@@ -1,0 +1,818 @@
+# 🧪 Complete Testing Guide - All Endpoints
+
+## 📋 PREREQUISITES
+
+### 1. Jalankan Migration Baru
+
+npx sequelize-cli db:migrate
+npx sequelize-cli db:migrate:status
+
+
+### 2. Start Server
+
+npm start
+# Expected: Server running on port 3000
+
+
+### 3. Verify Database
+
+-- Cek kolom baru di PamitUlangs
+SELECT column_name FROM information_schema.columns 
+WHERE table_name = 'PamitUlangs';
+
+-- Expected: pesan_ke_dosen_pembimbing harus ada
+
+
+---
+
+## 🔐 PHASE 0: LOGIN & SAVE TOKEN
+
+### Login Mahasiswa
+```http
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "22523001",
+  "password": "12345678"
+}
+
+Save token as: `{token_mahasiswa}`
+
+
+Login Dosen (Calon Pembimbing)
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "198501012010121001",
+  "password": "198501012010121001"
+}
+Save token as:`{token_dosen_1}`
+
+
+
+Login Dosen 2
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "198601012011121002",
+  "password": "198601012011121002"
+}
+Save token as: `{token_dosen_2}`
+
+Login DPA (Dosen Pembimbing Akademik)
+POST http://localhost:3000/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "197001011995031002",
+  "password": "197001011995031002"
+}
+Save token as: `{token_dpa}`
+
+
+PHASE 1: MAHASISWA - SETUP AWAL
+Test 1: Get Profile Mahasiswa
+GET http://localhost:3000/api/mahasiswa/profile
+Authorization: Bearer {token_mahasiswa}
+
+
+**Expected Response:**
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "nim": "12345678",
+    "nama": "Ahmad Mahasiswa",
+    "email": "ahmad@mail.ugm.ac.id",
+    "status_jalur_saat_ini": "belum_mengajukan",
+    "dosen_pembimbing_akademik_id": null,
+    "dosen_pembimbing_skripsi_id": null
+  }
+}
+```
+
+---
+
+### Test 2: Get List Dosen
+GET http://localhost:3000/api/mahasiswa/dosen
+Authorization: Bearer {token_mahasiswa}
+
+Expected Response:
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "nip": "198501012010121001",
+      "nama": "Dr. Ahmad Fauzi, M.Kom"
+    },
+    {
+      "id": 2,
+      "nip": "197001011995031002",
+      "nama": "Dr. Siti DPA, S.T., M.T."
+    }
+  ],
+  "total": 2
+}
+
+
+Test 3: Pilih DPA
+PUT http://localhost:3000/api/mahasiswa/pilih-dpa
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "dosen_id": 2
+}
+
+Expected Response:
+{
+  "success": true,
+  "message": "Dosen pembimbing akademik berhasil dipilih",
+  "data": {
+    "id": 1,
+    "nim": "12345678",
+    "nama": "Ahmad Mahasiswa",
+    "dosen_pembimbing_akademik_id": 2,
+    "dosenPembimbingAkademik": {
+      "id": 2,
+      "nip": "197001011995031002",
+      "nama": "Dr. Siti DPA, S.T., M.T."
+    }
+  }
+}
+```
+
+---
+
+### Test 4: Get Current DPA
+```http
+GET http://localhost:3000/api/mahasiswa/dpa/current
+Authorization: Bearer {token_mahasiswa}
+```
+
+Expected Response:
+
+{
+  "success": true,
+  "has_dpa": true,
+  "data": {
+    "id": 2,
+    "nip": "197001011995031002",
+    "nama": "Dr. Siti DPA, S.T., M.T.",
+    "email": "siti.dpa@ugm.ac.id"
+  }
+}
+
+## 🎯 PHASE 2: MAHASISWA - MELIHAT TOPIK
+
+### Test 5: GET /api/topics - Lihat Semua Topik
+```http
+GET http://localhost:3000/api/topics
+Authorization: Bearer {token_mahasiswa}
+```
+
+---
+
+### Test 6: GET /api/topics?cluster=ITSC - Filter by Cluster
+```http
+GET http://localhost:3000/api/topics?cluster=ITSC
+Authorization: Bearer {token_mahasiswa}
+```
+
+**Test filter lainnya:**
+- `?cluster=Sirkel` → Expected: topik cluster Sirkel
+- `?cluster=Siber` → Expected: topik cluster Siber
+- `?status=available` → Expected: semua topik available
+
+
+Test 7: GET /api/topics/:id - Detail Topik
+GET http://localhost:3000/api/topics/1
+Authorization: Bearer {token_mahasiswa}
+
+PHASE 3: MAHASISWA - CHECK ELIGIBILITY
+
+Test 8: Check Status Jalur
+
+GET http://localhost:3000/api/jalur/status
+Authorization: Bearer {token_mahasiswa}
+
+
+Expected Response (Mahasiswa Baru):
+{
+  "success": true,
+  "data": {
+    "current_status": "belum_mengajukan",
+    "has_active_submission": false,
+    "has_dospem_akademik": true,
+    "has_dospem_skripsi": false,
+    "active_pamit": null,
+    "available_options": {
+      "baru": true,
+      "ulang": false,
+      "ekstensi": false
+    }
+  }
+}
+
+PHASE 4: MAHASISWA - SUBMIT JALUR BARU (TOPIK DOSEN)
+Test 9: POST /api/jalur/baru/topik-dosen
+POST http://localhost:3000/api/jalur/baru/topik-dosen
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "topik_1_kode": "SIRKEL01",
+  "topik_1_judul": "Sistem Rekomendasi E-Commerce dengan Collaborative Filtering",
+  "dosen_1_nama": "Dr. Ahmad Fauzi, M.Kom",
+  
+  "topik_2_kode": "SIBER01",
+  "topik_2_judul": "Deteksi Intrusi Jaringan Menggunakan Random Forest",
+  "dosen_2_nama": "Dr. Budi Santoso, M.T",
+  
+  "topik_3_kode": "ITSC01",
+  "topik_3_judul": "Pengembangan Chatbot Customer Service dengan NLP",
+  "dosen_3_nama": "Dr. Citra Dewi, M.Kom"
+}
+
+
+Expected Response:
+{
+  "success": true,
+  "message": "Pengajuan jalur baru (topik dosen) berhasil dibuat",
+  "data": {
+    "id": 1,
+    "mahasiswa_id": 1,
+    "jenis_jalur": "baru",
+    "tipe_pengajuan": "topik_dosen",
+    "topik_1_kode": "SIRKEL01",
+    "dosen_saat_ini": 1,
+    "status": "pending"
+  }
+}
+
+Test 10: Error Cases - Double Submission
+POST http://localhost:3000/api/jalur/baru/topik-dosen
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "topik_1_kode": "MVK01",
+  "topik_1_judul": "Judul lain",
+  "dosen_1_nama": "Dr. Dodi Prasetyo"
+}
+
+
+**Expected Response:**
+{
+  "success": false,
+  "message": "Anda sudah memiliki pengajuan yang aktif"
+}
+
+
+PHASE 5: DOSEN 1 - REVIEW & REJECT
+Test 11: GET /api/dosen/submissions - Dosen 1 Lihat Pengajuan
+
+GET http://localhost:3000/api/dosen/submissions
+Authorization: Bearer {token_dosen_1}
+
+
+Expected Response:
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "topik_1_kode": "SIRKEL01",
+      "topik_1_judul": "Sistem Rekomendasi E-Commerce...",
+      "status": "pending",
+      "dosen_saat_ini": 1,
+      "mahasiswa": {
+        "nim": "12345678",
+        "nama": "Ahmad Mahasiswa"
+      }
+    }
+  ],
+  "total": 1
+}
+`
+
+Test 12: POST /api/dosen/submissions/:id/reject - Dosen 1 Menolak
+POST http://localhost:3000/api/dosen/submissions/1/reject
+Authorization: Bearer {token_dosen_1}
+Content-Type: application/json
+
+{
+  "keterangan": "Topik 1 (SIRKEL01) tidak sesuai dengan bidang keahlian saya. Silakan diajukan ke dosen yang lebih expert di bidang machine learning."
+}
+
+
+Expected Response:
+
+{
+  "success": true,
+  "message": "Pengajuan ditolak dan diteruskan ke dosen pilihan berikutnya",
+  "data": {
+    "id": 1,
+    "dosen_saat_ini": 2,
+    "status": "pending",
+    "alasan_penolakan": "Topik 1 (SIRKEL01) tidak sesuai..."
+  }
+}
+```
+
+---
+
+## 👨‍🏫 PHASE 6: DOSEN 2 - REVIEW & APPROVE
+
+### Test 13: GET /api/dosen/submissions - Dosen 2 Lihat Pengajuan
+```http
+GET http://localhost:3000/api/dosen/submissions
+Authorization: Bearer {token_dosen_2}
+```
+
+---
+
+### Test 14: POST /api/dosen/submissions/:id/approve - Dosen 2 Approve
+```http
+POST http://localhost:3000/api/dosen/submissions/1/approve
+Authorization: Bearer {token_dosen_2}
+Content-Type: application/json
+
+{
+  "keterangan": "Topik 2 (SIBER01) sangat menarik dan sesuai dengan keahlian saya di bidang cybersecurity. Saya setuju untuk membimbing."
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Pengajuan berhasil disetujui",
+  "data": {
+    "id": 1,
+    "status": "approved",
+    "dosen_saat_ini": 2
+  }
+}
+```
+
+---
+
+## 📊 PHASE 7: MAHASISWA - CEK STATUS SETELAH APPROVED
+
+### Test 15: GET /api/submissions - Cek Status Akhir
+```http
+GET http://localhost:3000/api/submissions
+Authorization: Bearer {token_mahasiswa}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "jenis_jalur": "baru",
+      "tipe_pengajuan": "topik_dosen",
+      "status": "approved",
+      "topik_1_judul": "Sistem Rekomendasi E-Commerce..."
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### Test 16: GET /api/submissions/history - Cek History
+```http
+GET http://localhost:3000/api/submissions/history
+Authorization: Bearer {token_mahasiswa}
+```
+
+---
+
+### Test 17: GET /api/jalur/status - Cek Eligibility Setelah Approved
+```http
+GET http://localhost:3000/api/jalur/status
+Authorization: Bearer {token_mahasiswa}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "current_status": "baru",
+    "has_active_submission": true,
+    "has_dospem_skripsi": true,
+    "available_options": {
+      "baru": false,
+      "ulang": true,
+      "ekstensi": false
+    }
+  }
+}
+```
+
+---
+
+## 🔄 PHASE 8: MAHASISWA - JALUR ULANG (PAMIT) ⭐ NEW!
+
+### Test 18: POST /api/jalur/ulang/pamit - Submit Pamit
+```http
+POST http://localhost:3000/api/jalur/ulang/pamit
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "pesan_ke_dosen_pembimbing": "Pak/Bu, dengan hormat saya ingin menyampaikan bahwa saya bermaksud mengundurkan diri dari bimbingan skripsi ini. Saya merasa topik yang saya ambil tidak sesuai dengan minat saya. Mohon persetujuannya.",
+  
+  "alasan_ulang": "Setelah menjalani beberapa bulan, saya merasa topik Deteksi Intrusi Jaringan terlalu kompleks dan tidak sesuai dengan passion saya di bidang mobile development. Saya ingin mencoba topik lain yang lebih sesuai dengan minat saya.",
+  
+  "surat_pengunduran_diri": "https://drive.google.com/file/d/xxxxx/view",
+  
+  "catatan_tambahan": "Saya mohon maaf atas ketidaknyamanan ini dan berterima kasih atas bimbingan yang telah diberikan."
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Pamit ulang berhasil disubmit. Pesan telah dikirim ke dosen pembimbing dan menunggu approval dari DPA.",
+  "data": {
+    "pamit": {
+      "id": 1,
+      "mahasiswa_id": 1,
+      "pengajuan_sebelumnya_id": 1,
+      "pesan_ke_dosen_pembimbing": "Pak/Bu, dengan hormat...",
+      "alasan_ulang": "Setelah menjalani beberapa bulan...",
+      "status_dpa": "pending"
+    },
+    "status": "pending",
+    "next_step": "Tunggu approval dari DPA, kemudian pilih: Topik Dosen atau Judul Mandiri"
+  }
+}
+```
+
+---
+
+### Test 19: GET /api/jalur/ulang/status-pamit - Cek Status Pamit
+```http
+GET http://localhost:3000/api/jalur/ulang/status-pamit
+Authorization: Bearer {token_mahasiswa}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "has_pamit": true,
+    "pamit_id": 1,
+    "status_dpa": "pending",
+    "can_continue": false,
+    "message": "Menunggu approval dari DPA"
+  }
+}
+```
+
+---
+
+### Test 20: Error Case - Submit Pamit Tanpa Dosen Pembimbing
+**Note:** Mahasiswa harus punya `dosen_pembimbing_skripsi_id` dulu
+
+**Expected Response:**
+```json
+{
+  "success": false,
+  "message": "Anda belum memiliki dosen pembimbing skripsi. Tidak bisa mengajukan pamit ulang."
+}
+```
+
+---
+
+## 👨‍🏫 PHASE 9: DOSEN PEMBIMBING - LIHAT PAMIT (READ ONLY) ⭐ NEW!
+
+### Test 21: GET /api/dosen/pamit-mahasiswa - Dosen Pembimbing Lihat Pamit
+```http
+GET http://localhost:3000/api/dosen/pamit-mahasiswa
+Authorization: Bearer {token_dosen_2}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "mahasiswa_id": 1,
+      "pesan_ke_dosen_pembimbing": "Pak/Bu, dengan hormat...",
+      "alasan_ulang": "Setelah menjalani beberapa bulan...",
+      "status_dpa": "pending",
+      "mahasiswa": {
+        "nim": "12345678",
+        "nama": "Ahmad Mahasiswa",
+        "dosenPembimbingAkademik": {
+          "nama": "Dr. Siti DPA, S.T., M.T."
+        }
+      }
+    }
+  ],
+  "total": 1,
+  "message": "Ini adalah daftar pamit mahasiswa bimbingan Anda. Anda hanya dapat melihat, tidak dapat approve/reject."
+}
+```
+
+---
+
+### Test 22: GET /api/dosen/pamit-mahasiswa/:id - Detail Pamit
+```http
+GET http://localhost:3000/api/dosen/pamit-mahasiswa/1
+Authorization: Bearer {token_dosen_2}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": 1,
+    "pesan_ke_dosen_pembimbing": "Pak/Bu, dengan hormat saya ingin menyampaikan...",
+    "alasan_ulang": "Setelah menjalani beberapa bulan...",
+    "surat_pengunduran_diri": "https://drive.google.com/file/d/xxxxx/view",
+    "status_dpa": "pending",
+    "mahasiswa": {
+      "nim": "12345678",
+      "nama": "Ahmad Mahasiswa"
+    }
+  },
+  "message": "Detail pamit mahasiswa. Anda hanya dapat melihat, tidak dapat approve/reject. Approval dilakukan oleh DPA."
+}
+```
+
+---
+
+## 👨‍🏫 PHASE 10: DPA - REVIEW & APPROVE PAMIT ⭐ NEW!
+
+### Test 23: GET /api/dosen/pamit-dpa - DPA Lihat Pamit
+```http
+GET http://localhost:3000/api/dosen/pamit-dpa
+Authorization: Bearer {token_dpa}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 1,
+      "mahasiswa_id": 1,
+      "pesan_ke_dosen_pembimbing": "Pak/Bu, dengan hormat...",
+      "alasan_ulang": "Setelah menjalani beberapa bulan...",
+      "status_dpa": "pending",
+      "mahasiswa": {
+        "nim": "12345678",
+        "nama": "Ahmad Mahasiswa",
+        "dosenPembimbingSkripsi": {
+          "nama": "Dr. Budi Santoso, M.T"
+        }
+      }
+    }
+  ],
+  "total": 1
+}
+```
+
+---
+
+### Test 24: GET /api/dosen/pamit-dpa/:id - DPA Lihat Detail
+```http
+GET http://localhost:3000/api/dosen/pamit-dpa/1
+Authorization: Bearer {token_dpa}
+```
+
+---
+
+### Test 25: POST /api/dosen/pamit-dpa/:id/approve - DPA Approve
+```http
+POST http://localhost:3000/api/dosen/pamit-dpa/1/approve
+Authorization: Bearer {token_dpa}
+Content-Type: application/json
+
+{
+  "keterangan_dpa": "Saya setuju dengan alasan yang diberikan. Silakan lanjutkan dengan memilih topik baru yang lebih sesuai dengan minat Anda."
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Pamit berhasil disetujui. Mahasiswa dapat melanjutkan dengan memilih topik baru.",
+  "data": {
+    "id": 1,
+    "status_dpa": "approved",
+    "keterangan_dpa": "Saya setuju dengan alasan yang diberikan...",
+    "tanggal_approval_dpa": "2025-10-30T10:00:00.000Z"
+  }
+}
+```
+
+---
+
+### Test 26: POST /api/dosen/pamit-dpa/:id/reject - DPA Reject (Alternative)
+```http
+POST http://localhost:3000/api/dosen/pamit-dpa/1/reject
+Authorization: Bearer {token_dpa}
+Content-Type: application/json
+
+{
+  "keterangan_dpa": "Alasan yang diberikan kurang kuat. Saya sarankan untuk menyelesaikan topik yang sudah dipilih terlebih dahulu."
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Pamit ditolak",
+  "data": {
+    "id": 1,
+    "status_dpa": "rejected",
+    "keterangan_dpa": "Alasan yang diberikan kurang kuat...",
+    "tanggal_approval_dpa": "2025-10-30T10:00:00.000Z"
+  }
+}
+```
+
+---
+
+## 🔄 PHASE 11: MAHASISWA - SUBMIT TOPIK BARU SETELAH PAMIT APPROVED ⭐ NEW!
+
+### Test 27: GET /api/jalur/ulang/status-pamit - Cek Status Pamit Setelah Approved
+```http
+GET http://localhost:3000/api/jalur/ulang/status-pamit
+Authorization: Bearer {token_mahasiswa}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "has_pamit": true,
+    "pamit_id": 1,
+    "status_dpa": "approved",
+    "can_continue": true,
+    "message": "Pamit sudah disetujui. Silakan lanjutkan dengan memilih topik baru."
+  }
+}
+```
+
+---
+
+### Test 28: POST /api/jalur/ulang/topik-dosen - Submit Topik Baru
+```http
+POST http://localhost:3000/api/jalur/ulang/topik-dosen
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "pamit_id": 1,
+  
+  "topik_1_kode": "MVK01",
+  "topik_1_judul": "Aplikasi Mobile Augmented Reality untuk Edukasi Anak",
+  "dosen_1_nama": "Dr. Dodi Prasetyo, M.Kom",
+  
+  "topik_2_kode": null,
+  "topik_2_judul": null,
+  "dosen_2_nama": null,
+  
+  "topik_3_kode": null,
+  "topik_3_judul": null,
+  "dosen_3_nama": null
+}
+```
+
+**Expected Response:**
+```json
+{
+  "success": true,
+  "message": "Pengajuan jalur ulang (topik dosen) berhasil dibuat",
+  "data": {
+    "pengajuan": {
+      "id": 2,
+      "mahasiswa_id": 1,
+      "jenis_jalur": "ulang",
+      "tipe_pengajuan": "topik_dosen",
+      "pamit_ulang_id": 1,
+      "topik_1_kode": "MVK01",
+      "status": "pending"
+    },
+    "pengajuan_sebelumnya": {
+      "id": 1,
+      "status_baru": "dibatalkan"
+    }
+  }
+}
+```
+
+---
+
+## 📚 PHASE 12: JALUR BARU - JUDUL MANDIRI
+
+Test 29: POST /api/jalur/baru/judul-mandiri
+
+POST http://localhost:3000/api/jalur/baru/judul-mandiri
+Authorization: Bearer {token_mahasiswa}
+Content-Type: application/json
+
+{
+  "judul_mandiri": "Pengembangan Aplikasi Mobile untuk Monitoring Kesehatan Lansia berbasis IoT",
+  "deskripsi_mandiri": "Penelitian ini bertujuan mengembangkan aplikasi mobile yang terintegrasi dengan sensor IoT untuk monitoring kesehatan lansia secara real-time.",
+  "keyword_mandiri": "IoT, Mobile Application, Healthcare, Elderly Care",
+  "prospective_supervisor_id": 1
+}
+
+PHASE 13: ADMIN - UPLOAD TOPICS
+
+Test 30: Download Template Excel
+Open in browser:
+http://localhost:3000/api/admin/upload/template
+
+
+### Test 31: Upload Topics dari Excel
+
+POST http://localhost:3000/api/admin/upload/topics
+Authorization: Bearer {token_admin}
+Content-Type: multipart/form-data
+
+[Select Excel file in form-data]
+
+test admin (untuk Download template excel mahasiswa)
+GET http://localhost:3000/api/admin/upload/mahasiswa-template
+
+
+## ✅ TESTING CHECKLIST
+
+### Basic Features (Existing):
+- [ ] Login mahasiswa & dosen
+- [ ] Mahasiswa lihat topik
+- [ ] Mahasiswa submit jalur baru (topik dosen)
+- [ ] Dosen 1 reject → auto redirect
+- [ ] Dosen 2 approve
+- [ ] Mahasiswa cek status & history
+
+### New Features (Pamit & DPA):
+- [ ] Mahasiswa pilih DPA
+- [ ] Mahasiswa submit pamit dengan 2 bagian (pesan + alasan)
+- [ ] Dosen pembimbing lihat pamit (READ ONLY)
+- [ ] DPA lihat pamit mahasiswa bimbingan akademiknya
+- [ ] DPA approve/reject pamit
+- [ ] Mahasiswa submit topik baru setelah pamit approved
+- [ ] Validasi: mahasiswa harus punya dosen pembimbing skripsi
+- [ ] Jalur baru - Judul mandiri
+
+---
+
+## 🎯 EXPECTED FLOW SUMMARY
+
+1. **Mahasiswa** → Pilih DPA
+2. **Mahasiswa** → Submit jalur baru (topik dosen)
+3. **Dosen 1** → Reject → Auto redirect ke dosen 2
+4. **Dosen 2** → Approve → Mahasiswa dapat dosen pembimbing skripsi
+5. **Mahasiswa** → Submit pamit (pesan ke dospem + alasan untuk DPA)
+6. **Dosen Pembimbing** → Lihat pamit (READ ONLY)
+7. **DPA** → Approve/Reject alasan mengulang jalur
+8. **Mahasiswa** → (Jika DPA approve) Submit topik baru
+
+---
+
+## 🐛 TROUBLESHOOTING
+
+### Error: "Pesan ke dosen pembimbing harus diisi"
+**Solution:** Pastikan field `pesan_ke_dosen_pembimbing` ada dalam request body
+
+### Error: "Anda belum memiliki dosen pembimbing skripsi"
+**Solution:** Mahasiswa harus punya pengajuan yang approved dulu (dapat dosen pembimbing)
+
+### Error: "Anda tidak memiliki akses untuk melihat pamit ini"
+**Solution:** 
+- Dosen pembimbing hanya bisa lihat pamit mahasiswa dengan `dosen_pembimbing_skripsi_id = dosen_id`
+- DPA hanya bisa lihat pamit mahasiswa dengan `dosen_pembimbing_akademik_id = dosen_id`
+
+### Error: "Pamit belum disetujui oleh DPA"
+**Solution:** Tunggu DPA approve pamit dulu sebelum submit topik baru
+
+---
+
+**Good luck testing! 🚀**

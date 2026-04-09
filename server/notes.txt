@@ -1,0 +1,2 @@
+menjalankan seeder dengan spesifik file tertentu: npx sequelize-cli db:seed --seed demo-admin.js
+menjalankan semua seeder: npx sequelize-cli db:seed:all

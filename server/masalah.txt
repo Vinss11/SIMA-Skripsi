@@ -1,0 +1,10 @@
+memperbaiki masalah file template upload topik yang ditawarkan dosen di endpoint http://localhost:3000/api/admin/upload/topics 
+masalahnya ada di kuotanya, karena seharusnya untuk masalah kuota itu dari dosennya bukan dari topiknya
+
+untuk ketua cluster sebaiknya dibuat akun tersendiri
+
+membuat halaman history untuk bimbingan skripsi
+jadi dosen pembimbing skripsi akan dapat set jadwal untuk bimbingan
+
+ketika sudah override kuota dosen, tapi override lagi hasilnya malah error
+di endpoint http://localhost:3000/api/admin/dosen/1/kuota
