@@ -9,6 +9,8 @@ function buildTopikList(submission) {
           slot: 1,
           kode: submission.topik_1_kode,
           judul: submission.topik_1_judul,
+          dosen: submission.dosen_1_nama,
+          dosen_id: submission.dosen_pilihan_1,
         }
       : null,
     submission.topik_2_kode
@@ -16,6 +18,8 @@ function buildTopikList(submission) {
           slot: 2,
           kode: submission.topik_2_kode,
           judul: submission.topik_2_judul,
+          dosen: submission.dosen_2_nama,
+          dosen_id: submission.dosen_pilihan_2,
         }
       : null,
     submission.topik_3_kode
@@ -23,6 +27,8 @@ function buildTopikList(submission) {
           slot: 3,
           kode: submission.topik_3_kode,
           judul: submission.topik_3_judul,
+          dosen: submission.dosen_3_nama,
+          dosen_id: submission.dosen_pilihan_3,
         }
       : null,
   ].filter(Boolean);
@@ -36,6 +42,108 @@ function getApprovedTopik(submission, topikList) {
   const rejectedCount = (submission.riwayat || []).filter((item) => item.status === "rejected").length;
   const approvedSlot = Math.min(rejectedCount + 1, topikList.length);
   return topikList.find((item) => item.slot === approvedSlot) || null;
+}
+
+function formatSubmissionDecisionResponse(submission) {
+  const riwayatOrdered = (submission.riwayat || [])
+    .slice()
+    .sort((a, b) => new Date(a.tanggal_keputusan || a.createdAt) - new Date(b.tanggal_keputusan || b.createdAt));
+
+  const latestApproved = riwayatOrdered
+    .slice()
+    .reverse()
+    .find((item) => item.status === "approved");
+
+  const topikList = buildTopikList(submission);
+  const approvedTopik = submission.tipe_pengajuan === "topik_dosen" ? getApprovedTopik(submission, topikList) : null;
+
+  const responseData = {
+    id: submission.id,
+    jenis_jalur: submission.jenis_jalur,
+    tipe_pengajuan: submission.tipe_pengajuan,
+    status: submission.status,
+    diajukan_pada: submission.createdAt,
+    diproses_pada: submission.updatedAt,
+    mahasiswa: submission.mahasiswa
+      ? {
+          id: submission.mahasiswa.id,
+          nim: submission.mahasiswa.nim,
+          nama: submission.mahasiswa.nama,
+          email: submission.mahasiswa.email,
+        }
+      : null,
+    detail_pengajuan: null,
+    hasil_approval: {
+      status_pengajuan: submission.status,
+      keterangan: submission.alasan_persetujuan || latestApproved?.keterangan || null,
+      tanggal_keputusan: latestApproved ? latestApproved.tanggal_keputusan || latestApproved.createdAt : submission.updatedAt,
+      dosen: latestApproved?.dosen
+        ? {
+            id: latestApproved.dosen.id,
+            nip: latestApproved.dosen.nip,
+            nama: latestApproved.dosen.nama,
+          }
+        : submission.dosenCurrent
+        ? {
+            id: submission.dosenCurrent.id,
+            nip: submission.dosenCurrent.nip,
+            nama: submission.dosenCurrent.nama,
+          }
+        : null,
+    },
+    riwayat_persetujuan: riwayatOrdered.map((item) => ({
+      status: item.status,
+      keterangan: item.keterangan,
+      tanggal_keputusan: item.tanggal_keputusan || item.createdAt,
+      dosen: item.dosen
+        ? {
+            id: item.dosen.id,
+            nip: item.dosen.nip,
+            nama: item.dosen.nama,
+          }
+        : null,
+    })),
+  };
+
+  if (submission.tipe_pengajuan === "topik_dosen") {
+    responseData.detail_pengajuan = {
+      topik_dipilih: topikList.map(({ slot, kode, judul, dosen }) => ({ slot, kode, judul, dosen })),
+      topik_disetujui: approvedTopik
+        ? {
+            slot: approvedTopik.slot,
+            kode: approvedTopik.kode,
+            judul: approvedTopik.judul,
+          }
+        : null,
+      dosen_pembimbing: approvedTopik
+        ? {
+            id: approvedTopik.dosen_id,
+            nama: approvedTopik.dosen,
+          }
+        : submission.dosenCurrent
+        ? {
+            id: submission.dosenCurrent.id,
+            nama: submission.dosenCurrent.nama,
+          }
+        : null,
+    };
+  } else {
+    responseData.detail_pengajuan = {
+      judul_mandiri: submission.judul_mandiri,
+      deskripsi_mandiri: submission.deskripsi_mandiri,
+      keyword_mandiri: submission.keyword_mandiri,
+      calon_dosen_pembimbing: submission.prospectiveSupervisor
+        ? {
+            id: submission.prospectiveSupervisor.id,
+            nip: submission.prospectiveSupervisor.nip,
+            nama: submission.prospectiveSupervisor.nama,
+            email: submission.prospectiveSupervisor.email,
+          }
+        : null,
+    };
+  }
+
+  return responseData;
 }
 
 // GET /api/dosen/submissions - Dosen melihat pengajuan yang ditujukan kepadanya
@@ -280,6 +388,16 @@ exports.approveSubmission = async (req, res) => {
           attributes: ["id", "nim", "nama", "email"],
         },
         {
+          model: Dosen,
+          as: "dosenCurrent",
+          attributes: ["id", "nip", "nama", "email"],
+        },
+        {
+          model: Dosen,
+          as: "prospectiveSupervisor",
+          attributes: ["id", "nip", "nama", "email"],
+        },
+        {
           model: RiwayatPersetujuan,
           as: "riwayat",
           include: [
@@ -293,10 +411,12 @@ exports.approveSubmission = async (req, res) => {
       ],
     });
 
+    const responseData = formatSubmissionDecisionResponse(updatedSubmission);
+
     res.json({
       success: true,
       message: "Pengajuan berhasil disetujui",
-      data: updatedSubmission,
+      data: responseData,
     });
   } catch (error) {
     if (!t.finished) {
@@ -498,7 +618,7 @@ exports.rejectSubmission = async (req, res) => {
   }
 };
 
-// ========== PAMIT MAHASISWA (DOSEN PEMBIMBING - READ ONLY) ==========
+// ========== PAMIT MAHASISWA (DOSEN PEMBIMBING SKRIPSI - TAHAP 1) ==========
 
 // GET /api/dosen/pamit-mahasiswa - Dosen pembimbing melihat pamit mahasiswa yang dibimbingnya (READ ONLY)
 exports.getPamitMahasiswa = async (req, res) => {
@@ -530,7 +650,7 @@ exports.getPamitMahasiswa = async (req, res) => {
     };
 
     if (status) {
-      where.status_dpa = status;
+      where.status_dospem = status;
     }
 
     const pamits = await PamitUlang.findAll({
@@ -561,7 +681,7 @@ exports.getPamitMahasiswa = async (req, res) => {
       success: true,
       data: pamits,
       total: pamits.length,
-      message: "Ini adalah daftar pamit mahasiswa bimbingan Anda. Anda hanya dapat melihat, tidak dapat approve/reject.",
+      message: "Ini adalah daftar pamit mahasiswa bimbingan Anda untuk review dosen pembimbing skripsi.",
     });
   } catch (error) {
     console.error("Error di getPamitMahasiswa:", error);
@@ -619,10 +739,232 @@ exports.getPamitMahasiswaDetail = async (req, res) => {
     res.json({
       success: true,
       data: pamit,
-      message: "Detail pamit mahasiswa. Anda hanya dapat melihat, tidak dapat approve/reject. Approval dilakukan oleh DPA.",
+      message: "Detail pamit mahasiswa untuk review dosen pembimbing skripsi.",
     });
   } catch (error) {
     console.error("Error di getPamitMahasiswaDetail:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/dosen/pamit-mahasiswa/:id/approve - Dosen pembimbing skripsi menyetujui pamit (tahap 1)
+exports.approvePamitMahasiswa = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const dosen_id = req.user.id;
+    const { keterangan_dospem } = req.body || {};
+
+    const pamit = await PamitUlang.findByPk(id, {
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "dosen_pembimbing_skripsi_id"],
+        },
+      ],
+      transaction: t,
+    });
+
+    if (!pamit) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data pamit tidak ditemukan",
+      });
+    }
+
+    if (pamit.mahasiswa.dosen_pembimbing_skripsi_id !== dosen_id) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Anda tidak memiliki akses untuk menyetujui pamit ini",
+      });
+    }
+
+    if (pamit.status_dospem !== "pending") {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Pamit ini sudah diproses oleh dosen pembimbing skripsi dengan status: ${pamit.status_dospem}`,
+      });
+    }
+
+    await pamit.update(
+      {
+        status_dospem: "approved",
+        keterangan_dospem: keterangan_dospem || "Disetujui oleh dosen pembimbing skripsi",
+        tanggal_approval_dospem: new Date(),
+        // Backward compatibility: status DPA mengikuti hasil final dospem.
+        status_dpa: "approved",
+        keterangan_dpa: "Tidak diperlukan (otomatis mengikuti approval dosen pembimbing skripsi)",
+        tanggal_approval_dpa: new Date(),
+      },
+      { transaction: t }
+    );
+
+    // Saat dospem menyetujui pamit, mahasiswa resmi melepas dospem skripsi saat ini.
+    const mahasiswa = await Mahasiswa.findByPk(pamit.mahasiswa_id, { transaction: t });
+    const previous_dosen_id = mahasiswa.dosen_pembimbing_skripsi_id;
+
+    await mahasiswa.update(
+      {
+        dosen_pembimbing_skripsi_id: null,
+        status_jalur_saat_ini: "sedang_mengajukan",
+        pengajuan_aktif_id: null,
+      },
+      { transaction: t }
+    );
+
+    // Jika kuota dosen tidak penuh lagi, aktifkan kembali topik yang sebelumnya unavailable.
+    if (previous_dosen_id) {
+      const previousDosen = await Dosen.findByPk(previous_dosen_id, { transaction: t });
+
+      if (previousDosen) {
+        const kuotaInfo = await previousDosen.getKuotaInfo();
+        if (!kuotaInfo.is_penuh) {
+          await Topik.update(
+            { status: "available" },
+            {
+              where: {
+                dosen_id: previous_dosen_id,
+                status: "unavailable",
+              },
+              transaction: t,
+            }
+          );
+        }
+      }
+    }
+
+    await t.commit();
+
+    const updatedPamit = await PamitUlang.findByPk(id, {
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "email"],
+        },
+        {
+          model: Pengajuan,
+          as: "pengajuanSebelumnya",
+          attributes: ["id", "topik_1_judul", "judul_mandiri"],
+        },
+      ],
+    });
+
+    res.json({
+      success: true,
+      message: "Pamit disetujui dosen pembimbing skripsi. Mahasiswa dapat melanjutkan pengajuan ulang.",
+      data: updatedPamit,
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di approvePamitMahasiswa:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/dosen/pamit-mahasiswa/:id/reject - Dosen pembimbing skripsi menolak pamit (tahap 1)
+exports.rejectPamitMahasiswa = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+    const dosen_id = req.user.id;
+    const { keterangan_dospem } = req.body || {};
+
+    if (!keterangan_dospem) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Keterangan penolakan harus diisi",
+      });
+    }
+
+    const pamit = await PamitUlang.findByPk(id, {
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "dosen_pembimbing_skripsi_id"],
+        },
+      ],
+      transaction: t,
+    });
+
+    if (!pamit) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data pamit tidak ditemukan",
+      });
+    }
+
+    if (pamit.mahasiswa.dosen_pembimbing_skripsi_id !== dosen_id) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Anda tidak memiliki akses untuk menolak pamit ini",
+      });
+    }
+
+    if (pamit.status_dospem !== "pending") {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Pamit ini sudah diproses oleh dosen pembimbing skripsi dengan status: ${pamit.status_dospem}`,
+      });
+    }
+
+    await pamit.update(
+      {
+        status_dospem: "rejected",
+        keterangan_dospem,
+        tanggal_approval_dospem: new Date(),
+        // Backward compatibility: status DPA mengikuti hasil final dospem.
+        status_dpa: "rejected",
+        keterangan_dpa: keterangan_dospem,
+        tanggal_approval_dpa: new Date(),
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    const updatedPamit = await PamitUlang.findByPk(id, {
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "email"],
+        },
+        {
+          model: Pengajuan,
+          as: "pengajuanSebelumnya",
+          attributes: ["id", "topik_1_judul", "judul_mandiri"],
+        },
+      ],
+    });
+
+    res.json({
+      success: true,
+      message: "Pamit ditolak oleh dosen pembimbing skripsi.",
+      data: updatedPamit,
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di rejectPamitMahasiswa:", error);
     res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
@@ -660,6 +1002,7 @@ exports.getPamitDPA = async (req, res) => {
 
     const where = {
       mahasiswa_id: mahasiswaIds,
+      status_dospem: "approved",
     };
 
     if (status) {
@@ -800,6 +1143,15 @@ exports.approvePamitDPA = async (req, res) => {
     }
 
     // Validasi: Pamit harus dalam status pending
+    if (pamit.status_dospem !== "approved") {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Pamit belum disetujui dosen pembimbing skripsi. Status saat ini: ${pamit.status_dospem}`,
+      });
+    }
+
+    // Validasi: Pamit harus dalam status pending
     if (pamit.status_dpa !== "pending") {
       await t.rollback();
       return res.status(400).json({
@@ -934,6 +1286,15 @@ exports.rejectPamitDPA = async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses untuk menolak pamit ini",
+      });
+    }
+
+    // Validasi: Pamit harus disetujui dosen pembimbing skripsi terlebih dahulu
+    if (pamit.status_dospem !== "approved") {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Pamit belum disetujui dosen pembimbing skripsi. Status saat ini: ${pamit.status_dospem}`,
       });
     }
 

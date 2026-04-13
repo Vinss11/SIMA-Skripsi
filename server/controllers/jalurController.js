@@ -192,7 +192,8 @@ exports.checkStatusJalur = async (req, res) => {
     const activePamit = await PamitUlang.findOne({
       where: {
         mahasiswa_id,
-        status_dpa: { [Op.in]: ["pending", "approved"] },
+        pengajuan_baru_id: null,
+        status_dospem: { [Op.in]: ["pending", "approved"] },
       },
       order: [["createdAt", "DESC"]],
     });
@@ -201,7 +202,7 @@ exports.checkStatusJalur = async (req, res) => {
     const availableOptions = {
       baru: !hasActiveSubmission && mahasiswa.status_jalur_saat_ini === "belum_mengajukan",
 
-      ulang: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && mahasiswa.dosen_pembimbing_akademik_id !== null,
+      ulang: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && mahasiswa.dosen_pembimbing_skripsi_id !== null,
 
       ekstensi: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && mahasiswa.status_jalur_saat_ini === "ekstensi",
     };
@@ -216,7 +217,7 @@ exports.checkStatusJalur = async (req, res) => {
         active_pamit: activePamit
           ? {
               id: activePamit.id,
-              status_dpa: activePamit.status_dpa,
+              status_dospem: activePamit.status_dospem,
               tanggal: activePamit.createdAt,
             }
           : null,
@@ -501,12 +502,12 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
-    // Validasi: Pamit harus sudah approved
-    if (pamit.status_dpa !== "approved") {
+    // Validasi: Pamit harus disetujui dosen pembimbing skripsi terlebih dahulu
+    if (pamit.status_dospem !== "approved") {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: `Pamit belum disetujui oleh DPA. Status: ${pamit.status_dpa}`,
+        message: `Pamit belum disetujui oleh dosen pembimbing skripsi. Status: ${pamit.status_dospem}`,
       });
     }
 
@@ -859,15 +860,6 @@ exports.submitPamit = async (req, res) => {
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
 
-    // Validasi: Mahasiswa harus punya DPA
-    if (!mahasiswa.dosen_pembimbing_akademik_id) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Anda belum memiliki dosen pembimbing akademik. Hubungi koordinator.",
-      });
-    }
-
     // Validasi: Mahasiswa harus punya Dosen Pembimbing Skripsi
     if (!mahasiswa.dosen_pembimbing_skripsi_id) {
       await t.rollback();
@@ -895,11 +887,12 @@ exports.submitPamit = async (req, res) => {
       });
     }
 
-    // Cek apakah sudah pernah submit pamit yang masih pending
+    // Cek apakah sudah ada pamit aktif yang belum selesai dipakai
     const existingPamit = await PamitUlang.findOne({
       where: {
         mahasiswa_id,
-        status_dpa: "pending",
+        pengajuan_baru_id: null,
+        status_dospem: { [Op.in]: ["pending", "approved"] },
       },
       transaction: t,
     });
@@ -908,7 +901,7 @@ exports.submitPamit = async (req, res) => {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Anda sudah memiliki pamit yang sedang menunggu approval DPA",
+        message: "Anda sudah memiliki pamit aktif yang belum selesai diproses",
       });
     }
 
@@ -920,6 +913,7 @@ exports.submitPamit = async (req, res) => {
         pesan_ke_dosen_pembimbing,
         alasan_ulang,
         catatan_tambahan: catatan_tambahan || null,
+        status_dospem: "pending",
         status_dpa: "pending",
       },
       { transaction: t }
@@ -947,11 +941,11 @@ exports.submitPamit = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Pamit ulang berhasil disubmit. Pesan telah dikirim ke dosen pembimbing dan menunggu approval dari DPA.",
+      message: "Pamit ulang berhasil disubmit. Menunggu approval dari dosen pembimbing skripsi.",
       data: {
         pamit: pamitWithDetails,
         status: "pending",
-        next_step: "Tunggu approval dari DPA, kemudian pilih: Topik Dosen atau Judul Mandiri",
+        next_step: "Tunggu approval dosen pembimbing skripsi -> lalu pilih Topik Dosen atau Judul Mandiri",
       },
     });
   } catch (error) {
@@ -1007,22 +1001,22 @@ exports.getStatusPamit = async (req, res) => {
       });
     }
 
-    const canContinue = pamit.status_dpa === "approved" && !pamit.pengajuan_baru_id;
+    const canContinue = pamit.status_dospem === "approved" && !pamit.pengajuan_baru_id;
 
     res.json({
       success: true,
       data: {
         has_pamit: true,
         pamit_id: pamit.id,
-        status_dpa: pamit.status_dpa,
+        status_dospem: pamit.status_dospem,
         can_continue: canContinue,
         pamit,
         message: canContinue
           ? "Pamit sudah disetujui. Silakan lanjutkan dengan memilih topik baru."
-          : pamit.status_dpa === "pending"
-          ? "Menunggu approval dari DPA"
-          : pamit.status_dpa === "rejected"
-          ? "Pamit ditolak oleh DPA"
+          : pamit.status_dospem === "pending"
+          ? "Menunggu approval dari dosen pembimbing skripsi"
+          : pamit.status_dospem === "rejected"
+          ? "Pamit ditolak oleh dosen pembimbing skripsi"
           : "Pamit sudah digunakan untuk pengajuan",
       },
     });
@@ -1119,12 +1113,12 @@ exports.submitUlangTopikDosen = async (req, res) => {
       });
     }
 
-    // Validasi: Pamit harus sudah approved oleh DPA
-    if (pamit.status_dpa !== "approved") {
+    // Validasi: Pamit harus disetujui dosen pembimbing skripsi terlebih dahulu
+    if (pamit.status_dospem !== "approved") {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: `Pamit belum disetujui oleh DPA. Status: ${pamit.status_dpa}`,
+        message: `Pamit belum disetujui oleh dosen pembimbing skripsi. Status: ${pamit.status_dospem}`,
       });
     }
 

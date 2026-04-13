@@ -401,6 +401,7 @@ exports.getSubmissionById = async (req, res) => {
     if (submission.pamitUlang) {
       responseData.referensi.pamit_ulang = {
         id: submission.pamitUlang.id,
+        status_dospem: submission.pamitUlang.status_dospem || null,
         status_dpa: submission.pamitUlang.status_dpa || null,
         alasan_ulang: submission.pamitUlang.alasan_ulang || null,
       };

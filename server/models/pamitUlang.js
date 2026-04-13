@@ -64,11 +64,24 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: "pending",
         allowNull: false,
       },
+      status_dospem: {
+        type: DataTypes.ENUM("pending", "approved", "rejected"),
+        defaultValue: "pending",
+        allowNull: false,
+      },
       keterangan_dpa: {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      keterangan_dospem: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
       tanggal_approval_dpa: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      tanggal_approval_dospem: {
         type: DataTypes.DATE,
         allowNull: true,
       },

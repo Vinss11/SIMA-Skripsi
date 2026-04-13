@@ -11,17 +11,15 @@ router.get("/submissions/:id", authenticateToken, authorizeRole("dosen"), submis
 router.post("/submissions/:id/approve", authenticateToken, authorizeRole("dosen"), dosenController.approveSubmission);
 router.post("/submissions/:id/reject", authenticateToken, authorizeRole("dosen"), dosenController.rejectSubmission);
 
-// ========== PAMIT MAHASISWA (DOSEN PEMBIMBING - READ ONLY) ==========
-// Dosen pembimbing skripsi melihat pamit mahasiswa bimbingannya (hanya lihat, tidak bisa approve/reject)
+// ========== PAMIT MAHASISWA (DOSEN PEMBIMBING SKRIPSI) ==========
+// Dosen pembimbing skripsi mereview pamit mahasiswa bimbingannya (approve/reject tahap 1)
 router.get("/pamit-mahasiswa", authenticateToken, authorizeRole("dosen"), dosenController.getPamitMahasiswa);
 router.get("/pamit-mahasiswa/:id", authenticateToken, authorizeRole("dosen"), dosenController.getPamitMahasiswaDetail);
+router.post("/pamit-mahasiswa/:id/approve", authenticateToken, authorizeRole("dosen"), dosenController.approvePamitMahasiswa);
+router.post("/pamit-mahasiswa/:id/reject", authenticateToken, authorizeRole("dosen"), dosenController.rejectPamitMahasiswa);
 
-// ========== PAMIT ULANG (DPA - CAN APPROVE/REJECT) ==========
-// Dosen (sebagai DPA) mereview pamit mahasiswa bimbingan akademiknya
-router.get("/pamit-dpa", authenticateToken, authorizeRole("dosen"), dosenController.getPamitDPA);
-router.get("/pamit-dpa/:id", authenticateToken, authorizeRole("dosen"), dosenController.getPamitDPADetail);
-router.post("/pamit-dpa/:id/approve", authenticateToken, authorizeRole("dosen"), dosenController.approvePamitDPA);
-router.post("/pamit-dpa/:id/reject", authenticateToken, authorizeRole("dosen"), dosenController.rejectPamitDPA);
+// ========== PAMIT ULANG ==========
+// Approval pamit hanya oleh dosen pembimbing skripsi (endpoint DPA dinonaktifkan).
 
 // ========== DOSEN KUOTA ==========
 router.get("/kuota", authenticateToken, authorizeRole("dosen"), dosenController.getKuotaSendiri);
