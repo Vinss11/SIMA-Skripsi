@@ -17,7 +17,6 @@ import {
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 import MenuSectionHeader from "../components/MenuSectionHeader";
-import StandardTabs from "../components/StandardTabs";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -248,7 +247,7 @@ function UploadPanel({
       <div className="mt-4 flex flex-wrap gap-3">
         <a
           href={templateUrl}
-          className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+          className="inline-flex items-center gap-2 rounded-lg border border-[#b8e0cb] bg-white px-4 py-2 text-sm font-bold text-[#0f7b50] transition hover:bg-[#effaf4]"
         >
           <Download className="h-4 w-4" />
           Download Template
@@ -265,7 +264,7 @@ function UploadPanel({
         <button
           type="submit"
           disabled={isUploading}
-          className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Upload className="h-4 w-4" />
           {isUploading ? "Mengupload..." : "Upload File"}
@@ -953,32 +952,57 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
           <div className="space-y-4">
             <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <StandardTabs
-                    backButton={{
-                      onClick: handleBackToDosenGrid,
-                      disabled: !selectedDosen,
-                      title: "Kembali ke grid data dosen",
-                      icon: ArrowLeft,
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleBackToDosenGrid}
+                    disabled={dosenMode === "list" && !selectedDosen}
+                    title="Kembali ke grid data dosen"
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Kembali ke grid data dosen"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={loadData}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                  >
+                    <RefreshCcw className="h-4 w-4" />
+                    Refresh
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDosen(null);
+                      setDosenMode("add");
+                      setDosenActionError("");
+                      setDosenActionMessage("");
                     }}
-                    items={[
-                      { key: "list", label: "Data Dosen", icon: FileSpreadsheet },
-                      { key: "add", label: "Add", icon: Upload },
-                    ]}
-                    activeKey={dosenMode}
-                    onChange={(nextMode) => setDosenMode(nextMode)}
-                  />
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                      dosenMode === "add"
+                        ? "bg-[#2f63e3] text-white"
+                        : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                    }`}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Add
+                  </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleDownloadDosenExcel}
-                  disabled={isDownloadingDosen}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  <Download className="h-4 w-4" />
-                  {isDownloadingDosen ? "Mengunduh..." : "Download Data Dosen"}
-                </button>
+                {dosenMode === "list" ? (
+                  <button
+                    type="button"
+                    onClick={handleDownloadDosenExcel}
+                    disabled={isDownloadingDosen}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Download className="h-4 w-4" />
+                    {isDownloadingDosen ? "Mengunduh..." : "Download Data Dosen"}
+                  </button>
+                ) : null}
               </div>
             </div>
 

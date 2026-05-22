@@ -21,7 +21,6 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
-import StandardTabs from "../components/StandardTabs";
 import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
 
 const TOPIK_PAGE_SIZE = 25;
@@ -2996,26 +2995,36 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 }
               >
                 <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <StandardTabs
-                        items={[
-                          { key: "list", label: "Data Topik", icon: BookOpenCheck },
-                          { key: "api", label: "Add", icon: ClipboardList },
-                          { key: "upload", label: "Upload Excel", icon: FileSpreadsheet },
-                        ]}
-                        activeKey={topikMode}
-                        onChange={(nextMode) => setTopikMode(nextMode)}
-                      />
-                    </div>
-
-                    <a
-                      href={`${apiBaseUrl}/api/admin/upload/template`}
-                      className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setTopikMode("list")}
+                      disabled={topikMode === "list"}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Kembali ke data topik"
                     >
-                      <Download className="h-4 w-4" />
-                      Download Template Topik
-                    </a>
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTopikMode("api")}
+                      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                        topikMode === "api"
+                          ? "bg-[#2f63e3] text-white"
+                          : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                      }`}
+                    >
+                      <ClipboardList className="h-4 w-4" />
+                      Add
+                    </button>
                   </div>
                 </div>
 
@@ -3110,103 +3119,112 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 ) : null}
 
                 {topikMode === "api" ? (
-                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <h3 className="mb-3 text-lg font-black text-[#1b274b]">Tambah Topik via Form</h3>
-                    <form onSubmit={handleTopikApiSubmit} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Kode Topik</label>
-                        <input
-                          type="text"
-                          name="kode"
-                          value={topikForm.kode}
-                          onChange={handleTopikFormChange}
-                          placeholder="Contoh: SIRKEL99"
-                          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Cluster</label>
-                        <select
-                          name="cluster"
-                          value={topikForm.cluster}
-                          onChange={handleTopikFormChange}
-                          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-lg font-black text-[#1b274b]">Upload Topik via Excel</h3>
+                        <a
+                          href={`${apiBaseUrl}/api/admin/upload/template`}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#b8e0cb] px-3 py-2 text-sm font-semibold text-[#0f7b50] hover:bg-[#effaf4]"
                         >
-                          {TOPIK_CLUSTER_OPTIONS.map((cluster) => (
-                            <option key={cluster} value={cluster}>
-                              {cluster}
-                            </option>
-                          ))}
-                        </select>
+                          <Download className="h-4 w-4" />
+                          Download Template
+                        </a>
                       </div>
-                      <div className="lg:col-span-2">
-                        <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Judul Topik</label>
+                      <p className="text-sm text-[#5d6c91]">
+                        Gunakan template topik. Sistem otomatis memasangkan topik ke akun dosen yang sedang login.
+                      </p>
+
+                      <form onSubmit={handleTopikUploadSubmit} className="mt-4 space-y-3">
                         <input
-                          type="text"
-                          name="judul"
-                          value={topikForm.judul}
-                          onChange={handleTopikFormChange}
-                          placeholder="Masukkan judul topik"
-                          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          type="file"
+                          accept=".xls,.xlsx,.ods"
+                          onChange={(event) => setTopikUploadFile(event.target.files?.[0] || null)}
+                          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm"
                         />
-                      </div>
-                      <div className="lg:col-span-2">
-                        <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Deskripsi (opsional)</label>
-                        <textarea
-                          name="deskripsi"
-                          value={topikForm.deskripsi}
-                          onChange={handleTopikFormChange}
-                          rows={4}
-                          placeholder="Deskripsi singkat topik"
-                          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                        />
-                      </div>
-                      <div className="lg:col-span-2">
                         <button
                           type="submit"
-                          disabled={savingTopik}
+                          disabled={uploadingTopik}
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                          <FileSpreadsheet className="h-4 w-4" />
-                          {savingTopik ? "Menyimpan..." : "Simpan Topik"}
+                          <Upload className="h-4 w-4" />
+                          {uploadingTopik ? "Mengupload..." : "Upload Topik"}
                         </button>
-                      </div>
-                    </form>
-                  </div>
-                ) : null}
+                      </form>
 
-                {topikMode === "upload" ? (
-                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <h3 className="mb-1 text-lg font-black text-[#1b274b]">Upload Topik via Excel</h3>
-                    <p className="text-sm text-[#5d6c91]">
-                      Gunakan template topik. Untuk akun dosen/sekretaris, sistem otomatis memasangkan topik ke akun dosen yang sedang login.
-                    </p>
+                      {uploadTopikResult ? (
+                        <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
+                          <p className="text-sm font-bold text-[#1e2f57]">{uploadTopikResult.message}</p>
+                          <p className="mt-1 text-sm text-[#42527c]">
+                            Berhasil: {uploadTopikResult?.data?.berhasil ?? 0} | Gagal: {uploadTopikResult?.data?.gagal ?? 0}
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
 
-                    <form onSubmit={handleTopikUploadSubmit} className="mt-4 space-y-3">
-                      <input
-                        type="file"
-                        accept=".xls,.xlsx,.ods"
-                        onChange={(event) => setTopikUploadFile(event.target.files?.[0] || null)}
-                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm"
-                      />
-                      <button
-                        type="submit"
-                        disabled={uploadingTopik}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Upload className="h-4 w-4" />
-                        {uploadingTopik ? "Mengupload..." : "Upload Topik"}
-                      </button>
-                    </form>
-
-                    {uploadTopikResult ? (
-                      <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-bold text-[#1e2f57]">{uploadTopikResult.message}</p>
-                        <p className="mt-1 text-sm text-[#42527c]">
-                          Berhasil: {uploadTopikResult?.data?.berhasil ?? 0} | Gagal: {uploadTopikResult?.data?.gagal ?? 0}
-                        </p>
-                      </div>
-                    ) : null}
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="mb-3 text-lg font-black text-[#1b274b]">Tambah Topik via Form</h3>
+                      <form onSubmit={handleTopikApiSubmit} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Kode Topik</label>
+                          <input
+                            type="text"
+                            name="kode"
+                            value={topikForm.kode}
+                            onChange={handleTopikFormChange}
+                            placeholder="Contoh: SIRKEL99"
+                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Cluster</label>
+                          <select
+                            name="cluster"
+                            value={topikForm.cluster}
+                            onChange={handleTopikFormChange}
+                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          >
+                            {TOPIK_CLUSTER_OPTIONS.map((cluster) => (
+                              <option key={cluster} value={cluster}>
+                                {cluster}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="lg:col-span-2">
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Judul Topik</label>
+                          <input
+                            type="text"
+                            name="judul"
+                            value={topikForm.judul}
+                            onChange={handleTopikFormChange}
+                            placeholder="Masukkan judul topik"
+                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <div className="lg:col-span-2">
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Deskripsi (opsional)</label>
+                          <textarea
+                            name="deskripsi"
+                            value={topikForm.deskripsi}
+                            onChange={handleTopikFormChange}
+                            rows={4}
+                            placeholder="Deskripsi singkat topik"
+                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <div className="lg:col-span-2">
+                          <button
+                            type="submit"
+                            disabled={savingTopik}
+                            className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <FileSpreadsheet className="h-4 w-4" />
+                            {savingTopik ? "Menyimpan..." : "Simpan Topik"}
+                          </button>
+                        </div>
+                      </form>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -3492,43 +3510,46 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 }
               >
                 <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <StandardTabs
-                        backButton={{
-                          onClick: () => {
-                            setPeriodeMode("list");
-                            setEditingPeriode(null);
-                            setPeriodeFormErrors({});
-                            setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
-                          },
-                          disabled: periodeMode === "list",
-                          title: "Kembali ke data periode",
-                          icon: ArrowLeft,
-                        }}
-                        items={[
-                          {
-                            key: "list",
-                            label: "Data Periode",
-                            icon: CalendarRange,
-                          },
-                          {
-                            key: "open",
-                            label: "Buka Periode",
-                            icon: CalendarRange,
-                          },
-                        ]}
-                        activeKey={periodeMode}
-                        onChange={(nextMode) => {
-                          setPeriodeMode(nextMode);
-                          setEditingPeriode(null);
-                          setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
-                          if (nextMode === "open") {
-                            setPeriodeFormErrors({});
-                          }
-                        }}
-                      />
-                    </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPeriodeMode("list");
+                        setEditingPeriode(null);
+                        setPeriodeFormErrors({});
+                        setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
+                      }}
+                      disabled={periodeMode === "list"}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      aria-label="Kembali ke data periode"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPeriodeMode("open");
+                        setEditingPeriode(null);
+                        setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
+                        setPeriodeFormErrors({});
+                      }}
+                      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                        periodeMode === "open"
+                          ? "bg-[#2f63e3] text-white"
+                          : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                      }`}
+                    >
+                      <CalendarRange className="h-4 w-4" />
+                      Buka Periode
+                    </button>
                   </div>
                 </div>
 
@@ -3640,8 +3661,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </p>
 
                     <div className="mt-4 space-y-4">
-                      <section className="rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <p className="text-sm font-black text-[#1b274b]">
                           1. Ketua Cluster Penelitian
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
@@ -3706,8 +3727,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </section>
 
-                      <section className="rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <p className="text-sm font-black text-[#1b274b]">
                           2. Penanggung Jawab Jalur Magang
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
@@ -3739,8 +3760,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </section>
 
-                      <section className="rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <p className="text-sm font-black text-[#1b274b]">
                           3. Penanggung Jawab Jalur Pengabdian Masyarakat
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
@@ -3776,8 +3797,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </section>
 
-                      <section className="rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <p className="text-sm font-black text-[#1b274b]">
                           4. Penanggung Jawab Jalur Perintisan Bisnis
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
@@ -3813,8 +3834,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </section>
 
-                      <section className="rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
-                        <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <p className="text-sm font-black text-[#1b274b]">
                           5. Detail Periode Penjaluran
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
