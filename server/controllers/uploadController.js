@@ -1,6 +1,162 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
-const { Topik, Dosen, Mahasiswa, sequelize } = require("../models");
+const { Op } = require("sequelize");
+const { Topik, Dosen, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
+const {
+  STRUKTURAL_POSITIONS,
+  normalizeJabatanStrukturalInput,
+  isValidJabatanStruktural,
+} = require("../constants/jabatanStruktural");
+
+const TEMPLATE_HEADERS = {
+  dosen: [
+    { key: "nik", label: "NIK" },
+    { key: "nama", label: "Nama" },
+    { key: "gelar", label: "Gelar" },
+    { key: "email", label: "Email" },
+    { key: "jabatan struktural", label: "Jabatan Struktural" },
+    { key: "klaster", label: "Klaster" },
+    { key: "kuota bimbingan", label: "Kuota Bimbingan" },
+  ],
+  mahasiswa: [
+    { key: "nim", label: "NIM" },
+    { key: "nama", label: "Nama" },
+    { key: "email", label: "Email" },
+    { key: "angkatan", label: "Angkatan" },
+    { key: "nik dpa", label: "NIK DPA" },
+  ],
+};
+
+function normalizeHeader(header) {
+  return String(header || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+}
+
+function getSheetHeaders(sheet) {
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: "" });
+  if (!rows.length || !Array.isArray(rows[0])) {
+    return [];
+  }
+
+  return rows[0].map((header) => normalizeHeader(header)).filter(Boolean);
+}
+
+function validateTemplateHeaders(sheetHeaders, templateType) {
+  const requiredHeaders = TEMPLATE_HEADERS[templateType] || [];
+  const missing = requiredHeaders.filter((item) => !sheetHeaders.includes(item.key));
+
+  return {
+    isValid: missing.length === 0,
+    missingLabels: missing.map((item) => item.label),
+    expectedLabels: requiredHeaders.map((item) => item.label),
+  };
+}
+
+function validateHumanName(name, label) {
+  const normalizedName = String(name || "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!normalizedName) {
+    return {
+      isValid: false,
+      message: `${label} harus diisi`,
+    };
+  }
+
+  if (/\d/.test(normalizedName)) {
+    return {
+      isValid: false,
+      message: `${label} tidak boleh mengandung angka`,
+    };
+  }
+
+  const allowedPattern = /^[A-Za-z'.,\s-]+$/;
+  if (!allowedPattern.test(normalizedName)) {
+    return {
+      isValid: false,
+      message: `${label} mengandung karakter tidak valid. Gunakan huruf, spasi, titik, koma, apostrof, atau tanda hubung.`,
+    };
+  }
+
+  return {
+    isValid: true,
+    normalized: normalizedName,
+  };
+}
+
+function normalizeNameKey(name) {
+  return String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
+
+const KLASTER_INPUT_ALIAS = {
+  "sistem informasi": "SIRKEL",
+  "rekayasa perangkat lunak": "SIRKEL",
+  "sains data": "SDATA",
+  "informatika medis": "MEDIS",
+  "informatika teori & sistem cerdas": "ITSC",
+  "informatika teori dan sistem cerdas": "ITSC",
+  "multimedia & visi komputer": "MVK",
+  "multimedia dan visi komputer": "MVK",
+  "sistem siber": "SIBER",
+};
+
+function parseKlasterListInput(rawKlasterValue, klasterMap) {
+  if (rawKlasterValue === null || rawKlasterValue === undefined || rawKlasterValue === "") {
+    return {
+      klasterIds: [],
+      invalidTokens: [],
+    };
+  }
+
+  const tokens = String(rawKlasterValue)
+    .split(/[;,|]/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  const uniqueIds = new Set();
+  const invalidTokens = [];
+
+  for (const token of tokens) {
+    const normalizedToken = token.toLowerCase().replace(/\s+/g, " ").trim();
+    const byAlias = KLASTER_INPUT_ALIAS[normalizedToken];
+    const byCode = token.toUpperCase().replace(/\s+/g, "");
+    const targetKey = byAlias || byCode || normalizedToken;
+    const klaster = klasterMap.get(targetKey) || klasterMap.get(normalizedToken);
+
+    if (!klaster) {
+      invalidTokens.push(token);
+      continue;
+    }
+
+    uniqueIds.add(klaster.id);
+  }
+
+  return {
+    klasterIds: [...uniqueIds],
+    invalidTokens,
+  };
+}
+
+async function getNextDosenSequence(transaction) {
+  const [rows] = await sequelize.query(
+    `
+      SELECT COALESCE(MAX(CAST(SUBSTRING("kode_dosen" FROM 4) AS INTEGER)), 0) AS max_seq
+      FROM "Dosens"
+      WHERE "kode_dosen" ~ '^DSN[0-9]+$'
+    `,
+    { transaction }
+  );
+
+  const maxSequence = Number(rows?.[0]?.max_seq || 0);
+  return maxSequence + 1;
+}
 
 // ========== TOPIK UPLOAD ==========
 
@@ -9,6 +165,66 @@ exports.uploadTopics = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
+    let actorDosen = null;
+    if (req.user?.role === "dosen") {
+      actorDosen = await Dosen.findByPk(req.user.id, {
+        attributes: ["id", "nik", "kode_dosen", "email", "nama"],
+        transaction: t,
+      });
+    } else if (req.user?.role === "sekretaris_prodi") {
+      const username = String(req.user?.username || "").trim();
+      const where = [];
+      if (username) {
+        where.push({ nik: username });
+        where.push({ email: username.toLowerCase() });
+        where.push({ kode_dosen: username.toUpperCase() });
+      }
+      if (where.length > 0) {
+        actorDosen = await Dosen.findOne({
+          where: { [Op.or]: where },
+          attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+          transaction: t,
+        });
+      }
+
+      if (!actorDosen) {
+        const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
+          attributes: ["nik", "email", "jabatan"],
+          transaction: t,
+        });
+
+        if (sekretaris) {
+          const fallbackWhere = [];
+          if (sekretaris.nik) fallbackWhere.push({ nik: String(sekretaris.nik).trim() });
+          if (sekretaris.email) fallbackWhere.push({ email: String(sekretaris.email).trim().toLowerCase() });
+
+          if (fallbackWhere.length > 0) {
+            actorDosen = await Dosen.findOne({
+              where: { [Op.or]: fallbackWhere },
+              attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+              transaction: t,
+            });
+          }
+
+          if (!actorDosen && sekretaris.jabatan) {
+            actorDosen = await Dosen.findOne({
+              where: { jabatan_struktural: sekretaris.jabatan },
+              attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+              transaction: t,
+            });
+          }
+        }
+      }
+    }
+
+    if ((req.user?.role === "dosen" || req.user?.role === "sekretaris_prodi") && !actorDosen) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen sehingga tidak bisa upload topik.",
+      });
+    }
+
     // Cek apakah file di-upload
     if (!req.file) {
       return res.status(400).json({
@@ -53,14 +269,22 @@ exports.uploadTopics = async (req, res) => {
         const judul = row["Judul"] || row["judul"] || row["JUDUL"];
         const deskripsi = row["Deskripsi"] || row["deskripsi"] || row["DESKRIPSI"];
         const cluster = row["Cluster"] || row["cluster"] || row["CLUSTER"];
-        const nipDosen = row["NIP Dosen"] || row["nip"] || row["NIP"];
+        const dosenIdentifier = actorDosen
+          ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
+          : row["NIK Dosen"] ||
+            row["nik"] ||
+            row["NIK"] ||
+            row["Kode Dosen"] ||
+            row["kode_dosen"] ||
+            row["Email Dosen"] ||
+            row["email_dosen"];
 
         // Validasi field wajib
-        if (!kode || !judul || !cluster || !nipDosen) {
+        if (!kode || !judul || !cluster || !dosenIdentifier) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, NIP Dosen harus diisi)",
+            error: "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
@@ -76,17 +300,27 @@ exports.uploadTopics = async (req, res) => {
           continue;
         }
 
-        // Cari dosen berdasarkan NIP
-        const dosen = await Dosen.findOne({
-          where: { nip: nipDosen },
-          transaction: t,
-        });
+        const normalizedDosenIdentifier = String(dosenIdentifier || "").trim();
+        let dosen = actorDosen;
+        if (!dosen) {
+          // Cari dosen berdasarkan identifier (NIK/kode_dosen/email)
+          dosen = await Dosen.findOne({
+            where: {
+              [Op.or]: [
+                { nik: normalizedDosenIdentifier },
+                { kode_dosen: normalizedDosenIdentifier.toUpperCase() },
+                { email: normalizedDosenIdentifier.toLowerCase() },
+              ],
+            },
+            transaction: t,
+          });
+        }
 
         if (!dosen) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `Dosen dengan NIP ${nipDosen} tidak ditemukan di database`,
+            error: `Dosen dengan identifier "${normalizedDosenIdentifier}" tidak ditemukan di database`,
           });
           continue;
         }
@@ -185,28 +419,28 @@ exports.downloadTemplate = (req, res) => {
         Judul: "Contoh Judul Topik Penelitian",
         Deskripsi: "Deskripsi singkat tentang topik penelitian ini",
         Cluster: "Sirkel",
-        "NIP Dosen": "198501012010121001",
+        "NIK Dosen": "900000001",
       },
       {
         "Kode Topik": "SIBER03",
         Judul: "Implementasi Blockchain untuk Keamanan Data",
         Deskripsi: "Penelitian implementasi blockchain dalam sistem keamanan data",
         Cluster: "Siber",
-        "NIP Dosen": "198601012011121002",
+        "NIK Dosen": "900000002",
       },
       {
         "Kode Topik": "ITSC05",
         Judul: "Sistem Informasi Manajemen Perpustakaan",
         Deskripsi: "Pengembangan sistem informasi untuk manajemen perpustakaan digital",
         Cluster: "ITSC",
-        "NIP Dosen": "199001012015121003",
+        "NIK Dosen": "900000003",
       },
       {
         "Kode Topik": "MVK02",
         Judul: "Analisis Sentimen Media Sosial Menggunakan Deep Learning",
         Deskripsi: "Penelitian analisis sentimen pada data Twitter menggunakan LSTM",
         Cluster: "MVK",
-        "NIP Dosen": "199001012015121003",
+        "NIK Dosen": "900000004",
       },
     ];
 
@@ -219,7 +453,7 @@ exports.downloadTemplate = (req, res) => {
       { wch: 50 }, // Judul
       { wch: 60 }, // Deskripsi
       { wch: 10 }, // Cluster
-      { wch: 20 }, // NIP Dosen
+      { wch: 20 }, // NIK Dosen
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Topik");
@@ -259,6 +493,20 @@ exports.uploadMahasiswa = async (req, res) => {
     const workbook = XLSX.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
+    const headers = getSheetHeaders(sheet);
+    const templateValidation = validateTemplateHeaders(headers, "mahasiswa");
+    if (!templateValidation.isValid) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: "File yang diupload bukan template mahasiswa yang valid.",
+        detail: {
+          missing_columns: templateValidation.missingLabels,
+          expected_columns: templateValidation.expectedLabels,
+        },
+      });
+    }
+
     const data = XLSX.utils.sheet_to_json(sheet);
 
     console.log(`📄 Memproses ${data.length} baris data mahasiswa dari Excel...`);
@@ -278,6 +526,9 @@ exports.uploadMahasiswa = async (req, res) => {
     };
 
     const DEFAULT_PASSWORD = "12345678";
+    const seenNimInFile = new Set();
+    const seenNamaInFile = new Set();
+    const seenEmailInFile = new Set();
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -288,18 +539,41 @@ exports.uploadMahasiswa = async (req, res) => {
         const nama = row["Nama"] || row["nama"] || row["NAMA"];
         const email = row["Email"] || row["email"] || row["EMAIL"];
         const angkatan = row["Angkatan"] || row["angkatan"] || row["ANGKATAN"];
-        const nipDPA = row["NIP DPA"] || row["nip_dpa"] || row["NIP_DPA"];
+        const dpaIdentifierRaw =
+          row["NIK DPA"] ||
+          row["nik_dpa"] ||
+          row["NIK_DPA"] ||
+          row["nip_dpa"] ||
+          row["NIP_DPA"] ||
+          row["Kode Dosen DPA"] ||
+          row["kode_dosen_dpa"] ||
+          row["Email DPA"] ||
+          row["email_dpa"];
 
-        if (!nim || !nama || !email || !angkatan || !nipDPA) {
+        if (!nim || !nama || !email || !angkatan || !dpaIdentifierRaw) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Field wajib tidak lengkap (NIM, Nama, Email, Angkatan, NIP DPA harus diisi)",
+            error: "Field wajib tidak lengkap (NIM, Nama, Email, Angkatan, dan identifier DPA harus diisi)",
           });
           continue;
         }
 
-        if (!/^\d{8}$/.test(nim.toString())) {
+        const nameValidation = validateHumanName(nama, "Nama mahasiswa");
+        if (!nameValidation.isValid) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: nameValidation.message,
+          });
+          continue;
+        }
+
+        const normalizedNim = nim.toString().trim();
+        const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
+        const normalizedEmail = email.toString().trim().toLowerCase();
+
+        if (!/^\d{8}$/.test(normalizedNim)) {
           results.failed.push({
             row: rowNumber,
             data: row,
@@ -308,12 +582,39 @@ exports.uploadMahasiswa = async (req, res) => {
           continue;
         }
 
+        if (seenNimInFile.has(normalizedNim)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `NIM ${normalizedNim} duplikat di file upload`,
+          });
+          continue;
+        }
+
+        if (seenNamaInFile.has(normalizedNamaKey)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Nama mahasiswa "${nameValidation.normalized}" duplikat di file upload`,
+          });
+          continue;
+        }
+
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(normalizedEmail)) {
           results.failed.push({
             row: rowNumber,
             data: row,
             error: "Format email tidak valid",
+          });
+          continue;
+        }
+
+        if (seenEmailInFile.has(normalizedEmail)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Email ${normalizedEmail} duplikat di file upload`,
           });
           continue;
         }
@@ -328,7 +629,7 @@ exports.uploadMahasiswa = async (req, res) => {
         }
 
         const existingMahasiswaNIM = await Mahasiswa.findOne({
-          where: { nim: nim.toString() },
+          where: { nim: normalizedNim },
           transaction: t,
         });
 
@@ -342,7 +643,7 @@ exports.uploadMahasiswa = async (req, res) => {
         }
 
         const existingMahasiswaEmail = await Mahasiswa.findOne({
-          where: { email: email.toLowerCase() },
+          where: { email: normalizedEmail },
           transaction: t,
         });
 
@@ -355,8 +656,15 @@ exports.uploadMahasiswa = async (req, res) => {
           continue;
         }
 
+        const dpaIdentifier = dpaIdentifierRaw.toString().trim();
         const dpa = await Dosen.findOne({
-          where: { nip: nipDPA.toString() },
+          where: {
+            [Op.or]: [
+              { nik: dpaIdentifier },
+              { kode_dosen: dpaIdentifier.toUpperCase() },
+              { email: dpaIdentifier.toLowerCase() },
+            ],
+          },
           transaction: t,
         });
 
@@ -364,16 +672,30 @@ exports.uploadMahasiswa = async (req, res) => {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `Dosen dengan NIP ${nipDPA} tidak ditemukan di database`,
+            error: `Dosen pembimbing akademik dengan identifier "${dpaIdentifier}" tidak ada di daftar dosen`,
+          });
+          continue;
+        }
+
+        const existingMahasiswaNama = await Mahasiswa.findOne({
+          where: sequelize.where(sequelize.fn("LOWER", sequelize.fn("TRIM", sequelize.col("nama"))), normalizedNamaKey),
+          transaction: t,
+        });
+
+        if (existingMahasiswaNama) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Nama mahasiswa "${nameValidation.normalized}" sudah terdaftar di database`,
           });
           continue;
         }
 
         const newMahasiswa = await Mahasiswa.create(
           {
-            nim: nim.toString().trim(),
-            nama: nama.trim(),
-            email: email.toLowerCase().trim(),
+            nim: normalizedNim,
+            nama: nameValidation.normalized,
+            email: normalizedEmail,
             // Password akan di-hash oleh hook model (beforeCreate)
             password: DEFAULT_PASSWORD,
             is_default_password: true,
@@ -392,11 +714,22 @@ exports.uploadMahasiswa = async (req, res) => {
           angkatan: newMahasiswa.angkatan,
           dpa: dpa.nama,
         });
+
+        seenNimInFile.add(normalizedNim);
+        seenNamaInFile.add(normalizedNamaKey);
+        seenEmailInFile.add(normalizedEmail);
       } catch (error) {
+        let uploadErrorMessage = error.message;
+        if (
+          error?.name === "SequelizeUniqueConstraintError" &&
+          JSON.stringify(error?.errors || []).includes("uq_dosen_jabatan_struktural_single_holder")
+        ) {
+          uploadErrorMessage = "Jabatan struktural sudah digunakan oleh dosen lain.";
+        }
         results.failed.push({
           row: rowNumber,
           data: row,
-          error: error.message,
+          error: uploadErrorMessage,
         });
       }
     }
@@ -450,21 +783,21 @@ exports.downloadMahasiswaTemplate = (req, res) => {
         Nama: "John Doe",
         Email: "john.doe@student.university.ac.id",
         Angkatan: "2022",
-        "NIP DPA": "199001012015121003",
+        "NIK DPA": "900000003",
       },
       {
         NIM: "22523002",
         Nama: "Jane Smith",
         Email: "jane.smith@student.university.ac.id",
         Angkatan: "2022",
-        "NIP DPA": "199001012015121003",
+        "NIK DPA": "900000003",
       },
       {
         NIM: "23523001",
         Nama: "Alice Johnson",
         Email: "alice.johnson@student.university.ac.id",
         Angkatan: "2023",
-        "NIP DPA": "198601012011121002",
+        "NIK DPA": "900000002",
       },
     ];
 
@@ -510,6 +843,20 @@ exports.uploadDosen = async (req, res) => {
     const workbook = XLSX.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
+    const headers = getSheetHeaders(sheet);
+    const templateValidation = validateTemplateHeaders(headers, "dosen");
+    if (!templateValidation.isValid) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: "File yang diupload bukan template dosen yang valid.",
+        detail: {
+          missing_columns: templateValidation.missingLabels,
+          expected_columns: templateValidation.expectedLabels,
+        },
+      });
+    }
+
     const data = XLSX.utils.sheet_to_json(sheet);
 
     console.log(`📄 Memproses ${data.length} baris data dosen dari Excel...`);
@@ -529,41 +876,115 @@ exports.uploadDosen = async (req, res) => {
     };
 
     const DEFAULT_PASSWORD_DOSEN = process.env.DEFAULT_PASSWORD_DOSEN || "12345678"; // Password default untuk dosen
+    let nextKodeSequence = await getNextDosenSequence(t);
+    const seenNikInFile = new Set();
+    const seenNamaInFile = new Set();
+    const seenEmailInFile = new Set();
+    const seenJabatanInFile = new Set();
+    const allKlasters = await Klaster.findAll({
+      attributes: ["id", "kode", "nama"],
+      transaction: t,
+    });
+    const klasterMap = new Map();
+    for (const klaster of allKlasters) {
+      const kode = String(klaster.kode || "").toUpperCase().replace(/\s+/g, "");
+      const nama = String(klaster.nama || "").toLowerCase().replace(/\s+/g, " ").trim();
+      if (kode) klasterMap.set(kode, klaster);
+      if (nama) klasterMap.set(nama, klaster);
+    }
+    Object.entries(KLASTER_INPUT_ALIAS).forEach(([alias, kode]) => {
+      const found = klasterMap.get(kode);
+      if (found) {
+        klasterMap.set(alias, found);
+      }
+    });
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNumber = i + 2;
 
       try {
-        const nip = row["NIP"] || row["nip"];
+        const nik = row["NIK"] || row["Nik"] || row["nik"] || row["Nip"];
         const nama = row["Nama"] || row["nama"] || row["NAMA"];
+        const gelar = row["Gelar"] || row["gelar"] || row["GELAR"];
         const email = row["Email"] || row["email"] || row["EMAIL"];
-        const jabatan = row["Jabatan"] || row["jabatan"] || row["JABATAN"];
+        const rawJabatanStruktural =
+          row["Jabatan Struktural"] ||
+          row["jabatan_struktural"] ||
+          row["jabatan struktural"] ||
+          row["JABATAN_STRUKTURAL"] ||
+          row["Jabatan"] ||
+          row["jabatan"] ||
+          row["JABATAN"];
+        const jabatanStruktural = normalizeJabatanStrukturalInput(rawJabatanStruktural);
+        const klasterRaw =
+          row["Klaster"] ||
+          row["klaster"] ||
+          row["KLASTER"] ||
+          row["Cluster"] ||
+          row["cluster"] ||
+          row["CLUSTER"];
         const kuotaBimbingan = row["Kuota Bimbingan"] || row["kuota_bimbingan"] || row["KUOTA_BIMBINGAN"] || 5;
 
         // Validasi field wajib
-        if (!nip || !nama || !email || !jabatan) {
+        if (!nama || !email) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Field wajib tidak lengkap (NIP, Nama, Email, Jabatan harus diisi)",
+            error: "Field wajib tidak lengkap (Nama dan Email harus diisi)",
           });
           continue;
         }
 
-        // Validasi format NIP (minimal 10 digit, maksimal 20 digit angka)
-        if (!/^\d{10,20}$/.test(nip.toString())) {
+        const nameValidation = validateHumanName(nama, "Nama dosen");
+        if (!nameValidation.isValid) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Format NIP tidak valid. NIP harus 10-20 digit angka",
+            error: nameValidation.message,
+          });
+          continue;
+        }
+
+        const normalizedNik = nik ? nik.toString().trim() : null;
+        const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
+        const normalizedEmail = email.toString().trim().toLowerCase();
+
+        if (normalizedNik) {
+          // Validasi format NIK (maksimal 9 digit angka)
+          if (!/^\d{1,9}$/.test(normalizedNik)) {
+            results.failed.push({
+              row: rowNumber,
+              data: row,
+              error: "Format NIK tidak valid. NIK harus angka dengan panjang maksimal 9 digit",
+            });
+            continue;
+          }
+        }
+
+        if (normalizedNik) {
+          if (seenNikInFile.has(normalizedNik)) {
+            results.failed.push({
+              row: rowNumber,
+              data: row,
+              error: `NIK ${normalizedNik} duplikat di file upload`,
+            });
+            continue;
+          }
+        }
+
+        if (seenNamaInFile.has(normalizedNamaKey)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Nama dosen "${nameValidation.normalized}" duplikat di file upload`,
           });
           continue;
         }
 
         // Validasi format email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
+        if (!emailRegex.test(normalizedEmail)) {
           results.failed.push({
             row: rowNumber,
             data: row,
@@ -572,13 +993,29 @@ exports.uploadDosen = async (req, res) => {
           continue;
         }
 
-        // Validasi jabatan
-        const validJabatan = ["Guru Besar", "Lektor Kepala", "Lektor", "Asisten Ahli"];
-        if (!validJabatan.includes(jabatan)) {
+        if (seenEmailInFile.has(normalizedEmail)) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `Jabatan tidak valid. Harus salah satu dari: ${validJabatan.join(", ")}`,
+            error: `Email ${normalizedEmail} duplikat di file upload`,
+          });
+          continue;
+        }
+
+        if (jabatanStruktural && !isValidJabatanStruktural(jabatanStruktural)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Jabatan struktural '${jabatanStruktural}' tidak valid. Pilihan resmi: ${STRUKTURAL_POSITIONS.join(" | ")}`,
+          });
+          continue;
+        }
+
+        if (jabatanStruktural && seenJabatanInFile.has(jabatanStruktural)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Jabatan struktural '${jabatanStruktural}' duplikat di file upload.`,
           });
           continue;
         }
@@ -594,24 +1031,50 @@ exports.uploadDosen = async (req, res) => {
           continue;
         }
 
-        // Cek apakah NIP sudah ada
-        const existingDosenNIP = await Dosen.findOne({
-          where: { nip: nip.toString() },
+        if (normalizedNik) {
+          // Cek apakah NIK sudah ada
+          const existingDosenNik = await Dosen.findOne({
+            where: { nik: normalizedNik },
+            transaction: t,
+          });
+
+          if (existingDosenNik) {
+            results.failed.push({
+              row: rowNumber,
+              data: row,
+              error: `NIK ${nik} sudah terdaftar di database`,
+            });
+            continue;
+          }
+        }
+
+        const existingDosenNama = await Dosen.findOne({
+          where: sequelize.where(sequelize.fn("LOWER", sequelize.fn("TRIM", sequelize.col("nama"))), normalizedNamaKey),
           transaction: t,
         });
 
-        if (existingDosenNIP) {
+        if (existingDosenNama) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `NIP ${nip} sudah terdaftar di database`,
+            error: `Nama dosen "${nameValidation.normalized}" sudah terdaftar di database`,
+          });
+          continue;
+        }
+
+        const parsedKlaster = parseKlasterListInput(klasterRaw, klasterMap);
+        if (parsedKlaster.invalidTokens.length > 0) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Klaster tidak valid: ${parsedKlaster.invalidTokens.join(", ")}`,
           });
           continue;
         }
 
         // Cek apakah email sudah ada
         const existingDosenEmail = await Dosen.findOne({
-          where: { email: email.toLowerCase() },
+          where: { email: normalizedEmail },
           transaction: t,
         });
 
@@ -624,29 +1087,73 @@ exports.uploadDosen = async (req, res) => {
           continue;
         }
 
+        if (jabatanStruktural) {
+          const existingDosenJabatan = await Dosen.findOne({
+            where: { jabatan_struktural: jabatanStruktural },
+            transaction: t,
+          });
+
+          if (existingDosenJabatan) {
+            results.failed.push({
+              row: rowNumber,
+              data: row,
+              error: `Jabatan struktural '${jabatanStruktural}' sudah diisi oleh dosen ${existingDosenJabatan.nama}.`,
+            });
+            continue;
+          }
+        }
+
+        const generatedKodeDosen = `DSN${String(nextKodeSequence).padStart(4, "0")}`;
+        const generatedNik = String(nextKodeSequence).padStart(9, "0");
+        nextKodeSequence += 1;
+
         // Insert dosen ke database
         const newDosen = await Dosen.create(
           {
-            nip: nip.toString().trim(),
-            nama: nama.trim(),
-            email: email.toLowerCase().trim(),
+            kode_dosen: generatedKodeDosen,
+            nik: normalizedNik || generatedNik,
+            nama: nameValidation.normalized,
+            gelar: gelar ? String(gelar).trim() || null : null,
+            email: normalizedEmail,
             // Password akan di-hash oleh hook model (beforeCreate)
             password: DEFAULT_PASSWORD_DOSEN,
             is_default_password: true,
-            jabatan: jabatan.trim(),
+            jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
           },
           { transaction: t }
         );
 
+        if (parsedKlaster.klasterIds.length > 0) {
+          const selectedKlasters = allKlasters.filter((item) => parsedKlaster.klasterIds.includes(item.id));
+          await newDosen.setKlasters(selectedKlasters, { transaction: t });
+        }
+
         results.success.push({
           row: rowNumber,
-          nip: newDosen.nip,
+          kode_dosen: newDosen.kode_dosen,
+          nik: newDosen.nik,
           nama: newDosen.nama,
+          gelar: newDosen.gelar,
           email: newDosen.email,
-          jabatan: newDosen.jabatan,
+          jabatan_struktural: newDosen.jabatan_struktural,
+          klaster: parsedKlaster.klasterIds.length > 0
+            ? allKlasters
+                .filter((item) => parsedKlaster.klasterIds.includes(item.id))
+                .map((item) => item.kode)
+                .join(", ")
+            : null,
           kuota_bimbingan: newDosen.kuota_bimbingan,
         });
+
+        if (normalizedNik) {
+          seenNikInFile.add(normalizedNik);
+        }
+        seenNamaInFile.add(normalizedNamaKey);
+        seenEmailInFile.add(normalizedEmail);
+        if (jabatanStruktural) {
+          seenJabatanInFile.add(jabatanStruktural);
+        }
       } catch (error) {
         results.failed.push({
           row: rowNumber,
@@ -701,31 +1208,39 @@ exports.downloadDosenTemplate = (req, res) => {
   try {
     const templateData = [
       {
-        NIP: "198501012010121001",
+        NIK: "900000001",
         Nama: "Dr. Ahmad Fauzi",
+        Gelar: "S.T., M.Cs., Ph.D.",
         Email: "ahmad.fauzi@university.ac.id",
-        Jabatan: "Lektor Kepala",
+        "Jabatan Struktural": "Ketua Jurusan Informatika",
+        Klaster: "ITSC, SIRKEL",
         "Kuota Bimbingan": 10,
       },
       {
-        NIP: "198601012011121002",
+        NIK: "900000002",
         Nama: "Dr. Budi Santoso",
+        Gelar: "",
         Email: "budi.santoso@university.ac.id",
-        Jabatan: "Lektor",
+        "Jabatan Struktural": "",
+        Klaster: "SIBER",
         "Kuota Bimbingan": 8,
       },
       {
-        NIP: "199001012015121003",
+        NIK: "900000003",
         Nama: "Dr. Citra Dewi",
+        Gelar: "",
         Email: "citra.dewi@university.ac.id",
-        Jabatan: "Asisten Ahli",
+        "Jabatan Struktural": "",
+        Klaster: "SDATA, MVK",
         "Kuota Bimbingan": 5,
       },
       {
-        NIP: "199201012016121004",
+        NIK: "900000004",
         Nama: "Prof. Dr. Dodi Prasetyo",
+        Gelar: "",
         Email: "dodi.prasetyo@university.ac.id",
-        Jabatan: "Guru Besar",
+        "Jabatan Struktural": "Sekretaris Program Studi Informatika - Program Sarjana Reguler",
+        Klaster: "MEDIS",
         "Kuota Bimbingan": 12,
       },
     ];
@@ -735,10 +1250,12 @@ exports.downloadDosenTemplate = (req, res) => {
 
     // Set lebar kolom
     ws["!cols"] = [
-      { wch: 20 }, // NIP
+      { wch: 20 }, // NIK
       { wch: 30 }, // Nama
+      { wch: 28 }, // Gelar
       { wch: 35 }, // Email
-      { wch: 20 }, // Jabatan
+      { wch: 36 }, // Jabatan Struktural
+      { wch: 28 }, // Klaster
       { wch: 18 }, // Kuota Bimbingan
     ];
 
@@ -759,3 +1276,4 @@ exports.downloadDosenTemplate = (req, res) => {
     });
   }
 };
+

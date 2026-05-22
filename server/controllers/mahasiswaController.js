@@ -14,12 +14,12 @@ exports.getProfile = async (req, res) => {
         {
           model: Dosen,
           as: "dosenPembimbingAkademik",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "dosenPembimbingSkripsi",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Pengajuan,
@@ -78,12 +78,12 @@ exports.updateProfile = async (req, res) => {
         {
           model: Dosen,
           as: "dosenPembimbingAkademik",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "dosenPembimbingSkripsi",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
       ],
     });
@@ -173,7 +173,7 @@ exports.getCurrentDPA = async (req, res) => {
         {
           model: Dosen,
           as: "dosenPembimbingAkademik",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
       ],
     });
@@ -208,3 +208,4 @@ exports.getCurrentDPA = async (req, res) => {
     });
   }
 };
+

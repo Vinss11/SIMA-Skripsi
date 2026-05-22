@@ -1,4 +1,6 @@
 const jwt = require("jsonwebtoken");
+const { SekretarisProdi } = require("../models");
+const { isAllowedSekretarisJabatan } = require("../constants/sekretarisAkses");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -38,7 +40,7 @@ exports.authenticateToken = (req, res, next) => {
 };
 
 // Middleware untuk memeriksa role tertentu
-// Mendukung: 'mahasiswa', 'dosen', 'admin'
+// Mendukung: 'mahasiswa', 'dosen', 'admin', 'sekretaris_prodi'
 exports.authorizeRole = (...roles) => {
   return (req, res, next) => {
     if (!req.user || !req.user.role) {
@@ -57,4 +59,35 @@ exports.authorizeRole = (...roles) => {
 
     next();
   };
+};
+
+// Middleware khusus untuk membatasi akses sekretaris prodi ke 2 akun resmi saja
+exports.authorizeSekretarisAccess = async (req, res, next) => {
+  try {
+    if (!req.user || req.user.role !== "sekretaris_prodi") {
+      return res.status(403).json({
+        success: false,
+        message: "Akses ditolak. Hanya sekretaris prodi yang diizinkan.",
+      });
+    }
+
+    const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
+      attributes: ["id", "jabatan"],
+    });
+
+    if (!sekretaris || !isAllowedSekretarisJabatan(sekretaris.jabatan)) {
+      return res.status(403).json({
+        success: false,
+        message: "Akses sekretaris prodi ditolak. Akun ini tidak termasuk 2 akun resmi.",
+      });
+    }
+
+    next();
+  } catch (error) {
+    console.error("Error di authorizeSekretarisAccess:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+    });
+  }
 };

@@ -47,6 +47,14 @@ module.exports = (sequelize, DataTypes) => {
           key: "id",
         },
       },
+      pengajuan_baru_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "Pengajuans",
+          key: "id",
+        },
+      },
       pesan_ke_dosen_pembimbing: {
         type: DataTypes.TEXT,
         allowNull: false,

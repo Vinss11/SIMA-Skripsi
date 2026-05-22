@@ -1,5 +1,56 @@
-const { Topik, Dosen, Mahasiswa } = require("../models");
+const { Topik, Dosen, Mahasiswa, SekretarisProdi } = require("../models");
 const { Op } = require("sequelize");
+
+const CLUSTER_NORMALIZATION_MAP = {
+  sirkel: "Sirkel",
+  siber: "Siber",
+  itsc: "ITSC",
+  mvk: "MVK",
+};
+
+function normalizeClusterInput(value) {
+  const key = String(value || "").trim().toLowerCase();
+  return CLUSTER_NORMALIZATION_MAP[key] || null;
+}
+
+async function resolveActorDosenId(req) {
+  if (req.user?.role === "dosen") {
+    return req.user.id;
+  }
+
+  if (req.user?.role === "sekretaris_prodi") {
+    const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
+      attributes: ["nik", "email", "jabatan"],
+    });
+    if (!sekretaris) return null;
+
+    const where = [];
+    if (sekretaris.nik) where.push({ nik: String(sekretaris.nik).trim() });
+    if (sekretaris.email) where.push({ email: String(sekretaris.email).trim().toLowerCase() });
+    const username = String(req.user?.username || "").trim();
+    if (username) {
+      where.push({ nik: username });
+      where.push({ email: username.toLowerCase() });
+    }
+
+    if (where.length === 0) return null;
+    let dosen = await Dosen.findOne({
+      where: { [Op.or]: where },
+      attributes: ["id"],
+    });
+
+    if (!dosen && sekretaris.jabatan) {
+      dosen = await Dosen.findOne({
+        where: { jabatan_struktural: sekretaris.jabatan },
+        attributes: ["id"],
+      });
+    }
+
+    return dosen?.id || null;
+  }
+
+  return null;
+}
 
 // GET /api/topics - Daftar topik dengan filter dan info kuota dosen
 exports.getTopics = async (req, res) => {
@@ -29,7 +80,7 @@ exports.getTopics = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nip", "nama", "email", "jabatan", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -82,7 +133,7 @@ exports.getTopicById = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nip", "nama", "email", "jabatan", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
         },
       ],
     });
@@ -116,37 +167,63 @@ exports.getTopicById = async (req, res) => {
   }
 };
 
-// POST /api/topics - Buat topik baru (Dosen only)
+// POST /api/topics - Buat topik baru (Admin/Dosen/Sekretaris Prodi)
 exports.createTopic = async (req, res) => {
   try {
-    const { judul, deskripsi, cluster } = req.body;
-    const dosen_id = req.user.id;
+    const { kode, judul, deskripsi, cluster, dosen_id: dosenIdInput } = req.body;
+    const normalizedKode = String(kode || "").trim().toUpperCase();
+    const normalizedCluster = normalizeClusterInput(cluster);
+    let dosen_id = null;
 
     // Validasi
-    if (!judul || !cluster) {
+    if (!normalizedKode || !judul || !normalizedCluster) {
       return res.status(400).json({
         success: false,
-        message: "Judul dan cluster harus diisi",
+        message: "Kode topik, judul, dan cluster harus diisi",
       });
     }
 
-    // Validasi cluster
-    const validClusters = ["Sirkel", "Siber", "ITSC", "MVK"];
-    if (!validClusters.includes(cluster)) {
-      return res.status(400).json({
+    if (req.user.role === "admin") {
+      dosen_id = Number(dosenIdInput);
+      if (!Number.isInteger(dosen_id) || dosen_id <= 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Admin wajib mengirim dosen_id yang valid saat membuat topik.",
+        });
+      }
+    } else {
+      dosen_id = await resolveActorDosenId(req);
+      if (!dosen_id) {
+        return res.status(403).json({
+          success: false,
+          message: "Akun ini tidak terhubung ke data dosen.",
+        });
+      }
+    }
+
+    const existingKode = await Topik.findOne({ where: { kode: normalizedKode } });
+    if (existingKode) {
+      return res.status(409).json({
         success: false,
-        message: `Cluster harus salah satu dari: ${validClusters.join(", ")}`,
+        message: `Kode topik ${normalizedKode} sudah digunakan.`,
       });
     }
 
     // Cek kuota dosen
     const dosen = await Dosen.findByPk(dosen_id);
+    if (!dosen) {
+      return res.status(404).json({
+        success: false,
+        message: "Data dosen tidak ditemukan.",
+      });
+    }
     const kuotaInfo = await dosen.getKuotaInfo();
 
     const topic = await Topik.create({
+      kode: normalizedKode,
       judul,
       deskripsi,
-      cluster,
+      cluster: normalizedCluster,
       dosen_id,
       status: "available",
     });
@@ -157,7 +234,7 @@ exports.createTopic = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nip", "nama", "email", "jabatan", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
         },
       ],
     });
@@ -183,12 +260,20 @@ exports.createTopic = async (req, res) => {
   }
 };
 
-// PUT /api/topics/:id - Update topik (Dosen only)
+// PUT /api/topics/:id - Update topik (Admin/Dosen/Sekretaris Prodi)
 exports.updateTopic = async (req, res) => {
   try {
     const { id } = req.params;
-    const { judul, deskripsi, cluster, status } = req.body;
-    const dosen_id = req.user.id;
+    const { kode, judul, deskripsi, cluster, status } = req.body;
+    const isAdmin = req.user.role === "admin";
+    const dosen_id = isAdmin ? null : await resolveActorDosenId(req);
+
+    if (!isAdmin && !dosen_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen.",
+      });
+    }
 
     const topic = await Topik.findByPk(id);
 
@@ -200,7 +285,7 @@ exports.updateTopic = async (req, res) => {
     }
 
     // Cek apakah dosen ini pemilik topik
-    if (topic.dosen_id !== dosen_id) {
+    if (!isAdmin && topic.dosen_id !== dosen_id) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses untuk mengubah topik ini",
@@ -208,9 +293,40 @@ exports.updateTopic = async (req, res) => {
     }
 
     // Update
+    if (kode) {
+      const normalizedKode = String(kode).trim().toUpperCase();
+      if (!normalizedKode) {
+        return res.status(400).json({
+          success: false,
+          message: "Kode topik tidak valid.",
+        });
+      }
+      const existingKode = await Topik.findOne({
+        where: {
+          kode: normalizedKode,
+          id: { [Op.ne]: topic.id },
+        },
+      });
+      if (existingKode) {
+        return res.status(409).json({
+          success: false,
+          message: `Kode topik ${normalizedKode} sudah digunakan.`,
+        });
+      }
+      topic.kode = normalizedKode;
+    }
     if (judul) topic.judul = judul;
     if (deskripsi) topic.deskripsi = deskripsi;
-    if (cluster) topic.cluster = cluster;
+    if (cluster) {
+      const normalizedCluster = normalizeClusterInput(cluster);
+      if (!normalizedCluster) {
+        return res.status(400).json({
+          success: false,
+          message: "Cluster harus salah satu dari: Sirkel, Siber, ITSC, MVK",
+        });
+      }
+      topic.cluster = normalizedCluster;
+    }
     if (status) topic.status = status;
 
     await topic.save();
@@ -221,7 +337,7 @@ exports.updateTopic = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nip", "nama", "email", "jabatan", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
         },
       ],
     });
@@ -248,11 +364,19 @@ exports.updateTopic = async (req, res) => {
   }
 };
 
-// DELETE /api/topics/:id - Hapus topik (Dosen only)
+// DELETE /api/topics/:id - Hapus topik (Admin/Dosen/Sekretaris Prodi)
 exports.deleteTopic = async (req, res) => {
   try {
     const { id } = req.params;
-    const dosen_id = req.user.id;
+    const isAdmin = req.user.role === "admin";
+    const dosen_id = isAdmin ? null : await resolveActorDosenId(req);
+
+    if (!isAdmin && !dosen_id) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen.",
+      });
+    }
 
     const topic = await Topik.findByPk(id);
 
@@ -264,7 +388,7 @@ exports.deleteTopic = async (req, res) => {
     }
 
     // Cek apakah dosen ini pemilik topik
-    if (topic.dosen_id !== dosen_id) {
+    if (!isAdmin && topic.dosen_id !== dosen_id) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses untuk menghapus topik ini",
@@ -286,3 +410,4 @@ exports.deleteTopic = async (req, res) => {
     });
   }
 };
+

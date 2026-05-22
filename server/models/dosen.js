@@ -22,6 +22,54 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "dosen_id",
         as: "topiks",
       });
+
+      // Relasi many-to-many dengan Klaster Riset
+      Dosen.belongsToMany(models.Klaster, {
+        through: models.DosenKlaster,
+        foreignKey: "dosen_id",
+        otherKey: "klaster_id",
+        as: "klasters",
+      });
+
+      Dosen.hasMany(models.DosenKlaster, {
+        foreignKey: "dosen_id",
+        as: "dosenKlasters",
+      });
+
+      Dosen.hasMany(models.IzinLanjutSkripsi, {
+        foreignKey: "dosen_pembimbing_skripsi_id",
+        as: "izinLanjutMahasiswa",
+      });
+
+      Dosen.hasMany(models.KlasterKetuaPeriode, {
+        foreignKey: "dosen_id",
+        as: "ketuaKlasterPeriodes",
+      });
+
+      Dosen.hasMany(models.PeriodePenjaluran, {
+        foreignKey: "ketua_penelitian_dosen_id",
+        as: "periodeKetuaPenelitian",
+      });
+
+      Dosen.hasMany(models.PeriodePenjaluran, {
+        foreignKey: "pengawas_magang_dosen_id",
+        as: "periodePengawasMagang",
+      });
+
+      Dosen.hasMany(models.PeriodePenjaluran, {
+        foreignKey: "pengawas_pengabdian_dosen_id",
+        as: "periodePengawasPengabdian",
+      });
+
+      Dosen.hasMany(models.PeriodePenjaluran, {
+        foreignKey: "pengawas_perintisan_bisnis_dosen_id",
+        as: "periodePengawasPerintisanBisnis",
+      });
+
+      Dosen.hasMany(models.BimbinganSkripsi, {
+        foreignKey: "dosen_id",
+        as: "bimbinganSkripsis",
+      });
     }
 
     // Method untuk compare password
@@ -73,14 +121,23 @@ module.exports = (sequelize, DataTypes) => {
 
   Dosen.init(
     {
-      nip: {
+      kode_dosen: {
         type: DataTypes.STRING,
         allowNull: false,
+        unique: true,
+      },
+      nik: {
+        type: DataTypes.STRING(9),
+        allowNull: true,
         unique: true,
       },
       nama: {
         type: DataTypes.STRING,
         allowNull: false,
+      },
+      gelar: {
+        type: DataTypes.STRING,
+        allowNull: true,
       },
       email: {
         type: DataTypes.STRING,
@@ -95,7 +152,7 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
       },
-      jabatan: {
+      jabatan_struktural: {
         type: DataTypes.STRING,
         allowNull: true,
       },
@@ -128,3 +185,4 @@ module.exports = (sequelize, DataTypes) => {
 
   return Dosen;
 };
+

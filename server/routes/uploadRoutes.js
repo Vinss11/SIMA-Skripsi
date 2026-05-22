@@ -4,12 +4,34 @@ const uploadController = require("../controllers/uploadController");
 const upload = require("../middlewares/uploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
+function handleUploadMulterError(err, res) {
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({
+      success: false,
+      message: "Ukuran file terlalu besar. Maksimal 5MB.",
+      error: err.message,
+    });
+  }
+
+  if (err.message && err.message.toLowerCase().includes("format excel")) {
+    return res.status(400).json({
+      success: false,
+      message: "File tidak valid. Hanya file Excel (.xls, .xlsx, .ods) yang diperbolehkan.",
+      error: err.message,
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    message: "Error pada file upload",
+    error: err.message,
+  });
+}
+
 // ========== DOSEN ROUTES (ADMIN ONLY) ==========
 
-// Download template Excel Dosen
 router.get("/dosen-template", uploadController.downloadDosenTemplate);
 
-// Upload Excel dosen (Admin only)
 router.post(
   "/dosen",
   authenticateToken,
@@ -17,12 +39,8 @@ router.post(
   (req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err) {
-        console.error("❌ Multer Error:", err.message);
-        return res.status(400).json({
-          success: false,
-          message: "Error pada file upload",
-          error: err.message,
-        });
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
       }
       next();
     });
@@ -32,23 +50,17 @@ router.post(
 
 // ========== TOPIK ROUTES ==========
 
-// Download template Excel Topik
 router.get("/template", uploadController.downloadTemplate);
 
-// Upload Excel topik (Admin only)
 router.post(
   "/topics",
   authenticateToken,
-  authorizeRole("admin"),
+  authorizeRole("admin", "dosen", "sekretaris_prodi"),
   (req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err) {
-        console.error("❌ Multer Error:", err.message);
-        return res.status(400).json({
-          success: false,
-          message: "Error pada file upload",
-          error: err.message,
-        });
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
       }
       next();
     });
@@ -58,10 +70,8 @@ router.post(
 
 // ========== MAHASISWA ROUTES (ADMIN ONLY) ==========
 
-// Download template Excel Mahasiswa
 router.get("/mahasiswa-template", uploadController.downloadMahasiswaTemplate);
 
-// Upload Excel mahasiswa (Admin only)
 router.post(
   "/mahasiswa",
   authenticateToken,
@@ -69,12 +79,8 @@ router.post(
   (req, res, next) => {
     upload.single("file")(req, res, (err) => {
       if (err) {
-        console.error("❌ Multer Error:", err.message);
-        return res.status(400).json({
-          success: false,
-          message: "Error pada file upload",
-          error: err.message,
-        });
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
       }
       next();
     });

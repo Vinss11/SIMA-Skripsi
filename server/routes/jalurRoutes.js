@@ -1,11 +1,22 @@
 const express = require("express");
 const router = express.Router();
 const jalurController = require("../controllers/jalurController");
+const mitraMagangController = require("../controllers/mitraMagangController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
 // Mahasiswa only - semua endpoint ini hanya untuk mahasiswa
 
 router.get("/status", authenticateToken, authorizeRole("mahasiswa"), jalurController.checkStatusJalur);
+router.get("/eligibility", authenticateToken, authorizeRole("mahasiswa"), jalurController.getJalurEligibility);
+router.get("/izin-lanjut/status", authenticateToken, authorizeRole("mahasiswa"), jalurController.getIzinLanjutStatus);
+router.post("/izin-lanjut", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitIzinLanjutSemester);
+router.get(
+  "/non-penelitian/magang/mitra",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  mitraMagangController.getMitraMagangOptions
+);
+router.post("/non-penelitian/submit", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitFormNonPenelitian);
 
 // ========== JALUR ULANG - PAMIT ==========
 router.post("/ulang/pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitPamit);

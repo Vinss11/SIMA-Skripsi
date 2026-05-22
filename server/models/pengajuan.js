@@ -55,6 +55,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pengajuan_id",
         as: "riwayat",
       });
+
+      Pengajuan.hasMany(models.BimbinganSkripsi, {
+        foreignKey: "pengajuan_id",
+        as: "bimbinganSkripsis",
+      });
     }
   }
 
@@ -200,7 +205,7 @@ module.exports = (sequelize, DataTypes) => {
       },
       // ===== STATUS & TRACKING =====
       status: {
-        type: DataTypes.ENUM("pending", "approved", "rejected", "completed"),
+        type: DataTypes.ENUM("pending", "menunggu_set_ketua_cluster", "approved", "rejected", "completed"),
         defaultValue: "pending",
         allowNull: false,
       },

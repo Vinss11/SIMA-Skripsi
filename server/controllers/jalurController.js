@@ -1,5 +1,62 @@
-const { Pengajuan, Topik, Mahasiswa, Dosen, PamitUlang, sequelize } = require("../models");
+const {
+  Pengajuan,
+  Topik,
+  Mahasiswa,
+  Dosen,
+  PamitUlang,
+  IzinLanjutSkripsi,
+  PendaftaranPenjaluran,
+  PeriodePenjaluran,
+  MitraMagang,
+  sequelize,
+} = require("../models");
 const { Op } = require("sequelize");
+const {
+  buildSemesterLanjutanGate,
+  getReferencePeriode,
+  toIzinResponse,
+} = require("../services/semesterLanjutanService");
+const {
+  evaluatePeriodeWindow,
+  getPeriodeWindowErrorCode,
+  getPeriodeWindowMessage,
+} = require("../services/periodePenjaluranService");
+
+const MAGANG_PROPOSED_POSITION_OPTIONS = [
+  "analyst",
+  "designer",
+  "programmer",
+  "tester",
+  "network engineer",
+  "data scientist",
+  "other",
+];
+
+const MAGANG_COMPANY_SECTOR_OPTIONS = [
+  "it industry",
+  "goverment",
+  "education/school",
+  "economy/financial",
+  "other",
+];
+
+const MAGANG_COMPANY_TYPE_OPTIONS = ["partner_company", "non_partner_company"];
+const MAGANG_NON_PARTNER_INSTITUTION_LABEL = "Other (Non partner Company)";
+
+const MAGANG_APPLICATION_METHOD_OPTIONS = [
+  "via Internship Vacancy",
+  "Independent (no vacancy/via Direct Contact)",
+  "other",
+];
+const NON_PENELITIAN_JALUR_SET = new Set(["magang", "pengabdian", "perintisan_bisnis"]);
+const NON_PENELITIAN_WORKFLOW_STATUS = new Set([
+  "draft",
+  "submitted",
+  "review_dosen_magang",
+  "review_sekprodi",
+  "approved",
+  "rejected",
+]);
 
 // ========== HELPER FUNCTION - VALIDASI KUOTA DOSEN ==========
 
@@ -41,6 +98,17 @@ function normalizeText(value) {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function parseBoolean(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "ya"].includes(normalized)) return true;
+    if (["false", "0", "no", "tidak"].includes(normalized)) return false;
+  }
+  return null;
+}
+
 function getTopikStatusMessage(status) {
   switch (status) {
     case "reserved":
@@ -52,6 +120,565 @@ function getTopikStatusMessage(status) {
     default:
       return "tidak tersedia";
   }
+}
+
+function resolveSelectedJalurFromPendaftaran(pendaftaran) {
+  if (!pendaftaran) return null;
+
+  if (pendaftaran.jalur === "baru") {
+    return pendaftaran.jenis_jalur_diambil || null;
+  }
+  if (pendaftaran.jalur === "ulang") {
+    return pendaftaran.jenis_jalur_ulang || null;
+  }
+  if (pendaftaran.jalur === "alih") {
+    return pendaftaran.penjaluran_baru || null;
+  }
+
+  return null;
+}
+
+function resolveTargetFormFromJalur(jalur) {
+  switch (jalur) {
+    case "penelitian":
+      return "pengajuan_penelitian";
+    case "magang":
+      return "surat_rekomendasi_magang";
+    case "pengabdian":
+      return "pengajuan_pengabdian";
+    case "perintisan_bisnis":
+      return "pengajuan_perintisan_bisnis";
+    default:
+      return "pengajuan_penelitian";
+  }
+}
+
+function formatJalurLabel(jalur) {
+  if (!jalur) return "-";
+  return String(jalur)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+async function getConfiguredActivePeriodePenjaluran(transaction) {
+  return PeriodePenjaluran.findOne({
+    where: { is_active: true },
+    order: [["updatedAt", "DESC"]],
+    transaction,
+  });
+}
+
+async function getActivePeriodePenjaluran(transaction) {
+  const periodeAktif = await getConfiguredActivePeriodePenjaluran(transaction);
+  if (!periodeAktif) return null;
+
+  const periodeWindow = evaluatePeriodeWindow(periodeAktif);
+  if (!periodeWindow.is_open) return null;
+
+  return periodeAktif;
+}
+
+function buildPeriodeNotAllowedResult(windowCheck) {
+  return {
+    allowed: false,
+    statusCode: 409,
+    message: getPeriodeWindowMessage(windowCheck),
+    code: getPeriodeWindowErrorCode(windowCheck),
+    detail: {
+      reason: windowCheck.reason,
+      tanggal_mulai: windowCheck.start || null,
+      tanggal_selesai: windowCheck.end || null,
+      now: windowCheck.now || null,
+    },
+  };
+}
+
+async function getLatestPendaftaranForPeriode(mahasiswaId, periodeId, transaction) {
+  const wherePeriode = { mahasiswa_id: mahasiswaId };
+  if (periodeId) {
+    wherePeriode.periode_penjaluran_id = periodeId;
+  }
+
+  const pendaftaranDalamPeriode = await PendaftaranPenjaluran.findOne({
+    where: wherePeriode,
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+
+  if (pendaftaranDalamPeriode) return pendaftaranDalamPeriode;
+
+  return PendaftaranPenjaluran.findOne({
+    where: { mahasiswa_id: mahasiswaId },
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+}
+
+async function hasPenelitianSubmissionForPendaftaran(mahasiswaId, pendaftaran, transaction) {
+  const where = {
+    mahasiswa_id: mahasiswaId,
+    tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
+  };
+
+  if (pendaftaran?.createdAt) {
+    where.createdAt = { [Op.gte]: pendaftaran.createdAt };
+  }
+
+  const existing = await Pengajuan.findOne({
+    where,
+    attributes: ["id"],
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+
+  return Boolean(existing);
+}
+
+async function validateSubmissionTargetJalur({
+  mahasiswa,
+  transaction,
+  targetJalur,
+  requireNonPenelitianNotSubmitted = false,
+}) {
+  const periodeAktif = await getConfiguredActivePeriodePenjaluran(transaction);
+
+  if (!periodeAktif) {
+    return {
+      allowed: false,
+      statusCode: 409,
+      message: "Periode pendaftaran belum aktif. Hubungi sekretaris prodi.",
+      code: "PERIODE_NOT_ACTIVE",
+    };
+  }
+
+  const periodeWindow = evaluatePeriodeWindow(periodeAktif);
+  if (!periodeWindow.is_open) {
+    return buildPeriodeNotAllowedResult(periodeWindow);
+  }
+
+  const pendaftaranAktif = await getLatestPendaftaranForPeriode(mahasiswa.id, periodeAktif.id, transaction);
+
+  // Backward compatibility untuk akun lama yang belum melalui alur pendaftaran baru.
+  if (!pendaftaranAktif) {
+    if (targetJalur === "penelitian") {
+      return {
+        allowed: true,
+        periodeAktif,
+        pendaftaranAktif: null,
+        selectedJalur: null,
+      };
+    }
+
+    return {
+      allowed: false,
+      statusCode: 409,
+      message: "Data pendaftaran jalur untuk periode aktif belum ditemukan.",
+      code: "PENDAFTARAN_NOT_FOUND",
+    };
+  }
+
+  const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
+
+  if (!selectedJalur) {
+    return {
+      allowed: false,
+      statusCode: 409,
+      message: "Jenis jalur pada data pendaftaran belum valid. Hubungi sekretaris prodi.",
+      code: "JALUR_NOT_SET",
+    };
+  }
+
+  if (selectedJalur !== targetJalur) {
+    return {
+      allowed: false,
+      statusCode: 409,
+      message: `Anda terdaftar pada jalur ${formatJalurLabel(selectedJalur)} untuk periode ini. Jalur ${formatJalurLabel(
+        targetJalur
+      )} tidak dapat diajukan.`,
+      code: "JALUR_MISMATCH",
+      detail: {
+        selected_jalur: selectedJalur,
+        requested_jalur: targetJalur,
+      },
+    };
+  }
+
+  if (targetJalur !== "penelitian" && requireNonPenelitianNotSubmitted) {
+    if (!["pending", "draft"].includes(String(pendaftaranAktif.form_lanjutan_status || ""))) {
+      return {
+        allowed: false,
+        statusCode: 409,
+        message: "Form jalur ini sudah pernah disubmit pada periode aktif.",
+        code: "FORM_ALREADY_SUBMITTED",
+      };
+    }
+  }
+
+  return {
+    allowed: true,
+    periodeAktif,
+    pendaftaranAktif,
+    selectedJalur,
+  };
+}
+
+function isHttpUrl(value) {
+  if (!value) return false;
+  try {
+    const parsed = new URL(String(value));
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+}
+
+async function getActiveMitraMagangNameSet(transaction) {
+  const rows = await MitraMagang.findAll({
+    where: { is_active: true },
+    attributes: ["nama"],
+    order: [["nama", "ASC"]],
+    transaction,
+  });
+
+  const names = new Set();
+  for (const row of rows) {
+    const nama = String(row?.nama || "").trim();
+    if (nama) names.add(nama);
+  }
+
+  return names;
+}
+
+async function findActiveMitraMagangByNama(nama, transaction) {
+  if (!nama) return null;
+
+  return MitraMagang.findOne({
+    where: {
+      is_active: true,
+      [Op.and]: [
+        sequelize.where(sequelize.fn("LOWER", sequelize.col("nama")), String(nama).trim().toLowerCase()),
+      ],
+    },
+    attributes: ["id", "nama", "bidang_jenis", "lokasi", "email_kontak", "website", "status", "is_active"],
+    transaction,
+  });
+}
+
+function normalizeMagangSubmissionPayload(rawPayload) {
+  const payload = rawPayload || {};
+  const companyType = String(payload.company_type || "").trim();
+
+  const normalizeOptionalText = (value) => {
+    const text = String(value || "").trim();
+    return text || null;
+  };
+
+  const normalizeArray = (value) => {
+    if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+    if (typeof value === "string") {
+      return value
+        .split("\n")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  return {
+    phone_number: String(payload.phone_number || "").trim(),
+    proposed_position: String(payload.proposed_position || "").trim(),
+    proposed_position_other: normalizeOptionalText(payload.proposed_position_other),
+    company_sector: String(payload.company_sector || "").trim(),
+    company_sector_other: normalizeOptionalText(payload.company_sector_other),
+    chosen_institution:
+      String(payload.chosen_institution || "").trim() ||
+      (companyType === "non_partner_company" ? MAGANG_NON_PARTNER_INSTITUTION_LABEL : ""),
+    complete_address_of_institution: String(payload.complete_address_of_institution || "").trim(),
+    company_type: companyType,
+    sudah_apply_ke_mitra: parseBoolean(payload.sudah_apply_ke_mitra),
+    tanggal_apply: String(payload.tanggal_apply || "").trim(),
+    metode_apply: String(payload.metode_apply || "").trim(),
+    bukti_apply: String(payload.bukti_apply || "").trim(),
+    internship_company_website_url: String(payload.internship_company_website_url || "").trim(),
+    internship_vacancy_url: normalizeOptionalText(payload.internship_vacancy_url),
+    supporting_documents_note: normalizeOptionalText(payload.supporting_documents_note),
+    cv_file_name: String(payload.cv_file_name || "").trim(),
+    portfolio_file_name: String(payload.portfolio_file_name || "").trim(),
+    transcript_file_name: String(payload.transcript_file_name || "").trim(),
+    other_supporting_documents_file_name: String(payload.other_supporting_documents_file_name || "").trim(),
+    company_name: normalizeOptionalText(payload.company_name),
+    year_of_establishment: normalizeOptionalText(payload.year_of_establishment),
+    number_of_employees: normalizeOptionalText(payload.number_of_employees),
+    internship_application_method: normalizeOptionalText(payload.internship_application_method),
+    internship_application_method_other: normalizeOptionalText(payload.internship_application_method_other),
+    selection_processes: normalizeArray(payload.selection_processes),
+  };
+}
+
+function validateMagangSubmissionPayload(payload, mitraNameSet) {
+  if (payload.sudah_apply_ke_mitra !== true) {
+    return {
+      statusCode: 409,
+      message: "Pengajuan magang hanya bisa dikirim setelah Anda apply ke mitra magang.",
+    };
+  }
+  if (!payload.tanggal_apply) {
+    return { statusCode: 400, message: "Tanggal apply wajib diisi." };
+  }
+  if (Number.isNaN(new Date(payload.tanggal_apply).getTime())) {
+    return { statusCode: 400, message: "Format tanggal apply tidak valid." };
+  }
+  if (!payload.metode_apply) {
+    return { statusCode: 400, message: "Metode apply wajib diisi." };
+  }
+  if (!payload.bukti_apply) {
+    return { statusCode: 400, message: "Bukti apply wajib diisi (nama file/url/catatan)." };
+  }
+
+  if (!payload.phone_number) return { statusCode: 400, message: "Phone number wajib diisi." };
+  if (!payload.proposed_position) return { statusCode: 400, message: "Proposed / Expected Position wajib dipilih." };
+  if (!MAGANG_PROPOSED_POSITION_OPTIONS.includes(payload.proposed_position)) {
+    return { statusCode: 400, message: "Pilihan Proposed / Expected Position tidak valid." };
+  }
+  if (payload.proposed_position === "other" && !payload.proposed_position_other) {
+    return { statusCode: 400, message: "Isi detail posisi untuk opsi Other pada Proposed / Expected Position." };
+  }
+
+  if (!payload.company_sector) return { statusCode: 400, message: "Company Sector wajib dipilih." };
+  if (!MAGANG_COMPANY_SECTOR_OPTIONS.includes(payload.company_sector)) {
+    return { statusCode: 400, message: "Pilihan Company Sector tidak valid." };
+  }
+  if (payload.company_sector === "other" && !payload.company_sector_other) {
+    return { statusCode: 400, message: "Isi detail sektor untuk opsi Other pada Company Sector." };
+  }
+
+  if (!payload.chosen_institution) return { statusCode: 400, message: "Chosen Institution wajib dipilih." };
+
+  if (!payload.complete_address_of_institution) {
+    return { statusCode: 400, message: "Complete Address of the Institution wajib diisi." };
+  }
+
+  if (!payload.company_type) return { statusCode: 400, message: "Type of Company wajib dipilih." };
+  if (!MAGANG_COMPANY_TYPE_OPTIONS.includes(payload.company_type)) {
+    return { statusCode: 400, message: "Pilihan Type of Company tidak valid." };
+  }
+  if (payload.company_type === "partner_company") {
+    if (!(mitraNameSet instanceof Set) || mitraNameSet.size === 0) {
+      return { statusCode: 409, message: "Daftar mitra magang belum tersedia. Hubungi sekretaris prodi." };
+    }
+    if (!mitraNameSet.has(payload.chosen_institution)) {
+      return {
+        statusCode: 409,
+        message: "Institusi magang tidak valid atau sudah tidak aktif pada daftar mitra.",
+      };
+    }
+  }
+
+  if (!payload.cv_file_name) return { statusCode: 400, message: "Upload CV wajib diisi." };
+  if (!payload.portfolio_file_name) return { statusCode: 400, message: "Upload portfolios of Past Work wajib diisi." };
+  if (!payload.transcript_file_name) return { statusCode: 400, message: "Upload Academic Transcript wajib diisi." };
+  if (!payload.other_supporting_documents_file_name) {
+    return { statusCode: 400, message: "Upload other supporting Documents wajib diisi." };
+  }
+
+  if (!payload.internship_company_website_url || !isHttpUrl(payload.internship_company_website_url)) {
+    return { statusCode: 400, message: "Internship Company website URL wajib diisi dengan URL valid." };
+  }
+
+  if (payload.internship_vacancy_url && !isHttpUrl(payload.internship_vacancy_url)) {
+    return { statusCode: 400, message: "Internship vacancy URL harus berupa URL valid." };
+  }
+
+  if (!payload.internship_vacancy_url && !payload.supporting_documents_note) {
+    return {
+      statusCode: 400,
+      message: "Jika Internship vacancy URL tidak tersedia, isi keterangan dokumen pendukung.",
+    };
+  }
+
+  if (payload.company_type === "non_partner_company") {
+    if (!payload.chosen_institution) {
+      return { statusCode: 400, message: "Chosen Institution wajib diisi untuk Non partner Company." };
+    }
+    if (!payload.company_name) return { statusCode: 400, message: "Company name wajib diisi untuk Non partner Company." };
+    if (!payload.year_of_establishment) {
+      return { statusCode: 400, message: "Year of establishment wajib diisi untuk Non partner Company." };
+    }
+    if (!payload.number_of_employees) {
+      return { statusCode: 400, message: "Number of employees wajib diisi untuk Non partner Company." };
+    }
+    if (!payload.internship_application_method) {
+      return {
+        statusCode: 400,
+        message: "Internship Application method wajib dipilih untuk Non partner Company.",
+      };
+    }
+    if (!MAGANG_APPLICATION_METHOD_OPTIONS.includes(payload.internship_application_method)) {
+      return { statusCode: 400, message: "Pilihan Internship Application method tidak valid." };
+    }
+    if (
+      payload.internship_application_method === "other" &&
+      !payload.internship_application_method_other
+    ) {
+      return { statusCode: 400, message: "Isi detail metode pendaftaran untuk opsi Other." };
+    }
+    if (!Array.isArray(payload.selection_processes) || payload.selection_processes.length === 0) {
+      return {
+        statusCode: 400,
+        message: "Selection Processes wajib diisi minimal 1 langkah untuk Non partner Company.",
+      };
+    }
+  }
+
+  return { statusCode: 200, message: "" };
+}
+
+function normalizeWorkflowStatusLabel(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) return "-";
+  return normalized
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function toObjectPayload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+
+function appendWorkflowTimeline(payload, entry) {
+  const basePayload = toObjectPayload(payload);
+  const timeline = Array.isArray(basePayload.workflow_timeline)
+    ? [...basePayload.workflow_timeline]
+    : [];
+  timeline.push(entry);
+
+  return {
+    ...basePayload,
+    workflow_timeline: timeline,
+  };
+}
+
+function resolveNonPenelitianPengampuByJalur(periode, jalur) {
+  const normalizedJalur = String(jalur || "").trim().toLowerCase();
+  if (!periode || !normalizedJalur) {
+    return { dosen_id: null, role: null };
+  }
+
+  if (normalizedJalur === "magang") {
+    return { dosen_id: Number(periode.pengawas_magang_dosen_id || 0) || null, role: "pengawas_magang" };
+  }
+  if (normalizedJalur === "pengabdian") {
+    return {
+      dosen_id: Number(periode.pengawas_pengabdian_dosen_id || 0) || null,
+      role: "pengampu_pengabdian",
+    };
+  }
+  if (normalizedJalur === "perintisan_bisnis") {
+    return {
+      dosen_id: Number(periode.pengawas_perintisan_bisnis_dosen_id || 0) || null,
+      role: "pengampu_perintisan_bisnis",
+    };
+  }
+
+  return { dosen_id: null, role: null };
+}
+
+function isNonPenelitianJalur(jalur) {
+  return NON_PENELITIAN_JALUR_SET.has(String(jalur || "").trim().toLowerCase());
+}
+
+function toNonPenelitianReviewResponse(item) {
+  const payload = toObjectPayload(item.form_lanjutan_payload);
+  const jalur = resolveSelectedJalurFromPendaftaran(item);
+  const assignedPengampu = resolveNonPenelitianPengampuByJalur(item.periode, jalur);
+
+  return {
+    id: item.id,
+    jalur,
+    form_lanjutan_status: item.form_lanjutan_status,
+    workflow_status: payload.workflow_status || item.form_lanjutan_status,
+    workflow_status_label: normalizeWorkflowStatusLabel(payload.workflow_status || item.form_lanjutan_status),
+    submitted_at: item.form_lanjutan_submitted_at,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    mahasiswa: item.mahasiswa
+      ? {
+          id: item.mahasiswa.id,
+          nim: item.mahasiswa.nim,
+          nama: item.mahasiswa.nama,
+          email: item.mahasiswa.email,
+          angkatan: item.mahasiswa.angkatan,
+        }
+      : null,
+    periode: item.periode
+      ? {
+          id: item.periode.id,
+          label_periode: item.periode.label_periode,
+          tahun_akademik: item.periode.tahun_akademik,
+          semester: item.periode.semester,
+          status: item.periode.status,
+          is_active: item.periode.is_active,
+        }
+      : null,
+    reviewer_target: {
+      dosen_id: assignedPengampu.dosen_id,
+      role: assignedPengampu.role,
+    },
+    payload,
+  };
+}
+
+async function getNonPenelitianSubmissionForReview(id, transaction, lock = false) {
+  return PendaftaranPenjaluran.findByPk(id, {
+    transaction,
+    lock: lock ? transaction.LOCK.UPDATE : undefined,
+    include: [
+      {
+        model: Mahasiswa,
+        as: "mahasiswa",
+        attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
+        required: true,
+      },
+      {
+        model: PeriodePenjaluran,
+        as: "periode",
+        attributes: [
+          "id",
+          "label_periode",
+          "tahun_akademik",
+          "semester",
+          "status",
+          "is_active",
+          "pengawas_magang_dosen_id",
+          "pengawas_pengabdian_dosen_id",
+          "pengawas_perintisan_bisnis_dosen_id",
+        ],
+        required: true,
+      },
+    ],
+  });
+}
+
+function ensureReviewableNonPenelitian(pendaftaran) {
+  const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaran);
+  if (!isNonPenelitianJalur(selectedJalur)) {
+    return {
+      ok: false,
+      statusCode: 409,
+      message: "Pendaftaran ini bukan jalur non-penelitian.",
+    };
+  }
+
+  if (!NON_PENELITIAN_WORKFLOW_STATUS.has(String(pendaftaran.form_lanjutan_status || "").trim().toLowerCase())) {
+    return {
+      ok: false,
+      statusCode: 409,
+      message: "Status form lanjutan tidak valid untuk jalur non-penelitian.",
+    };
+  }
+
+  return { ok: true, selectedJalur };
 }
 
 function buildTopikValidationError({ slot, kode, inputJudul, inputDosen, topikDb }) {
@@ -146,6 +773,24 @@ async function reserveTopikKodes(topikKodes, transaction) {
   return { ok: true };
 }
 
+async function validateSemesterLanjutanGate(mahasiswa, transaction, { allowUlangFlow = false } = {}) {
+  const gate = await buildSemesterLanjutanGate(mahasiswa, transaction);
+
+  if (!gate?.is_locked) {
+    return { allowed: true, gate };
+  }
+
+  if (allowUlangFlow && gate.must_ulang_jalur) {
+    return { allowed: true, gate };
+  }
+
+  return {
+    allowed: false,
+    gate,
+    message: gate.message || "Akses pengajuan dikunci sampai izin melanjutkan skripsi disetujui.",
+  };
+}
+
 // ========== CEK STATUS & ELIGIBILITY ==========
 
 // GET /api/jalur/status - Cek status jalur mahasiswa
@@ -180,7 +825,7 @@ exports.checkStatusJalur = async (req, res) => {
         {
           model: Dosen,
           as: "dosenCurrent",
-          attributes: ["id", "nama", "nip"],
+          attributes: ["id", "nama", "nik"],
         },
       ],
     });
@@ -197,6 +842,17 @@ exports.checkStatusJalur = async (req, res) => {
       },
       order: [["createdAt", "DESC"]],
     });
+    const periodeAktif = await getActivePeriodePenjaluran();
+    const pendaftaranAktif = await getLatestPendaftaranForPeriode(
+      mahasiswa_id,
+      periodeAktif?.id || null
+    );
+    const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
+    const nonPenelitianPayload = toObjectPayload(pendaftaranAktif?.form_lanjutan_payload);
+    const nonPenelitianWorkflowStatus =
+      nonPenelitianPayload.workflow_status || pendaftaranAktif?.form_lanjutan_status || null;
+
+    const semesterLanjutanGate = await buildSemesterLanjutanGate(mahasiswa);
 
     // Eligibility rules
     const availableOptions = {
@@ -221,6 +877,37 @@ exports.checkStatusJalur = async (req, res) => {
               tanggal: activePamit.createdAt,
             }
           : null,
+        pendaftaran_aktif: pendaftaranAktif
+          ? {
+              id: pendaftaranAktif.id,
+              jalur_daftar: pendaftaranAktif.jalur,
+              jalur_form_lanjutan: selectedJalur,
+              form_lanjutan_status: pendaftaranAktif.form_lanjutan_status,
+              form_lanjutan_submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
+              periode:
+                periodeAktif
+                  ? {
+                      id: periodeAktif.id,
+                      label_periode: periodeAktif.label_periode,
+                      tahun_akademik: periodeAktif.tahun_akademik,
+                      semester: periodeAktif.semester,
+                    }
+                  : null,
+            }
+          : null,
+        non_penelitian_form:
+          pendaftaranAktif && isNonPenelitianJalur(selectedJalur)
+            ? {
+                jalur: selectedJalur,
+                status: pendaftaranAktif.form_lanjutan_status,
+                workflow_status: nonPenelitianWorkflowStatus,
+                workflow_status_label: normalizeWorkflowStatusLabel(nonPenelitianWorkflowStatus),
+                submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
+                timeline: Array.isArray(nonPenelitianPayload.workflow_timeline)
+                  ? nonPenelitianPayload.workflow_timeline
+                  : [],
+              }
+            : null,
         last_submission: lastSubmission
           ? {
               id: lastSubmission.id,
@@ -232,6 +919,7 @@ exports.checkStatusJalur = async (req, res) => {
             }
           : null,
         available_options: availableOptions,
+        semester_lanjutan_gate: semesterLanjutanGate,
       },
     });
   } catch (error) {
@@ -243,6 +931,974 @@ exports.checkStatusJalur = async (req, res) => {
     });
   }
 };
+
+// GET /api/jalur/eligibility - Eligibility jalur/form lanjutan per mahasiswa
+exports.getJalurEligibility = async (req, res) => {
+  try {
+    const mahasiswa_id = req.user.id;
+
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, {
+      attributes: [
+        "id",
+        "nim",
+        "nama",
+        "status_jalur_saat_ini",
+        "pengajuan_aktif_id",
+      ],
+    });
+
+    if (!mahasiswa) {
+      return res.status(404).json({
+        success: false,
+        message: "Data mahasiswa tidak ditemukan",
+      });
+    }
+
+    const periodeAktif = await getActivePeriodePenjaluran();
+    const pendaftaranAktif = await getLatestPendaftaranForPeriode(
+      mahasiswa_id,
+      periodeAktif?.id || null
+    );
+    const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
+    const hasActivePengajuan = Boolean(mahasiswa.pengajuan_aktif_id);
+    const hasPenelitianSubmission = selectedJalur === "penelitian"
+      ? await hasPenelitianSubmissionForPendaftaran(mahasiswa_id, pendaftaranAktif)
+      : false;
+
+    const jalurList = ["penelitian", "magang", "pengabdian", "perintisan_bisnis"];
+    const jalurEligibility = {};
+    jalurList.forEach((jalur) => {
+      jalurEligibility[jalur] = {
+        enabled: false,
+        reason: "Belum dapat dipilih.",
+      };
+    });
+
+    let onboardingLocked = false;
+    let onboardingReason = "";
+    let onboardingTargetForm = selectedJalur ? resolveTargetFormFromJalur(selectedJalur) : null;
+
+    if (!periodeAktif) {
+      jalurList.forEach((jalur) => {
+        jalurEligibility[jalur] = {
+          enabled: false,
+          reason: "Periode pendaftaran belum aktif.",
+        };
+      });
+      onboardingLocked = false;
+    } else if (!selectedJalur) {
+      // Backward compatibility untuk akun lama yang belum punya data pendaftaran periode aktif.
+      jalurEligibility.penelitian = {
+        enabled: mahasiswa.status_jalur_saat_ini === "belum_mengajukan" && !hasActivePengajuan,
+        reason:
+          mahasiswa.status_jalur_saat_ini === "belum_mengajukan" && !hasActivePengajuan
+            ? ""
+            : "Mahasiswa sudah memiliki pengajuan aktif.",
+      };
+
+      if (!jalurEligibility.penelitian.enabled) {
+        jalurList
+          .filter((jalur) => jalur !== "penelitian")
+          .forEach((jalur) => {
+            jalurEligibility[jalur] = {
+              enabled: false,
+              reason: "Akun lama tanpa data pendaftaran jalur periode aktif.",
+            };
+          });
+      }
+
+      onboardingLocked = false;
+    } else {
+      const alreadySubmittedNonPenelitian = !["pending", "draft"].includes(
+        String(pendaftaranAktif?.form_lanjutan_status || "")
+      );
+      const alreadySubmittedPenelitian = hasPenelitianSubmission || hasActivePengajuan;
+      const targetSubmitted =
+        selectedJalur === "penelitian" ? alreadySubmittedPenelitian : alreadySubmittedNonPenelitian;
+
+      jalurList.forEach((jalur) => {
+        if (jalur === selectedJalur) {
+          jalurEligibility[jalur] = {
+            enabled: !targetSubmitted,
+            reason: targetSubmitted ? "Form jalur ini sudah pernah disubmit pada periode aktif." : "",
+          };
+          return;
+        }
+
+        jalurEligibility[jalur] = {
+          enabled: false,
+          reason: `Mahasiswa sudah terdaftar pada jalur ${formatJalurLabel(selectedJalur)} di periode aktif.`,
+        };
+      });
+
+      onboardingLocked = !targetSubmitted;
+      onboardingReason = onboardingLocked
+        ? `Selesaikan form ${formatJalurLabel(selectedJalur)} terlebih dahulu sebelum membuka menu lain.`
+        : "";
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        periode_aktif: periodeAktif
+          ? {
+              id: periodeAktif.id,
+              label_periode: periodeAktif.label_periode,
+              tahun_akademik: periodeAktif.tahun_akademik,
+              semester: periodeAktif.semester,
+              status: periodeAktif.status,
+              is_active: periodeAktif.is_active,
+            }
+          : null,
+        pendaftaran_aktif: pendaftaranAktif
+          ? {
+              id: pendaftaranAktif.id,
+              jalur: pendaftaranAktif.jalur,
+              selected_jalur: selectedJalur,
+              form_lanjutan_status: pendaftaranAktif.form_lanjutan_status || "draft",
+              submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
+              created_at: pendaftaranAktif.createdAt,
+            }
+          : null,
+        onboarding: {
+          is_locked: onboardingLocked,
+          target_jalur: selectedJalur,
+          target_form: onboardingTargetForm,
+          reason: onboardingReason,
+        },
+        jalur_eligibility: jalurEligibility,
+        flags: {
+          has_active_pengajuan: hasActivePengajuan,
+          has_penelitian_submission: hasPenelitianSubmission,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error di getJalurEligibility:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/jalur/izin-lanjut/status - Status Permohonan Extend semester ke-3
+exports.getIzinLanjutStatus = async (req, res) => {
+  try {
+    const mahasiswa_id = req.user.id;
+
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, {
+      attributes: ["id", "nim", "nama", "status_jalur_saat_ini", "dosen_pembimbing_skripsi_id"],
+      include: [
+        {
+          model: Dosen,
+          as: "dosenPembimbingSkripsi",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+      ],
+    });
+
+    if (!mahasiswa) {
+      return res.status(404).json({
+        success: false,
+        message: "Data mahasiswa tidak ditemukan",
+      });
+    }
+
+    const gate = await buildSemesterLanjutanGate(mahasiswa);
+    const riwayat = await IzinLanjutSkripsi.findAll({
+      where: { mahasiswa_id },
+      include: [
+        {
+          model: Dosen,
+          as: "dosenPembimbingSkripsi",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        mahasiswa: {
+          id: mahasiswa.id,
+          nim: mahasiswa.nim,
+          nama: mahasiswa.nama,
+          status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
+          dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi
+            ? {
+                id: mahasiswa.dosenPembimbingSkripsi.id,
+                nik: mahasiswa.dosenPembimbingSkripsi.nik,
+                nama: mahasiswa.dosenPembimbingSkripsi.nama,
+                email: mahasiswa.dosenPembimbingSkripsi.email,
+              }
+            : null,
+        },
+        gate,
+        riwayat: riwayat.map((item) => toIzinResponse(item)),
+      },
+    });
+  } catch (error) {
+    console.error("Error di getIzinLanjutStatus:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/jalur/izin-lanjut - Mahasiswa mengajukan permohonan extend semester ke-3
+exports.submitIzinLanjutSemester = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const mahasiswa_id = req.user.id;
+    const alasan_pengajuan = String(req.body?.alasan_pengajuan || "").trim();
+
+    if (!alasan_pengajuan || alasan_pengajuan.length < 10) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Alasan pengajuan wajib diisi minimal 10 karakter.",
+      });
+    }
+
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, {
+      attributes: ["id", "nim", "nama", "status_jalur_saat_ini", "dosen_pembimbing_skripsi_id"],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (!mahasiswa) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data mahasiswa tidak ditemukan",
+      });
+    }
+
+    const gate = await buildSemesterLanjutanGate(mahasiswa, t);
+
+    if (!gate.is_semester_tiga_plus) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Belum memasuki semester penjaluran ke-3, permohonan extend belum diperlukan.",
+        detail: gate,
+      });
+    }
+
+    if (!gate.can_submit_izin) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: gate.message,
+        detail: gate,
+      });
+    }
+
+    if (!mahasiswa.dosen_pembimbing_skripsi_id) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Dosen pembimbing skripsi belum ditetapkan. Permohonan extend belum bisa diajukan.",
+      });
+    }
+
+    const periodeReferensi = gate.reference_periode || (await getReferencePeriode(t));
+
+    const izin = await IzinLanjutSkripsi.create(
+      {
+        mahasiswa_id,
+        dosen_pembimbing_skripsi_id: mahasiswa.dosen_pembimbing_skripsi_id,
+        periode_penjaluran_id: periodeReferensi?.id || null,
+        semester_penjaluran_ke: gate.semester_penjaluran_aktif,
+        status: "pending",
+        alasan_pengajuan,
+        tanggal_pengajuan: new Date(),
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    const withDetail = await IzinLanjutSkripsi.findByPk(izin.id, {
+      include: [
+        {
+          model: Dosen,
+          as: "dosenPembimbingSkripsi",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+      ],
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Permintaan izin melanjutkan skripsi berhasil dikirim. Menunggu keputusan dosen pembimbing skripsi.",
+      data: toIzinResponse(withDetail),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di submitIzinLanjutSemester:", error);
+
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({
+        success: false,
+        message: "Permintaan izin untuk semester penjaluran ini sudah pernah diajukan.",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/jalur/non-penelitian/submit - Submit form jalur non-penelitian (magang/pengabdian/perintisan bisnis)
+exports.submitFormNonPenelitian = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const mahasiswa_id = req.user.id;
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t, lock: t.LOCK.UPDATE });
+
+    if (!mahasiswa) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data mahasiswa tidak ditemukan",
+      });
+    }
+
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t, {
+      allowUlangFlow: true,
+    });
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
+
+    const requestedJalur = String(req.body?.jalur || "").trim().toLowerCase().replace(/\s+/g, "_");
+    if (!requestedJalur || requestedJalur === "penelitian") {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Endpoint ini hanya untuk jalur non-penelitian.",
+      });
+    }
+
+    if (!["magang", "pengabdian", "perintisan_bisnis"].includes(requestedJalur)) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pilihan jalur non-penelitian tidak valid.",
+      });
+    }
+
+    const gate = await validateSubmissionTargetJalur({
+      mahasiswa,
+      transaction: t,
+      targetJalur: requestedJalur,
+      requireNonPenelitianNotSubmitted: true,
+    });
+
+    if (!gate.allowed) {
+      await t.rollback();
+      return res.status(gate.statusCode || 409).json({
+        success: false,
+        message: gate.message,
+        code: gate.code,
+        detail: gate.detail || null,
+      });
+    }
+
+    if (mahasiswa.pengajuan_aktif_id) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Anda sudah memiliki pengajuan aktif. Jalur lain tidak dapat diajukan.",
+      });
+    }
+
+    let payloadToSave = {};
+    if (requestedJalur === "magang") {
+      payloadToSave = normalizeMagangSubmissionPayload(req.body?.payload || {});
+      const activeMitraNameSet = await getActiveMitraMagangNameSet(t);
+      const validationResult = validateMagangSubmissionPayload(payloadToSave, activeMitraNameSet);
+      if (validationResult.message) {
+        await t.rollback();
+        return res.status(validationResult.statusCode || 400).json({
+          success: false,
+          message: validationResult.message,
+        });
+      }
+
+      const isNonPartner = payloadToSave.company_type === "non_partner_company";
+      const selectedMitra = !isNonPartner
+        ? await findActiveMitraMagangByNama(payloadToSave.chosen_institution, t)
+        : null;
+      payloadToSave.mitra_id = selectedMitra ? selectedMitra.id : null;
+      payloadToSave.mitra_snapshot = selectedMitra
+        ? {
+            id: selectedMitra.id,
+            nama: selectedMitra.nama,
+            bidang_jenis: selectedMitra.bidang_jenis || null,
+            lokasi: selectedMitra.lokasi || null,
+            email_kontak: selectedMitra.email_kontak || null,
+            website: selectedMitra.website || null,
+            is_active: selectedMitra.is_active !== false,
+          }
+        : null;
+    } else {
+      const rawPayload = req.body?.payload || {};
+      if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Payload form jalur non-penelitian tidak valid.",
+        });
+      }
+      const ringkasan = String(rawPayload.ringkasan || "").trim();
+      if (!ringkasan) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Ringkasan pengajuan wajib diisi.",
+        });
+      }
+      payloadToSave = {
+        ringkasan,
+        catatan: String(rawPayload.catatan || "").trim() || null,
+      };
+    }
+
+    const now = new Date();
+    const workflowStatus =
+      requestedJalur === "magang"
+        ? payloadToSave.company_type === "non_partner_company"
+          ? "review_sekprodi"
+          : "review_dosen_magang"
+        : "submitted";
+
+    await gate.pendaftaranAktif.update(
+      {
+        form_lanjutan_status: workflowStatus,
+        form_lanjutan_submitted_at: now,
+        form_lanjutan_payload: {
+          submitted_at: now,
+          workflow_status: workflowStatus,
+          workflow_timeline:
+            requestedJalur === "magang"
+              ? [
+                  {
+                    status: "submitted",
+                    actor: "mahasiswa",
+                    note: "Form magang dikirim oleh mahasiswa.",
+                    at: now,
+                  },
+                  {
+                    status: workflowStatus,
+                    actor: "system",
+                    note:
+                      workflowStatus === "review_sekprodi"
+                        ? "Menunggu review sekretaris prodi (non-mitra)."
+                        : "Menunggu review dosen pengawas magang.",
+                    at: now,
+                  },
+                ]
+              : [
+                  {
+                    status: "submitted",
+                    actor: "mahasiswa",
+                    note: "Form non-penelitian dikirim oleh mahasiswa.",
+                    at: now,
+                  },
+                ],
+          jalur: requestedJalur,
+          ...payloadToSave,
+        },
+      },
+      { transaction: t }
+    );
+
+    await mahasiswa.update(
+      {
+        status_jalur_saat_ini: "sedang_mengajukan",
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    return res.status(201).json({
+      success: true,
+      message:
+        requestedJalur === "magang"
+          ? workflowStatus === "review_sekprodi"
+            ? "Permintaan surat rekomendasi magang berhasil dikirim. Status: menunggu review sekretaris prodi."
+            : "Permintaan surat rekomendasi magang berhasil dikirim. Status: menunggu review dosen pengawas magang."
+          : "Form jalur non-penelitian berhasil dikirim.",
+      data: {
+        pendaftaran_id: gate.pendaftaranAktif.id,
+        jalur: requestedJalur,
+        form_lanjutan_status: workflowStatus,
+        submitted_at: now,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di submitFormNonPenelitian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/dosen/non-penelitian/magang/reviews - Antrian review magang (partner) untuk dosen pengawas magang
+exports.getMagangReviewQueueForDosen = async (req, res) => {
+  try {
+    const dosenId = Number(req.user?.id || 0);
+    if (!dosenId) {
+      return res.status(401).json({
+        success: false,
+        message: "Autentikasi dosen tidak valid.",
+      });
+    }
+
+    const rows = await PendaftaranPenjaluran.findAll({
+      where: { form_lanjutan_status: "review_dosen_magang" },
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "email", "angkatan"],
+          required: true,
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: [
+            "id",
+            "label_periode",
+            "tahun_akademik",
+            "semester",
+            "status",
+            "is_active",
+            "pengawas_magang_dosen_id",
+            "pengawas_pengabdian_dosen_id",
+            "pengawas_perintisan_bisnis_dosen_id",
+          ],
+          where: { pengawas_magang_dosen_id: dosenId },
+          required: true,
+        },
+      ],
+      order: [["form_lanjutan_submitted_at", "DESC"], ["createdAt", "DESC"]],
+    });
+
+    const filtered = rows
+      .filter((item) => resolveSelectedJalurFromPendaftaran(item) === "magang")
+      .map((item) => toNonPenelitianReviewResponse(item));
+
+    return res.json({
+      success: true,
+      data: filtered,
+      total: filtered.length,
+    });
+  } catch (error) {
+    console.error("Error di getMagangReviewQueueForDosen:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/dosen/non-penelitian/magang/reviews/:id
+exports.getMagangReviewDetailForDosen = async (req, res) => {
+  try {
+    const dosenId = Number(req.user?.id || 0);
+    const id = Number(req.params?.id || 0);
+
+    if (!dosenId || !id) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter request tidak valid.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, null, false);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        message: "Data form non-penelitian tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message || "Data bukan pengajuan magang.",
+      });
+    }
+
+    const assigned = resolveNonPenelitianPengampuByJalur(row.periode, reviewable.selectedJalur);
+    if (!assigned.dosen_id || assigned.dosen_id !== dosenId) {
+      return res.status(403).json({
+        success: false,
+        message: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: toNonPenelitianReviewResponse(row),
+    });
+  } catch (error) {
+    console.error("Error di getMagangReviewDetailForDosen:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+async function decideMagangReviewByDosen(req, res, decision) {
+  const t = await sequelize.transaction();
+  try {
+    const dosenId = Number(req.user?.id || 0);
+    const id = Number(req.params?.id || 0);
+    const note = String(req.body?.keterangan || req.body?.alasan || "").trim();
+
+    if (!dosenId || !id) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Parameter request tidak valid.",
+      });
+    }
+
+    if (decision === "rejected" && !note) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Alasan penolakan wajib diisi.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, t, true);
+    if (!row) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data form non-penelitian tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+      await t.rollback();
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message || "Data bukan pengajuan magang.",
+      });
+    }
+
+    if (String(row.form_lanjutan_status || "") !== "review_dosen_magang") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Form magang sudah diproses. Status saat ini: ${row.form_lanjutan_status}`,
+      });
+    }
+
+    const assigned = resolveNonPenelitianPengampuByJalur(row.periode, reviewable.selectedJalur);
+    if (!assigned.dosen_id || assigned.dosen_id !== dosenId) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
+      });
+    }
+
+    const now = new Date();
+    const payloadWithTimeline = appendWorkflowTimeline(row.form_lanjutan_payload, {
+      status: decision,
+      actor: "dosen_pengawas_magang",
+      actor_id: dosenId,
+      note: note || (decision === "approved" ? "Disetujui dosen pengawas magang." : "Ditolak dosen pengawas magang."),
+      at: now,
+    });
+
+    const nextPayload = {
+      ...payloadWithTimeline,
+      workflow_status: decision,
+      review_result: {
+        status: decision,
+        decided_at: now,
+        decided_by: {
+          role: "dosen",
+          dosen_id: dosenId,
+        },
+        note: note || null,
+      },
+    };
+
+    await row.update(
+      {
+        form_lanjutan_status: decision,
+        form_lanjutan_payload: nextPayload,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message:
+        decision === "approved"
+          ? "Form magang berhasil disetujui dosen pengawas."
+          : "Form magang ditolak oleh dosen pengawas.",
+      data: toNonPenelitianReviewResponse(row),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di decideMagangReviewByDosen:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+}
+
+// POST /api/dosen/non-penelitian/magang/reviews/:id/approve
+exports.approveMagangReviewByDosen = async (req, res) =>
+  decideMagangReviewByDosen(req, res, "approved");
+
+// POST /api/dosen/non-penelitian/magang/reviews/:id/reject
+exports.rejectMagangReviewByDosen = async (req, res) =>
+  decideMagangReviewByDosen(req, res, "rejected");
+
+// GET /api/sekretaris/non-penelitian/reviews - Antrian review non-penelitian untuk sekretaris prodi
+exports.getNonPenelitianReviewQueueForSekretaris = async (req, res) => {
+  try {
+    const rows = await PendaftaranPenjaluran.findAll({
+      where: { form_lanjutan_status: "review_sekprodi" },
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "email", "angkatan"],
+          required: true,
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: [
+            "id",
+            "label_periode",
+            "tahun_akademik",
+            "semester",
+            "status",
+            "is_active",
+            "pengawas_magang_dosen_id",
+            "pengawas_pengabdian_dosen_id",
+            "pengawas_perintisan_bisnis_dosen_id",
+          ],
+          required: true,
+        },
+      ],
+      order: [["form_lanjutan_submitted_at", "DESC"], ["createdAt", "DESC"]],
+    });
+
+    const filtered = rows
+      .filter((item) => isNonPenelitianJalur(resolveSelectedJalurFromPendaftaran(item)))
+      .map((item) => toNonPenelitianReviewResponse(item));
+
+    return res.json({
+      success: true,
+      data: filtered,
+      total: filtered.length,
+    });
+  } catch (error) {
+    console.error("Error di getNonPenelitianReviewQueueForSekretaris:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/non-penelitian/reviews/:id
+exports.getNonPenelitianReviewDetailForSekretaris = async (req, res) => {
+  try {
+    const id = Number(req.params?.id || 0);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "ID tidak valid.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, null, false);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        message: "Data form non-penelitian tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok) {
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message,
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: toNonPenelitianReviewResponse(row),
+    });
+  } catch (error) {
+    console.error("Error di getNonPenelitianReviewDetailForSekretaris:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
+  const t = await sequelize.transaction();
+  try {
+    const sekretarisId = Number(req.user?.id || 0);
+    const id = Number(req.params?.id || 0);
+    const note = String(req.body?.keterangan || req.body?.alasan || "").trim();
+
+    if (!sekretarisId || !id) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Parameter request tidak valid.",
+      });
+    }
+
+    if (decision === "rejected" && !note) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Alasan penolakan wajib diisi.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, t, true);
+    if (!row) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data form non-penelitian tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok) {
+      await t.rollback();
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message,
+      });
+    }
+
+    if (String(row.form_lanjutan_status || "") !== "review_sekprodi") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Form non-penelitian ini tidak berada pada tahap review sekretaris. Status saat ini: ${row.form_lanjutan_status}`,
+      });
+    }
+
+    const now = new Date();
+    const payloadWithTimeline = appendWorkflowTimeline(row.form_lanjutan_payload, {
+      status: decision,
+      actor: "sekretaris_prodi",
+      actor_id: sekretarisId,
+      note:
+        note ||
+        (decision === "approved"
+          ? "Disetujui sekretaris prodi."
+          : "Ditolak sekretaris prodi."),
+      at: now,
+    });
+
+    const nextPayload = {
+      ...payloadWithTimeline,
+      workflow_status: decision,
+      review_result: {
+        status: decision,
+        decided_at: now,
+        decided_by: {
+          role: "sekretaris_prodi",
+          sekretaris_id: sekretarisId,
+        },
+        note: note || null,
+      },
+    };
+
+    await row.update(
+      {
+        form_lanjutan_status: decision,
+        form_lanjutan_payload: nextPayload,
+      },
+      { transaction: t }
+    );
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message:
+        decision === "approved"
+          ? "Form non-penelitian berhasil disetujui sekretaris prodi."
+          : "Form non-penelitian ditolak oleh sekretaris prodi.",
+      data: toNonPenelitianReviewResponse(row),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di decideNonPenelitianReviewBySekretaris:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+}
+
+// POST /api/sekretaris/non-penelitian/reviews/:id/approve
+exports.approveNonPenelitianReviewBySekretaris = async (req, res) =>
+  decideNonPenelitianReviewBySekretaris(req, res, "approved");
+
+// POST /api/sekretaris/non-penelitian/reviews/:id/reject
+exports.rejectNonPenelitianReviewBySekretaris = async (req, res) =>
+  decideNonPenelitianReviewBySekretaris(req, res, "rejected");
 
 // ========== JALUR BARU ==========
 
@@ -265,10 +1921,36 @@ exports.submitBaruTopikDosen = async (req, res) => {
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
 
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t);
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
+
+    const jalurGate = await validateSubmissionTargetJalur({
+      mahasiswa,
+      transaction: t,
+      targetJalur: "penelitian",
+    });
+
+    if (!jalurGate.allowed) {
+      await t.rollback();
+      return res.status(jalurGate.statusCode || 409).json({
+        success: false,
+        message: jalurGate.message,
+        code: jalurGate.code,
+        detail: jalurGate.detail || null,
+      });
+    }
+
     // Validasi eligibility
     if (mahasiswa.status_jalur_saat_ini !== "belum_mengajukan") {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: `Anda tidak eligible untuk jalur baru. Status: ${mahasiswa.status_jalur_saat_ini}`,
       });
@@ -276,7 +1958,7 @@ exports.submitBaruTopikDosen = async (req, res) => {
 
     if (mahasiswa.pengajuan_aktif_id) {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Anda sudah memiliki pengajuan yang aktif",
       });
@@ -295,7 +1977,7 @@ exports.submitBaruTopikDosen = async (req, res) => {
     // Validasi topik exist
     const topiks = await Topik.findAll({
       where: { kode: { [Op.in]: topikKodes } },
-      include: [{ model: Dosen, as: "dosen", attributes: ["id", "nip", "nama"] }],
+      include: [{ model: Dosen, as: "dosen", attributes: ["id", "nik", "nama"] }],
       transaction: t,
     });
 
@@ -434,10 +2116,10 @@ exports.submitBaruTopikDosen = async (req, res) => {
     // Load data lengkap
     const pengajuanLengkap = await Pengajuan.findByPk(pengajuan.id, {
       include: [
-        { model: Dosen, as: "dosen1", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosen2", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosen3", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nip", "nama"] },
+        { model: Dosen, as: "dosen1", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosen2", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosen3", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nik", "nama"] },
       ],
     });
 
@@ -483,6 +2165,18 @@ exports.submitUlangJudulMandiri = async (req, res) => {
     }
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
+
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t, {
+      allowUlangFlow: true,
+    });
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
 
     if (mahasiswa.pengajuan_aktif_id) {
       await t.rollback();
@@ -587,8 +2281,8 @@ exports.submitUlangJudulMandiri = async (req, res) => {
     // Load data lengkap
     const pengajuanLengkap = await Pengajuan.findByPk(pengajuan.id, {
       include: [
-        { model: Dosen, as: "prospectiveSupervisor", attributes: ["id", "nip", "nama", "email"] },
-        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nip", "nama"] },
+        { model: Dosen, as: "prospectiveSupervisor", attributes: ["id", "nik", "nama", "email"] },
+        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nik", "nama"] },
         { model: PamitUlang, as: "pamitUlang" },
       ],
     });
@@ -626,6 +2320,16 @@ exports.pengajuanEkstensi = async (req, res) => {
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
 
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t);
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
+
     // Cek pengajuan yang approved sebelumnya
     const previousSubmission = await Pengajuan.findOne({
       where: {
@@ -637,7 +2341,7 @@ exports.pengajuanEkstensi = async (req, res) => {
         {
           model: Dosen,
           as: "dosenCurrent",
-          attributes: ["id", "nama", "nip", "email"],
+          attributes: ["id", "nama", "nik", "email"],
         },
       ],
       transaction: t,
@@ -708,7 +2412,7 @@ exports.pengajuanEkstensi = async (req, res) => {
 
     // Load data lengkap
     const pengajuanLengkap = await Pengajuan.findByPk(pengajuanEkstensi.id, {
-      include: [{ model: Dosen, as: "dosenCurrent", attributes: ["id", "nip", "nama", "email"] }],
+      include: [{ model: Dosen, as: "dosenCurrent", attributes: ["id", "nik", "nama", "email"] }],
     });
 
     res.status(201).json({
@@ -749,10 +2453,36 @@ exports.submitBaruJudulMandiri = async (req, res) => {
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
 
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t);
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
+
+    const jalurGate = await validateSubmissionTargetJalur({
+      mahasiswa,
+      transaction: t,
+      targetJalur: "penelitian",
+    });
+
+    if (!jalurGate.allowed) {
+      await t.rollback();
+      return res.status(jalurGate.statusCode || 409).json({
+        success: false,
+        message: jalurGate.message,
+        code: jalurGate.code,
+        detail: jalurGate.detail || null,
+      });
+    }
+
     // Validasi eligibility
     if (mahasiswa.status_jalur_saat_ini !== "belum_mengajukan") {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Anda tidak eligible untuk jalur baru",
       });
@@ -760,7 +2490,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
 
     if (mahasiswa.pengajuan_aktif_id) {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "Anda sudah memiliki pengajuan yang aktif",
       });
@@ -818,8 +2548,8 @@ exports.submitBaruJudulMandiri = async (req, res) => {
     // Load data lengkap
     const pengajuanLengkap = await Pengajuan.findByPk(pengajuan.id, {
       include: [
-        { model: Dosen, as: "prospectiveSupervisor", attributes: ["id", "nip", "nama", "email"] },
-        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nip", "nama"] },
+        { model: Dosen, as: "prospectiveSupervisor", attributes: ["id", "nik", "nama", "email"] },
+        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nik", "nama"] },
       ],
     });
 
@@ -859,6 +2589,18 @@ exports.submitPamit = async (req, res) => {
     }
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
+
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t, {
+      allowUlangFlow: true,
+    });
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
 
     // Validasi: Mahasiswa harus punya Dosen Pembimbing Skripsi
     if (!mahasiswa.dosen_pembimbing_skripsi_id) {
@@ -932,7 +2674,7 @@ exports.submitPamit = async (req, res) => {
             {
               model: Dosen,
               as: "dosenCurrent",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
         },
@@ -977,7 +2719,7 @@ exports.getStatusPamit = async (req, res) => {
             {
               model: Dosen,
               as: "dosenCurrent",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
         },
@@ -1095,6 +2837,18 @@ exports.submitUlangTopikDosen = async (req, res) => {
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
 
+    const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t, {
+      allowUlangFlow: true,
+    });
+    if (!semesterGateCheck.allowed) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: semesterGateCheck.message,
+        detail: semesterGateCheck.gate,
+      });
+    }
+
     if (mahasiswa.pengajuan_aktif_id) {
       await t.rollback();
       return res.status(400).json({
@@ -1144,7 +2898,7 @@ exports.submitUlangTopikDosen = async (req, res) => {
     // Validasi topik exist
     const topiks = await Topik.findAll({
       where: { kode: { [Op.in]: topikKodes } },
-      include: [{ model: Dosen, as: "dosen", attributes: ["id", "nip", "nama"] }],
+      include: [{ model: Dosen, as: "dosen", attributes: ["id", "nik", "nama"] }],
       transaction: t,
     });
 
@@ -1297,10 +3051,10 @@ exports.submitUlangTopikDosen = async (req, res) => {
     // Load data lengkap
     const pengajuanLengkap = await Pengajuan.findByPk(pengajuan.id, {
       include: [
-        { model: Dosen, as: "dosen1", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosen2", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosen3", attributes: ["id", "nip", "nama"] },
-        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nip", "nama"] },
+        { model: Dosen, as: "dosen1", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosen2", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosen3", attributes: ["id", "nik", "nama"] },
+        { model: Dosen, as: "dosenCurrent", attributes: ["id", "nik", "nama"] },
         { model: PamitUlang, as: "pamitUlang" },
       ],
     });
@@ -1326,3 +3080,4 @@ exports.submitUlangTopikDosen = async (req, res) => {
     });
   }
 };
+

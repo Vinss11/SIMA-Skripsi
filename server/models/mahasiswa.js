@@ -28,6 +28,24 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "dosen_pembimbing_skripsi_id",
         as: "dosenPembimbingSkripsi",
       });
+
+      // Relasi dengan form pendaftaran penjaluran
+      Mahasiswa.hasMany(models.PendaftaranPenjaluran, {
+        foreignKey: "mahasiswa_id",
+        as: "pendaftaranPenjalurans",
+      });
+
+      // Relasi permohonan extend semester ke-3
+      Mahasiswa.hasMany(models.IzinLanjutSkripsi, {
+        foreignKey: "mahasiswa_id",
+        as: "izinLanjutSkripsis",
+      });
+
+      // Relasi sesi bimbingan skripsi
+      Mahasiswa.hasMany(models.BimbinganSkripsi, {
+        foreignKey: "mahasiswa_id",
+        as: "bimbinganSkripsis",
+      });
     }
 
     // Method untuk compare password

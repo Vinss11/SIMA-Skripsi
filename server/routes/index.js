@@ -14,6 +14,8 @@ route.get("/", (req, res) => {
       mahasiswa: "/api/mahasiswa",
       dosen: "/api/dosen",
       admin: "/api/admin",
+      sekretaris: "/api/sekretaris",
+      pendaftaran: "/api/pendaftaran",
       upload: "/api/admin/upload",
     },
   });
@@ -42,5 +44,11 @@ route.use("/api/admin", adminRoutes);
 
 const uploadRoutes = require("./uploadRoutes");
 route.use("/api/admin/upload", uploadRoutes);
+
+const sekretarisRoutes = require("./sekretarisRoutes");
+route.use("/api/sekretaris", sekretarisRoutes);
+
+const pendaftaranRoutes = require("./pendaftaranRoutes");
+route.use("/api/pendaftaran", pendaftaranRoutes);
 
 module.exports = route;

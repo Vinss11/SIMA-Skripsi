@@ -42,7 +42,7 @@ exports.getPamitList = async (req, res) => {
             {
               model: Dosen,
               as: "dosenCurrent",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
         },
@@ -86,7 +86,7 @@ exports.getPamitDetail = async (req, res) => {
             {
               model: Dosen,
               as: "dosenPembimbingAkademik",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
         },
@@ -98,7 +98,7 @@ exports.getPamitDetail = async (req, res) => {
             {
               model: Dosen,
               as: "dosenCurrent",
-              attributes: ["id", "nip", "nama", "email"],
+              attributes: ["id", "nik", "nama", "email"],
             },
           ],
         },
@@ -326,3 +326,4 @@ exports.rejectPamit = async (req, res) => {
     });
   }
 };
+

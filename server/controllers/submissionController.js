@@ -1,4 +1,43 @@
-const { Pengajuan, Mahasiswa, Dosen, RiwayatPersetujuan, PamitUlang } = require("../models");
+const { Op } = require("sequelize");
+const { Pengajuan, Mahasiswa, Dosen, Topik, RiwayatPersetujuan, PamitUlang, SekretarisProdi } = require("../models");
+
+async function resolveSekretarisAsDosenId(req, sekretarisId) {
+  const sekretaris = await SekretarisProdi.findByPk(sekretarisId, {
+    attributes: ["nik", "email", "jabatan"],
+  });
+
+  if (!sekretaris) return null;
+
+  const where = [];
+  if (sekretaris.nik) {
+    where.push({ nik: String(sekretaris.nik).trim() });
+  }
+  if (sekretaris.email) {
+    where.push({ email: String(sekretaris.email).trim().toLowerCase() });
+  }
+
+  const tokenUsername = String(req.user?.username || "").trim();
+  if (tokenUsername) {
+    where.push({ nik: tokenUsername });
+    where.push({ email: tokenUsername.toLowerCase() });
+  }
+
+  if (where.length === 0) return null;
+
+  let dosen = await Dosen.findOne({
+    where: { [Op.or]: where },
+    attributes: ["id"],
+  });
+
+  if (!dosen && sekretaris.jabatan) {
+    dosen = await Dosen.findOne({
+      where: { jabatan_struktural: sekretaris.jabatan },
+      attributes: ["id"],
+    });
+  }
+
+  return dosen?.id ? Number(dosen.id) : null;
+}
 
 function buildTopikList(submission) {
   return [
@@ -42,6 +81,40 @@ function getApprovedTopik(submission, topikList) {
   return topikList.find((item) => item.slot === approvedSlot) || null;
 }
 
+function getRiwayatApprovalType(item) {
+  return String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
+}
+
+function getTopikDosenApprovalStage(submission) {
+  if (!submission || submission.tipe_pengajuan !== "topik_dosen") {
+    return "non_topik_dosen_or_final";
+  }
+
+  if (submission.status === "menunggu_set_ketua_cluster") {
+    return "menunggu_set_ketua_cluster";
+  }
+
+  if (submission.status !== "pending") {
+    return "non_topik_dosen_or_final";
+  }
+
+  const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
+  const hasCalonPembimbingApproved = riwayat.some(
+    (item) => item.status === "approved" && getRiwayatApprovalType(item) === "calon_pembimbing"
+  );
+  const hasKetuaKlasterDecided = riwayat.some(
+    (item) =>
+      (item.status === "approved" || item.status === "rejected") &&
+      getRiwayatApprovalType(item) === "koordinator"
+  );
+
+  if (hasCalonPembimbingApproved && !hasKetuaKlasterDecided) {
+    return "pending_ketua_klaster";
+  }
+
+  return "pending_dosen_pembimbing";
+}
+
 // GET /api/submissions - Mahasiswa melihat pengajuan mereka
 exports.getMySubmissions = async (req, res) => {
   try {
@@ -65,12 +138,12 @@ exports.getMySubmissions = async (req, res) => {
         {
           model: Dosen,
           as: "dosenCurrent",
-          attributes: ["id", "nip", "nama"],
+          attributes: ["id", "nik", "nama"],
         },
         {
           model: Dosen,
           as: "prospectiveSupervisor",
-          attributes: ["id", "nip", "nama"],
+          attributes: ["id", "nik", "nama"],
         },
         {
           model: RiwayatPersetujuan,
@@ -81,22 +154,57 @@ exports.getMySubmissions = async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
+    const topikKodes = [
+      ...new Set(
+        submissions
+          .flatMap((submission) => [submission.topik_1_kode, submission.topik_2_kode, submission.topik_3_kode])
+          .filter(Boolean)
+      ),
+    ];
+
+    const topikByKode = {};
+    if (topikKodes.length > 0) {
+      const topikRows = await Topik.findAll({
+        where: { kode: { [Op.in]: topikKodes } },
+        attributes: ["kode", "judul"],
+      });
+      topikRows.forEach((item) => {
+        topikByKode[item.kode] = item.judul;
+      });
+    }
+
     const compactData = submissions.map((submission) => {
+      const approvalStage = getTopikDosenApprovalStage(submission);
       const base = {
         id: submission.id,
         jenis_jalur: submission.jenis_jalur,
         tipe_pengajuan: submission.tipe_pengajuan,
         status: submission.status,
+        tahap_approval: approvalStage,
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
       };
 
       if (submission.tipe_pengajuan === "topik_dosen") {
-        const topikList = buildTopikList(submission);
+        const topikList = buildTopikList(submission).map((item) => ({
+          ...item,
+          judul: item.judul || topikByKode[item.kode] || null,
+        }));
         const approvedTopik = getApprovedTopik(submission, topikList);
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
-        base.topik_disetujui = approvedTopik ? approvedTopik.judul : null;
+        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul }) => ({
+          slot,
+          kode,
+          judul,
+        }));
+        base.topik_disetujui = approvedTopik
+          ? {
+              slot: approvedTopik.slot,
+              kode: approvedTopik.kode,
+              judul: approvedTopik.judul,
+            }
+          : null;
         base.dosen_pembimbing = submission.dosenCurrent ? submission.dosenCurrent.nama : null;
       } else {
         base.judul_mandiri = {
@@ -104,7 +212,7 @@ exports.getMySubmissions = async (req, res) => {
           prospective_supervisor: submission.prospectiveSupervisor
             ? {
                 id: submission.prospectiveSupervisor.id,
-                nip: submission.prospectiveSupervisor.nip,
+                nik: submission.prospectiveSupervisor.nik,
                 nama: submission.prospectiveSupervisor.nama,
               }
             : null,
@@ -135,6 +243,7 @@ exports.getSubmissionById = async (req, res) => {
     const { id } = req.params;
     const userId = Number(req.user.id);
     const userRole = typeof req.user.role === "string" ? req.user.role.trim().toLowerCase() : "";
+    let accessorDosenId = null;
 
     if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
       return res.status(400).json({
@@ -143,11 +252,23 @@ exports.getSubmissionById = async (req, res) => {
       });
     }
 
-    if (!Number.isInteger(userId) || !["mahasiswa", "dosen"].includes(userRole)) {
+    if (!Number.isInteger(userId) || !["mahasiswa", "dosen", "sekretaris_prodi"].includes(userRole)) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses ke endpoint ini",
       });
+    }
+
+    if (userRole === "dosen") {
+      accessorDosenId = userId;
+    } else if (userRole === "sekretaris_prodi") {
+      accessorDosenId = await resolveSekretarisAsDosenId(req, userId);
+      if (!accessorDosenId) {
+        return res.status(403).json({
+          success: false,
+          message: "Akun sekretaris prodi tidak terhubung ke data dosen",
+        });
+      }
     }
 
     const submission = await Pengajuan.findByPk(Number(id), {
@@ -160,34 +281,34 @@ exports.getSubmissionById = async (req, res) => {
             {
               model: Dosen,
               as: "dosenPembimbingAkademik",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
         },
         {
           model: Dosen,
           as: "dosen1",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "dosen2",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "dosen3",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "dosenCurrent",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Dosen,
           as: "prospectiveSupervisor",
-          attributes: ["id", "nip", "nama", "email"],
+          attributes: ["id", "nik", "nama", "email"],
         },
         {
           model: Pengajuan,
@@ -206,7 +327,7 @@ exports.getSubmissionById = async (req, res) => {
                 {
                   model: Dosen,
                   as: "dosenCurrent",
-                  attributes: ["id", "nip", "nama"],
+                  attributes: ["id", "nik", "nama"],
                 },
               ],
             },
@@ -219,7 +340,7 @@ exports.getSubmissionById = async (req, res) => {
             {
               model: Dosen,
               as: "dosen",
-              attributes: ["id", "nip", "nama"],
+              attributes: ["id", "nik", "nama"],
             },
           ],
           order: [["createdAt", "ASC"]],
@@ -242,8 +363,9 @@ exports.getSubmissionById = async (req, res) => {
       });
     }
 
-    if (userRole === "dosen") {
+    if (userRole === "dosen" || userRole === "sekretaris_prodi") {
       const dosenPilihan = [
+        submission.dosen_saat_ini,
         submission.dosen_pilihan_1,
         submission.dosen_pilihan_2,
         submission.dosen_pilihan_3,
@@ -253,7 +375,7 @@ exports.getSubmissionById = async (req, res) => {
         .filter(Boolean)
         .map((item) => Number(item));
 
-      if (!dosenPilihan.includes(userId)) {
+      if (!dosenPilihan.includes(accessorDosenId)) {
         return res.status(403).json({
           success: false,
           message: "Anda tidak memiliki akses ke pengajuan ini",
@@ -318,14 +440,14 @@ exports.getSubmissionById = async (req, res) => {
       hasilPengajuan.dosen_pembimbing = dosenApproved
         ? {
             id: dosenApproved.id,
-            nip: dosenApproved.nip,
+            nik: dosenApproved.nik,
             nama: dosenApproved.nama,
             email: dosenApproved.email,
           }
         : submission.dosenCurrent
         ? {
             id: submission.dosenCurrent.id,
-            nip: submission.dosenCurrent.nip,
+            nik: submission.dosenCurrent.nik,
             nama: submission.dosenCurrent.nama,
             email: submission.dosenCurrent.email,
           }
@@ -339,7 +461,7 @@ exports.getSubmissionById = async (req, res) => {
         calon_dosen_pembimbing: submission.prospectiveSupervisor
           ? {
               id: submission.prospectiveSupervisor.id,
-              nip: submission.prospectiveSupervisor.nip,
+              nik: submission.prospectiveSupervisor.nik,
               nama: submission.prospectiveSupervisor.nama,
               email: submission.prospectiveSupervisor.email,
             }
@@ -352,6 +474,7 @@ exports.getSubmissionById = async (req, res) => {
       jenis_jalur: submission.jenis_jalur,
       tipe_pengajuan: submission.tipe_pengajuan,
       status: submission.status,
+      tahap_approval: getTopikDosenApprovalStage(submission),
       diajukan_pada: submission.createdAt,
       diperbarui_pada: submission.updatedAt,
       mahasiswa: submission.mahasiswa
@@ -365,7 +488,7 @@ exports.getSubmissionById = async (req, res) => {
             dosen_pembimbing_akademik: submission.mahasiswa.dosenPembimbingAkademik
               ? {
                   id: submission.mahasiswa.dosenPembimbingAkademik.id,
-                  nip: submission.mahasiswa.dosenPembimbingAkademik.nip,
+                  nik: submission.mahasiswa.dosenPembimbingAkademik.nik,
                   nama: submission.mahasiswa.dosenPembimbingAkademik.nama,
                 }
               : null,
@@ -375,12 +498,13 @@ exports.getSubmissionById = async (req, res) => {
       hasil_pengajuan: hasilPengajuan,
       riwayat_persetujuan: riwayatOrdered.map((item) => ({
         status: item.status,
+        tipe_approval: item.tipe_approval || "calon_pembimbing",
         keterangan: item.keterangan,
         tanggal_keputusan: item.tanggal_keputusan || item.createdAt,
         dosen: item.dosen
           ? {
               id: item.dosen.id,
-              nip: item.dosen.nip,
+              nik: item.dosen.nik,
               nama: item.dosen.nama,
             }
           : null,
@@ -424,3 +548,4 @@ exports.getSubmissionById = async (req, res) => {
     });
   }
 };
+

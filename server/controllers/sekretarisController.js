@@ -1,0 +1,1794 @@
+const XLSX = require("xlsx");
+const { Op } = require("sequelize");
+const {
+  PendaftaranPenjaluran,
+  Mahasiswa,
+  PeriodePenjaluran,
+  Dosen,
+  DosenKlaster,
+  Klaster,
+  Pengajuan,
+  Topik,
+  RiwayatPersetujuan,
+  KlasterKetuaPeriode,
+  SekretarisProdi,
+  sequelize,
+} = require("../models");
+const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
+const { parseInputDateForJakarta } = require("../services/periodePenjaluranService");
+
+const RESEARCH_CLUSTER_CODES = ["ITSC", "SIRKEL", "SIBER", "MVK"];
+const RESEARCH_CLUSTER_LABELS = {
+  ITSC: "Informatika Teori & Sistem Cerdas",
+  SIRKEL: "Sistem Informasi & Rekayasa Perangkat Lunak",
+  SIBER: "Sistem Siber",
+  MVK: "Multimedia & Visi Komputer",
+};
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function validateTahunAkademik(value) {
+  if (!/^\d{4}\/\d{4}$/.test(value)) return false;
+  const [tahunAwal, tahunAkhir] = value.split("/").map((item) => Number(item));
+  return Number.isFinite(tahunAwal) && Number.isFinite(tahunAkhir) && tahunAkhir === tahunAwal + 1;
+}
+
+function formatPeriodeLabel(semester, tahunAkademik) {
+  const semesterLabel = semester === "ganjil" ? "Ganjil" : "Genap";
+  return `${semesterLabel} ${tahunAkademik}`;
+}
+
+function getPeriodeRank(tahunAkademik, semester) {
+  if (!validateTahunAkademik(tahunAkademik)) return null;
+  const [tahunAwal] = tahunAkademik.split("/").map((item) => Number(item));
+  const semesterRank = semester === "ganjil" ? 1 : semester === "genap" ? 2 : null;
+  if (!Number.isFinite(tahunAwal) || !semesterRank) return null;
+  return tahunAwal * 10 + semesterRank;
+}
+
+function isPeriodeActive(periode) {
+  if (!periode) return false;
+  return periode.status === "active" || periode.is_active === true;
+}
+
+function getPeriodeStatusLabel(periode) {
+  if (!periode) return "closed";
+  if (periode.status) return periode.status;
+  return periode.is_active ? "active" : "closed";
+}
+
+function getRiwayatApprovalType(item) {
+  return String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
+}
+
+function getTopikWaitingKetuaKlaster(submission) {
+  const topikList = [
+    submission.topik_1_kode ? { slot: 1, kode: submission.topik_1_kode } : null,
+    submission.topik_2_kode ? { slot: 2, kode: submission.topik_2_kode } : null,
+    submission.topik_3_kode ? { slot: 3, kode: submission.topik_3_kode } : null,
+  ].filter(Boolean);
+  if (topikList.length === 0) return null;
+
+  const rejectedCalonCount = (submission.riwayat || []).filter(
+    (item) => item.status === "rejected" && getRiwayatApprovalType(item) === "calon_pembimbing"
+  ).length;
+  const approvedSlot = Math.min(rejectedCalonCount + 1, topikList.length);
+  return topikList.find((item) => item.slot === approvedSlot) || null;
+}
+
+function normalizeTopikClusterCode(clusterValue) {
+  const value = String(clusterValue || "").trim().toUpperCase();
+  if (!value) return null;
+
+  if (value === "SIRKEL") return "SIRKEL";
+  if (value === "SIBER") return "SIBER";
+  if (value === "ITSC") return "ITSC";
+  if (value === "MVK") return "MVK";
+
+  if (value.includes("SISTEM INFORMASI") || value.includes("REKAYASA PERANGKAT LUNAK")) return "SIRKEL";
+  if (value.includes("SIBER")) return "SIBER";
+  if (
+    value.includes("INTELLIGENT") ||
+    value.includes("CERDAS") ||
+    value.includes("INFORMATIKA TEORI") ||
+    value.includes("ITSC")
+  ) {
+    return "ITSC";
+  }
+  if (value.includes("MULTIMEDIA") || value.includes("VISI KOMPUTER") || value.includes("MVK")) return "MVK";
+
+  // MEDIS + SAINS DATA sementara disatukan ke ITSC untuk kebutuhan approval ketua klaster penelitian.
+  if (value.includes("MEDIS") || value.includes("SAINS DATA") || value.includes("SDATA")) return "ITSC";
+
+  return value;
+}
+
+function resolveResearchClusterCode(klasterRow) {
+  if (!klasterRow) return null;
+  const fromKode = normalizeTopikClusterCode(klasterRow.kode);
+  if (fromKode && RESEARCH_CLUSTER_CODES.includes(fromKode)) return fromKode;
+
+  const fromNama = normalizeTopikClusterCode(klasterRow.nama);
+  if (fromNama && RESEARCH_CLUSTER_CODES.includes(fromNama)) return fromNama;
+
+  return null;
+}
+
+async function resolveSubmissionClusterCode(submission, transaction) {
+  if (!submission) return null;
+
+  if (submission.tipe_pengajuan === "topik_dosen") {
+    const topikWaiting = getTopikWaitingKetuaKlaster(submission);
+    if (!topikWaiting?.kode) return null;
+    const topik = await Topik.findOne({
+      where: { kode: topikWaiting.kode },
+      attributes: ["kode", "cluster"],
+      transaction,
+    });
+    if (!topik) return null;
+    const fromCluster = normalizeTopikClusterCode(topik.cluster);
+    const fromKode = normalizeTopikClusterCode(String(topik.kode || "").replace(/[0-9].*$/, ""));
+    return fromCluster || fromKode || null;
+  }
+
+  if (submission.tipe_pengajuan === "judul_mandiri") {
+    const calonApproved = (submission.riwayat || []).find(
+      (item) => item.status === "approved" && getRiwayatApprovalType(item) === "calon_pembimbing"
+    );
+    const dosenId = Number(submission.prospective_supervisor_id || calonApproved?.dosen_id || 0);
+    if (!dosenId) return null;
+
+    const dosenKlaster = await DosenKlaster.findOne({
+      where: { dosen_id: dosenId },
+      attributes: ["dosen_id", "klaster_id"],
+      include: [
+        {
+          model: Klaster,
+          as: "klaster",
+          attributes: ["kode"],
+          required: true,
+        },
+      ],
+      order: [[{ model: Klaster, as: "klaster" }, "kode", "ASC"]],
+      transaction,
+    });
+    return dosenKlaster?.klaster?.kode || null;
+  }
+
+  return null;
+}
+
+async function routeWaitingSubmissionsToKetuaCluster({
+  klaster,
+  ketuaDosenId,
+  transaction,
+}) {
+  const waitingSubmissions = await Pengajuan.findAll({
+    where: {
+      status: "menunggu_set_ketua_cluster",
+      tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
+    },
+    include: [
+      {
+        model: RiwayatPersetujuan,
+        as: "riwayat",
+        attributes: ["id", "status", "tipe_approval", "dosen_id", "createdAt"],
+        required: false,
+      },
+    ],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+
+  let routed = 0;
+  for (const submission of waitingSubmissions) {
+    const clusterCode = await resolveSubmissionClusterCode(submission, transaction);
+    if (!clusterCode || clusterCode !== klaster.kode) continue;
+
+    await submission.update(
+      {
+        dosen_saat_ini: ketuaDosenId,
+        status: "pending",
+      },
+      { transaction }
+    );
+    routed += 1;
+  }
+
+  return routed;
+}
+
+function buildFilters(query) {
+  const pendaftaranWhere = {};
+  const periodeWhere = {};
+  const mahasiswaWhere = {};
+
+  if (query.jalur) {
+    pendaftaranWhere.jalur = query.jalur;
+  }
+
+  if (query.status) {
+    pendaftaranWhere.status = query.status;
+  }
+
+  if (query.tahun_akademik) {
+    periodeWhere.tahun_akademik = query.tahun_akademik;
+  }
+
+  if (query.semester) {
+    periodeWhere.semester = query.semester;
+  }
+
+  const search = (query.search || "").trim();
+  if (search) {
+    mahasiswaWhere[Op.or] = [{ nim: { [Op.iLike]: `%${search}%` } }, { nama: { [Op.iLike]: `%${search}%` } }, { email: { [Op.iLike]: `%${search}%` } }];
+  }
+
+  return { pendaftaranWhere, periodeWhere, mahasiswaWhere };
+}
+
+function toCompactRow(item) {
+  return {
+    id: item.id,
+    jalur: item.jalur,
+    semester_mahasiswa: item.semester_mahasiswa,
+    nomor_whatsapp: item.nomor_whatsapp,
+    status: item.status,
+    reviewed_at: item.reviewed_at,
+    approval_note: item.approval_note,
+    jenis_jalur_diambil: item.jenis_jalur_diambil,
+    penjaluran_sebelumnya: item.penjaluran_sebelumnya,
+    penjaluran_baru: item.penjaluran_baru,
+    createdAt: item.createdAt,
+    dosen_pembimbing_akademik: item.dosenPembimbingAkademik
+      ? {
+          id: item.dosenPembimbingAkademik.id,
+          nik: item.dosenPembimbingAkademik.nik,
+          nama: item.dosenPembimbingAkademik.nama,
+        }
+      : null,
+    dosen_pembimbing_ta: item.dosenPembimbingTA
+      ? {
+          id: item.dosenPembimbingTA.id,
+          nik: item.dosenPembimbingTA.nik,
+          nama: item.dosenPembimbingTA.nama,
+        }
+      : null,
+    dosen_pembimbing_ta_sebelumnya: item.dosenPembimbingTASebelumnya
+      ? {
+          id: item.dosenPembimbingTASebelumnya.id,
+          nik: item.dosenPembimbingTASebelumnya.nik,
+          nama: item.dosenPembimbingTASebelumnya.nama,
+        }
+      : null,
+    dosen_pembimbing_ta_baru: item.dosenPembimbingTABaru
+      ? {
+          id: item.dosenPembimbingTABaru.id,
+          nik: item.dosenPembimbingTABaru.nik,
+          nama: item.dosenPembimbingTABaru.nama,
+        }
+      : null,
+    reviewed_by: item.reviewedBySekretaris
+      ? {
+          id: item.reviewedBySekretaris.id,
+          nik: item.reviewedBySekretaris.nik,
+          nama: item.reviewedBySekretaris.nama,
+        }
+      : null,
+    mahasiswa: item.mahasiswa
+      ? {
+          id: item.mahasiswa.id,
+          nim: item.mahasiswa.nim,
+          nama: item.mahasiswa.nama,
+          email: item.mahasiswa.email,
+          angkatan: item.mahasiswa.angkatan,
+        }
+      : null,
+    periode: item.periode
+      ? {
+          id: item.periode.id,
+          label_periode: item.periode.label_periode,
+          tahun_akademik: item.periode.tahun_akademik,
+          semester: item.periode.semester,
+        }
+      : null,
+  };
+}
+
+// GET /api/sekretaris/mahasiswa/master
+exports.getMahasiswaMasterData = async (req, res) => {
+  try {
+    const data = await fetchMahasiswaMasterData({
+      status_jalur: req.query.status_jalur,
+      angkatan: req.query.angkatan,
+    });
+
+    return res.json({
+      success: true,
+      data,
+      total: data.length,
+      role_owner: "sekretaris_prodi",
+      can_edit: true,
+    });
+  } catch (error) {
+    console.error("Error di getMahasiswaMasterData (sekretaris):", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/pendaftaran
+exports.getPendaftaranList = async (req, res) => {
+  try {
+    const { pendaftaranWhere, periodeWhere, mahasiswaWhere } = buildFilters(req.query);
+
+    const list = await PendaftaranPenjaluran.findAll({
+      where: pendaftaranWhere,
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama", "email", "angkatan"],
+          where: mahasiswaWhere,
+          required: true,
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: ["id", "tahun_akademik", "semester", "label_periode", "is_active"],
+          where: periodeWhere,
+          required: true,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingAkademik",
+          attributes: ["id", "nik", "nama"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTA",
+          attributes: ["id", "nik", "nama"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTASebelumnya",
+          attributes: ["id", "nik", "nama"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTABaru",
+          attributes: ["id", "nik", "nama"],
+          required: false,
+        },
+        {
+          model: SekretarisProdi,
+          as: "reviewedBySekretaris",
+          attributes: ["id", "nik", "nama"],
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    res.json({
+      success: true,
+      data: list.map(toCompactRow),
+      total: list.length,
+    });
+  } catch (error) {
+    console.error("Error di getPendaftaranList:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/pendaftaran/export
+exports.exportPendaftaran = async (req, res) => {
+  try {
+    const { pendaftaranWhere, periodeWhere, mahasiswaWhere } = buildFilters(req.query);
+
+    const list = await PendaftaranPenjaluran.findAll({
+      where: pendaftaranWhere,
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["nim", "nama", "email", "angkatan"],
+          where: mahasiswaWhere,
+          required: true,
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: ["label_periode", "tahun_akademik", "semester"],
+          where: periodeWhere,
+          required: true,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingAkademik",
+          attributes: ["nama", "nik"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTA",
+          attributes: ["nama", "nik"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTASebelumnya",
+          attributes: ["nama", "nik"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTABaru",
+          attributes: ["nama", "nik"],
+          required: false,
+        },
+        {
+          model: SekretarisProdi,
+          as: "reviewedBySekretaris",
+          attributes: ["nama", "nik"],
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    const rows = list.map((item) => ({
+      "Tanggal Daftar": item.createdAt,
+      "Periode Penjaluran": item.periode?.label_periode || "-",
+      "Tahun Akademik": item.periode?.tahun_akademik || "-",
+      "Semester Akademik": item.periode?.semester || "-",
+      Jalur: item.jalur,
+      "Semester Mahasiswa": item.semester_mahasiswa,
+      NIM: item.mahasiswa?.nim || "-",
+      Nama: item.mahasiswa?.nama || "-",
+      Email: item.mahasiswa?.email || "-",
+      Angkatan: item.mahasiswa?.angkatan || "-",
+      "Nomor WhatsApp": item.nomor_whatsapp || "-",
+      Status: item.status,
+      "Jenis Jalur Diambil": item.jenis_jalur_diambil || "-",
+      "Penjaluran Sebelumnya": item.penjaluran_sebelumnya || "-",
+      "Penjaluran Baru": item.penjaluran_baru || "-",
+      "Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nama || "-",
+      "NIK Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nik || "-",
+      "Dosen Pembimbing TA": item.dosenPembimbingTA?.nama || "-",
+      "NIK Dosen Pembimbing TA": item.dosenPembimbingTA?.nik || "-",
+      "Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nama || "-",
+      "NIK Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nik || "-",
+      "Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nama || "-",
+      "NIK Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nik || "-",
+      "Direview Oleh": item.reviewedBySekretaris?.nama || "-",
+      "NIK Reviewer": item.reviewedBySekretaris?.nik || "-",
+      "Tanggal Review": item.reviewed_at || "-",
+      "Catatan Approval": item.approval_note || "-",
+      Catatan: item.catatan || "-",
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Pendaftaran Penjaluran");
+
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    });
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=export_pendaftaran_penjaluran_${dateStamp}.xlsx`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error("Error di exportPendaftaran:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+async function fetchPendaftaranDetail(id) {
+  return PendaftaranPenjaluran.findByPk(id, {
+    include: [
+      {
+        model: Mahasiswa,
+        as: "mahasiswa",
+        attributes: ["id", "nim", "nama", "email", "angkatan"],
+      },
+      {
+        model: PeriodePenjaluran,
+        as: "periode",
+        attributes: ["id", "tahun_akademik", "semester", "label_periode", "is_active"],
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingAkademik",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingTA",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingTASebelumnya",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingTABaru",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: SekretarisProdi,
+        as: "reviewedBySekretaris",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+    ],
+  });
+}
+
+// GET /api/sekretaris/pendaftaran/:id
+exports.getPendaftaranDetail = async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        message: "ID pendaftaran tidak valid.",
+      });
+    }
+
+    const pendaftaran = await fetchPendaftaranDetail(id);
+    if (!pendaftaran) {
+      return res.status(404).json({
+        success: false,
+        message: "Data pendaftaran tidak ditemukan.",
+      });
+    }
+
+    res.json({
+      success: true,
+      data: toCompactRow(pendaftaran),
+    });
+  } catch (error) {
+    console.error("Error di getPendaftaranDetail:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/pendaftaran/:id/approve
+exports.approvePendaftaran = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const pendaftaranId = Number(req.params.id);
+    const reviewerId = req.user.id;
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+
+    if (!pendaftaranId) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID pendaftaran tidak valid.",
+      });
+    }
+
+    const pendaftaran = await PendaftaranPenjaluran.findByPk(pendaftaranId, { transaction: t });
+    if (!pendaftaran) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data pendaftaran tidak ditemukan.",
+      });
+    }
+
+    if (pendaftaran.status !== "submitted") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Pendaftaran tidak bisa di-approve. Status saat ini: ${pendaftaran.status}`,
+      });
+    }
+
+    pendaftaran.status = "approved";
+    pendaftaran.reviewed_by_sekretaris_id = reviewerId;
+    pendaftaran.reviewed_at = new Date();
+    pendaftaran.approval_note = note || "Disetujui oleh sekretaris prodi";
+    await pendaftaran.save({ transaction: t });
+
+    await Mahasiswa.update(
+      {
+        status_jalur_saat_ini: "sedang_mengajukan",
+      },
+      {
+        where: { id: pendaftaran.mahasiswa_id },
+        transaction: t,
+      }
+    );
+
+    await t.commit();
+
+    const detail = await fetchPendaftaranDetail(pendaftaranId);
+    res.json({
+      success: true,
+      message: "Pendaftaran berhasil di-approve. Mahasiswa sekarang bisa login.",
+      data: toCompactRow(detail),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di approvePendaftaran:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/pendaftaran/:id/reject
+exports.rejectPendaftaran = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const pendaftaranId = Number(req.params.id);
+    const reviewerId = req.user.id;
+    const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
+
+    if (!pendaftaranId) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID pendaftaran tidak valid.",
+      });
+    }
+
+    if (!note) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Alasan penolakan wajib diisi pada field note.",
+      });
+    }
+
+    const pendaftaran = await PendaftaranPenjaluran.findByPk(pendaftaranId, { transaction: t });
+    if (!pendaftaran) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data pendaftaran tidak ditemukan.",
+      });
+    }
+
+    if (pendaftaran.status !== "submitted") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Pendaftaran tidak bisa ditolak. Status saat ini: ${pendaftaran.status}`,
+      });
+    }
+
+    pendaftaran.status = "rejected";
+    pendaftaran.reviewed_by_sekretaris_id = reviewerId;
+    pendaftaran.reviewed_at = new Date();
+    pendaftaran.approval_note = note;
+    await pendaftaran.save({ transaction: t });
+
+    await Mahasiswa.update(
+      {
+        status_jalur_saat_ini: "belum_mengajukan",
+      },
+      {
+        where: { id: pendaftaran.mahasiswa_id },
+        transaction: t,
+      }
+    );
+
+    await t.commit();
+
+    const detail = await fetchPendaftaranDetail(pendaftaranId);
+    res.json({
+      success: true,
+      message: "Pendaftaran ditolak. Mahasiswa belum dapat login.",
+      data: toCompactRow(detail),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di rejectPendaftaran:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/periode
+exports.getPeriodeOverview = async (req, res) => {
+  try {
+    const [periodes, dosenOptions, klasterRows, dosenKlasterRows] = await Promise.all([
+      PeriodePenjaluran.findAll({
+        include: [
+          {
+            model: Dosen,
+            as: "ketuaPenelitianDosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+            required: false,
+          },
+          {
+            model: Dosen,
+            as: "pengawasMagangDosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+            required: false,
+          },
+          {
+            model: Dosen,
+            as: "pengawasPengabdianDosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+            required: false,
+          },
+          {
+            model: Dosen,
+            as: "pengawasPerintisanBisnisDosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+            required: false,
+          },
+        ],
+        order: [["updatedAt", "DESC"]],
+      }),
+      Dosen.findAll({
+        attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural"],
+        order: [["nama", "ASC"]],
+      }),
+      Klaster.findAll({
+        attributes: ["id", "kode", "nama"],
+        order: [["nama", "ASC"]],
+      }),
+      DosenKlaster.findAll({
+        include: [
+          {
+            model: Klaster,
+            as: "klaster",
+            attributes: ["id", "kode", "nama"],
+            required: true,
+          },
+          {
+            model: Dosen,
+            as: "dosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+            required: true,
+          },
+        ],
+        order: [
+          [{ model: Klaster, as: "klaster" }, "nama", "ASC"],
+          [{ model: Dosen, as: "dosen" }, "nama", "ASC"],
+        ],
+      }),
+    ]);
+
+    const klasterByCode = new Map(
+      RESEARCH_CLUSTER_CODES.map((kode) => [
+        kode,
+        {
+          id: null,
+          kode,
+          nama: RESEARCH_CLUSTER_LABELS[kode] || kode,
+          klaster_ids: [],
+          kandidat_dosen: [],
+        },
+      ])
+    );
+
+    for (const klaster of klasterRows) {
+      const mappedCode = resolveResearchClusterCode(klaster);
+      if (!mappedCode || !klasterByCode.has(mappedCode)) continue;
+      const target = klasterByCode.get(mappedCode);
+      if (!target.klaster_ids.includes(klaster.id)) {
+        target.klaster_ids.push(klaster.id);
+      }
+      if (!target.id) {
+        target.id = klaster.id;
+      }
+    }
+
+    for (const row of dosenKlasterRows) {
+      const mappedCode = resolveResearchClusterCode(row.klaster);
+      if (!mappedCode || !klasterByCode.has(mappedCode) || !row.dosen) continue;
+      const target = klasterByCode.get(mappedCode);
+      const exists = target.kandidat_dosen.some((item) => item.id === row.dosen.id);
+      if (exists) continue;
+      target.kandidat_dosen.push({
+        id: row.dosen.id,
+        kode_dosen: row.dosen.kode_dosen,
+        nik: row.dosen.nik,
+        nama: row.dosen.nama,
+        email: row.dosen.email,
+      });
+    }
+
+    const ketuaKlasterOptions = RESEARCH_CLUSTER_CODES.map((kode) => {
+      const row = klasterByCode.get(kode);
+      return {
+        ...row,
+        kandidat_dosen: (row?.kandidat_dosen || []).sort((a, b) => a.nama.localeCompare(b.nama)),
+      };
+    });
+
+    const mappedPeriodes = periodes
+      .map((item) => {
+        const payload = item.toJSON();
+        const status = getPeriodeStatusLabel(item);
+        return {
+          ...payload,
+          status,
+          is_active: status === "active",
+        };
+      })
+      .sort((a, b) => {
+        const rank = { active: 0, draft: 1, closed: 2 };
+        const left = rank[a.status] ?? 3;
+        const right = rank[b.status] ?? 3;
+        if (left !== right) return left - right;
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      });
+
+    const activePeriode = mappedPeriodes.find((item) => item.status === "active") || null;
+    const draftPeriode = mappedPeriodes.find((item) => item.status === "draft") || null;
+
+    res.json({
+      success: true,
+      data: {
+        active_periode: activePeriode,
+        draft_periode: draftPeriode,
+        periodes: mappedPeriodes,
+        dosen_options: dosenOptions,
+        ketua_klaster_options: ketuaKlasterOptions,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getPeriodeOverview:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+function resolveKetuaKlasterTargetPeriode(periodes, periodeId) {
+  if (Number.isInteger(periodeId) && periodeId > 0) {
+    return periodes.find((item) => Number(item.id) === Number(periodeId)) || null;
+  }
+
+  const draft = periodes.find((item) => getPeriodeStatusLabel(item) === "draft");
+  if (draft) return draft;
+
+  const active = periodes.find((item) => getPeriodeStatusLabel(item) === "active");
+  if (active) return active;
+
+  return null;
+}
+
+// GET /api/sekretaris/ketua-klaster
+exports.getKetuaKlasterOverview = async (req, res) => {
+  try {
+    const periodeId = Number(req.query.periode_penjaluran_id);
+    const [periodes, klasters, dosenKlasterRows] = await Promise.all([
+      PeriodePenjaluran.findAll({
+        attributes: ["id", "tahun_akademik", "semester", "label_periode", "is_active", "status", "updatedAt"],
+        order: [["updatedAt", "DESC"]],
+      }),
+      Klaster.findAll({
+        attributes: ["id", "kode", "nama"],
+        order: [["kode", "ASC"]],
+      }),
+      DosenKlaster.findAll({
+        attributes: ["klaster_id", "dosen_id"],
+        include: [
+          {
+            model: Dosen,
+            as: "dosen",
+            attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural"],
+            required: true,
+          },
+        ],
+        order: [[{ model: Dosen, as: "dosen" }, "nama", "ASC"]],
+      }),
+    ]);
+
+    const periodeDipakai = resolveKetuaKlasterTargetPeriode(periodes, periodeId);
+    if (Number.isInteger(periodeId) && periodeId > 0 && !periodeDipakai) {
+      return res.status(404).json({
+        success: false,
+        message: "Periode yang dipilih tidak ditemukan.",
+      });
+    }
+
+    const activePeriode = periodes.find((item) => getPeriodeStatusLabel(item) === "active") || null;
+    const mappedPeriodes = periodes
+      .map((item) => ({
+        ...item.toJSON(),
+        status: getPeriodeStatusLabel(item),
+        is_active: isPeriodeActive(item),
+      }))
+      .sort((a, b) => {
+        const rank = { active: 0, draft: 1, closed: 2 };
+        const left = rank[a.status] ?? 3;
+        const right = rank[b.status] ?? 3;
+        if (left !== right) return left - right;
+        return new Date(b.updatedAt) - new Date(a.updatedAt);
+      });
+
+    if (!periodeDipakai) {
+      return res.json({
+        success: true,
+        data: {
+          active_periode: activePeriode ? { ...activePeriode.toJSON(), status: getPeriodeStatusLabel(activePeriode), is_active: isPeriodeActive(activePeriode) } : null,
+          periode_terpilih: null,
+          periodes: mappedPeriodes,
+          rows: klasters.map((klaster) => ({
+            id: klaster.id,
+            kode: klaster.kode,
+            nama: klaster.nama,
+            ketua: null,
+            kandidat_dosen: [],
+            total_kandidat: 0,
+          })),
+          message: "Belum ada periode. Buat draft periode terlebih dahulu.",
+        },
+      });
+    }
+
+    const ketuaRows = await KlasterKetuaPeriode.findAll({
+      where: { periode_penjaluran_id: periodeDipakai.id },
+      include: [
+        {
+          model: Dosen,
+          as: "ketuaDosen",
+          attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural"],
+          required: true,
+        },
+        {
+          model: SekretarisProdi,
+          as: "assignedBySekretaris",
+          attributes: ["id", "nik", "nama", "jabatan"],
+          required: false,
+        },
+      ],
+      order: [["updatedAt", "DESC"]],
+    });
+
+    const dosenPerKlasterMap = new Map();
+    for (const row of dosenKlasterRows) {
+      const key = row.klaster_id;
+      const current = dosenPerKlasterMap.get(key) || [];
+      current.push({
+        id: row.dosen.id,
+        kode_dosen: row.dosen.kode_dosen,
+        nik: row.dosen.nik,
+        nama: row.dosen.nama,
+        email: row.dosen.email,
+        jabatan_struktural: row.dosen.jabatan_struktural || null,
+      });
+      dosenPerKlasterMap.set(key, current);
+    }
+
+    const ketuaPerKlasterMap = new Map();
+    for (const row of ketuaRows) {
+      ketuaPerKlasterMap.set(row.klaster_id, {
+        id: row.id,
+        updatedAt: row.updatedAt,
+        ketua_dosen: row.ketuaDosen
+          ? {
+              id: row.ketuaDosen.id,
+              kode_dosen: row.ketuaDosen.kode_dosen,
+              nik: row.ketuaDosen.nik,
+              nama: row.ketuaDosen.nama,
+              email: row.ketuaDosen.email,
+              jabatan_struktural: row.ketuaDosen.jabatan_struktural || null,
+            }
+          : null,
+        assigned_by: row.assignedBySekretaris
+          ? {
+              id: row.assignedBySekretaris.id,
+              nik: row.assignedBySekretaris.nik,
+              nama: row.assignedBySekretaris.nama,
+              jabatan: row.assignedBySekretaris.jabatan || null,
+            }
+          : null,
+      });
+    }
+
+    const rows = klasters.map((klaster) => ({
+      id: klaster.id,
+      kode: klaster.kode,
+      nama: klaster.nama,
+      ketua: ketuaPerKlasterMap.get(klaster.id) || null,
+      kandidat_dosen: dosenPerKlasterMap.get(klaster.id) || [],
+      total_kandidat: (dosenPerKlasterMap.get(klaster.id) || []).length,
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        active_periode: activePeriode ? { ...activePeriode.toJSON(), status: getPeriodeStatusLabel(activePeriode), is_active: isPeriodeActive(activePeriode) } : null,
+        periode_terpilih: {
+          ...periodeDipakai.toJSON(),
+          status: getPeriodeStatusLabel(periodeDipakai),
+          is_active: isPeriodeActive(periodeDipakai),
+        },
+        periodes: mappedPeriodes,
+        rows,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getKetuaKlasterOverview:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/ketua-klaster/assign
+exports.assignKetuaKlaster = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const periodePenjaluranId = Number(req.body?.periode_penjaluran_id);
+    const klasterId = Number(req.body?.klaster_id);
+    const dosenId = Number(req.body?.dosen_id);
+    const sekretarisId = req.user?.id || null;
+
+    if (!Number.isInteger(periodePenjaluranId) || periodePenjaluranId <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "periode_penjaluran_id wajib diisi dan harus valid.",
+      });
+    }
+
+    if (!Number.isInteger(klasterId) || klasterId <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "klaster_id wajib diisi dan harus valid.",
+      });
+    }
+
+    if (!Number.isInteger(dosenId) || dosenId <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "dosen_id wajib diisi dan harus valid.",
+      });
+    }
+
+    const [periode, klaster, dosen] = await Promise.all([
+      PeriodePenjaluran.findByPk(periodePenjaluranId, { transaction: t }),
+      Klaster.findByPk(klasterId, { transaction: t }),
+      Dosen.findByPk(dosenId, { transaction: t }),
+    ]);
+
+    if (!periode) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Periode tidak ditemukan.",
+      });
+    }
+
+    const statusPeriode = getPeriodeStatusLabel(periode);
+    if (!["draft", "active"].includes(statusPeriode)) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Ketua klaster hanya bisa diubah pada periode berstatus draft atau aktif.",
+      });
+    }
+
+    if (!klaster) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Klaster tidak ditemukan.",
+      });
+    }
+
+    if (!dosen) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Dosen tidak ditemukan.",
+      });
+    }
+
+    const dosenTerdaftarDiKlaster = await DosenKlaster.findOne({
+      where: {
+        klaster_id: klasterId,
+        dosen_id: dosenId,
+      },
+      transaction: t,
+    });
+
+    if (!dosenTerdaftarDiKlaster) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Dosen ${dosen.nama} tidak terdaftar pada klaster ${klaster.kode}.`,
+      });
+    }
+
+    const existingRow = await KlasterKetuaPeriode.findOne({
+      where: {
+        periode_penjaluran_id: periodePenjaluranId,
+        klaster_id: klasterId,
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (existingRow) {
+      existingRow.dosen_id = dosenId;
+      existingRow.assigned_by_sekretaris_id = sekretarisId;
+      await existingRow.save({ transaction: t });
+    } else {
+      await KlasterKetuaPeriode.create(
+        {
+          periode_penjaluran_id: periodePenjaluranId,
+          klaster_id: klasterId,
+          dosen_id: dosenId,
+          assigned_by_sekretaris_id: sekretarisId,
+        },
+        { transaction: t }
+      );
+    }
+
+    const saved = await KlasterKetuaPeriode.findOne({
+      where: {
+        periode_penjaluran_id: periodePenjaluranId,
+        klaster_id: klasterId,
+      },
+      include: [
+        {
+          model: Klaster,
+          as: "klaster",
+          attributes: ["id", "kode", "nama"],
+        },
+        {
+          model: Dosen,
+          as: "ketuaDosen",
+          attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural"],
+        },
+        {
+          model: SekretarisProdi,
+          as: "assignedBySekretaris",
+          attributes: ["id", "nik", "nama", "jabatan"],
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: ["id", "label_periode", "tahun_akademik", "semester", "is_active"],
+        },
+      ],
+      transaction: t,
+    });
+
+    let totalRouted = 0;
+    if (statusPeriode === "active") {
+      totalRouted = await routeWaitingSubmissionsToKetuaCluster({
+        klaster,
+        ketuaDosenId: dosenId,
+        transaction: t,
+      });
+    }
+
+    await t.commit();
+
+    return res.json({
+      success: true,
+      message:
+        totalRouted > 0
+          ? `Ketua klaster ${klaster.kode} untuk periode ${periode.label_periode} berhasil disimpan. ${totalRouted} pengajuan penelitian otomatis diteruskan ke ketua klaster.`
+          : `Ketua klaster ${klaster.kode} untuk periode ${periode.label_periode} berhasil disimpan.`,
+      data: {
+        mapping: saved,
+        pengajuan_diteruskan: totalRouted,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di assignKetuaKlaster:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/periode/open
+exports.openPeriodePendaftaran = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const tahunAkademik = normalizeText(req.body?.tahun_akademik);
+    const semester = normalizeText(req.body?.semester).toLowerCase();
+    const tanggalMulaiRaw = normalizeText(req.body?.tanggal_mulai);
+    const tanggalSelesaiRaw = normalizeText(req.body?.tanggal_selesai);
+    const pengawasMagangDosenId = Number(req.body?.pengawas_magang_dosen_id);
+    const pengawasPengabdianDosenId = Number(req.body?.pengawas_pengabdian_dosen_id);
+    const pengawasPerintisanBisnisDosenId = Number(req.body?.pengawas_perintisan_bisnis_dosen_id);
+
+    const ketuaFieldMap = [
+      { kode: "ITSC", field: "ketua_itsc_dosen_id", label: "Ketua cluster ITSC (Informatika Teori & Sistem Cerdas)" },
+      { kode: "SIRKEL", field: "ketua_sirkel_dosen_id", label: "Ketua cluster SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)" },
+      { kode: "SIBER", field: "ketua_siber_dosen_id", label: "Ketua cluster SIBER (Sistem Siber)" },
+      { kode: "MVK", field: "ketua_mvk_dosen_id", label: "Ketua cluster MVK (Multimedia & Visi Komputer)" },
+    ];
+    const ketuaFallbackDosenId = Number(req.body?.ketua_penelitian_dosen_id);
+    const ketuaPayload = {};
+    for (const item of ketuaFieldMap) {
+      ketuaPayload[item.field] = Number(req.body?.[item.field]);
+    }
+    const allKetuaEmpty = ketuaFieldMap.every(
+      (item) => !Number.isInteger(ketuaPayload[item.field]) || ketuaPayload[item.field] <= 0
+    );
+    if (allKetuaEmpty && Number.isInteger(ketuaFallbackDosenId) && ketuaFallbackDosenId > 0) {
+      for (const item of ketuaFieldMap) {
+        ketuaPayload[item.field] = ketuaFallbackDosenId;
+      }
+    }
+
+    const fieldErrors = {};
+
+    for (const item of ketuaFieldMap) {
+      if (!Number.isInteger(ketuaPayload[item.field]) || ketuaPayload[item.field] <= 0) {
+        fieldErrors[item.field] = `${item.label} wajib dipilih.`;
+      }
+    }
+    if (!Number.isInteger(pengawasMagangDosenId) || pengawasMagangDosenId <= 0) {
+      fieldErrors.pengawas_magang_dosen_id = "Dosen pengawas magang wajib dipilih.";
+    }
+    if (!Number.isInteger(pengawasPengabdianDosenId) || pengawasPengabdianDosenId <= 0) {
+      fieldErrors.pengawas_pengabdian_dosen_id = "Dosen pengampu jalur pengabdian masyarakat wajib dipilih.";
+    }
+    if (!Number.isInteger(pengawasPerintisanBisnisDosenId) || pengawasPerintisanBisnisDosenId <= 0) {
+      fieldErrors.pengawas_perintisan_bisnis_dosen_id = "Dosen pengampu jalur perintisan bisnis wajib dipilih.";
+    }
+
+    if (!validateTahunAkademik(tahunAkademik)) {
+      fieldErrors.tahun_akademik =
+        "Format tahun akademik tidak valid. Gunakan YYYY/YYYY (contoh: 2026/2027).";
+    }
+
+    if (!["ganjil", "genap"].includes(semester)) {
+      fieldErrors.semester = "Semester wajib dipilih (ganjil/genap).";
+    }
+
+    if (!tanggalMulaiRaw) {
+      fieldErrors.tanggal_mulai = "Tanggal mulai wajib diisi.";
+    }
+    if (!tanggalSelesaiRaw) {
+      fieldErrors.tanggal_selesai = "Tanggal selesai wajib diisi.";
+    }
+
+    const tanggalMulai = parseInputDateForJakarta(tanggalMulaiRaw, "start");
+    const tanggalSelesai = parseInputDateForJakarta(tanggalSelesaiRaw, "end");
+    if (tanggalMulaiRaw && Number.isNaN(tanggalMulai?.getTime())) {
+      fieldErrors.tanggal_mulai = "Format tanggal mulai tidak valid.";
+    }
+    if (tanggalSelesaiRaw && Number.isNaN(tanggalSelesai?.getTime())) {
+      fieldErrors.tanggal_selesai = "Format tanggal selesai tidak valid.";
+    }
+    if (tanggalMulai && tanggalSelesai && tanggalMulai.getTime() > tanggalSelesai.getTime()) {
+      fieldErrors.tanggal_mulai = "Tanggal mulai tidak boleh lebih besar dari tanggal selesai.";
+      fieldErrors.tanggal_selesai = "Tanggal selesai harus setelah tanggal mulai.";
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Validasi gagal. Periksa field yang ditandai.",
+        detail: fieldErrors,
+      });
+    }
+
+    const labelPeriode = normalizeText(req.body?.label_periode) || formatPeriodeLabel(semester, tahunAkademik);
+    const periodeRankBaru = getPeriodeRank(tahunAkademik, semester);
+    if (!periodeRankBaru) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Periode tidak valid.",
+      });
+    }
+
+    const periodeSudahAda = await PeriodePenjaluran.findOne({
+      where: {
+        tahun_akademik: tahunAkademik,
+        semester,
+      },
+      transaction: t,
+    });
+    if (periodeSudahAda) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Periode ${formatPeriodeLabel(semester, tahunAkademik)} sudah ada. Gunakan periode lain.`,
+      });
+    }
+
+    const semuaPeriode = await PeriodePenjaluran.findAll({
+      attributes: ["id", "tahun_akademik", "semester"],
+      transaction: t,
+    });
+    let periodeTerbesar = null;
+    let rankTerbesar = null;
+    for (const item of semuaPeriode) {
+      const rank = getPeriodeRank(item.tahun_akademik, item.semester);
+      if (rank === null) continue;
+      if (rankTerbesar === null || rank > rankTerbesar) {
+        rankTerbesar = rank;
+        periodeTerbesar = item;
+      }
+    }
+
+    if (rankTerbesar !== null && periodeRankBaru < rankTerbesar) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Periode tidak boleh lebih kecil dari periode terbaru (${formatPeriodeLabel(periodeTerbesar.semester, periodeTerbesar.tahun_akademik)}).`,
+      });
+    }
+
+    const duplicateLabel = await PeriodePenjaluran.findOne({
+      where: {
+        label_periode: labelPeriode,
+      },
+      transaction: t,
+    });
+    if (duplicateLabel) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Label periode '${labelPeriode}' sudah digunakan. Gunakan label lain.`,
+      });
+    }
+
+    const activePeriode = await PeriodePenjaluran.findOne({
+      where: {
+        status: "active",
+      },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (activePeriode) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Masih ada periode aktif (${activePeriode.label_periode}). Tutup periode aktif terlebih dahulu.`,
+      });
+    }
+
+    const klasterRows = await Klaster.findAll({
+      attributes: ["id", "kode", "nama"],
+      transaction: t,
+    });
+    const klasterByCode = new Map(
+      RESEARCH_CLUSTER_CODES.map((kode) => [
+        kode,
+        {
+          kode,
+          klaster_ids: [],
+          preferred_klaster_id: null,
+        },
+      ])
+    );
+    for (const row of klasterRows) {
+      const mappedCode = resolveResearchClusterCode(row);
+      if (!mappedCode || !klasterByCode.has(mappedCode)) continue;
+      const target = klasterByCode.get(mappedCode);
+      target.klaster_ids.push(row.id);
+      const rawKode = String(row.kode || "").trim().toUpperCase();
+      if (!target.preferred_klaster_id || rawKode === mappedCode) {
+        target.preferred_klaster_id = row.id;
+      }
+    }
+    const missingCodes = RESEARCH_CLUSTER_CODES.filter((kode) => (klasterByCode.get(kode)?.klaster_ids || []).length === 0);
+    if (missingCodes.length > 0) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message:
+          `Master klaster penelitian belum lengkap. Klaster yang belum terpetakan: ${missingCodes.join(", ")}.`,
+      });
+    }
+    const ketuaMappings = ketuaFieldMap.map((item) => ({
+      ...item,
+      klasterIds: klasterByCode.get(item.kode)?.klaster_ids || [],
+      preferredKlasterId: klasterByCode.get(item.kode)?.preferred_klaster_id || null,
+      dosenId: Number(ketuaPayload[item.field]),
+    }));
+
+    for (const item of ketuaMappings) {
+      if (!Array.isArray(item.klasterIds) || item.klasterIds.length === 0) {
+        fieldErrors[item.field] = `Klaster ${item.kode} belum tersedia di master klaster.`;
+      }
+    }
+
+    const allDosenIds = [
+        ...new Set([
+          ...ketuaMappings.map((item) => item.dosenId),
+          pengawasMagangDosenId,
+          pengawasPengabdianDosenId,
+          pengawasPerintisanBisnisDosenId,
+        ]),
+    ].filter((id) => Number.isInteger(id) && id > 0);
+
+    const dosenRows = await Dosen.findAll({
+      where: { id: { [Op.in]: allDosenIds } },
+      attributes: ["id", "nama", "kode_dosen", "nik"],
+      transaction: t,
+    });
+    const dosenById = new Map(dosenRows.map((item) => [item.id, item]));
+
+    for (const item of ketuaMappings) {
+      if (!dosenById.has(item.dosenId)) {
+        fieldErrors[item.field] = `Dosen untuk klaster ${item.kode} tidak ditemukan.`;
+      }
+    }
+    if (!dosenById.has(pengawasMagangDosenId)) {
+      fieldErrors.pengawas_magang_dosen_id = "Dosen pengawas magang tidak ditemukan.";
+    }
+    if (!dosenById.has(pengawasPengabdianDosenId)) {
+      fieldErrors.pengawas_pengabdian_dosen_id = "Dosen pengampu jalur pengabdian masyarakat tidak ditemukan.";
+    }
+    if (!dosenById.has(pengawasPerintisanBisnisDosenId)) {
+      fieldErrors.pengawas_perintisan_bisnis_dosen_id = "Dosen pengampu jalur perintisan bisnis tidak ditemukan.";
+    }
+
+    const membershipRows = await DosenKlaster.findAll({
+      where: {
+        dosen_id: {
+          [Op.in]: ketuaMappings
+            .map((item) => item.dosenId)
+            .filter((id) => Number.isInteger(id) && id > 0),
+        },
+        klaster_id: {
+          [Op.in]: [...new Set(ketuaMappings.flatMap((item) => item.klasterIds || []))],
+        },
+      },
+      attributes: ["klaster_id", "dosen_id"],
+      transaction: t,
+    });
+    const membershipSet = new Set(membershipRows.map((item) => `${item.klaster_id}:${item.dosen_id}`));
+    for (const item of ketuaMappings) {
+      if (!Array.isArray(item.klasterIds) || item.klasterIds.length === 0) continue;
+      const isMember = item.klasterIds.some((klasterId) => membershipSet.has(`${klasterId}:${item.dosenId}`));
+      if (!isMember) {
+        fieldErrors[item.field] = `Dosen terpilih bukan anggota klaster ${item.kode}.`;
+      }
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Validasi gagal. Periksa field yang ditandai.",
+        detail: fieldErrors,
+      });
+    }
+
+    const ketuaPenelitianDosenId = ketuaMappings.find((item) => item.kode === "ITSC")?.dosenId;
+
+    const periode = await PeriodePenjaluran.create(
+      {
+        tahun_akademik: tahunAkademik,
+        semester,
+        label_periode: labelPeriode,
+        tanggal_mulai: tanggalMulai,
+        tanggal_selesai: tanggalSelesai,
+        ketua_penelitian_dosen_id: ketuaPenelitianDosenId,
+        pengawas_magang_dosen_id: pengawasMagangDosenId,
+        pengawas_pengabdian_dosen_id: pengawasPengabdianDosenId,
+        pengawas_perintisan_bisnis_dosen_id: pengawasPerintisanBisnisDosenId,
+        is_active: true,
+        status: "active",
+      },
+      { transaction: t }
+    );
+
+    await KlasterKetuaPeriode.bulkCreate(
+      ketuaMappings.map((item) => ({
+        klaster_id: item.preferredKlasterId || item.klasterIds[0],
+        dosen_id: item.dosenId,
+        periode_penjaluran_id: periode.id,
+        assigned_by_sekretaris_id: req.user?.id || null,
+      })),
+      { transaction: t }
+    );
+
+    await t.commit();
+
+    return res.json({
+      success: true,
+      message: `Periode ${periode.label_periode} berhasil dibuka.`,
+      data: periode,
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di openPeriodePendaftaran:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/periode/:id/activate
+exports.activatePeriodePendaftaran = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const periodeId = Number(req.params.id);
+    if (!Number.isInteger(periodeId) || periodeId <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID periode tidak valid.",
+      });
+    }
+
+    const periode = await PeriodePenjaluran.findByPk(periodeId, { transaction: t, lock: true });
+    if (!periode) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Periode tidak ditemukan.",
+      });
+    }
+
+    const statusPeriode = getPeriodeStatusLabel(periode);
+    if (statusPeriode !== "draft") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Hanya periode berstatus draft yang bisa diaktifkan.",
+      });
+    }
+
+    const activePeriode = await PeriodePenjaluran.findOne({
+      where: { status: "active" },
+      transaction: t,
+      lock: true,
+    });
+    if (activePeriode) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Masih ada periode aktif (${activePeriode.label_periode}). Tutup periode aktif terlebih dahulu.`,
+      });
+    }
+
+    periode.is_active = true;
+    periode.status = "active";
+    await periode.save({ transaction: t });
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message: `Periode ${periode.label_periode} berhasil diaktifkan.`,
+      data: {
+        activated_periode: {
+          id: periode.id,
+          label_periode: periode.label_periode,
+          tahun_akademik: periode.tahun_akademik,
+          semester: periode.semester,
+          status: periode.status,
+          is_active: periode.is_active,
+        },
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di activatePeriodePendaftaran:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/periode/close
+exports.closePeriodePendaftaran = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const periodeAktif = await PeriodePenjaluran.findOne({
+      where: { status: "active" },
+      order: [["updatedAt", "DESC"]],
+      transaction: t,
+    });
+
+    if (!periodeAktif) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Tidak ada periode aktif yang sedang dibuka.",
+      });
+    }
+
+    await PeriodePenjaluran.update(
+      { is_active: false, status: "closed" },
+      {
+        where: { status: "active" },
+        transaction: t,
+      }
+    );
+
+    await t.commit();
+
+    return res.json({
+      success: true,
+      message: "Periode pendaftaran berhasil ditutup.",
+      data: {
+        closed_periode: {
+          id: periodeAktif.id,
+          label_periode: periodeAktif.label_periode,
+          tahun_akademik: periodeAktif.tahun_akademik,
+          semester: periodeAktif.semester,
+        },
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di closePeriodePendaftaran:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// PATCH /api/sekretaris/periode/:id/tanggal
+exports.updatePeriodeTanggal = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const periodeId = Number(req.params.id);
+    if (!periodeId) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID periode tidak valid.",
+      });
+    }
+
+    const periode = await PeriodePenjaluran.findByPk(periodeId, { transaction: t });
+    if (!periode) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Periode tidak ditemukan.",
+      });
+    }
+
+    const tanggalMulaiRaw = normalizeText(req.body?.tanggal_mulai);
+    const tanggalSelesaiRaw = normalizeText(req.body?.tanggal_selesai);
+    const tanggalMulai = parseInputDateForJakarta(tanggalMulaiRaw, "start");
+    const tanggalSelesai = parseInputDateForJakarta(tanggalSelesaiRaw, "end");
+
+    if ((tanggalMulaiRaw && Number.isNaN(tanggalMulai?.getTime())) || (tanggalSelesaiRaw && Number.isNaN(tanggalSelesai?.getTime()))) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Format tanggal_mulai/tanggal_selesai tidak valid.",
+      });
+    }
+    if (tanggalMulai && tanggalSelesai && tanggalMulai.getTime() > tanggalSelesai.getTime()) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "tanggal_mulai tidak boleh lebih besar dari tanggal_selesai.",
+      });
+    }
+
+    periode.tanggal_mulai = tanggalMulai;
+    periode.tanggal_selesai = tanggalSelesai;
+    await periode.save({ transaction: t });
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message: "Tanggal periode berhasil diperbarui.",
+      data: periode,
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di updatePeriodeTanggal:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/periode/:id/close
+exports.closePeriodeById = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const periodeId = Number(req.params.id);
+    if (!periodeId) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID periode tidak valid.",
+      });
+    }
+
+    const periode = await PeriodePenjaluran.findByPk(periodeId, { transaction: t });
+    if (!periode) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Periode tidak ditemukan.",
+      });
+    }
+
+    if (getPeriodeStatusLabel(periode) !== "active") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode ini sudah nonaktif.",
+      });
+    }
+
+    periode.is_active = false;
+    periode.status = "closed";
+    await periode.save({ transaction: t });
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message: `Periode ${periode.label_periode} berhasil ditutup.`,
+      data: {
+        closed_periode: {
+          id: periode.id,
+          label_periode: periode.label_periode,
+          tahun_akademik: periode.tahun_akademik,
+          semester: periode.semester,
+        },
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di closePeriodeById:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+

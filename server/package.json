@@ -19,6 +19,7 @@
     "multer": "^2.0.2",
     "pg": "^8.18.0",
     "sequelize": "^6.37.7",
+    "sweetalert2": "^11.26.24",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
