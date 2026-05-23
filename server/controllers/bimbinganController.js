@@ -533,8 +533,18 @@ exports.getDosenBimbingan = async (req, res) => {
       });
     }
 
+    const view = String(req.query?.view || "").trim().toLowerCase();
+    const where = { dosen_id };
+
+    if (view === "permohonan_sesi") {
+      where.status_permohonan = "pending";
+    } else if (view === "resume_bimbingan") {
+      where.status_permohonan = "approved";
+      where.status_resume = "submitted";
+    }
+
     const rows = await BimbinganSkripsi.findAll({
-      where: { dosen_id },
+      where,
       include: [
         {
           model: Mahasiswa,
@@ -556,6 +566,7 @@ exports.getDosenBimbingan = async (req, res) => {
     return res.json({
       success: true,
       data: {
+        view: view || "all",
         stats,
         rows: serializedRows,
       },
@@ -631,6 +642,8 @@ exports.approveDosenBimbingan = async (req, res) => {
 
     const catatan = String(req.body?.catatan_dosen || "").trim();
     const lokasi = String(req.body?.lokasi_bimbingan || "").trim();
+    const tanggalBimbingan = normalizeDateOnly(req.body?.tanggal_bimbingan || req.body?.permintaan_tanggal);
+    const jamBimbingan = String(req.body?.jam_bimbingan || req.body?.permintaan_jam || "").trim();
 
     if (!catatan || catatan.length < 5) {
       await transaction.rollback();
@@ -638,6 +651,33 @@ exports.approveDosenBimbingan = async (req, res) => {
         success: false,
         message: "Alasan/pesan persetujuan minimal 5 karakter",
         detail: { field: "catatan_dosen" },
+      });
+    }
+
+    if (!tanggalBimbingan) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tanggal bimbingan wajib diisi",
+        detail: { field: "tanggal_bimbingan" },
+      });
+    }
+
+    if (!isValidJam(jamBimbingan)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Format waktu bimbingan harus HH:mm",
+        detail: { field: "jam_bimbingan" },
+      });
+    }
+
+    if (tanggalBimbingan < todayDateOnly()) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tanggal bimbingan tidak boleh di masa lalu",
+        detail: { field: "tanggal_bimbingan" },
       });
     }
 
@@ -674,6 +714,8 @@ exports.approveDosenBimbingan = async (req, res) => {
 
     row.status_permohonan = "approved";
     row.catatan_dosen = catatan;
+    row.permintaan_tanggal = tanggalBimbingan;
+    row.permintaan_jam = jamBimbingan;
     row.lokasi_bimbingan = lokasi;
     row.tanggal_keputusan = new Date();
     await row.save({ transaction });

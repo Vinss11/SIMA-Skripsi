@@ -2647,7 +2647,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             {!loading && activeTab === "permohonan-extend" ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-lg font-black text-[#1b274b]">Grid Permohonan Extend Semester 3</h3>
+                  <h3 className="text-lg font-black text-[#1b274b]">Grid Permohonan Extend Penjaluran Semester 3</h3>
                   <div className="flex items-center gap-2">
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
