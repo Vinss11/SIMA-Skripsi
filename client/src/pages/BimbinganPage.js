@@ -1,6 +1,43 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { CalendarDays, CheckCircle2, Clock3, MapPin, MessageSquareText, RefreshCcw, Send, XCircle } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock3,
+  Eye,
+  MapPin,
+  MessageSquareText,
+  Pencil,
+  RefreshCcw,
+  Search,
+  Send,
+  XCircle,
+} from "lucide-react";
 import Swal from "sweetalert2";
+
+const PAGE_SIZE = 10;
+const BIMBINGAN_VIEW_TABS = [
+  { key: "riwayat", label: "Riwayat Bimbingan" },
+  { key: "permohonan", label: "Permohonan Bimbingan" },
+  { key: "resume", label: "Resume Bimbingan" },
+];
+const MAHASISWA_BIMBINGAN_TAB_STORAGE_KEY = "sima_mahasiswa_bimbingan_active_tab";
+
+function getInitialBimbinganViewTab() {
+  if (typeof window === "undefined") return BIMBINGAN_VIEW_TABS[0].key;
+  try {
+    const saved = window.sessionStorage.getItem(MAHASISWA_BIMBINGAN_TAB_STORAGE_KEY);
+    if (BIMBINGAN_VIEW_TABS.some((tab) => tab.key === saved)) {
+      return saved;
+    }
+  } catch (_) {
+    // Ignore storage access error, fallback to default tab.
+  }
+  return BIMBINGAN_VIEW_TABS[0].key;
+}
+
+function isValidJam(value) {
+  return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || "").trim());
+}
 
 function formatDate(value) {
   if (!value) return "-";
@@ -26,15 +63,74 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function statusBadge(status) {
+function getNowJakartaParts() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(new Date()).reduce((accumulator, part) => {
+    if (part.type !== "literal") {
+      accumulator[part.type] = part.value;
+    }
+    return accumulator;
+  }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
+function isPendingSchedulePassed(row) {
+  const statusPermohonan = String(row?.status_permohonan || "").toLowerCase();
+  if (statusPermohonan !== "pending") return false;
+
+  const tanggal = String(row?.permintaan_tanggal || "").trim().slice(0, 10);
+  const jam = String(row?.permintaan_jam || "").trim();
+  if (!tanggal) return false;
+
+  const now = getNowJakartaParts();
+  if (tanggal < now.date) return true;
+  if (tanggal > now.date) return false;
+
+  if (!isValidJam(jam)) return false;
+  return jam <= now.time;
+}
+
+function isApprovedLikeStatus(status) {
   const normalized = String(status || "").toLowerCase();
-  if (normalized === "approved") {
-    return "bg-[#e6f8ef] text-[#1f8a58]";
+  return normalized === "approved" || normalized === "rescheduled";
+}
+
+function isRowInBimbinganViewTab(row, tabKey) {
+  if (!row) return false;
+  const statusPermohonan = String(row.status_permohonan || "").toLowerCase();
+
+  if (tabKey === "permohonan") {
+    return ["pending", "rejected", "expired"].includes(statusPermohonan);
   }
-  if (normalized === "rejected") {
-    return "bg-[#ffeded] text-[#b03d3d]";
+  if (tabKey === "resume") {
+    return isApprovedLikeStatus(statusPermohonan);
   }
-  return "bg-[#fff5df] text-[#9b6d00]";
+  return true;
+}
+
+function statusPermohonanBadge(status, isOverduePending = false) {
+  if (isOverduePending) {
+    return "bg-[#b73a3a] text-white";
+  }
+
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "approved") return "bg-[#e6f8ef] text-[#1f8a58]";
+  if (normalized === "rescheduled") return "bg-[#e8f1ff] text-[#244ea7]";
+  if (normalized === "rejected") return "bg-[#ffeded] text-[#b03d3d]";
+  if (normalized === "expired") return "bg-[#b73a3a] text-white";
+  if (normalized === "pending") return "bg-[#fff5df] text-[#9b6d00]";
+  return "bg-[#eef2fb] text-[#55658f]";
 }
 
 function resumeBadge(status) {
@@ -44,6 +140,17 @@ function resumeBadge(status) {
   if (normalized === "revisi") return "bg-[#fff5df] text-[#9b6d00]";
   if (normalized === "submitted") return "bg-[#edf3ff] text-[#2952b7]";
   return "bg-[#eef2fb] text-[#55658f]";
+}
+
+function normalizeResumeStatusLabel(status) {
+  const map = {
+    belum_diisi: "Belum Diisi",
+    submitted: "Menunggu Review",
+    approved: "Disetujui",
+    revisi: "Perlu Revisi",
+    rejected: "Ditolak",
+  };
+  return map[String(status || "").toLowerCase()] || String(status || "-");
 }
 
 function showSuccessToast(message) {
@@ -58,138 +165,258 @@ function showSuccessToast(message) {
   });
 }
 
-const MAHASISWA_BIMBINGAN_TABS = [
-  { key: "semua", label: "Semua" },
-  { key: "menunggu", label: "Menunggu" },
-  { key: "perlu_resume", label: "Perlu Resume" },
-  { key: "perlu_revisi", label: "Perlu Revisi" },
-  { key: "selesai", label: "Selesai" },
-];
-
-function isRowInMahasiswaTab(row, tabKey) {
-  if (!row) return false;
-  const statusPermohonan = String(row.status_permohonan || "").toLowerCase();
-  const statusResume = String(row.status_resume || "").toLowerCase();
-
-  if (tabKey === "menunggu") {
-    return statusPermohonan === "pending" || (statusPermohonan === "approved" && statusResume === "submitted");
-  }
-  if (tabKey === "perlu_resume") {
-    return statusPermohonan === "approved" && statusResume === "belum_diisi";
-  }
-  if (tabKey === "perlu_revisi") {
-    return statusResume === "revisi" || statusResume === "rejected";
-  }
-  if (tabKey === "selesai") {
-    return statusPermohonan === "approved" && statusResume === "approved" && Boolean(row.is_counted);
-  }
-  return true;
-}
-
 function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [submittingRequest, setSubmittingRequest] = useState(false);
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState(null);
   const [dosenPembimbing, setDosenPembimbing] = useState(null);
+
+  const [mode, setMode] = useState("list");
+  const [selectedRowId, setSelectedRowId] = useState(null);
+  const [selectedRow, setSelectedRow] = useState(null);
+
+  const [activeViewTab, setActiveViewTab] = useState(getInitialBimbinganViewTab);
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+
   const [form, setForm] = useState({
     pesan: "",
     tanggal: "",
     jam: "",
   });
+  const [formErrors, setFormErrors] = useState({});
+  const [submittingRequest, setSubmittingRequest] = useState(false);
+
   const [resumeDraft, setResumeDraft] = useState({});
   const [submittingResumeId, setSubmittingResumeId] = useState(null);
-  const [activeTab, setActiveTab] = useState("semua");
+  const [expiringRequestId, setExpiringRequestId] = useState(null);
 
-  const fetchWithAuth = async (path, options = {}) => {
-    const response = await fetch(`${apiBaseUrl}${path}`, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
-    });
+  const fetchWithAuth = useCallback(
+    async (path, options = {}) => {
+      const response = await fetch(`${apiBaseUrl}${path}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+          ...(options.headers || {}),
+        },
+      });
 
-    const payload = await response.json().catch(() => null);
-    const message = String(payload?.message || "").toLowerCase();
-    const tokenError =
-      message.includes("token tidak valid") ||
-      message.includes("token tidak ditemukan") ||
-      message.includes("kadaluarsa");
+      const payload = await response.json().catch(() => null);
+      const message = String(payload?.message || "").toLowerCase();
+      const tokenError =
+        message.includes("token tidak valid") ||
+        message.includes("token tidak ditemukan") ||
+        message.includes("kadaluarsa");
 
-    if (response.status === 401 || (response.status === 403 && tokenError)) {
-      onSessionExpired?.();
-      throw new Error("__SESSION_EXPIRED__");
-    }
+      if (response.status === 401 || (response.status === 403 && tokenError)) {
+        onSessionExpired?.();
+        throw new Error("__SESSION_EXPIRED__");
+      }
 
-    if (!response.ok || !payload?.success) {
-      throw new Error(payload?.message || "Terjadi kesalahan pada server");
-    }
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Terjadi kesalahan pada server");
+      }
 
-    return payload;
-  };
+      return payload;
+    },
+    [apiBaseUrl, onSessionExpired, session.token]
+  );
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
       const payload = await fetchWithAuth("/api/mahasiswa/bimbingan");
       const data = payload?.data || {};
-      setRows(Array.isArray(data.rows) ? data.rows : []);
+      const fetchedRows = Array.isArray(data.rows) ? data.rows : [];
+      setRows(fetchedRows);
       setStats(data.stats || null);
       setDosenPembimbing(data.dosen_pembimbing || null);
+      return fetchedRows;
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
-        setError(loadError.message || "Gagal memuat data bimbingan");
+        setError(loadError.message || "Gagal memuat data bimbingan.");
       }
+      return [];
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
   useEffect(() => {
     loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiBaseUrl, session.token]);
+  }, [loadData]);
 
-  const progressPercent = useMemo(() => {
-    return Number(stats?.progress_percent || 0);
-  }, [stats]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(MAHASISWA_BIMBINGAN_TAB_STORAGE_KEY, activeViewTab);
+    } catch (_) {
+      // Ignore storage access error.
+    }
+  }, [activeViewTab]);
+
+  useEffect(() => {
+    if (mode !== "detail" || !selectedRowId) return;
+    const latest = rows.find((item) => Number(item.id) === Number(selectedRowId)) || null;
+    setSelectedRow(latest);
+    if (!latest) {
+      setMode("list");
+      setSelectedRowId(null);
+    }
+  }, [mode, rows, selectedRowId]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, activeViewTab]);
+
+  useEffect(() => {
+    setMode("list");
+    setSelectedRowId(null);
+    setSelectedRow(null);
+    setQuery("");
+  }, [activeViewTab]);
+
+  const progressPercent = useMemo(() => Number(stats?.progress_percent || 0), [stats]);
+
+  const acceptedCount = useMemo(
+    () =>
+      Number(
+        stats?.accepted_permohonan ??
+          (Number(stats?.approved_permohonan || 0) + Number(stats?.rescheduled_permohonan || 0))
+      ),
+    [stats]
+  );
 
   const tabCounts = useMemo(() => {
-    const counts = {};
-    MAHASISWA_BIMBINGAN_TABS.forEach((tab) => {
-      counts[tab.key] = rows.filter((row) => isRowInMahasiswaTab(row, tab.key)).length;
+    const result = {};
+    BIMBINGAN_VIEW_TABS.forEach((tab) => {
+      result[tab.key] = rows.filter((row) => isRowInBimbinganViewTab(row, tab.key)).length;
     });
-    return counts;
+    return result;
   }, [rows]);
 
   const filteredRows = useMemo(() => {
-    return rows.filter((row) => isRowInMahasiswaTab(row, activeTab));
-  }, [activeTab, rows]);
+    const rowsByTab = rows.filter((row) => isRowInBimbinganViewTab(row, activeViewTab));
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return rowsByTab;
+
+    return rowsByTab.filter((row) => {
+      const haystack = [
+        row.id,
+        row.permintaan_tanggal,
+        row.permintaan_jam,
+        row.status_permohonan,
+        row.status_permohonan_label,
+        row.status_resume,
+        row.status_resume_label,
+        row.permintaan_pesan,
+        row.resume_mahasiswa,
+        row.catatan_dosen,
+        row.catatan_review_resume,
+        row.lokasi_bimbingan,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [activeViewTab, query, rows]);
+
+  const totalPages = useMemo(() => Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE)), [filteredRows.length]);
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredRows.slice(start, start + PAGE_SIZE);
+  }, [filteredRows, page]);
+  const rangeStart = filteredRows.length === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const rangeEnd = Math.min(page * PAGE_SIZE, filteredRows.length);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
+  const resetFormErrors = () => {
+    setFormErrors({});
+  };
+
+  const validateAjukanForm = () => {
+    const nextErrors = {};
+    if (String(form.pesan || "").trim().length < 10) {
+      nextErrors.pesan = "Pesan minimal 10 karakter.";
+    }
+    if (!String(form.tanggal || "").trim()) {
+      nextErrors.tanggal = "Tanggal wajib diisi.";
+    }
+    if (!isValidJam(form.jam)) {
+      nextErrors.jam = "Jam wajib format HH:mm.";
+    }
+    setFormErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const openDetail = (row) => {
+    if (!row?.id) return;
+    setSelectedRowId(row.id);
+    setSelectedRow(row);
+    setResumeDraft((prev) => {
+      if (typeof prev[row.id] === "string") return prev;
+      return { ...prev, [row.id]: row.resume_mahasiswa || "" };
+    });
+    setMode("detail");
+  };
+
+  const backToList = () => {
+    setMode("list");
+    setSelectedRowId(null);
+    setSelectedRow(null);
+  };
+
+  const openAjukanMode = () => {
+    setMode("add");
+    resetFormErrors();
+  };
+
+  const handleRefresh = async () => {
+    const freshRows = await loadData();
+    if (mode === "detail" && selectedRowId) {
+      const latest = freshRows.find((item) => Number(item.id) === Number(selectedRowId)) || null;
+      setSelectedRow(latest);
+      if (!latest) {
+        backToList();
+      }
+    }
+    onUpdated?.();
+  };
 
   const handleSubmitRequest = async (event) => {
     event.preventDefault();
     setError("");
+
+    if (!validateAjukanForm()) return;
+
     try {
       setSubmittingRequest(true);
       await fetchWithAuth("/api/mahasiswa/bimbingan", {
         method: "POST",
         body: JSON.stringify({
-          pesan: form.pesan,
+          pesan: String(form.pesan || "").trim(),
           tanggal: form.tanggal,
           jam: form.jam,
         }),
       });
       showSuccessToast("Pengajuan sesi bimbingan berhasil dibuat.");
       setForm({ pesan: "", tanggal: "", jam: "" });
+      resetFormErrors();
+      setMode("list");
       await loadData();
       onUpdated?.();
     } catch (submitError) {
       if (submitError.message !== "__SESSION_EXPIRED__") {
-        setError(submitError.message || "Gagal mengirim permintaan bimbingan");
+        setError(submitError.message || "Gagal mengirim permohonan bimbingan.");
       }
     } finally {
       setSubmittingRequest(false);
@@ -202,28 +429,131 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setError("Resume minimal 20 karakter.");
       return;
     }
+
+    const confirmation = await Swal.fire({
+      title: "Kirim resume bimbingan?",
+      text: "Resume yang dikirim akan masuk ke antrean review dosen.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Ya, Kirim Resume",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#2f63e3",
+    });
+    if (!confirmation.isConfirmed) return;
+
     setError("");
     try {
       setSubmittingResumeId(rowId);
-      await fetchWithAuth(`/api/mahasiswa/bimbingan/${rowId}/resume`, {
+      const payload = await fetchWithAuth(`/api/mahasiswa/bimbingan/${rowId}/resume`, {
         method: "POST",
         body: JSON.stringify({ resume }),
       });
+      const fallbackUpdatedRow = {
+        id: rowId,
+        resume_mahasiswa: resume,
+        status_resume: "submitted",
+        status_resume_label: normalizeResumeStatusLabel("submitted"),
+        catatan_review_resume: null,
+        is_counted: false,
+        updatedAt: new Date().toISOString(),
+      };
+      const rowFromServer =
+        payload?.data && Number(payload.data.id) === Number(rowId) ? payload.data : null;
+      const mergedRow = { ...fallbackUpdatedRow, ...(rowFromServer || {}) };
+
+      setRows((prevRows) =>
+        prevRows.map((item) =>
+          Number(item.id) === Number(rowId)
+            ? {
+                ...item,
+                ...mergedRow,
+                id: item.id,
+              }
+            : item
+        )
+      );
+      setSelectedRow((prevSelected) => {
+        if (!prevSelected || Number(prevSelected.id) !== Number(rowId)) return prevSelected;
+        return {
+          ...prevSelected,
+          ...mergedRow,
+          id: prevSelected.id,
+        };
+      });
       showSuccessToast("Resume bimbingan berhasil dikirim.");
       setResumeDraft((prev) => ({ ...prev, [rowId]: "" }));
-      await loadData();
       onUpdated?.();
     } catch (resumeError) {
       if (resumeError.message !== "__SESSION_EXPIRED__") {
-        setError(resumeError.message || "Gagal mengirim resume");
+        setError(resumeError.message || "Gagal mengirim resume.");
       }
     } finally {
       setSubmittingResumeId(null);
     }
   };
 
+  const handleExpireRequest = async (row) => {
+    if (!row?.id) return;
+
+    const confirm = await Swal.fire({
+      title: "Tarik permohonan ini?",
+      text: "Status akan menjadi expired dan dosen tidak bisa approve permohonan ini lagi.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Ya, tarik permohonan",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#b73a3a",
+    });
+
+    if (!confirm.isConfirmed) return;
+
+    setError("");
+    try {
+      setExpiringRequestId(row.id);
+      await fetchWithAuth(`/api/mahasiswa/bimbingan/${row.id}/expire`, {
+        method: "POST",
+      });
+      showSuccessToast("Permohonan berhasil ditarik dan diubah menjadi expired.");
+      await handleRefresh();
+    } catch (expireError) {
+      if (expireError.message !== "__SESSION_EXPIRED__") {
+        setError(expireError.message || "Gagal menarik permohonan bimbingan.");
+      }
+    } finally {
+      setExpiringRequestId(null);
+    }
+  };
+
+  const selectedIsOverduePending = selectedRow ? isPendingSchedulePassed(selectedRow) : false;
+  const selectedResumeText = String(selectedRow?.resume_mahasiswa || "").trim();
+  const isRiwayatDetail = activeViewTab === "riwayat";
+  const canSubmitResumeOnDetail =
+    activeViewTab !== "riwayat" &&
+    selectedRow &&
+    isApprovedLikeStatus(selectedRow.status_permohonan) &&
+    (selectedRow.status_resume === "belum_diisi" || selectedRow.status_resume === "revisi");
+  const shouldShowPreviousRejectedResume =
+    canSubmitResumeOnDetail &&
+    selectedRow &&
+    ["revisi", "rejected"].includes(String(selectedRow.status_resume || "").toLowerCase()) &&
+    Boolean(selectedResumeText);
+
   return (
-    <div className="w-full space-y-4 pb-8">
+    <div className="flex h-full min-h-0 flex-1 flex-col gap-4">
+      <section className="rounded-xl bg-gradient-to-r from-[#2f63e3] to-[#3f6fe0] p-4 text-white shadow-sm">
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg border border-[#87a9ff] bg-[#ffffff1f] p-2">
+            <MessageSquareText className="h-5 w-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-black">Bimbingan Skripsi</h2>
+            <p className="text-sm text-[#e6edff]">
+              Kelola pengajuan sesi bimbingan, pantau status, dan kirim resume sesuai progres.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {error ? (
         <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-4 py-3 text-sm font-semibold text-[#a03f3f]">{error}</div>
       ) : null}
@@ -240,18 +570,21 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               style={{ width: `${progressPercent}%` }}
             />
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-[#2b3f74] md:grid-cols-4">
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm text-[#2b3f74] md:grid-cols-5">
             <p>
               <span className="font-bold">Pending:</span> {stats?.pending_permohonan || 0}
             </p>
             <p>
-              <span className="font-bold">Approved:</span> {stats?.approved_permohonan || 0}
+              <span className="font-bold">Disetujui:</span> {acceptedCount}
             </p>
             <p>
               <span className="font-bold">Resume Submit:</span> {stats?.submitted_resume || 0}
             </p>
             <p>
               <span className="font-bold">Resume Approved:</span> {stats?.approved_resume || 0}
+            </p>
+            <p>
+              <span className="font-bold">Expired:</span> {stats?.expired_permohonan || 0}
             </p>
           </div>
         </div>
@@ -270,78 +603,17 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
         </div>
       </section>
 
-      <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center gap-2">
-          <MessageSquareText className="h-5 w-5 text-[#2f63e3]" />
-          <h3 className="text-lg font-black text-[#1b274b]">Ajukan Jadwal Bimbingan</h3>
-        </div>
-        <form onSubmit={handleSubmitRequest} className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-          <div className="lg:col-span-3">
-            <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Pesan ke dosen</label>
-            <textarea
-              value={form.pesan}
-              onChange={(event) => setForm((prev) => ({ ...prev, pesan: event.target.value }))}
-              placeholder="Tulis topik yang ingin dibahas pada sesi bimbingan..."
-              rows={3}
-              className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-              required
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Tanggal</label>
-            <input
-              type="date"
-              value={form.tanggal}
-              onChange={(event) => setForm((prev) => ({ ...prev, tanggal: event.target.value }))}
-              className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-              required
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Jam</label>
-            <input
-              type="time"
-              value={form.jam}
-              onChange={(event) => setForm((prev) => ({ ...prev, jam: event.target.value }))}
-              className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-              required
-            />
-          </div>
-          <div className="flex items-end justify-end">
-            <button
-              type="submit"
-              disabled={submittingRequest || !dosenPembimbing}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              <Send className="h-4 w-4" />
-              {submittingRequest ? "Mengirim..." : "Kirim Permohonan"}
-            </button>
-          </div>
-        </form>
-      </section>
-
-      <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-lg font-black text-[#1b274b]">Riwayat Sesi Bimbingan</h3>
-          <button
-            type="button"
-            onClick={loadData}
-            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Refresh
-          </button>
-        </div>
-
-        <div className="mb-3 flex flex-wrap gap-2 border-b border-[#e8edf8] pb-3">
-          {MAHASISWA_BIMBINGAN_TABS.map((tab) => {
-            const isActive = activeTab === tab.key;
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+        <p className="text-sm font-black text-[#1b274b]">Menu Bimbingan</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {BIMBINGAN_VIEW_TABS.map((tab) => {
+            const isActive = activeViewTab === tab.key;
             return (
               <button
-                key={`tab-bimbingan-${tab.key}`}
+                key={`bimbingan-view-tab-${tab.key}`}
                 type="button"
-                onClick={() => setActiveTab(tab.key)}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition ${
+                onClick={() => setActiveViewTab(tab.key)}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm font-semibold transition ${
                   isActive
                     ? "border-[#2f63e3] bg-[#edf3ff] text-[#2f63e3]"
                     : "border-[#d3dbef] bg-white text-[#4d5e89] hover:bg-[#f5f8ff]"
@@ -349,7 +621,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               >
                 <span>{tab.label}</span>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[11px] font-black ${
+                  className={`rounded-full px-2 py-0.5 text-xs font-black ${
                     isActive ? "bg-[#2f63e3] text-white" : "bg-[#eef2fb] text-[#5e6f98]"
                   }`}
                 >
@@ -359,131 +631,564 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             );
           })}
         </div>
+      </section>
 
-        {loading ? (
-          <div className="rounded-lg border border-[#e8ecf6] bg-[#fafcff] px-4 py-6 text-sm font-semibold text-[#5d6c91]">
-            Memuat data bimbingan...
-          </div>
-        ) : filteredRows.length === 0 ? (
-          <div className="rounded-lg border border-[#e8ecf6] bg-[#fafcff] px-4 py-6 text-center text-sm font-semibold text-[#7b88ab]">
-            Tidak ada sesi pada tab ini.
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {filteredRows.map((row) => {
-              const canSubmitResume =
-                row.status_permohonan === "approved" &&
-                (row.status_resume === "belum_diisi" || row.status_resume === "revisi");
+      <section className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={backToList}
+            disabled={mode === "list"}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Kembali ke daftar bimbingan"
+          >
+            <ArrowLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              handleRefresh().catch(() => {});
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+          >
+            <RefreshCcw className="h-4 w-4" />
+            Refresh
+          </button>
+          {activeViewTab !== "resume" ? (
+            <button
+              type="button"
+              onClick={openAjukanMode}
+              className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold transition ${
+                mode === "add"
+                  ? "border-[#2f63e3] bg-[#2f63e3] text-white hover:brightness-110"
+                  : "border-[#d3dbef] bg-white text-[#27407b] hover:bg-[#f3f6ff]"
+              }`}
+            >
+              <Send className="h-4 w-4" />
+              Ajukan Bimbingan
+            </button>
+          ) : null}
+        </div>
+      </section>
 
-              return (
-                <article key={`row-bimbingan-${row.id}`} className="rounded-lg border border-[#e6ecf8] bg-white p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-bold text-[#1b274b]">Sesi #{row.id}</p>
-                      <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-[#4e5e86]">
-                        <span className="inline-flex items-center gap-1">
-                          <CalendarDays className="h-4 w-4" />
-                          {formatDate(row.permintaan_tanggal)} | {row.permintaan_jam}
+      {mode === "list" ? (
+        <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-lg font-black text-[#1b274b]">
+              {activeViewTab === "permohonan"
+                ? "Grid Permohonan Bimbingan"
+                : activeViewTab === "resume"
+                  ? "Grid Resume Bimbingan"
+                  : "Grid Riwayat Sesi Bimbingan"}
+            </h3>
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={
+                    activeViewTab === "permohonan"
+                      ? "Cari tanggal, jam, status permohonan, pesan..."
+                      : activeViewTab === "resume"
+                        ? "Cari tanggal, status resume, catatan, lokasi..."
+                        : "Cari tanggal, jam, status, pesan, catatan..."
+                  }
+                  className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  handleRefresh().catch(() => {});
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+              <table className="w-full min-w-[1380px] text-left text-sm">
+                <thead>
+                  <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal/Jam</th>
+                    {activeViewTab !== "resume" ? (
+                      <>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pesan Mahasiswa</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Permohonan</th>
+                      </>
+                    ) : null}
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Resume</th>
+                    {activeViewTab === "resume" ? (
+                      <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Catatan Resume</th>
+                    ) : null}
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Catatan Dosen</th>
+                    {activeViewTab === "resume" ? (
+                      <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Catatan Review</th>
+                    ) : null}
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Diperbarui</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                {filteredRows.length > 0
+                  ? pagedRows.map((row, index) => {
+                      const nomorUrut = rangeStart + index;
+                      const isOverduePending = isPendingSchedulePassed(row);
+                      const isExpired = String(row.status_permohonan || "").toLowerCase() === "expired";
+                      return (
+                        <tr
+                          key={`row-bimbingan-${row.id}`}
+                          className={`border-b border-[#eff3fb] align-middle ${
+                            isOverduePending || isExpired ? "bg-[#fff7f7]" : ""
+                          }`}
+                        >
+                          <td className="px-3 py-2 font-semibold text-[#254080]">{nomorUrut}</td>
+                          <td className="px-3 py-2">
+                            {formatDate(row.permintaan_tanggal)} | {row.permintaan_jam || "-"}
+                          </td>
+                          {activeViewTab !== "resume" ? (
+                            <>
+                              <td className="max-w-[320px] px-3 py-2">
+                                <p className="line-clamp-2">{row.permintaan_pesan || "-"}</p>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <span
+                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusPermohonanBadge(
+                                      row.status_permohonan,
+                                      isOverduePending
+                                    )}`}
+                                  >
+                                    {isOverduePending ? "Terlampaui (Pending)" : row.status_permohonan_label || "-"}
+                                  </span>
+                                  {isExpired ? (
+                                    <span className="inline-flex rounded-full bg-[#ffeded] px-2.5 py-1 text-xs font-bold text-[#b03d3d]">
+                                      Merah Prioritas
+                                    </span>
+                                  ) : null}
+                                </div>
+                              </td>
+                            </>
+                          ) : null}
+                          <td className="px-3 py-2">
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(row.status_resume)}`}>
+                              {row.status_resume_label || "-"}
+                            </span>
+                          </td>
+                          {activeViewTab === "resume" ? (
+                            <td className="max-w-[320px] px-3 py-2">
+                              <p className="line-clamp-2">{row.resume_mahasiswa || "-"}</p>
+                            </td>
+                          ) : null}
+                          <td className="max-w-[260px] px-3 py-2">
+                            <p className="line-clamp-2">{row.catatan_dosen || "-"}</p>
+                            <p className="mt-1 text-xs text-[#5a6a93]">Lokasi: {row.lokasi_bimbingan || "-"}</p>
+                          </td>
+                          {activeViewTab === "resume" ? (
+                            <td className="max-w-[260px] px-3 py-2">
+                              <p className="line-clamp-2">{row.catatan_review_resume || "-"}</p>
+                            </td>
+                          ) : null}
+                          <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openDetail(row)}
+                                className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-2.5 py-1 text-xs font-bold text-white transition hover:brightness-110"
+                              >
+                                {activeViewTab === "resume" ? (
+                                  <Pencil className="h-3.5 w-3.5" />
+                                ) : (
+                                  <Eye className="h-3.5 w-3.5" />
+                                )}
+                                {activeViewTab === "resume" ? "Isi Resume" : "Detail"}
+                              </button>
+                              {activeViewTab !== "resume" && isOverduePending ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    handleExpireRequest(row).catch(() => {});
+                                  }}
+                                  disabled={expiringRequestId === row.id}
+                                  className="rounded-md bg-[#b73a3a] px-2.5 py-1 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  {expiringRequestId === row.id ? "Memproses..." : "Tarik"}
+                                </button>
+                              ) : null}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  : null}
+              </tbody>
+            </table>
+            {loading ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                Memuat data bimbingan...
+              </div>
+            ) : null}
+            {!loading && filteredRows.length === 0 ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                {activeViewTab === "permohonan"
+                  ? "Belum ada data permohonan bimbingan."
+                  : activeViewTab === "resume"
+                    ? "Belum ada data resume bimbingan."
+                    : "Belum ada data sesi bimbingan pada filter ini."}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+            <p className="text-sm text-[#4f5e86]">
+              Menampilkan {rangeStart} - {rangeEnd} dari {filteredRows.length} data sesi bimbingan.
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={page === 1}
+                className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Sebelumnya
+              </button>
+              <span className="text-sm font-semibold text-[#314778]">
+                Halaman {page} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={page >= totalPages}
+                className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Berikutnya
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
+      {mode === "add" ? (
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <MessageSquareText className="h-5 w-5 text-[#2f63e3]" />
+            <h3 className="text-lg font-black text-[#1b274b]">Ajukan Jadwal Bimbingan</h3>
+          </div>
+          <form onSubmit={handleSubmitRequest} className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            <div className="lg:col-span-3">
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Pesan ke dosen</label>
+              <textarea
+                value={form.pesan}
+                onChange={(event) => {
+                  setForm((prev) => ({ ...prev, pesan: event.target.value }));
+                  setFormErrors((prev) => ({ ...prev, pesan: "" }));
+                }}
+                placeholder="Tulis topik yang ingin dibahas pada sesi bimbingan..."
+                rows={3}
+                className={`w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${
+                  formErrors.pesan ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                }`}
+              />
+              {formErrors.pesan ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.pesan}</p> : null}
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Tanggal</label>
+              <input
+                type="date"
+                value={form.tanggal}
+                onChange={(event) => {
+                  setForm((prev) => ({ ...prev, tanggal: event.target.value }));
+                  setFormErrors((prev) => ({ ...prev, tanggal: "" }));
+                }}
+                className={`w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${
+                  formErrors.tanggal ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                }`}
+              />
+              {formErrors.tanggal ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.tanggal}</p> : null}
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Jam</label>
+              <input
+                type="time"
+                value={form.jam}
+                onChange={(event) => {
+                  setForm((prev) => ({ ...prev, jam: event.target.value }));
+                  setFormErrors((prev) => ({ ...prev, jam: "" }));
+                }}
+                className={`w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${
+                  formErrors.jam ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                }`}
+              />
+              {formErrors.jam ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.jam}</p> : null}
+            </div>
+            <div className="flex items-end justify-end">
+              <button
+                type="submit"
+                disabled={submittingRequest || !dosenPembimbing}
+                className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                <Send className="h-4 w-4" />
+                {submittingRequest ? "Mengirim..." : "Kirim Permohonan"}
+              </button>
+            </div>
+          </form>
+        </section>
+      ) : null}
+
+      {mode === "detail" ? (
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+          {selectedRow ? (
+            <div className="space-y-4">
+              {activeViewTab === "resume" ? (
+                <>
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Isi Resume Bimbingan</h3>
+                    <p className="text-sm text-[#5d6c91]">Lengkapi resume sesi bimbingan sebagai tindak lanjut setelah sesi disetujui dosen.</p>
+                  </div>
+
+                  <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                    <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Sesi Bimbingan</h4>
+                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Tanggal/Jam</span>
+                        <span className="font-semibold text-[#1f2d53]">
+                          {formatDate(selectedRow.permintaan_tanggal)} | {selectedRow.permintaan_jam || "-"}
                         </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Clock3 className="h-4 w-4" />
-                          Diajukan: {formatDateTime(row.createdAt)}
+                      </div>
+                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Lokasi</span>
+                        <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
+                      </div>
+                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Status Resume</span>
+                        <span>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(selectedRow.status_resume)}`}>
+                            {selectedRow.status_resume_label || "-"}
+                          </span>
                         </span>
                       </div>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${statusBadge(row.status_permohonan)}`}>
-                        {row.status_permohonan_label}
-                      </span>
-                      <span className={`rounded-full px-3 py-1 text-xs font-bold ${resumeBadge(row.status_resume)}`}>
-                        Resume: {row.status_resume_label}
-                      </span>
-                    </div>
                   </div>
 
-                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    <div className="rounded-md border border-[#edf1fa] bg-[#fafcff] p-3">
-                      <p className="text-xs font-bold text-[#63739b]">Pesan Mahasiswa</p>
-                      <p className="mt-1 text-sm text-[#2b3f74]">{row.permintaan_pesan}</p>
+                  <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                    <h4 className="text-sm font-black text-[#1b274b]">Catatan Dosen</h4>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_dosen || "-"}</p>
+                    <p className="mt-3 inline-flex items-center gap-1 text-sm text-[#42588f]">
+                      <MapPin className="h-4 w-4" />
+                      Lokasi: {selectedRow.lokasi_bimbingan || "-"}
+                    </p>
+                  </div>
+
+                  {selectedRow.catatan_review_resume ? (
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Catatan Review Dosen</h4>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
                     </div>
-                    <div className="rounded-md border border-[#edf1fa] bg-[#fafcff] p-3">
-                      <p className="text-xs font-bold text-[#63739b]">Catatan Dosen</p>
-                      <p className="mt-1 text-sm text-[#2b3f74]">{row.catatan_dosen || "-"}</p>
-                      <p className="mt-2 inline-flex items-center gap-1 text-sm text-[#42588f]">
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Detail Sesi Bimbingan</h3>
+                    <p className="text-sm text-[#5d6c91]">Lihat status sesi, catatan dosen, dan tindak lanjut resume bimbingan.</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                    <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Permohonan</h4>
+                      <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Tanggal/Jam</span>
+                          <span className="font-semibold text-[#1f2d53]">
+                            {formatDate(selectedRow.permintaan_tanggal)} | {selectedRow.permintaan_jam || "-"}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Status Permohonan</span>
+                          <span>
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusPermohonanBadge(
+                                selectedRow.status_permohonan,
+                                selectedIsOverduePending
+                              )}`}
+                            >
+                              {selectedIsOverduePending
+                                ? "Terlampaui (Pending)"
+                                : selectedRow.status_permohonan_label || "-"}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Status Resume</span>
+                          <span>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(selectedRow.status_resume)}`}>
+                              {selectedRow.status_resume_label || "-"}
+                            </span>
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Lokasi</span>
+                          <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Catatan Dosen</h4>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_dosen || "-"}</p>
+                      <p className="mt-3 inline-flex items-center gap-1 text-sm text-[#42588f]">
                         <MapPin className="h-4 w-4" />
-                        Lokasi: {row.lokasi_bimbingan || "-"}
+                        Lokasi: {selectedRow.lokasi_bimbingan || "-"}
                       </p>
                     </div>
                   </div>
 
-                  {row.resume_mahasiswa ? (
-                    <div className="mt-3 rounded-md border border-[#edf1fa] bg-[#fafcff] p-3">
-                      <p className="text-xs font-bold text-[#63739b]">Resume Mahasiswa</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-[#2b3f74]">{row.resume_mahasiswa}</p>
-                    </div>
-                  ) : null}
+                  <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                    <h4 className="text-sm font-black text-[#1b274b]">Pesan Mahasiswa</h4>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.permintaan_pesan || "-"}</p>
+                  </div>
 
-                  {row.catatan_review_resume ? (
-                    <div className="mt-3 rounded-md border border-[#edf1fa] bg-[#fafcff] p-3">
-                      <p className="text-xs font-bold text-[#63739b]">Catatan Review Dosen</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-[#2b3f74]">{row.catatan_review_resume}</p>
-                    </div>
-                  ) : null}
-
-                  {canSubmitResume ? (
-                    <div className="mt-3 rounded-md border border-[#dce6ff] bg-[#f7faff] p-3">
-                      <p className="text-sm font-bold text-[#1b274b]">Kirim Resume Bimbingan</p>
+                  {isRiwayatDetail ? (
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
                       <textarea
-                        rows={3}
-                        value={resumeDraft[row.id] || ""}
-                        onChange={(event) =>
-                          setResumeDraft((prev) => ({
-                            ...prev,
-                            [row.id]: event.target.value,
-                          }))
-                        }
-                        placeholder="Tuliskan ringkasan hasil diskusi dan rencana tindak lanjut..."
-                        className="mt-2 w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                        rows={4}
+                        value={selectedRow.resume_mahasiswa || ""}
+                        readOnly
+                        disabled
+                        placeholder="Resume bimbingan masih belum diisi."
+                        className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-not-allowed disabled:opacity-100"
                       />
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          type="button"
-                          disabled={submittingResumeId === row.id}
-                          onClick={() => handleSubmitResume(row.id)}
-                          className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
-                        >
-                          {submittingResumeId === row.id ? "Mengirim..." : "Kirim Resume"}
-                        </button>
-                      </div>
+                      <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
+                        {selectedResumeText
+                          ? "Resume hanya bisa diubah dari tab Resume Bimbingan."
+                          : "Resume bimbingan masih belum diisi."}
+                      </p>
+                    </div>
+                  ) : selectedRow.resume_mahasiswa ? (
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.resume_mahasiswa || "-"}</p>
                     </div>
                   ) : null}
 
-                  {row.status_permohonan === "approved" && row.status_resume === "submitted" ? (
-                    <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-[#edf3ff] px-3 py-2 text-sm font-semibold text-[#2f63e3]">
-                      <Clock3 className="h-4 w-4" />
-                      Resume sedang menunggu review dosen pembimbing.
+                  {selectedRow.catatan_review_resume ? (
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Catatan Review Dosen</h4>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
                     </div>
                   ) : null}
+                </>
+              )}
 
-                  {row.status_resume === "approved" && row.is_counted ? (
-                    <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-[#e8f8ef] px-3 py-2 text-sm font-semibold text-[#1f8a58]">
-                      <CheckCircle2 className="h-4 w-4" />
-                      Sesi ini sudah dihitung ke progres minimal 8 bimbingan.
-                    </div>
-                  ) : null}
+              {selectedIsOverduePending ? (
+                <div className="rounded-lg border border-[#f6d8d8] bg-[#fff3f3] p-4">
+                  <p className="text-sm font-semibold text-[#8a2f2f]">
+                    Jadwal yang diajukan sudah lewat. Kamu bisa menunggu respons dosen, atau tarik permohonan ini.
+                  </p>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleExpireRequest(selectedRow).catch(() => {});
+                      }}
+                      disabled={expiringRequestId === selectedRow.id}
+                      className="rounded-lg bg-[#b73a3a] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {expiringRequestId === selectedRow.id ? "Memproses..." : "Tarik Permohonan (Expired)"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
 
-                  {row.status_permohonan === "rejected" ? (
-                    <div className="mt-3 inline-flex items-center gap-2 rounded-md bg-[#ffeded] px-3 py-2 text-sm font-semibold text-[#b03d3d]">
-                      <XCircle className="h-4 w-4" />
-                      Permohonan ditolak. Silakan ajukan jadwal baru.
+              {canSubmitResumeOnDetail ? (
+                <div className="rounded-lg border border-[#dce6ff] bg-[#f7faff] p-4">
+                  {shouldShowPreviousRejectedResume ? (
+                    <div className="mb-4 rounded-lg border border-[#e2e9f8] bg-white p-3">
+                      <h5 className="text-sm font-black text-[#1b274b]">Resume Sebelumnya (Perlu Revisi)</h5>
+                      <textarea
+                        rows={4}
+                        value={selectedRow.resume_mahasiswa || ""}
+                        readOnly
+                        disabled
+                        className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-not-allowed disabled:opacity-100"
+                      />
+                      <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
+                        Gunakan resume sebelumnya sebagai referensi sebelum mengirim revisi.
+                      </p>
                     </div>
                   ) : null}
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                  <h4 className="text-sm font-black text-[#1b274b]">Kirim Resume Bimbingan</h4>
+                  <textarea
+                    rows={4}
+                    value={resumeDraft[selectedRow.id] || ""}
+                    onChange={(event) =>
+                      setResumeDraft((prev) => ({
+                        ...prev,
+                        [selectedRow.id]: event.target.value,
+                      }))
+                    }
+                    placeholder="Tuliskan ringkasan hasil diskusi dan rencana tindak lanjut..."
+                    className="mt-2 w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                  />
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      disabled={submittingResumeId === selectedRow.id}
+                      onClick={() => {
+                        handleSubmitResume(selectedRow.id).catch(() => {});
+                      }}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <Send className="h-4 w-4" />
+                      {submittingResumeId === selectedRow.id ? "Mengirim..." : "Kirim Resume"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {isApprovedLikeStatus(selectedRow.status_permohonan) && selectedRow.status_resume === "submitted" ? (
+                <div className="inline-flex items-center gap-2 rounded-md bg-[#edf3ff] px-3 py-2 text-sm font-semibold text-[#2f63e3]">
+                  <Clock3 className="h-4 w-4" />
+                  Resume sedang menunggu review dosen pembimbing.
+                </div>
+              ) : null}
+
+              {selectedRow.status_resume === "approved" && selectedRow.is_counted ? (
+                <div className="inline-flex items-center gap-2 rounded-md bg-[#e8f8ef] px-3 py-2 text-sm font-semibold text-[#1f8a58]">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Sesi ini sudah dihitung ke progres minimal 8 bimbingan.
+                </div>
+              ) : null}
+
+              {selectedRow.status_permohonan === "rejected" ? (
+                <div className="inline-flex items-center gap-2 rounded-md bg-[#ffeded] px-3 py-2 text-sm font-semibold text-[#b03d3d]">
+                  <XCircle className="h-4 w-4" />
+                  Permohonan ditolak. Silakan ajukan jadwal baru.
+                </div>
+              ) : null}
+
+              {selectedRow.status_permohonan === "expired" ? (
+                <div className="inline-flex items-center gap-2 rounded-md bg-[#ffeded] px-3 py-2 text-sm font-semibold text-[#b03d3d]">
+                  <XCircle className="h-4 w-4" />
+                  Permohonan ini sudah expired karena ditarik mahasiswa.
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="rounded-lg border border-[#e8ecf6] bg-[#fafcff] px-4 py-6 text-sm font-semibold text-[#5d6c91]">
+              Data detail tidak ditemukan. Silakan kembali ke list.
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

@@ -21,5 +21,6 @@ router.put("/change-password", authenticateToken, authorizeRole("mahasiswa"), ma
 // ========== BIMBINGAN SKRIPSI ==========
 router.get("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaBimbingan);
 router.post("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.createMahasiswaBimbingan);
+router.post("/bimbingan/:id/expire", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.expireMahasiswaBimbingan);
 router.post("/bimbingan/:id/resume", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.submitResumeMahasiswaBimbingan);
 module.exports = router;

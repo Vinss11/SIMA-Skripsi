@@ -48,7 +48,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       status_permohonan: {
-        type: DataTypes.ENUM("pending", "approved", "rejected"),
+        type: DataTypes.ENUM("pending", "approved", "rescheduled", "rejected", "expired"),
         allowNull: false,
         defaultValue: "pending",
       },
@@ -97,4 +97,3 @@ module.exports = (sequelize, DataTypes) => {
 
   return BimbinganSkripsi;
 };
-

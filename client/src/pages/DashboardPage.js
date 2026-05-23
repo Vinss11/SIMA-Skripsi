@@ -1253,7 +1253,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
           </aside>
 
           <div
-            className="min-w-0 space-y-4 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="min-w-0 flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             style={{ msOverflowStyle: "none" }}
           >
             {mustChangePassword ? (
@@ -1275,7 +1275,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
               />
             ) : null}
 
-            {!mustChangePassword ? (
+            {!mustChangePassword && activeTab !== "bimbingan" ? (
               <MenuSectionHeader
                 icon={activeTabHeader.icon}
                 title={activeTabHeader.title}

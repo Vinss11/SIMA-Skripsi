@@ -12,6 +12,7 @@ const {
 
 const TARGET_SESI_MINIMAL = 8;
 const NON_PENELITIAN_JALUR_SET = new Set(["magang", "pengabdian", "perintisan_bisnis"]);
+const JAKARTA_TIME_ZONE = "Asia/Jakarta";
 
 function isValidJam(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || "").trim());
@@ -20,13 +21,49 @@ function isValidJam(value) {
 function normalizeDateOnly(value) {
   const raw = String(value || "").trim();
   if (!raw) return null;
+  const ymdMatch = raw.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (ymdMatch) return ymdMatch[1];
   const date = new Date(raw);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString().slice(0, 10);
 }
 
+function nowJakartaDateTimeParts() {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: JAKARTA_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(new Date()).reduce((accumulator, part) => {
+    if (part.type !== "literal") {
+      accumulator[part.type] = part.value;
+    }
+    return accumulator;
+  }, {});
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
 function todayDateOnly() {
-  return new Date().toISOString().slice(0, 10);
+  return nowJakartaDateTimeParts().date;
+}
+
+function isScheduleAlreadyPassed(tanggal, jam) {
+  const normalizedTanggal = normalizeDateOnly(tanggal);
+  if (!normalizedTanggal) return false;
+
+  const now = nowJakartaDateTimeParts();
+  if (normalizedTanggal < now.date) return true;
+  if (normalizedTanggal > now.date) return false;
+
+  if (!isValidJam(jam)) return false;
+  return String(jam).trim() <= now.time;
 }
 
 function normalizeResumeStatusLabel(status) {
@@ -44,7 +81,9 @@ function normalizePermohonanStatusLabel(status) {
   const map = {
     pending: "Menunggu Review",
     approved: "Disetujui",
+    rescheduled: "Di-reschedule & Disetujui",
     rejected: "Ditolak",
+    expired: "Expired (Ditarik Mahasiswa)",
   };
   return map[String(status || "").toLowerCase()] || String(status || "-");
 }
@@ -105,7 +144,9 @@ function buildStatFromRows(rows) {
   const total = rows.length;
   const pending_permohonan = rows.filter((item) => item.status_permohonan === "pending").length;
   const approved_permohonan = rows.filter((item) => item.status_permohonan === "approved").length;
+  const rescheduled_permohonan = rows.filter((item) => item.status_permohonan === "rescheduled").length;
   const rejected_permohonan = rows.filter((item) => item.status_permohonan === "rejected").length;
+  const expired_permohonan = rows.filter((item) => item.status_permohonan === "expired").length;
   const submitted_resume = rows.filter((item) => item.status_resume === "submitted").length;
   const approved_resume = rows.filter((item) => item.status_resume === "approved").length;
   const counted_sessions = rows.filter((item) => item.status_resume === "approved" && item.is_counted).length;
@@ -116,7 +157,10 @@ function buildStatFromRows(rows) {
     total_sesi: total,
     pending_permohonan,
     approved_permohonan,
+    rescheduled_permohonan,
+    accepted_permohonan: approved_permohonan + rescheduled_permohonan,
     rejected_permohonan,
+    expired_permohonan,
     submitted_resume,
     approved_resume,
     counted_sessions,
@@ -381,7 +425,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
         mahasiswa_id,
         permintaan_tanggal: tanggal,
         permintaan_jam: jam,
-        status_permohonan: { [Op.in]: ["pending", "approved"] },
+        status_permohonan: { [Op.in]: ["pending", "approved", "rescheduled"] },
       },
       transaction,
       lock: transaction.LOCK.UPDATE,
@@ -480,7 +524,7 @@ exports.submitResumeMahasiswaBimbingan = async (req, res) => {
       });
     }
 
-    if (row.status_permohonan !== "approved") {
+    if (!["approved", "rescheduled"].includes(row.status_permohonan)) {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
@@ -537,9 +581,9 @@ exports.getDosenBimbingan = async (req, res) => {
     const where = { dosen_id };
 
     if (view === "permohonan_sesi") {
-      where.status_permohonan = "pending";
+      where.status_permohonan = { [Op.in]: ["pending", "expired"] };
     } else if (view === "resume_bimbingan") {
-      where.status_permohonan = "approved";
+      where.status_permohonan = { [Op.in]: ["approved", "rescheduled"] };
       where.status_resume = "submitted";
     }
 
@@ -706,13 +750,23 @@ exports.approveDosenBimbingan = async (req, res) => {
 
     if (row.status_permohonan !== "pending") {
       await transaction.rollback();
+      if (row.status_permohonan === "expired") {
+        return res.status(409).json({
+          success: false,
+          message: "Permohonan sudah ditarik mahasiswa (expired) dan tidak bisa diproses.",
+        });
+      }
       return res.status(409).json({
         success: false,
         message: "Permohonan ini sudah diproses sebelumnya",
       });
     }
 
-    row.status_permohonan = "approved";
+    const tanggalSebelumnya = normalizeDateOnly(row.permintaan_tanggal);
+    const jamSebelumnya = String(row.permintaan_jam || "").trim();
+    const isRescheduled = tanggalSebelumnya !== tanggalBimbingan || jamSebelumnya !== jamBimbingan;
+
+    row.status_permohonan = isRescheduled ? "rescheduled" : "approved";
     row.catatan_dosen = catatan;
     row.permintaan_tanggal = tanggalBimbingan;
     row.permintaan_jam = jamBimbingan;
@@ -724,7 +778,9 @@ exports.approveDosenBimbingan = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Permohonan bimbingan berhasil disetujui",
+      message: isRescheduled
+        ? "Permohonan bimbingan berhasil di-reschedule dan disetujui"
+        : "Permohonan bimbingan berhasil disetujui",
       data: serializeRow(row),
     });
   } catch (error) {
@@ -776,6 +832,12 @@ exports.rejectDosenBimbingan = async (req, res) => {
 
     if (row.status_permohonan !== "pending") {
       await transaction.rollback();
+      if (row.status_permohonan === "expired") {
+        return res.status(409).json({
+          success: false,
+          message: "Permohonan sudah ditarik mahasiswa (expired) dan tidak bisa diproses.",
+        });
+      }
       return res.status(409).json({
         success: false,
         message: "Permohonan ini sudah diproses sebelumnya",
@@ -853,7 +915,7 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
       });
     }
 
-    if (row.status_permohonan !== "approved") {
+    if (!["approved", "rescheduled"].includes(row.status_permohonan)) {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
@@ -872,11 +934,9 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
     if (action === "approve") {
       row.status_resume = "approved";
       row.is_counted = true;
-    } else if (action === "revisi") {
-      row.status_resume = "revisi";
-      row.is_counted = false;
     } else {
-      row.status_resume = "rejected";
+      // Sesuai flow terbaru: penolakan review resume mengembalikan ke status revisi.
+      row.status_resume = "revisi";
       row.is_counted = false;
     }
 
@@ -894,6 +954,72 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
   } catch (error) {
     await transaction.rollback();
     console.error("Error di reviewResumeDosenBimbingan:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+exports.expireMahasiswaBimbingan = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const mahasiswa_id = req.user.id;
+    const id = req.params.id;
+    const catatanMahasiswa = String(req.body?.catatan_mahasiswa || "").trim();
+
+    const row = await BimbinganSkripsi.findOne({
+      where: { id, mahasiswa_id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    if (!row) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data bimbingan tidak ditemukan",
+      });
+    }
+
+    if (row.status_permohonan !== "pending") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Permohonan ini tidak bisa ditarik karena sudah diproses.",
+      });
+    }
+
+    if (!isScheduleAlreadyPassed(row.permintaan_tanggal, row.permintaan_jam)) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Permohonan hanya bisa ditarik setelah jadwal yang diajukan terlewati.",
+      });
+    }
+
+    row.status_permohonan = "expired";
+    row.catatan_dosen = catatanMahasiswa || row.catatan_dosen || "Permohonan ditarik oleh mahasiswa.";
+    row.lokasi_bimbingan = null;
+    row.status_resume = "belum_diisi";
+    row.resume_mahasiswa = null;
+    row.catatan_review_resume = null;
+    row.tanggal_review_resume = null;
+    row.is_counted = false;
+    row.tanggal_keputusan = new Date();
+    await row.save({ transaction });
+
+    await transaction.commit();
+
+    return res.json({
+      success: true,
+      message: "Permohonan berhasil ditarik dan diubah menjadi expired.",
+      data: serializeRow(row),
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Error di expireMahasiswaBimbingan:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",

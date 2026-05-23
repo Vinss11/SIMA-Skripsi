@@ -12,6 +12,20 @@ const DOSEN_REVIEW_TABS = [
   { key: "permohonan_sesi", label: "Permohonan Sesi" },
   { key: "resume_bimbingan", label: "Resume Bimbingan" },
 ];
+const DOSEN_REVIEW_TAB_STORAGE_KEY = "sima_dosen_bimbingan_review_active_tab";
+
+function getInitialReviewTab() {
+  if (typeof window === "undefined") return DOSEN_REVIEW_TABS[0].key;
+  try {
+    const saved = window.sessionStorage.getItem(DOSEN_REVIEW_TAB_STORAGE_KEY);
+    if (DOSEN_REVIEW_TABS.some((tab) => tab.key === saved)) {
+      return saved;
+    }
+  } catch (_) {
+    // Ignore storage access error, fallback to default tab.
+  }
+  return DOSEN_REVIEW_TABS[0].key;
+}
 
 function isValidJam(value) {
   return /^([01]\d|2[0-3]):([0-5]\d)$/.test(String(value || "").trim());
@@ -51,7 +65,9 @@ function formatLabel(value) {
 function statusPermohonanBadge(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "approved") return "bg-[#137748] text-white";
+  if (normalized === "rescheduled") return "bg-[#1f4eb4] text-white";
   if (normalized === "rejected") return "bg-[#b73a3a] text-white";
+  if (normalized === "expired") return "bg-[#b73a3a] text-white";
   if (normalized === "pending") return "bg-[#fdf1d4] text-[#a06a00]";
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
@@ -93,7 +109,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [rows, setRows] = useState([]);
-  const [activeReviewTab, setActiveReviewTab] = useState("permohonan_sesi");
+  const [activeReviewTab, setActiveReviewTab] = useState(getInitialReviewTab);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
 
@@ -187,6 +203,15 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
   useEffect(() => {
     onModeChange?.(mode === "list");
   }, [mode, onModeChange]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(DOSEN_REVIEW_TAB_STORAGE_KEY, activeReviewTab);
+    } catch (_) {
+      // Ignore storage access error.
+    }
+  }, [activeReviewTab]);
 
   useEffect(() => {
     setMode("list");
@@ -312,6 +337,19 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
       }
     }
 
+    if (decision === "reject") {
+      const confirmation = await Swal.fire({
+        title: "Tolak permohonan ini?",
+        text: "Mahasiswa harus mengajukan ulang jadwal bimbingan setelah ditolak.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Ya, Tolak Permohonan",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#b73a3a",
+      });
+      if (!confirmation.isConfirmed) return;
+    }
+
     const endpoint =
       decision === "approve"
         ? `/api/dosen/bimbingan/${selectedRowId}/approve`
@@ -354,20 +392,35 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
     const catatanTrimmed = resumeCatatan.trim();
     if (resumeAction === "reject" && catatanTrimmed.length < 5) {
-      showErrorToast("Catatan review minimal 5 karakter untuk penolakan resume.");
+      showErrorToast("Catatan review minimal 5 karakter untuk permintaan revisi resume.");
       return;
     }
+
+    if (resumeAction === "reject") {
+      const confirmation = await Swal.fire({
+        title: "Tolak resume ini?",
+        text: "Mahasiswa wajib memperbaiki resume berdasarkan catatan revisi Anda.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Ya, Tolak Resume",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#b73a3a",
+      });
+      if (!confirmation.isConfirmed) return;
+    }
+
+    const actionPayload = resumeAction === "reject" ? "revisi" : "approve";
 
     setSavingResume(true);
     try {
       await fetchWithAuth(`/api/dosen/bimbingan/${selectedRowId}/review-resume`, {
         method: "POST",
         body: JSON.stringify({
-          action: resumeAction,
+          action: actionPayload,
           catatan_review: catatanTrimmed,
         }),
       });
-      showSuccessToast("Review resume berhasil disimpan.");
+      showSuccessToast(actionPayload === "approve" ? "Resume bimbingan disetujui." : "Resume dikembalikan untuk revisi.");
       setResumeCatatan("");
       await loadData();
       await loadDetail(selectedRowId);
@@ -382,7 +435,11 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
   };
 
   const canReviewResume =
-    selectedRow?.status_permohonan === "approved" && selectedRow?.status_resume === "submitted";
+    ["approved", "rescheduled"].includes(selectedRow?.status_permohonan) && selectedRow?.status_resume === "submitted";
+  const permohonanDecisionTitle =
+    decision === "approve" ? "Approve Permohonan Bimbingan" : "Reject Permohonan Bimbingan";
+  const resumeDecisionTitle =
+    resumeAction === "approve" ? "Approve Resume Bimbingan" : "Reject Resume Bimbingan (Perlu Revisi)";
 
   return (
     <div className={mode === "list" ? "flex min-h-0 flex-1 flex-col gap-4" : "space-y-4"}>
@@ -498,7 +555,12 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                     ? pagedRows.map((row, index) => {
                         const nomorUrut = rangeStart + index;
                         return (
-                          <tr key={`row-bimbingan-dosen-${row.id}`} className="border-b border-[#eff3fb] align-middle">
+                          <tr
+                            key={`row-bimbingan-dosen-${row.id}`}
+                            className={`border-b border-[#eff3fb] align-middle ${
+                              row.status_permohonan === "expired" ? "bg-[#fff7f7]" : ""
+                            }`}
+                          >
                             <td className="px-3 py-2 font-semibold text-[#254080]">{nomorUrut}</td>
                             <td className="px-3 py-2">
                               <p className="font-semibold text-[#1f2d53]">{row.mahasiswa?.nama || "-"}</p>
@@ -537,47 +599,40 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
                                 {activeReviewTab === "permohonan_sesi" ? (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        openActionPage(row, "permohonan_approve").catch(() => {});
-                                      }}
-                                      className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        openActionPage(row, "permohonan_reject").catch(() => {});
-                                      }}
-                                      className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
-                                    >
-                                      Reject
-                                    </button>
-                                  </>
+                                  row.status_permohonan === "pending" ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          openActionPage(row, "permohonan_approve").catch(() => {});
+                                        }}
+                                        className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          openActionPage(row, "permohonan_reject").catch(() => {});
+                                        }}
+                                        className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
+                                      >
+                                        Reject
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <span className="text-xs font-semibold text-[#b73a3a]">Terkunci (Expired)</span>
+                                  )
                                 ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        openActionPage(row, "resume_approve").catch(() => {});
-                                      }}
-                                      className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        openActionPage(row, "resume_reject").catch(() => {});
-                                      }}
-                                      className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
-                                    >
-                                      Reject
-                                    </button>
-                                  </>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      openActionPage(row, "resume_approve").catch(() => {});
+                                    }}
+                                    className="rounded-md bg-[#2f63e3] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
+                                  >
+                                    Detail
+                                  </button>
                                 )}
                               </div>
                             </td>
@@ -634,15 +689,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
       {mode === "detail" ? (
         <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-          <div className="mb-4 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={backToList}
-              className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
-              title="Kembali ke grid bimbingan"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
+          <div className="mb-4">
             <div>
               <h3 className="text-lg font-black text-[#1b274b]">
                 {activeReviewTab === "permohonan_sesi"
@@ -668,13 +715,15 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
                 <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
                   <h4 className="text-sm font-black text-[#1b274b]">Identitas Mahasiswa</h4>
-                  <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                    <p>
-                      <span className="font-semibold">NIM:</span> {selectedRow.mahasiswa?.nim || "-"}
-                    </p>
-                    <p>
-                      <span className="font-semibold">Nama:</span> {selectedRow.mahasiswa?.nama || "-"}
-                    </p>
+                  <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                      <span className="font-semibold text-[#5a6a93]">NIM</span>
+                      <span className="font-semibold text-[#1f2d53]">{selectedRow.mahasiswa?.nim || "-"}</span>
+                    </div>
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                      <span className="font-semibold text-[#5a6a93]">Nama</span>
+                      <span className="font-semibold text-[#1f2d53]">{selectedRow.mahasiswa?.nama || "-"}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -684,16 +733,61 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                       ? "Ringkasan Permohonan Sesi"
                       : "Ringkasan Sesi Bimbingan"}
                   </h4>
-                  <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                    <p>
-                      <span className="font-semibold">Tanggal:</span> {formatDate(selectedRow.permintaan_tanggal)}
-                    </p>
-                    <p>
-                      <span className="font-semibold">Waktu:</span> {selectedRow.permintaan_jam || "-"}
-                    </p>
-                    <p>
-                      <span className="font-semibold">Ruangan:</span> {selectedRow.lokasi_bimbingan || "-"}
-                    </p>
+                  <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                      <span className="font-semibold text-[#5a6a93]">Tanggal Ajuan</span>
+                      <span className="font-semibold text-[#1f2d53]">{formatDate(selectedRow.permintaan_tanggal)}</span>
+                    </div>
+                    {activeReviewTab === "permohonan_sesi" ? (
+                      selectedRow.status_permohonan === "pending" ? (
+                      <>
+                        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Tanggal Bimbingan</span>
+                          <input
+                            type="date"
+                            value={decisionTanggal}
+                            onChange={(event) => setDecisionTanggal(event.target.value)}
+                            className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Waktu Bimbingan</span>
+                          <input
+                            type="time"
+                            value={decisionJam}
+                            onChange={(event) => setDecisionJam(event.target.value)}
+                            className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                      </>
+                      ) : (
+                        <>
+                          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                            <span className="font-semibold text-[#5a6a93]">Tanggal Bimbingan</span>
+                            <span className="font-semibold text-[#1f2d53]">{formatDate(selectedRow.permintaan_tanggal)}</span>
+                          </div>
+                          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                            <span className="font-semibold text-[#5a6a93]">Waktu Bimbingan</span>
+                            <span className="font-semibold text-[#1f2d53]">{selectedRow.permintaan_jam || "-"}</span>
+                          </div>
+                          <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                            <span className="font-semibold text-[#5a6a93]">Ruangan</span>
+                            <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
+                          </div>
+                        </>
+                      )
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Waktu Bimbingan</span>
+                          <span className="font-semibold text-[#1f2d53]">{selectedRow.permintaan_jam || "-"}</span>
+                        </div>
+                        <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                          <span className="font-semibold text-[#5a6a93]">Ruangan</span>
+                          <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
+                        </div>
+                      </>
+                    )}
                     {activeReviewTab === "resume_bimbingan" ? (
                       <p className="text-xs text-[#5e6f98]">
                         Sesi ini sudah disetujui, mahasiswa telah mengirim resume untuk direview.
@@ -710,6 +804,12 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                 </div>
               ) : null}
 
+              {selectedRow.status_permohonan === "expired" ? (
+                <div className="rounded-lg border border-[#f1caca] bg-[#fff2f2] p-4 text-sm font-semibold text-[#9f3f3f]">
+                  Permohonan ini sudah ditarik mahasiswa (expired), sehingga dosen tidak bisa approve/reject.
+                </div>
+              ) : null}
+
               {activeReviewTab === "resume_bimbingan" ? (
                 <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                   <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
@@ -719,31 +819,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
               {selectedRow.status_permohonan === "pending" ? (
                 <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                  <h4 className="text-sm font-black text-[#1b274b]">Keputusan Permohonan Bimbingan</h4>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setDecision("approve")}
-                      className={`rounded-md px-3 py-1 text-sm font-bold ${
-                        decision === "approve"
-                          ? "bg-[#137748] text-white"
-                          : "border border-[#cfd8ea] bg-white text-[#2f4679]"
-                      }`}
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDecision("reject")}
-                      className={`rounded-md px-3 py-1 text-sm font-bold ${
-                        decision === "reject"
-                          ? "bg-[#b73a3a] text-white"
-                          : "border border-[#cfd8ea] bg-white text-[#2f4679]"
-                      }`}
-                    >
-                      Tolak
-                    </button>
-                  </div>
+                  <h4 className="text-sm font-black text-[#1b274b]">{permohonanDecisionTitle}</h4>
 
                   <div className="mt-3">
                     <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">
@@ -761,37 +837,16 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                       className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
                     />
                   </div>
-
                   {decision === "approve" ? (
-                    <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Tanggal Bimbingan</label>
-                        <input
-                          type="date"
-                          value={decisionTanggal}
-                          onChange={(event) => setDecisionTanggal(event.target.value)}
-                          className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Waktu Bimbingan</label>
-                        <input
-                          type="time"
-                          value={decisionJam}
-                          onChange={(event) => setDecisionJam(event.target.value)}
-                          className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-                        />
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Ruangan Bimbingan</label>
-                        <input
-                          type="text"
-                          value={decisionLokasi}
-                          onChange={(event) => setDecisionLokasi(event.target.value)}
-                          placeholder="Contoh: Ruang Dosen 2.14 / Zoom"
-                          className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-                        />
-                      </div>
+                    <div className="mt-3">
+                      <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Ruangan Bimbingan</label>
+                      <input
+                        type="text"
+                        value={decisionLokasi}
+                        onChange={(event) => setDecisionLokasi(event.target.value)}
+                        placeholder="Contoh: Ruang Dosen 2.14 / Zoom"
+                        className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                      />
                     </div>
                   ) : null}
 
@@ -811,46 +866,49 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
               {canReviewResume ? (
                 <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                  <h4 className="text-sm font-black text-[#1b274b]">Review Resume Mahasiswa</h4>
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <h4 className="text-sm font-black text-[#1b274b]">{resumeDecisionTitle}</h4>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <button
                       type="button"
                       onClick={() => setResumeAction("approve")}
-                      className={`rounded-md px-3 py-1 text-sm font-bold ${
+                      className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${
                         resumeAction === "approve"
-                          ? "bg-[#137748] text-white"
-                          : "border border-[#cfd8ea] bg-white text-[#2f4679]"
+                          ? "border-[#137748] bg-[#137748] text-white"
+                          : "border-[#d3dbef] bg-white text-[#415480] hover:bg-[#f5f8ff]"
                       }`}
                     >
-                      Approve
+                      Approve Resume
                     </button>
                     <button
                       type="button"
                       onClick={() => setResumeAction("reject")}
-                      className={`rounded-md px-3 py-1 text-sm font-bold ${
+                      className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${
                         resumeAction === "reject"
-                          ? "bg-[#b73a3a] text-white"
-                          : "border border-[#cfd8ea] bg-white text-[#2f4679]"
+                          ? "border-[#b73a3a] bg-[#b73a3a] text-white"
+                          : "border-[#d3dbef] bg-white text-[#415480] hover:bg-[#f5f8ff]"
                       }`}
                     >
-                      Reject
+                      Tolak (Perlu Revisi)
                     </button>
                   </div>
 
-                  <div className="mt-3">
-                    <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Catatan Review Resume</label>
-                    <textarea
-                      rows={3}
-                      value={resumeCatatan}
-                      onChange={(event) => setResumeCatatan(event.target.value)}
-                      placeholder={
-                        resumeAction === "approve"
-                          ? "Opsional: catatan singkat untuk mahasiswa."
-                          : "Wajib isi alasan penolakan."
-                      }
-                      className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
-                    />
-                  </div>
+                  {resumeAction === "reject" ? (
+                    <div className="mt-3">
+                      <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Catatan Review Resume</label>
+                      <textarea
+                        rows={3}
+                        value={resumeCatatan}
+                        onChange={(event) => setResumeCatatan(event.target.value)}
+                        placeholder="Wajib isi alasan revisi (minimal 5 karakter)."
+                        className="w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-[#5f6f95]">
+                      Klik tombol approve untuk langsung menyetujui resume mahasiswa.
+                    </p>
+                  )}
 
                   <div className="mt-4 flex justify-end">
                     <button
@@ -860,7 +918,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                       className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <Send className="h-4 w-4" />
-                      {savingResume ? "Menyimpan..." : "Simpan Review Resume"}
+                      {savingResume ? "Menyimpan..." : resumeAction === "approve" ? "Approve Resume" : "Simpan Tolak Resume"}
                     </button>
                   </div>
                 </div>
