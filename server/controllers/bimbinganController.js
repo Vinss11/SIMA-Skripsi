@@ -540,6 +540,21 @@ exports.submitResumeMahasiswaBimbingan = async (req, res) => {
       });
     }
 
+    const jadwalSudahDimulai = isScheduleAlreadyPassed(row.permintaan_tanggal, row.permintaan_jam);
+    if (!jadwalSudahDimulai) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Resume belum bisa diisi. Menunggu sesi bimbingan dimulai sesuai jadwal.",
+        detail: {
+          code: "WAITING_SESSION_START",
+          tanggal_bimbingan: normalizeDateOnly(row.permintaan_tanggal),
+          jam_bimbingan: String(row.permintaan_jam || "").trim() || null,
+          timezone: "WIB",
+        },
+      });
+    }
+
     row.resume_mahasiswa = resume;
     row.status_resume = "submitted";
     row.is_counted = false;

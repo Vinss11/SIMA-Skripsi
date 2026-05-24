@@ -54,7 +54,7 @@ const TAB_HEADERS = {
   },
 };
 
-const DOSEN_PAGE_SIZE = 25;
+const DOSEN_PAGE_SIZE = 20;
 const JABATAN_STRUKTURAL_OPTIONS = [
   "Ketua Jurusan Informatika",
   "Sekretaris Jurusan Informatika",
@@ -132,7 +132,7 @@ function DataTable({
   rows,
   columns,
   emptyMessage = "Belum ada data.",
-  heightClass = "h-[520px]",
+  heightClass = "grid-unified-height",
   minTableWidthClass = "min-w-[560px]",
 }) {
   return (
@@ -912,7 +912,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             <DataTable
               title="Mahasiswa per Status"
               rows={summary.mahasiswaPerStatus}
-              heightClass="h-[260px]"
+              heightClass="grid-unified-height"
               columns={[
                 { key: "status_jalur_saat_ini", label: "Status Jalur" },
                 { key: "count", label: "Jumlah", render: (row) => parseCount(row.count) },
@@ -921,7 +921,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             <DataTable
               title="Pengajuan per Status"
               rows={summary.pengajuanPerStatus}
-              heightClass="h-[260px]"
+              heightClass="grid-unified-height"
               columns={[
                 { key: "status", label: "Status Pengajuan" },
                 { key: "count", label: "Jumlah", render: (row) => parseCount(row.count) },
@@ -930,7 +930,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             <DataTable
               title="Pengajuan per Jenis Jalur"
               rows={summary.pengajuanPerJenis}
-              heightClass="h-[260px]"
+              heightClass="grid-unified-height"
               columns={[
                 { key: "jenis_jalur", label: "Jenis Jalur" },
                 { key: "count", label: "Jumlah", render: (row) => parseCount(row.count) },
@@ -939,7 +939,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             <DataTable
               title="Pengajuan per Tipe"
               rows={summary.pengajuanPerTipe}
-              heightClass="h-[260px]"
+              heightClass="grid-unified-height"
               columns={[
                 { key: "tipe_pengajuan", label: "Tipe Pengajuan" },
                 { key: "count", label: "Jumlah", render: (row) => parseCount(row.count) },
@@ -1328,7 +1328,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
 
                     <div
                       ref={dosenGridScrollRef}
-                      className="relative h-[560px] overflow-auto rounded-lg border border-[#e6ecf8]"
+                      className="relative overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height"
                       style={{ overflowAnchor: "none" }}
                     >
                       <table className="min-w-[1850px] text-left text-sm">
@@ -1474,4 +1474,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
 }
 
 export default AdminDashboardPage;
+
+
 

@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 const BIMBINGAN_VIEW_TABS = [
   { key: "riwayat", label: "Riwayat Bimbingan" },
   { key: "permohonan", label: "Permohonan Bimbingan" },
@@ -85,20 +85,23 @@ function getNowJakartaParts() {
   };
 }
 
+function hasScheduleStarted(tanggal, jam) {
+  const normalizedTanggal = String(tanggal || "").trim().slice(0, 10);
+  const normalizedJam = String(jam || "").trim();
+  if (!normalizedTanggal) return false;
+
+  const now = getNowJakartaParts();
+  if (normalizedTanggal < now.date) return true;
+  if (normalizedTanggal > now.date) return false;
+
+  if (!isValidJam(normalizedJam)) return false;
+  return normalizedJam <= now.time;
+}
+
 function isPendingSchedulePassed(row) {
   const statusPermohonan = String(row?.status_permohonan || "").toLowerCase();
   if (statusPermohonan !== "pending") return false;
-
-  const tanggal = String(row?.permintaan_tanggal || "").trim().slice(0, 10);
-  const jam = String(row?.permintaan_jam || "").trim();
-  if (!tanggal) return false;
-
-  const now = getNowJakartaParts();
-  if (tanggal < now.date) return true;
-  if (tanggal > now.date) return false;
-
-  if (!isValidJam(jam)) return false;
-  return jam <= now.time;
+  return hasScheduleStarted(row?.permintaan_tanggal, row?.permintaan_jam);
 }
 
 function isApprovedLikeStatus(status) {
@@ -151,6 +154,43 @@ function normalizeResumeStatusLabel(status) {
     rejected: "Ditolak",
   };
   return map[String(status || "").toLowerCase()] || String(status || "-");
+}
+
+function isResumeEditableStatus(statusResume) {
+  const normalizedStatus = String(statusResume || "").toLowerCase();
+  return normalizedStatus === "belum_diisi" || normalizedStatus === "revisi";
+}
+
+function isResumeWaitingSessionStart(row) {
+  if (!row) return false;
+  return (
+    isApprovedLikeStatus(row.status_permohonan) &&
+    isResumeEditableStatus(row.status_resume) &&
+    !hasScheduleStarted(row.permintaan_tanggal, row.permintaan_jam)
+  );
+}
+
+function canSubmitResumeNow(row) {
+  if (!row) return false;
+  return (
+    isApprovedLikeStatus(row.status_permohonan) &&
+    isResumeEditableStatus(row.status_resume) &&
+    hasScheduleStarted(row.permintaan_tanggal, row.permintaan_jam)
+  );
+}
+
+function getResumeStatusMeta(row) {
+  if (isResumeWaitingSessionStart(row)) {
+    return {
+      label: "Menunggu Sesi Bimbingan",
+      badgeClass: "bg-[#fff5df] text-[#9b6d00]",
+    };
+  }
+
+  return {
+    label: row?.status_resume_label || normalizeResumeStatusLabel(row?.status_resume),
+    badgeClass: resumeBadge(row?.status_resume),
+  };
 }
 
 function showSuccessToast(message) {
@@ -430,6 +470,12 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       return;
     }
 
+    const currentRow = rows.find((item) => Number(item.id) === Number(rowId)) || selectedRow;
+    if (!canSubmitResumeNow(currentRow)) {
+      setError("Resume hanya bisa diisi saat sesi bimbingan sudah dimulai.");
+      return;
+    }
+
     const confirmation = await Swal.fire({
       title: "Kirim resume bimbingan?",
       text: "Resume yang dikirim akan masuk ke antrean review dosen.",
@@ -526,12 +572,12 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
   const selectedIsOverduePending = selectedRow ? isPendingSchedulePassed(selectedRow) : false;
   const selectedResumeText = String(selectedRow?.resume_mahasiswa || "").trim();
-  const isRiwayatDetail = activeViewTab === "riwayat";
+  const selectedResumeStatusMeta = getResumeStatusMeta(selectedRow);
+  const selectedResumeWaitingSessionStart = isResumeWaitingSessionStart(selectedRow);
   const canSubmitResumeOnDetail =
     activeViewTab !== "riwayat" &&
     selectedRow &&
-    isApprovedLikeStatus(selectedRow.status_permohonan) &&
-    (selectedRow.status_resume === "belum_diisi" || selectedRow.status_resume === "revisi");
+    canSubmitResumeNow(selectedRow);
   const shouldShowPreviousRejectedResume =
     canSubmitResumeOnDetail &&
     selectedRow &&
@@ -672,7 +718,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       </section>
 
       {mode === "list" ? (
-        <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-lg font-black text-[#1b274b]">
               {activeViewTab === "permohonan"
@@ -711,7 +757,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             </div>
           </div>
 
-          <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+          <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
               <table className="w-full min-w-[1380px] text-left text-sm">
                 <thead>
                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -741,6 +787,8 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                       const nomorUrut = rangeStart + index;
                       const isOverduePending = isPendingSchedulePassed(row);
                       const isExpired = String(row.status_permohonan || "").toLowerCase() === "expired";
+                      const resumeStatusMeta = getResumeStatusMeta(row);
+                      const canEditResumeNow = canSubmitResumeNow(row);
                       return (
                         <tr
                           key={`row-bimbingan-${row.id}`}
@@ -777,8 +825,8 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                             </>
                           ) : null}
                           <td className="px-3 py-2">
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(row.status_resume)}`}>
-                              {row.status_resume_label || "-"}
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeStatusMeta.badgeClass}`}>
+                              {resumeStatusMeta.label || "-"}
                             </span>
                           </td>
                           {activeViewTab === "resume" ? (
@@ -803,12 +851,12 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                                 onClick={() => openDetail(row)}
                                 className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-2.5 py-1 text-xs font-bold text-white transition hover:brightness-110"
                               >
-                                {activeViewTab === "resume" ? (
+                                {activeViewTab === "resume" && canEditResumeNow ? (
                                   <Pencil className="h-3.5 w-3.5" />
                                 ) : (
                                   <Eye className="h-3.5 w-3.5" />
                                 )}
-                                {activeViewTab === "resume" ? "Isi Resume" : "Detail"}
+                                {activeViewTab === "resume" && canEditResumeNow ? "Isi Resume" : "Detail"}
                               </button>
                               {activeViewTab !== "resume" && isOverduePending ? (
                                 <button
@@ -846,7 +894,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             ) : null}
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
             <p className="text-sm text-[#4f5e86]">
               Menampilkan {rangeStart} - {rangeEnd} dari {filteredRows.length} data sesi bimbingan.
             </p>
@@ -949,8 +997,14 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {activeViewTab === "resume" ? (
                 <>
                   <div>
-                    <h3 className="text-lg font-black text-[#1b274b]">Isi Resume Bimbingan</h3>
-                    <p className="text-sm text-[#5d6c91]">Lengkapi resume sesi bimbingan sebagai tindak lanjut setelah sesi disetujui dosen.</p>
+                    <h3 className="text-lg font-black text-[#1b274b]">
+                      {canSubmitResumeOnDetail ? "Isi Resume Bimbingan" : "Detail Resume Bimbingan"}
+                    </h3>
+                    <p className="text-sm text-[#5d6c91]">
+                      {canSubmitResumeOnDetail
+                        ? "Lengkapi resume sesi bimbingan sebagai tindak lanjut setelah sesi disetujui dosen."
+                        : "Lihat status sesi bimbingan dan tunggu jadwal dimulai sebelum mengirim resume."}
+                    </p>
                   </div>
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
@@ -969,8 +1023,8 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                       <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
                         <span className="font-semibold text-[#5a6a93]">Status Resume</span>
                         <span>
-                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(selectedRow.status_resume)}`}>
-                            {selectedRow.status_resume_label || "-"}
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${selectedResumeStatusMeta.badgeClass}`}>
+                            {selectedResumeStatusMeta.label || "-"}
                           </span>
                         </span>
                       </div>
@@ -1000,91 +1054,64 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                     <p className="text-sm text-[#5d6c91]">Lihat status sesi, catatan dosen, dan tindak lanjut resume bimbingan.</p>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                    <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Permohonan</h4>
-                      <div className="mt-3 space-y-2 text-sm text-[#324c86]">
-                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                          <span className="font-semibold text-[#5a6a93]">Tanggal/Jam</span>
-                          <span className="font-semibold text-[#1f2d53]">
-                            {formatDate(selectedRow.permintaan_tanggal)} | {selectedRow.permintaan_jam || "-"}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                          <span className="font-semibold text-[#5a6a93]">Status Permohonan</span>
-                          <span>
-                            <span
-                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusPermohonanBadge(
-                                selectedRow.status_permohonan,
-                                selectedIsOverduePending
-                              )}`}
-                            >
-                              {selectedIsOverduePending
-                                ? "Terlampaui (Pending)"
-                                : selectedRow.status_permohonan_label || "-"}
-                            </span>
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                          <span className="font-semibold text-[#5a6a93]">Status Resume</span>
-                          <span>
-                            <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${resumeBadge(selectedRow.status_resume)}`}>
-                              {selectedRow.status_resume_label || "-"}
-                            </span>
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                          <span className="font-semibold text-[#5a6a93]">Lokasi</span>
-                          <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
-                        </div>
+                  <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                    <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Permohonan</h4>
+                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Tanggal Bimbingan</span>
+                        <span className="font-semibold text-[#1f2d53]">{formatDate(selectedRow.permintaan_tanggal)}</span>
                       </div>
-                    </div>
-
-                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Catatan Dosen</h4>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_dosen || "-"}</p>
-                      <p className="mt-3 inline-flex items-center gap-1 text-sm text-[#42588f]">
-                        <MapPin className="h-4 w-4" />
-                        Lokasi: {selectedRow.lokasi_bimbingan || "-"}
-                      </p>
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Waktu Bimbingan</span>
+                        <span className="font-semibold text-[#1f2d53]">{selectedRow.permintaan_jam || "-"}</span>
+                      </div>
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Status Permohonan</span>
+                        <span>
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusPermohonanBadge(
+                              selectedRow.status_permohonan,
+                              selectedIsOverduePending
+                            )}`}
+                          >
+                            {selectedIsOverduePending
+                              ? "Terlampaui (Pending)"
+                              : selectedRow.status_permohonan_label || "-"}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Status Resume</span>
+                        <span>
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${selectedResumeStatusMeta.badgeClass}`}>
+                            {selectedResumeStatusMeta.label || "-"}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Pesan Mahasiswa</span>
+                        <p className="whitespace-pre-wrap font-semibold text-[#1f2d53]">{selectedRow.permintaan_pesan || "-"}</p>
+                      </div>
                     </div>
                   </div>
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                    <h4 className="text-sm font-black text-[#1b274b]">Pesan Mahasiswa</h4>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.permintaan_pesan || "-"}</p>
+                    <h4 className="text-sm font-black text-[#1b274b]">Pesan dari Dosen</h4>
+                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Catatan Dosen</span>
+                        <p className="whitespace-pre-wrap font-semibold text-[#1f2d53]">{selectedRow.catatan_dosen || "-"}</p>
+                      </div>
+                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
+                        <span className="font-semibold text-[#5a6a93]">Lokasi</span>
+                        <p className="inline-flex items-center gap-1 font-semibold text-[#1f2d53]">
+                          <MapPin className="h-4 w-4" />
+                          {selectedRow.lokasi_bimbingan || "-"}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
-                  {isRiwayatDetail ? (
-                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
-                      <textarea
-                        rows={4}
-                        value={selectedRow.resume_mahasiswa || ""}
-                        readOnly
-                        disabled
-                        placeholder="Resume bimbingan masih belum diisi."
-                        className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-not-allowed disabled:opacity-100"
-                      />
-                      <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
-                        {selectedResumeText
-                          ? "Resume hanya bisa diubah dari tab Resume Bimbingan."
-                          : "Resume bimbingan masih belum diisi."}
-                      </p>
-                    </div>
-                  ) : selectedRow.resume_mahasiswa ? (
-                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.resume_mahasiswa || "-"}</p>
-                    </div>
-                  ) : null}
-
-                  {selectedRow.catatan_review_resume ? (
-                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Catatan Review Dosen</h4>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
-                    </div>
-                  ) : null}
                 </>
               )}
 
@@ -1105,6 +1132,15 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                       {expiringRequestId === selectedRow.id ? "Memproses..." : "Tarik Permohonan (Expired)"}
                     </button>
                   </div>
+                </div>
+              ) : null}
+
+              {activeViewTab === "resume" && selectedResumeWaitingSessionStart ? (
+                <div className="rounded-lg border border-[#f4e4b5] bg-[#fff9e8] p-4">
+                  <p className="text-sm font-semibold text-[#8b6400]">
+                    Resume belum bisa diisi. Tunggu sampai sesi dimulai pada {formatDate(selectedRow.permintaan_tanggal)} pukul{" "}
+                    {selectedRow.permintaan_jam || "--:--"} WIB.
+                  </p>
                 </div>
               ) : null}
 
@@ -1189,8 +1225,43 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           )}
         </section>
       ) : null}
+
+      {mode === "detail" && selectedRow && activeViewTab !== "resume" ? (
+        <section className="rounded-xl border border-[#d9e4ff] bg-white p-4 shadow-sm">
+          <div>
+            <h3 className="text-xl font-black text-[#1b274b]">Detail Resume Bimbingan</h3>
+    
+          </div>
+
+          <div className="mt-4 rounded-xl border-2 border-[#c9d9ff] bg-[#f3f7ff] p-5">
+            <label className="block text-sm font-semibold text-[#5a6a93]">Resume Mahasiswa</label>
+            <textarea
+              rows={5}
+              value={selectedRow.resume_mahasiswa || ""}
+              readOnly
+              disabled
+              placeholder="Resume bimbingan masih belum diisi."
+              className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-not-allowed disabled:opacity-100"
+            />
+            <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
+              {selectedResumeText
+                ? "Resume hanya bisa diubah dari tab Resume Bimbingan."
+                : "Resume bimbingan masih belum diisi."}
+            </p>
+
+            {selectedRow.catatan_review_resume ? (
+              <div className="mt-4 rounded-lg border border-[#dbe5ff] bg-white p-3">
+                <p className="text-sm font-black text-[#1b274b]">Pesan Revisi Dosen</p>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
 
 export default BimbinganPage;
+
+

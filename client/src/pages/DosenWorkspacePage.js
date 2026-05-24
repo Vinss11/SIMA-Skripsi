@@ -23,10 +23,10 @@ import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
 import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
 
-const TOPIK_PAGE_SIZE = 25;
-const MASTER_TOPIK_PAGE_SIZE = 25;
-const MAHASISWA_MASTER_PAGE_SIZE = 25;
-const DOSEN_GRID_PAGE_SIZE = 25;
+const TOPIK_PAGE_SIZE = 20;
+const MASTER_TOPIK_PAGE_SIZE = 20;
+const MAHASISWA_MASTER_PAGE_SIZE = 20;
+const DOSEN_GRID_PAGE_SIZE = 20;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
 const PERIODE_FORM_INITIAL = {
   ketua_itsc_dosen_id: "",
@@ -2110,7 +2110,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[2300px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -2255,7 +2255,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </div>
                     </div>
 
-                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                       <table className="w-full min-w-[2060px] table-fixed text-left text-sm">
                         <colgroup>
                           <col style={{ width: "56px" }} />
@@ -2492,7 +2492,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                           <h4 className="text-sm font-black text-[#1b274b]">Detail Topik/Judul</h4>
                           {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
-                            <div className="mt-3 overflow-auto rounded-lg border border-[#e6ecf8]">
+                            <div className="mt-3 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                               <table className="w-full min-w-[700px] text-left text-sm">
                                 <thead>
                                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -2670,7 +2670,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="w-full min-w-[1400px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -2798,7 +2798,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             {!loading && activeTab === "pamit" ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <h3 className="mb-3 text-lg font-black text-[#1b274b]">Grid Pamit Mahasiswa</h3>
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[1200px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -2910,7 +2910,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="w-full min-w-[1400px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3054,7 +3054,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </div>
                     </div>
 
-                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                       <table className="w-full min-w-[1200px] text-left text-sm">
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3257,7 +3257,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="w-full min-w-[1400px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3392,7 +3392,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="w-full min-w-[1300px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3557,7 +3557,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   <>
                     <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <h3 className="mb-3 text-lg font-black text-[#1b274b]">Riwayat Periode</h3>
-                      <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                      <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                         <table className="w-full min-w-[980px] text-left text-sm">
                           <thead>
                             <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3958,7 +3958,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </div>
                     </div>
 
-                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+                    <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                       <table className="w-full min-w-[1300px] text-left text-sm">
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -4278,3 +4278,5 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 }
 
 export default DosenWorkspacePage;
+
+

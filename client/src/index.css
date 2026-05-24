@@ -21,3 +21,9 @@
     box-sizing: border-box;
   }
 }
+
+@layer components {
+  .grid-unified-height {
+    height: 440px;
+  }
+}

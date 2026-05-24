@@ -4,11 +4,10 @@ import {
   ArrowLeft,
   Eye,
   FileSearch,
-  Info,
   RefreshCcw,
 } from "lucide-react";
 
-const PAGE_SIZE = 8;
+const PAGE_SIZE = 20;
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -140,7 +139,6 @@ function StatusPage({
   session,
   apiBaseUrl,
   onSessionExpired,
-  initialJalurStatus = null,
   initialSubmissions = [],
 }) {
   const [loading, setLoading] = useState(true);
@@ -149,7 +147,6 @@ function StatusPage({
   const [detailError, setDetailError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
 
-  const [jalurStatus, setJalurStatus] = useState(initialJalurStatus);
   const [submissions, setSubmissions] = useState(
     Array.isArray(initialSubmissions) ? initialSubmissions : []
   );
@@ -196,21 +193,14 @@ function StatusPage({
       setLoading(true);
       setError("");
 
-      const [jalurResult, submissionsResult] = await Promise.allSettled([
-        fetchWithAuth("/api/jalur/status"),
-        fetchWithAuth("/api/submissions"),
-      ]);
+      const submissionsResult = await fetchWithAuth("/api/submissions")
+        .then((value) => ({ status: "fulfilled", value }))
+        .catch((reason) => ({ status: "rejected", reason }));
 
       if (!isMounted) return;
 
       const issues = [];
       let nextSubmissions = [];
-
-      if (jalurResult.status === "fulfilled") {
-        setJalurStatus(jalurResult.value || null);
-      } else if (jalurResult.reason?.message !== "__SESSION_EXPIRED__") {
-        issues.push(jalurResult.reason?.message || "Gagal memuat status jalur.");
-      }
 
       if (submissionsResult.status === "fulfilled") {
         nextSubmissions = Array.isArray(submissionsResult.value) ? submissionsResult.value : [];
@@ -301,7 +291,7 @@ function StatusPage({
     return () => {
       isMounted = false;
     };
-  }, [apiBaseUrl, onSessionExpired, selectedSubmissionId, session.token]);
+  }, [apiBaseUrl, onSessionExpired, refreshTick, selectedSubmissionId, session.token]);
 
   const filteredRows = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -365,7 +355,6 @@ function StatusPage({
     return [];
   }, [selectedDetail]);
   const selectedStatusChip = getStatusChip(selectedDetail?.status || selectedSubmissionRow?.status || "-");
-  const currentJalurStatus = formatLabel(jalurStatus?.current_status || "belum_mengajukan");
 
   const handleOpenDetail = (submissionId) => {
     setSelectedSubmissionId(submissionId);
@@ -376,63 +365,38 @@ function StatusPage({
     setViewMode("list");
   };
 
+  const handleRefresh = () => {
+    setRefreshTick((prev) => prev + 1);
+  };
+
   return (
     <div className="w-full space-y-4 pb-8">
-      <div className="rounded-lg border border-[#dbe6ff] bg-[#f5f9ff] p-4">
-        <div className="flex items-start gap-3">
-          <Info className="mt-0.5 h-5 w-5 text-[#2f63e3]" />
-          <p className="text-sm text-[#2a457f]">
-            Halaman ini menampilkan riwayat dan detail status pengajuan Anda, termasuk tahapan review, alasan
-            persetujuan, dan alasan penolakan.
-          </p>
-        </div>
-        <p className="mt-2 text-xs font-semibold text-[#405993]">
-          Status jalur saat ini: <span className="font-black">{currentJalurStatus}</span>
-        </p>
-      </div>
-
       {error ? (
         <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-4 py-3 text-sm font-semibold text-[#a03f3f]">
           {error}
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-[#e8ecf6] bg-white px-3 pt-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-1 border-b border-[#e8edf8] pb-2">
-          {viewMode === "detail" ? (
-            <button
-              type="button"
-              onClick={handleBackToList}
-              className="mr-1 inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d0dbf3] text-[#7a8cbc] transition hover:bg-[#f4f7ff]"
-              title="Kembali ke riwayat"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          ) : null}
+      
+
+      <section className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={() => setViewMode("list")}
-            className={`inline-flex items-center gap-2 border-b-2 px-3 py-2 text-lg font-black transition ${
-              viewMode === "list"
-                ? "border-[#2f63e3] text-[#1a2648]"
-                : "border-transparent text-[#5d6f97] hover:text-[#1a2648]"
-            }`}
+            onClick={handleBackToList}
+            disabled={viewMode === "list"}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            aria-label="Kembali ke daftar riwayat pengajuan"
           >
-            <FileSearch className="h-4 w-4" />
-            Riwayat Pengajuan
+            <ArrowLeft className="h-4 w-4" />
           </button>
           <button
             type="button"
-            onClick={() => selectedSubmissionId && setViewMode("detail")}
-            disabled={!selectedSubmissionId}
-            className={`inline-flex items-center gap-2 border-b-2 px-3 py-2 text-lg font-black transition ${
-              viewMode === "detail"
-                ? "border-[#2f63e3] text-[#1a2648]"
-                : "border-transparent text-[#5d6f97] hover:text-[#1a2648]"
-            } disabled:cursor-not-allowed disabled:opacity-45`}
+            onClick={handleRefresh}
+            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
           >
-            <Eye className="h-4 w-4" />
-            Detail Pengajuan
+            <RefreshCcw className="h-4 w-4" />
+            Refresh
           </button>
         </div>
       </section>
@@ -441,32 +405,22 @@ function StatusPage({
       <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-black text-[#1a2648]">Riwayat Pengajuan</h3>
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <Activity className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
-              <input
-                type="text"
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setPage(1);
-                }}
-                placeholder="Cari ID, jalur, tipe, status, judul, cluster, kode..."
-                className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setRefreshTick((prev) => prev + 1)}
-              className="inline-flex items-center gap-2 rounded-lg border border-[#c7d3ee] px-3 py-2 text-sm font-bold text-[#30457c] transition hover:bg-[#f4f7ff]"
-            >
-              <RefreshCcw className="h-4 w-4" />
-              Refresh
-            </button>
+          <div className="relative">
+            <Activity className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+            <input
+              type="text"
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Cari ID, jalur, tipe, status, judul, cluster, kode..."
+              className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+            />
           </div>
         </div>
 
-        <div className="relative h-[360px] overflow-auto rounded-lg border border-[#e6ecf8]">
+        <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
           <table className="w-full min-w-[1150px] text-left text-sm">
             <thead>
               <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -719,3 +673,5 @@ function StatusPage({
 }
 
 export default StatusPage;
+
+

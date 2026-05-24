@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
 const DOSEN_REVIEW_TABS = [
   { key: "permohonan_sesi", label: "Permohonan Sesi" },
   { key: "resume_bimbingan", label: "Resume Bimbingan" },
@@ -492,7 +492,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
       {mode === "list" ? (
         <>
-          <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+          <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h3 className="text-lg font-black text-[#1b274b]">
                 {activeReviewTab === "permohonan_sesi"
@@ -533,7 +533,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
               </div>
             ) : null}
 
-            <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8]">
+            <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
               <table className="w-full min-w-[1280px] text-left text-sm">
                 <thead>
                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -656,7 +656,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
               ) : null}
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
               <p className="text-sm text-[#4f5e86]">
                 Menampilkan {rangeStart} - {rangeEnd} dari {filteredRows.length} data{" "}
                 {activeReviewTab === "permohonan_sesi" ? "permohonan sesi" : "resume bimbingan"}.
@@ -933,3 +933,5 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 }
 
 export default DosenBimbinganReviewPage;
+
+

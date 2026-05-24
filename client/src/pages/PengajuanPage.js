@@ -425,7 +425,7 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
           </div>
         </div>
 
-        <div className="relative h-[430px] overflow-auto rounded-lg border border-[#e6ecf8]">
+        <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
           <table className="min-w-[1200px] text-left text-sm">
             <thead>
               <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -1718,3 +1718,5 @@ function PengajuanPage({
 }
 
 export default PengajuanPage;
+
+
