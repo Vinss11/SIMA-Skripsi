@@ -46,6 +46,12 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "mahasiswa_id",
         as: "bimbinganSkripsis",
       });
+
+      // Relasi dokumen kesiapan sidang (one to one)
+      Mahasiswa.hasOne(models.DokumenSidang, {
+        foreignKey: "mahasiswa_id",
+        as: "dokumenSidang",
+      });
     }
 
     // Method untuk compare password

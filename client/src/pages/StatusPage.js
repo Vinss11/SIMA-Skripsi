@@ -420,7 +420,7 @@ function StatusPage({
           </div>
         </div>
 
-        <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
+        <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height-dynamic">
           <table className="w-full min-w-[1150px] text-left text-sm">
             <thead>
               <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">

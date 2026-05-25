@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const dosenController = require("../controllers/dosenController");
 const bimbinganController = require("../controllers/bimbinganController");
+const dokumenSidangController = require("../controllers/dokumenSidangController");
 const submissionController = require("../controllers/submissionController");
 const jalurController = require("../controllers/jalurController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
@@ -72,6 +73,32 @@ router.post(
   authenticateToken,
   authorizeRole("dosen", "sekretaris_prodi"),
   bimbinganController.reviewResumeDosenBimbingan
+);
+
+// ========== REVIEW DOKUMEN SIDANG ==========
+router.get(
+  "/dokumen-sidang",
+  authenticateToken,
+  authorizeRole("dosen"),
+  dokumenSidangController.getDosenDokumenSidangList
+);
+router.get(
+  "/dokumen-sidang/:mahasiswaId",
+  authenticateToken,
+  authorizeRole("dosen"),
+  dokumenSidangController.getDosenDokumenSidangDetail
+);
+router.post(
+  "/dokumen-sidang/:mahasiswaId/review",
+  authenticateToken,
+  authorizeRole("dosen"),
+  dokumenSidangController.reviewDosenDokumenSidang
+);
+router.get(
+  "/dokumen-sidang/:mahasiswaId/:jenis/download",
+  authenticateToken,
+  authorizeRole("dosen"),
+  dokumenSidangController.downloadDosenDokumenSidang
 );
 
 module.exports = router;

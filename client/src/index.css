@@ -26,4 +26,9 @@
   .grid-unified-height {
     height: 440px;
   }
+
+  .grid-unified-height-dynamic {
+    min-height: 440px;
+    height: clamp(440px, 56vh, 640px);
+  }
 }

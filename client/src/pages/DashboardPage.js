@@ -22,6 +22,7 @@ import {
 import PengajuanPage from "./PengajuanPage";
 import StatusPage from "./StatusPage";
 import BimbinganPage from "./BimbinganPage";
+import MahasiswaDokumenSidangPage from "./MahasiswaDokumenSidangPage";
 import MenuSectionHeader from "../components/MenuSectionHeader";
 
 const NAV_ITEMS = [
@@ -1334,10 +1335,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
               />
             ) : null}
             {!loading && !mustChangePassword && activeTab === "dokumen" ? (
-              <div className="rounded-xl border border-[#e8ecf6] bg-white p-6 shadow-sm">
-                <h3 className="text-xl font-black text-[#1a2648]">Dokumen</h3>
-                <p className="mt-2 text-sm text-[#5f6b89]">Halaman dokumen belum diimplementasikan. Nanti bisa kita sambungkan ke API dokumen skripsi.</p>
-              </div>
+              <MahasiswaDokumenSidangPage
+                session={session}
+                apiBaseUrl={apiBaseUrl}
+                onSessionExpired={onSessionExpired}
+              />
             ) : null}
           </div>
         </div>
