@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, RefreshCcw, Search, XCircle } from "lucide-react";
 
 const PAGE_SIZE = 20;
@@ -50,7 +50,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
     draft_skripsi: "",
   });
 
-  const fetchWithAuth = async (path, options = {}) => {
+  const fetchWithAuth = useCallback(async (path, options = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       headers: {
@@ -73,9 +73,9 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       }
     }
     return response;
-  };
+  }, [apiBaseUrl, onSessionExpired, session.token]);
 
-  const loadRows = async () => {
+  const loadRows = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
@@ -93,9 +93,9 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
-  const loadDetail = async (mahasiswaId) => {
+  const loadDetail = useCallback(async (mahasiswaId) => {
     if (!mahasiswaId) return;
     try {
       setLoadingDetail(true);
@@ -119,11 +119,11 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
     } finally {
       setLoadingDetail(false);
     }
-  };
+  }, [fetchWithAuth]);
 
   useEffect(() => {
     loadRows().catch(() => {});
-  }, []);
+  }, [loadRows]);
 
   const filteredRows = useMemo(() => {
     const keyword = String(query || "").trim().toLowerCase();
@@ -477,4 +477,3 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
 }
 
 export default DosenDokumenSidangReviewPage;
-

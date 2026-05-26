@@ -3,6 +3,7 @@ const router = express.Router();
 const sekretarisController = require("../controllers/sekretarisController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const jalurController = require("../controllers/jalurController");
+const sidangAkhirController = require("../controllers/sidangAkhirController");
 const { authenticateToken, authorizeRole, authorizeSekretarisAccess } = require("../middlewares/authMiddleware");
 
 router.get("/pendaftaran", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPendaftaranList);
@@ -51,5 +52,56 @@ router.get("/mitra-magang", authenticateToken, authorizeRole("sekretaris_prodi")
 router.post("/mitra-magang", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, mitraMagangController.createMitraMagang);
 router.put("/mitra-magang/:id", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, mitraMagangController.updateMitraMagang);
 router.delete("/mitra-magang/:id", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, mitraMagangController.deleteMitraMagang);
+
+// ========== SIDANG AKHIR ==========
+router.get(
+  "/sidang/periode",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.getSekretarisSidangOverview
+);
+router.post(
+  "/sidang/periode",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.createSekretarisPeriodeSidang
+);
+router.patch(
+  "/sidang/periode/:id",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.updateSekretarisPeriodeSidang
+);
+router.post(
+  "/sidang/periode/:id/open",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.openSekretarisPeriodeSidang
+);
+router.post(
+  "/sidang/periode/:id/close",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.closeSekretarisPeriodeSidang
+);
+router.get(
+  "/sidang/queue",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.getSekretarisSidangQueue
+);
+router.post(
+  "/sidang/assign",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.autoAssignSidangPenguji
+);
 
 module.exports = router;

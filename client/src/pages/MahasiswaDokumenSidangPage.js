@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FileUp, RefreshCcw } from "lucide-react";
 
 const DOKUMEN_ORDER = ["transkrip", "cept", "draft_skripsi"];
@@ -33,18 +33,28 @@ function statusSidangLabel(status) {
   return "Menunggu Minimal 8 Bimbingan Tervalidasi";
 }
 
+function registrationStatusLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "scheduled") return "Terjadwal";
+  if (normalized === "cancelled") return "Dibatalkan";
+  if (normalized === "submitted") return "Menunggu Penjadwalan";
+  return "-";
+}
+
 function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [data, setData] = useState(null);
+  const [sidangStatus, setSidangStatus] = useState(null);
   const [uploadingKey, setUploadingKey] = useState("");
+  const [registeringSidang, setRegisteringSidang] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState({
     transkrip: null,
     cept: null,
     draft_skripsi: null,
   });
 
-  const fetchWithAuth = async (path, options = {}) => {
+  const fetchWithAuth = useCallback(async (path, options = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, {
       ...options,
       headers: {
@@ -67,18 +77,26 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     }
 
     return response;
-  };
+  }, [apiBaseUrl, onSessionExpired, session.token]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError("");
-      const response = await fetchWithAuth("/api/mahasiswa/dokumen-sidang");
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || !payload?.success) {
-        throw new Error(payload?.message || "Gagal memuat data dokumen sidang.");
+      const [docResponse, sidangResponse] = await Promise.all([
+        fetchWithAuth("/api/mahasiswa/dokumen-sidang"),
+        fetchWithAuth("/api/mahasiswa/sidang/status"),
+      ]);
+      const docPayload = await docResponse.json().catch(() => null);
+      const sidangPayload = await sidangResponse.json().catch(() => null);
+      if (!docResponse.ok || !docPayload?.success) {
+        throw new Error(docPayload?.message || "Gagal memuat data dokumen sidang.");
       }
-      setData(payload.data || null);
+      if (!sidangResponse.ok || !sidangPayload?.success) {
+        throw new Error(sidangPayload?.message || "Gagal memuat status pendaftaran sidang.");
+      }
+      setData(docPayload.data || null);
+      setSidangStatus(sidangPayload.data || null);
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
         setError(loadError.message || "Gagal memuat data dokumen sidang.");
@@ -86,11 +104,11 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [fetchWithAuth]);
 
   useEffect(() => {
     loadData().catch(() => {});
-  }, []);
+  }, [loadData]);
 
   const dokumenItems = useMemo(() => {
     const source = data?.dokumen || {};
@@ -101,6 +119,7 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   const counted = Number(gate.counted_sessions || 0);
   const target = Number(gate.target_minimum || 8);
   const progressPercent = Math.max(0, Math.min(100, Math.round((counted / Math.max(target, 1)) * 100)));
+  const canRegisterSidang = Boolean(sidangStatus?.can_register);
 
   const handlePickFile = (docKey, file) => {
     setSelectedFiles((prev) => ({
@@ -169,6 +188,31 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     }
   };
 
+  const handleRegisterSidang = async () => {
+    const agree = window.confirm("Kirim pendaftaran sidang sekarang?");
+    if (!agree) return;
+
+    try {
+      setRegisteringSidang(true);
+      setError("");
+      const response = await fetchWithAuth("/api/mahasiswa/sidang/daftar", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Pendaftaran sidang gagal.");
+      }
+      await loadData();
+    } catch (registerError) {
+      if (registerError.message !== "__SESSION_EXPIRED__") {
+        setError(registerError.message || "Pendaftaran sidang gagal.");
+      }
+    } finally {
+      setRegisteringSidang(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       {error ? (
@@ -208,6 +252,72 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
           <p className="mt-2 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#7a5a00]">
             Upload dokumen akan terbuka otomatis setelah mencapai minimal {target} bimbingan tervalidasi.
           </p>
+        ) : null}
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black text-[#1b274b]">Pendaftaran Sidang</h3>
+            <p className="text-sm text-[#5d6c91]">
+              Daftar sidang dibuka saat semua dokumen disetujui dosen pembimbing dan periode sidang sedang open.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={!canRegisterSidang || registeringSidang}
+            onClick={() => {
+              handleRegisterSidang().catch(() => {});
+            }}
+            className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {registeringSidang ? "Memproses..." : "Daftar Sidang"}
+          </button>
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3 text-sm text-[#42588f]">
+            <p>
+              <span className="font-semibold">Periode Aktif:</span>{" "}
+              {sidangStatus?.periode_sidang_aktif?.label_periode || "-"}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Window Pendaftaran:</span>{" "}
+              {sidangStatus?.periode_sidang_aktif
+                ? `${sidangStatus.periode_sidang_aktif.tanggal_mulai_pendaftaran} s/d ${sidangStatus.periode_sidang_aktif.tanggal_selesai_pendaftaran}`
+                : "-"}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Status Window:</span>{" "}
+              {sidangStatus?.registration_window_open ? "Sedang Dibuka" : "Belum/Tidak Dibuka"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3 text-sm text-[#42588f]">
+            <p>
+              <span className="font-semibold">Status Pendaftaran Anda:</span>{" "}
+              {registrationStatusLabel(sidangStatus?.pendaftaran_aktif?.status)}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Terdaftar Pada:</span>{" "}
+              {formatDateTime(sidangStatus?.pendaftaran_aktif?.registered_at)}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Jadwal Sidang:</span>{" "}
+              {sidangStatus?.pendaftaran_aktif?.jadwal_sidang
+                ? `${sidangStatus.pendaftaran_aktif.jadwal_sidang.tanggal_sidang} | Sesi ${sidangStatus.pendaftaran_aktif.jadwal_sidang.sesi_ke} (${sidangStatus.pendaftaran_aktif.jadwal_sidang.sesi_mulai}-${sidangStatus.pendaftaran_aktif.jadwal_sidang.sesi_selesai}) | ${sidangStatus.pendaftaran_aktif.jadwal_sidang.ruangan}`
+                : "Belum dijadwalkan"}
+            </p>
+          </div>
+        </div>
+
+        {sidangStatus?.pendaftaran_aktif?.jadwal_sidang ? (
+          <div className="mt-3 rounded-lg border border-[#d6f1e2] bg-[#ecfaf2] p-3 text-sm text-[#196a45]">
+            <p className="font-semibold">Penguji Sidang</p>
+            <p className="mt-1">
+              {sidangStatus.pendaftaran_aktif.jadwal_sidang.penguji1?.nama || "-"} dan{" "}
+              {sidangStatus.pendaftaran_aktif.jadwal_sidang.penguji2?.nama || "-"}
+            </p>
+          </div>
         ) : null}
       </section>
 
@@ -287,4 +397,3 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
 }
 
 export default MahasiswaDokumenSidangPage;
-

@@ -22,6 +22,9 @@ import {
 import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
 import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
+import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
+import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
+import SekretarisSidangManagementPage from "./SekretarisSidangManagementPage";
 
 const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
@@ -147,6 +150,8 @@ function buildNavItems(isSekretaris) {
       { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
       { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
+      { id: "dokumen-sidang-review", label: "Review Dokumen Sidang", icon: FileSpreadsheet },
+      { id: "ketersediaan-sidang", label: "Ketersediaan Sidang", icon: CalendarRange },
       { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
       { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
       { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
@@ -166,6 +171,7 @@ function buildNavItems(isSekretaris) {
     { id: "master-topik", label: "Master Topik", icon: BookOpenCheck },
     { id: "penjaluran", label: "Manajemen Penjaluran", icon: ListChecks },
     { id: "periode", label: "Manajemen Periode", icon: CalendarRange },
+    { id: "sidang-akhir", label: "Manajemen Sidang", icon: CalendarRange },
   ];
 }
 
@@ -190,6 +196,16 @@ function buildTabHeaders(isSekretaris) {
       icon: MessageSquareText,
       title: "Review Bimbingan",
       subtitle: "Terima, jadwalkan, dan review sesi bimbingan mahasiswa.",
+    },
+    "dokumen-sidang-review": {
+      icon: FileSpreadsheet,
+      title: "Review Dokumen Sidang",
+      subtitle: "Review dokumen CEPT, transkrip, dan draft skripsi per mahasiswa.",
+    },
+    "ketersediaan-sidang": {
+      icon: CalendarRange,
+      title: "Ketersediaan Sidang",
+      subtitle: "Isi ketersediaan hari/sesi sebagai penguji, tipe penilaian, dan kondisi fisik.",
     },
     submissions: {
       icon: ClipboardList,
@@ -233,6 +249,11 @@ function buildTabHeaders(isSekretaris) {
       icon: CalendarRange,
       title: "Manajemen Periode",
       subtitle: "Buka, lihat, dan kelola periode penjaluran sesuai jadwal akademik.",
+    },
+    "sidang-akhir": {
+      icon: CalendarRange,
+      title: "Manajemen Sidang",
+      subtitle: "Set periode sidang, ruangan, jadwal, serta auto-assign penguji.",
     },
   };
 }
@@ -334,6 +355,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     !loading &&
     ((activeTab === "master-mahasiswa" || activeTab === "mahasiswa-bimbingan") ||
       (activeTab === "bimbingan-review" && isBimbinganReviewListMode) ||
+      activeTab === "dokumen-sidang-review" ||
+      activeTab === "ketersediaan-sidang" ||
       (activeTab === "submissions" && submissionMode === "list") ||
       activeTab === "permohonan-extend" ||
       activeTab === "pamit" ||
@@ -342,7 +365,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       (isSekretaris && activeTab === "penjaluran") ||
       (isSekretaris &&
         activeTab === "periode" &&
-        periodeMode === "list"));
+        periodeMode === "list") ||
+      (isSekretaris && activeTab === "sidang-akhir"));
 
   useEffect(() => {
     if (activeTab !== "bimbingan-review") {
@@ -2224,6 +2248,30 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 onSessionExpired={onSessionExpired}
                 onRefreshParent={loadAllData}
                 onModeChange={(isListMode) => setIsBimbinganReviewListMode(Boolean(isListMode))}
+              />
+            ) : null}
+
+            {!loading && activeTab === "dokumen-sidang-review" ? (
+              <DosenDokumenSidangReviewPage
+                session={session}
+                apiBaseUrl={apiBaseUrl}
+                onSessionExpired={onSessionExpired}
+              />
+            ) : null}
+
+            {!loading && activeTab === "ketersediaan-sidang" ? (
+              <DosenSidangKetersediaanPage
+                session={session}
+                apiBaseUrl={apiBaseUrl}
+                onSessionExpired={onSessionExpired}
+              />
+            ) : null}
+
+            {!loading && isSekretaris && activeTab === "sidang-akhir" ? (
+              <SekretarisSidangManagementPage
+                session={session}
+                apiBaseUrl={apiBaseUrl}
+                onSessionExpired={onSessionExpired}
               />
             ) : null}
 

@@ -3,6 +3,7 @@ const router = express.Router();
 const mahasiswaController = require("../controllers/mahasiswaController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
+const sidangAkhirController = require("../controllers/sidangAkhirController");
 const sidangDokumenUpload = require("../middlewares/sidangDokumenUploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
@@ -70,5 +71,19 @@ router.get(
   authenticateToken,
   authorizeRole("mahasiswa"),
   dokumenSidangController.downloadMahasiswaDokumenSidang
+);
+
+// ========== PENDAFTARAN SIDANG AKHIR ==========
+router.get(
+  "/sidang/status",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  sidangAkhirController.getMahasiswaSidangStatus
+);
+router.post(
+  "/sidang/daftar",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  sidangAkhirController.registerMahasiswaSidang
 );
 module.exports = router;

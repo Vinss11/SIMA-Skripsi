@@ -3,6 +3,7 @@ const router = express.Router();
 const dosenController = require("../controllers/dosenController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
+const sidangAkhirController = require("../controllers/sidangAkhirController");
 const submissionController = require("../controllers/submissionController");
 const jalurController = require("../controllers/jalurController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
@@ -99,6 +100,20 @@ router.get(
   authenticateToken,
   authorizeRole("dosen"),
   dokumenSidangController.downloadDosenDokumenSidang
+);
+
+// ========== KETERSEDIAAN PENGUJI SIDANG ==========
+router.get(
+  "/sidang/ketersediaan",
+  authenticateToken,
+  authorizeRole("dosen"),
+  sidangAkhirController.getDosenKetersediaanSidang
+);
+router.post(
+  "/sidang/ketersediaan",
+  authenticateToken,
+  authorizeRole("dosen"),
+  sidangAkhirController.saveDosenKetersediaanSidang
 );
 
 module.exports = router;

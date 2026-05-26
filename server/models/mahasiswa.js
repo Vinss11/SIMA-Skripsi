@@ -52,6 +52,16 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "mahasiswa_id",
         as: "dokumenSidang",
       });
+
+      Mahasiswa.hasMany(models.PendaftaranSidang, {
+        foreignKey: "mahasiswa_id",
+        as: "pendaftaranSidangs",
+      });
+
+      Mahasiswa.hasMany(models.JadwalSidangPenguji, {
+        foreignKey: "mahasiswa_id",
+        as: "jadwalSidangMahasiswa",
+      });
     }
 
     // Method untuk compare password

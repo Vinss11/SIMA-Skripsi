@@ -70,6 +70,31 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "dosen_id",
         as: "bimbinganSkripsis",
       });
+
+      Dosen.hasMany(models.PendaftaranSidang, {
+        foreignKey: "dosen_pembimbing_id",
+        as: "pendaftaranSidangBimbingan",
+      });
+
+      Dosen.hasMany(models.KetersediaanPengujiSidang, {
+        foreignKey: "dosen_id",
+        as: "ketersediaanPengujiSidang",
+      });
+
+      Dosen.hasMany(models.JadwalSidangPenguji, {
+        foreignKey: "dosen_pembimbing_id",
+        as: "jadwalSidangSebagaiPembimbing",
+      });
+
+      Dosen.hasMany(models.JadwalSidangPenguji, {
+        foreignKey: "penguji1_dosen_id",
+        as: "jadwalSidangSebagaiPenguji1",
+      });
+
+      Dosen.hasMany(models.JadwalSidangPenguji, {
+        foreignKey: "penguji2_dosen_id",
+        as: "jadwalSidangSebagaiPenguji2",
+      });
     }
 
     // Method untuk compare password
