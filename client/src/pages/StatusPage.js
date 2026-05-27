@@ -135,6 +135,37 @@ function getClusterDisplay(row) {
   return clusters.length > 0 ? clusters.join(", ") : "-";
 }
 
+function getSidangStatusChip(sidangStatus) {
+  const registration = sidangStatus?.pendaftaran_aktif;
+  if (registration?.jadwal_sidang) {
+    return {
+      label: "Sudah Dijadwalkan",
+      className: "bg-[#dff3ec] text-[#106d45]",
+    };
+  }
+  if (String(registration?.status || "").toLowerCase() === "submitted") {
+    return {
+      label: "Menunggu Penjadwalan",
+      className: "bg-[#fdf1d4] text-[#a06a00]",
+    };
+  }
+  if (sidangStatus?.can_register) {
+    return {
+      label: "Siap Daftar Sidang",
+      className: "bg-[#eef3ff] text-[#2f63e3]",
+    };
+  }
+  return {
+    label: "Belum Dijadwalkan",
+    className: "bg-[#eef2fb] text-[#5c6d95]",
+  };
+}
+
+function buildSidangScheduleLabel(schedule) {
+  if (!schedule) return "Belum ada jadwal sidang.";
+  return `${schedule.tanggal_sidang} | Sesi ${schedule.sesi_ke} (${schedule.sesi_mulai}-${schedule.sesi_selesai}) | ${schedule.ruangan}`;
+}
+
 function StatusPage({
   session,
   apiBaseUrl,
@@ -145,7 +176,9 @@ function StatusPage({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
+  const [sidangStatusError, setSidangStatusError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
+  const [sidangStatus, setSidangStatus] = useState(null);
 
   const [submissions, setSubmissions] = useState(
     Array.isArray(initialSubmissions) ? initialSubmissions : []
@@ -192,10 +225,12 @@ function StatusPage({
     const loadSummary = async () => {
       setLoading(true);
       setError("");
+      setSidangStatusError("");
 
-      const submissionsResult = await fetchWithAuth("/api/submissions")
-        .then((value) => ({ status: "fulfilled", value }))
-        .catch((reason) => ({ status: "rejected", reason }));
+      const [submissionsResult, sidangResult] = await Promise.allSettled([
+        fetchWithAuth("/api/submissions"),
+        fetchWithAuth("/api/mahasiswa/sidang/status"),
+      ]);
 
       if (!isMounted) return;
 
@@ -208,6 +243,15 @@ function StatusPage({
       } else if (submissionsResult.reason?.message !== "__SESSION_EXPIRED__") {
         setSubmissions([]);
         issues.push(submissionsResult.reason?.message || "Gagal memuat data submissions.");
+      }
+
+      if (sidangResult.status === "fulfilled") {
+        setSidangStatus(sidangResult.value || null);
+      } else if (sidangResult.reason?.message !== "__SESSION_EXPIRED__") {
+        setSidangStatus(null);
+        setSidangStatusError(
+          sidangResult.reason?.message || "Gagal memuat informasi jadwal sidang."
+        );
       }
 
       if (nextSubmissions.length === 0) {
@@ -355,6 +399,17 @@ function StatusPage({
     return [];
   }, [selectedDetail]);
   const selectedStatusChip = getStatusChip(selectedDetail?.status || selectedSubmissionRow?.status || "-");
+  const sidangChip = getSidangStatusChip(sidangStatus);
+  const sidangSchedule =
+    sidangStatus?.pendaftaran_aktif?.jadwal_sidang ||
+    sidangStatus?.riwayat_terakhir?.jadwal_sidang ||
+    null;
+  const sidangPenguji1 = sidangSchedule?.penguji1?.nama || "-";
+  const sidangPenguji2 = sidangSchedule?.penguji2?.nama || "-";
+  const countedSessions = Number(sidangStatus?.eligibility?.counted_sessions || 0);
+  const targetSessions = Number(sidangStatus?.eligibility?.target_minimum || 8);
+  const approvedDocs = Number(sidangStatus?.eligibility?.dokumen_approved_count || 0);
+  const totalDocs = Number(sidangStatus?.eligibility?.dokumen_total_required || 3);
 
   const handleOpenDetail = (submissionId) => {
     setSelectedSubmissionId(submissionId);
@@ -399,6 +454,64 @@ function StatusPage({
             Refresh
           </button>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-black text-[#1a2648]">Status Sidang Akhir</h3>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${sidangChip.className}`}>
+            {sidangChip.label}
+          </span>
+        </div>
+
+        {sidangStatusError ? (
+          <div className="mb-3 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+            {sidangStatusError}
+          </div>
+        ) : null}
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-[#e8ecf6] bg-white p-3 text-sm text-[#26355f]">
+            <p>
+              <span className="font-semibold">Progress Bimbingan:</span> {countedSessions} / {targetSessions}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Dokumen Approved:</span> {approvedDocs} / {totalDocs}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Periode Sidang Aktif:</span>{" "}
+              {sidangStatus?.periode_sidang_aktif?.label_periode || "-"}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Status Pendaftaran:</span>{" "}
+              {sidangStatus?.pendaftaran_aktif?.status
+                ? formatLabel(sidangStatus.pendaftaran_aktif.status)
+                : "Belum daftar / belum ada periode aktif"}
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-[#e8ecf6] bg-white p-3 text-sm text-[#26355f]">
+            <p>
+              <span className="font-semibold">Jadwal & Ruangan:</span> {buildSidangScheduleLabel(sidangSchedule)}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Penguji 1:</span> {sidangPenguji1}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Penguji 2:</span> {sidangPenguji2}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Terdaftar Pada:</span>{" "}
+              {formatDateTime(sidangStatus?.pendaftaran_aktif?.registered_at)}
+            </p>
+          </div>
+        </div>
+
+        {!sidangSchedule ? (
+          <p className="mt-3 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#7a5a00]">
+            Informasi penguji dan ruangan akan muncul otomatis setelah sekretaris prodi menyelesaikan penjadwalan sidang.
+          </p>
+        ) : null}
       </section>
 
       {viewMode === "list" ? (

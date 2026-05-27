@@ -44,6 +44,7 @@ function registrationStatusLabel(status) {
 function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [fieldMessages, setFieldMessages] = useState({});
   const [data, setData] = useState(null);
   const [sidangStatus, setSidangStatus] = useState(null);
   const [uploadingKey, setUploadingKey] = useState("");
@@ -126,12 +127,19 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
       ...prev,
       [docKey]: file || null,
     }));
+    setFieldMessages((prev) => ({
+      ...prev,
+      [docKey]: "",
+    }));
   };
 
   const handleUpload = async (docKey) => {
     const selected = selectedFiles[docKey];
     if (!selected) {
-      setError("Pilih file terlebih dahulu sebelum upload.");
+      setFieldMessages((prev) => ({
+        ...prev,
+        [docKey]: "Silakan pilih file terlebih dahulu sebelum upload.",
+      }));
       return;
     }
 
@@ -141,6 +149,10 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     try {
       setUploadingKey(docKey);
       setError("");
+      setFieldMessages((prev) => ({
+        ...prev,
+        [docKey]: "",
+      }));
       const response = await fetchWithAuth(`/api/mahasiswa/dokumen-sidang/${docKey}/upload`, {
         method: "POST",
         body: formData,
@@ -154,10 +166,17 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
         ...prev,
         [docKey]: null,
       }));
+      setFieldMessages((prev) => ({
+        ...prev,
+        [docKey]: "Dokumen berhasil diunggah dan masuk antrean review dosen pembimbing.",
+      }));
       await loadData();
     } catch (uploadError) {
       if (uploadError.message !== "__SESSION_EXPIRED__") {
-        setError(uploadError.message || "Upload dokumen gagal.");
+        setFieldMessages((prev) => ({
+          ...prev,
+          [docKey]: uploadError.message || "Upload dokumen gagal.",
+        }));
       }
     } finally {
       setUploadingKey("");
@@ -248,6 +267,11 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
         <p className="mt-3 text-sm font-semibold text-[#415480]">
           Status Tahap Sidang: {statusSidangLabel(data?.status_pendaftaran_sidang)}
         </p>
+        {data?.summary?.semua_disetujui ? (
+          <p className="mt-2 rounded-lg border border-[#d6f1e2] bg-[#ecfaf2] px-3 py-2 text-sm font-semibold text-[#196a45]">
+            Semua dokumen sudah disetujui dosen pembimbing. Silakan daftar sidang ketika periode sidang dibuka.
+          </p>
+        ) : null}
         {!gate.unlocked ? (
           <p className="mt-2 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#7a5a00]">
             Upload dokumen akan terbuka otomatis setelah mencapai minimal {target} bimbingan tervalidasi.
@@ -352,9 +376,37 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
                     <span className="font-semibold">Terakhir Upload:</span> {formatDateTime(item.uploaded_at)}
                   </p>
                   <p>
-                    <span className="font-semibold">Catatan Review Dosen:</span> {item.review_note || "-"}
+                    <span className="font-semibold">Pesan Dosen Pembimbing:</span> {item.review_note || "-"}
                   </p>
                 </div>
+
+                {String(item.status || "").toLowerCase() === "revisi" ? (
+                  <div className="mt-2 rounded-lg border border-[#f6d7d7] bg-[#fff2f2] px-3 py-2 text-sm text-[#a03f3f]">
+                    <p className="font-semibold">Pesan Revisi</p>
+                    <p className="mt-1">
+                      {item.review_note ||
+                        "Dokumen ini perlu direvisi. Mohon unggah ulang sesuai arahan dosen pembimbing."}
+                    </p>
+                  </div>
+                ) : null}
+
+                {String(item.status || "").toLowerCase() === "submitted" ? (
+                  <div className="mt-2 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm text-[#7a5a00]">
+                    Dokumen sedang menunggu review dosen pembimbing.
+                  </div>
+                ) : null}
+
+                {fieldMessages[item.key] ? (
+                  <div
+                    className={`mt-2 rounded-lg border px-3 py-2 text-sm ${
+                      String(fieldMessages[item.key]).toLowerCase().includes("berhasil")
+                        ? "border-[#d6f1e2] bg-[#ecfaf2] text-[#196a45]"
+                        : "border-[#f6d7d7] bg-[#fff2f2] text-[#a03f3f]"
+                    }`}
+                  >
+                    {fieldMessages[item.key]}
+                  </div>
+                ) : null}
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <input

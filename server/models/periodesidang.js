@@ -43,6 +43,21 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         unique: true,
       },
+      periode: {
+        type: DataTypes.ENUM("uts", "uas"),
+        allowNull: false,
+        defaultValue: "uts",
+      },
+      tahun_akademik: {
+        type: DataTypes.STRING(20),
+        allowNull: false,
+        defaultValue: "-",
+      },
+      semester: {
+        type: DataTypes.ENUM("ganjil", "genap"),
+        allowNull: false,
+        defaultValue: "ganjil",
+      },
       tanggal_mulai_pendaftaran: {
         type: DataTypes.DATEONLY,
         allowNull: false,

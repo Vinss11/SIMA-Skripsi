@@ -365,8 +365,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       (isSekretaris && activeTab === "penjaluran") ||
       (isSekretaris &&
         activeTab === "periode" &&
-        periodeMode === "list") ||
-      (isSekretaris && activeTab === "sidang-akhir"));
+        periodeMode === "list"));
 
   useEffect(() => {
     if (activeTab !== "bimbingan-review") {

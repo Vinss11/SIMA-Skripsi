@@ -3,6 +3,9 @@ const {
   sequelize,
   Mahasiswa,
   Dosen,
+  Pengajuan,
+  PendaftaranPenjaluran,
+  PeriodePenjaluran,
   BimbinganSkripsi,
   DokumenSidang,
   PeriodeSidang,
@@ -19,6 +22,39 @@ const DOKUMEN_APPROVAL_FIELDS = [
   "cept_status",
   "draft_skripsi_status",
 ];
+
+function normalizePeriodeType(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "uts" || raw === "uas") return raw;
+  return null;
+}
+
+function normalizeAcademicSemester(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (raw === "ganjil" || raw === "genap") return raw;
+  return null;
+}
+
+function formatPeriodeLabel(periodeType, semester, tahunAkademik) {
+  const tipe = String(periodeType || "").toUpperCase();
+  const semesterLabel = String(semester || "").trim().toLowerCase() === "genap" ? "Genap" : "Ganjil";
+  return `${tipe} ${semesterLabel} ${String(tahunAkademik || "").trim()}`.trim();
+}
+
+function resolveJudulSkripsiFromPengajuan(pengajuan) {
+  if (!pengajuan) return "-";
+  if (pengajuan.judul_mandiri) return pengajuan.judul_mandiri;
+  return (
+    pengajuan.topik_1_judul ||
+    pengajuan.topik_2_judul ||
+    pengajuan.topik_3_judul ||
+    "-"
+  );
+}
 
 function nowJakartaDateTime() {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -171,6 +207,9 @@ function serializePeriode(periode, hariRows = [], roomRows = []) {
   return {
     id: item.id,
     label_periode: item.label_periode,
+    periode: item.periode,
+    tahun_akademik: item.tahun_akademik,
+    semester: item.semester,
     tanggal_mulai_pendaftaran: item.tanggal_mulai_pendaftaran,
     tanggal_selesai_pendaftaran: item.tanggal_selesai_pendaftaran,
     status: item.status,
@@ -620,17 +659,44 @@ exports.getSekretarisSidangOverview = async (req, res) => {
 exports.createSekretarisPeriodeSidang = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const labelPeriode = String(req.body?.label_periode || "").trim();
+    const todayJakarta = nowJakartaDateTime().date;
+    const periodeType = normalizePeriodeType(req.body?.periode || req.body?.tipe_periode);
+    const tahunAkademik = String(req.body?.tahun_akademik || "").trim();
+    const semesterAkademik = normalizeAcademicSemester(req.body?.semester);
+    const rawLabelPeriode = String(req.body?.label_periode || "").trim();
+    const labelPeriode =
+      rawLabelPeriode || formatPeriodeLabel(periodeType, semesterAkademik, tahunAkademik);
     const tanggalMulai = normalizeDateOnly(req.body?.tanggal_mulai_pendaftaran);
     const tanggalSelesai = normalizeDateOnly(req.body?.tanggal_selesai_pendaftaran);
     const tanggalSidangList = sanitizeDateList(req.body?.tanggal_sidang_list);
     const ruanganList = sanitizeRoomList(req.body?.ruangan_list);
 
+    if (!periodeType) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field periode wajib diisi (uts/uas).",
+      });
+    }
+    if (!tahunAkademik) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field tahun akademik wajib diisi.",
+      });
+    }
+    if (!semesterAkademik) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field semester wajib diisi (ganjil/genap).",
+      });
+    }
     if (!labelPeriode) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: "Label periode sidang wajib diisi.",
+        message: "Label periode sidang tidak valid.",
       });
     }
     if (!tanggalMulai || !tanggalSelesai || tanggalMulai > tanggalSelesai) {
@@ -640,21 +706,20 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
         message: "Tanggal pendaftaran sidang tidak valid.",
       });
     }
-    if (tanggalSidangList.length === 0) {
+    if (tanggalMulai < todayJakarta) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: "Pilih minimal 1 hari sidang (Senin-Jumat).",
+        message: "Tanggal mulai pendaftaran sidang tidak boleh sebelum hari ini.",
       });
     }
-    if (ruanganList.length === 0) {
+    if (tanggalSelesai < todayJakarta) {
       await transaction.rollback();
       return res.status(400).json({
         success: false,
-        message: "Pilih minimal 1 ruangan sidang.",
+        message: "Tanggal selesai pendaftaran sidang tidak boleh sebelum hari ini.",
       });
     }
-
     const already = await PeriodeSidang.findOne({
       where: { label_periode: labelPeriode },
       transaction,
@@ -671,6 +736,9 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
     const periode = await PeriodeSidang.create(
       {
         label_periode: labelPeriode,
+        periode: periodeType,
+        tahun_akademik: tahunAkademik,
+        semester: semesterAkademik,
         tanggal_mulai_pendaftaran: tanggalMulai,
         tanggal_selesai_pendaftaran: tanggalSelesai,
         status: "draft",
@@ -680,21 +748,25 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
       { transaction }
     );
 
-    await PeriodeSidangHari.bulkCreate(
-      tanggalSidangList.map((tanggal) => ({
-        periode_sidang_id: periode.id,
-        tanggal_sidang: tanggal,
-      })),
-      { transaction }
-    );
+    if (tanggalSidangList.length > 0) {
+      await PeriodeSidangHari.bulkCreate(
+        tanggalSidangList.map((tanggal) => ({
+          periode_sidang_id: periode.id,
+          tanggal_sidang: tanggal,
+        })),
+        { transaction }
+      );
+    }
 
-    await PeriodeSidangRuangan.bulkCreate(
-      ruanganList.map((ruangan) => ({
-        periode_sidang_id: periode.id,
-        nama_ruangan: ruangan,
-      })),
-      { transaction }
-    );
+    if (ruanganList.length > 0) {
+      await PeriodeSidangRuangan.bulkCreate(
+        ruanganList.map((ruangan) => ({
+          periode_sidang_id: periode.id,
+          nama_ruangan: ruangan,
+        })),
+        { transaction }
+      );
+    }
 
     await transaction.commit();
 
@@ -705,6 +777,9 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
         periode: {
           id: periode.id,
           label_periode: periode.label_periode,
+          periode: periode.periode,
+          tahun_akademik: periode.tahun_akademik,
+          semester: periode.semester,
           tanggal_mulai_pendaftaran: periode.tanggal_mulai_pendaftaran,
           tanggal_selesai_pendaftaran: periode.tanggal_selesai_pendaftaran,
           status: periode.status,
@@ -731,6 +806,7 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
 exports.updateSekretarisPeriodeSidang = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
+    const todayJakarta = nowJakartaDateTime().date;
     const periodeId = Number(req.params.id);
     if (!periodeId) {
       await transaction.rollback();
@@ -759,6 +835,9 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
       });
     }
 
+    const periodeType = normalizePeriodeType(req.body?.periode || req.body?.tipe_periode || periode.periode);
+    const tahunAkademik = String(req.body?.tahun_akademik || periode.tahun_akademik || "").trim();
+    const semesterAkademik = normalizeAcademicSemester(req.body?.semester || periode.semester);
     const tanggalMulai = normalizeDateOnly(req.body?.tanggal_mulai_pendaftaran || periode.tanggal_mulai_pendaftaran);
     const tanggalSelesai = normalizeDateOnly(req.body?.tanggal_selesai_pendaftaran || periode.tanggal_selesai_pendaftaran);
     if (!tanggalMulai || !tanggalSelesai || tanggalMulai > tanggalSelesai) {
@@ -768,8 +847,46 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
         message: "Rentang tanggal pendaftaran tidak valid.",
       });
     }
+    if (tanggalMulai < todayJakarta) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tanggal mulai pendaftaran sidang tidak boleh sebelum hari ini.",
+      });
+    }
+    if (tanggalSelesai < todayJakarta) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tanggal selesai pendaftaran sidang tidak boleh sebelum hari ini.",
+      });
+    }
 
-    const nextLabel = String(req.body?.label_periode || periode.label_periode).trim();
+    if (!periodeType) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field periode wajib diisi (uts/uas).",
+      });
+    }
+    if (!tahunAkademik) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field tahun akademik wajib diisi.",
+      });
+    }
+    if (!semesterAkademik) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Field semester wajib diisi (ganjil/genap).",
+      });
+    }
+
+    const nextLabel = String(
+      req.body?.label_periode || formatPeriodeLabel(periodeType, semesterAkademik, tahunAkademik)
+    ).trim();
     if (!nextLabel) {
       await transaction.rollback();
       return res.status(400).json({
@@ -795,6 +912,9 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
     }
 
     periode.label_periode = nextLabel;
+    periode.periode = periodeType;
+    periode.tahun_akademik = tahunAkademik;
+    periode.semester = semesterAkademik;
     periode.tanggal_mulai_pendaftaran = tanggalMulai;
     periode.tanggal_selesai_pendaftaran = tanggalSelesai;
     periode.catatan = String(req.body?.catatan || periode.catatan || "").trim() || null;
@@ -1044,22 +1164,47 @@ exports.getSekretarisSidangQueue = async (req, res) => {
       order: [["registered_at", "ASC"]],
     });
 
-    return res.json({
-      success: true,
-      data: {
-        periode_sidang: {
-          id: targetPeriode.id,
-          label_periode: targetPeriode.label_periode,
-          tanggal_mulai_pendaftaran: targetPeriode.tanggal_mulai_pendaftaran,
-          tanggal_selesai_pendaftaran: targetPeriode.tanggal_selesai_pendaftaran,
-          status: targetPeriode.status,
-        },
-        rows: rows.map((row) => ({
+    const enrichedRows = await Promise.all(
+      rows.map(async (row) => {
+        const mahasiswaId = Number(row.mahasiswa_id || row.mahasiswa?.id || 0);
+        const [latestPengajuan, latestPendaftaranPenjaluran] = await Promise.all([
+          Pengajuan.findOne({
+            where: { mahasiswa_id: mahasiswaId },
+            attributes: [
+              "id",
+              "status",
+              "jenis_jalur",
+              "tipe_pengajuan",
+              "judul_mandiri",
+              "topik_1_judul",
+              "topik_2_judul",
+              "topik_3_judul",
+              "updatedAt",
+            ],
+            order: [["updatedAt", "DESC"]],
+          }),
+          PendaftaranPenjaluran.findOne({
+            where: { mahasiswa_id: mahasiswaId },
+            attributes: ["id", "semester_mahasiswa", "jalur", "jenis_jalur_diambil", "penjaluran_baru", "createdAt"],
+            include: [
+              {
+                model: PeriodePenjaluran,
+                as: "periode",
+                attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+              },
+            ],
+            order: [["createdAt", "DESC"]],
+          }),
+        ]);
+
+        return {
           id: row.id,
           status: row.status,
           registered_at: row.registered_at,
           assigned_at: row.assigned_at,
           catatan: row.catatan,
+          judul_skripsi: resolveJudulSkripsiFromPengajuan(latestPengajuan),
+          semester_penjaluran: latestPendaftaranPenjaluran?.semester_mahasiswa || null,
           mahasiswa: row.mahasiswa
             ? {
                 id: row.mahasiswa.id,
@@ -1077,7 +1222,24 @@ exports.getSekretarisSidangQueue = async (req, res) => {
               }
             : null,
           jadwal_sidang: serializeJadwalRow(row.jadwalSidang),
-        })),
+        };
+      })
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        periode_sidang: {
+          id: targetPeriode.id,
+          label_periode: targetPeriode.label_periode,
+          periode: targetPeriode.periode,
+          tahun_akademik: targetPeriode.tahun_akademik,
+          semester: targetPeriode.semester,
+          tanggal_mulai_pendaftaran: targetPeriode.tanggal_mulai_pendaftaran,
+          tanggal_selesai_pendaftaran: targetPeriode.tanggal_selesai_pendaftaran,
+          status: targetPeriode.status,
+        },
+        rows: enrichedRows,
       },
     });
   } catch (error) {
@@ -1085,6 +1247,207 @@ exports.getSekretarisSidangQueue = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan saat memuat antrian sidang.",
+      error: error.message,
+    });
+  }
+};
+
+exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
+  try {
+    const registrationId = Number(req.params.id || 0);
+    if (!registrationId) {
+      return res.status(400).json({
+        success: false,
+        message: "ID pendaftaran sidang tidak valid.",
+      });
+    }
+
+    const registration = await PendaftaranSidang.findByPk(registrationId, {
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: [
+            "id",
+            "nim",
+            "nama",
+            "email",
+            "angkatan",
+            "status_jalur_saat_ini",
+            "dosen_pembimbing_skripsi_id",
+          ],
+          include: [
+            {
+              model: Dosen,
+              as: "dosenPembimbingSkripsi",
+              attributes: ["id", "nama", "nik", "email"],
+            },
+          ],
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbing",
+          attributes: ["id", "nama", "nik", "email"],
+        },
+        {
+          model: PeriodeSidang,
+          as: "periodeSidang",
+          attributes: [
+            "id",
+            "label_periode",
+            "periode",
+            "tahun_akademik",
+            "semester",
+            "tanggal_mulai_pendaftaran",
+            "tanggal_selesai_pendaftaran",
+            "status",
+          ],
+        },
+        {
+          model: JadwalSidangPenguji,
+          as: "jadwalSidang",
+          include: [
+            { model: Dosen, as: "penguji1", attributes: ["id", "nama", "nik"] },
+            { model: Dosen, as: "penguji2", attributes: ["id", "nama", "nik"] },
+          ],
+        },
+      ],
+    });
+
+    if (!registration) {
+      return res.status(404).json({
+        success: false,
+        message: "Data pendaftaran sidang tidak ditemukan.",
+      });
+    }
+
+    const mahasiswaId = Number(registration.mahasiswa_id || 0);
+    const [latestPengajuan, latestPendaftaranPenjaluran, eligibility] = await Promise.all([
+      Pengajuan.findOne({
+        where: { mahasiswa_id: mahasiswaId },
+        attributes: [
+          "id",
+          "status",
+          "jenis_jalur",
+          "tipe_pengajuan",
+          "judul_mandiri",
+          "topik_1_kode",
+          "topik_1_judul",
+          "topik_2_kode",
+          "topik_2_judul",
+          "topik_3_kode",
+          "topik_3_judul",
+          "updatedAt",
+        ],
+        order: [["updatedAt", "DESC"]],
+      }),
+      PendaftaranPenjaluran.findOne({
+        where: { mahasiswa_id: mahasiswaId },
+        attributes: [
+          "id",
+          "jalur",
+          "semester_mahasiswa",
+          "jenis_jalur_diambil",
+          "penjaluran_sebelumnya",
+          "penjaluran_baru",
+          "createdAt",
+        ],
+        include: [
+          {
+            model: PeriodePenjaluran,
+            as: "periode",
+            attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+          },
+        ],
+        order: [["createdAt", "DESC"]],
+      }),
+      getMahasiswaSidangEligibility(mahasiswaId),
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        pendaftaran_sidang: {
+          id: registration.id,
+          status: registration.status,
+          registered_at: registration.registered_at,
+          assigned_at: registration.assigned_at,
+          catatan: registration.catatan,
+        },
+        periode_sidang: registration.periodeSidang
+          ? {
+              id: registration.periodeSidang.id,
+              label_periode: registration.periodeSidang.label_periode,
+              periode: registration.periodeSidang.periode,
+              tahun_akademik: registration.periodeSidang.tahun_akademik,
+              semester: registration.periodeSidang.semester,
+              tanggal_mulai_pendaftaran: registration.periodeSidang.tanggal_mulai_pendaftaran,
+              tanggal_selesai_pendaftaran: registration.periodeSidang.tanggal_selesai_pendaftaran,
+              status: registration.periodeSidang.status,
+            }
+          : null,
+        mahasiswa: registration.mahasiswa
+          ? {
+              id: registration.mahasiswa.id,
+              nim: registration.mahasiswa.nim,
+              nama: registration.mahasiswa.nama,
+              email: registration.mahasiswa.email,
+              angkatan: registration.mahasiswa.angkatan,
+              status_jalur_saat_ini: registration.mahasiswa.status_jalur_saat_ini,
+            }
+          : null,
+        dosen_pembimbing: registration.dosenPembimbing
+          ? {
+              id: registration.dosenPembimbing.id,
+              nama: registration.dosenPembimbing.nama,
+              nik: registration.dosenPembimbing.nik,
+              email: registration.dosenPembimbing.email,
+            }
+          : registration.mahasiswa?.dosenPembimbingSkripsi
+          ? {
+              id: registration.mahasiswa.dosenPembimbingSkripsi.id,
+              nama: registration.mahasiswa.dosenPembimbingSkripsi.nama,
+              nik: registration.mahasiswa.dosenPembimbingSkripsi.nik,
+              email: registration.mahasiswa.dosenPembimbingSkripsi.email,
+            }
+          : null,
+        pengajuan_skripsi: latestPengajuan
+          ? {
+              id: latestPengajuan.id,
+              status: latestPengajuan.status,
+              jenis_jalur: latestPengajuan.jenis_jalur,
+              tipe_pengajuan: latestPengajuan.tipe_pengajuan,
+              judul_skripsi: resolveJudulSkripsiFromPengajuan(latestPengajuan),
+              updated_at: latestPengajuan.updatedAt,
+            }
+          : null,
+        penjaluran_terakhir: latestPendaftaranPenjaluran
+          ? {
+              id: latestPendaftaranPenjaluran.id,
+              jalur: latestPendaftaranPenjaluran.jalur,
+              semester_mahasiswa: latestPendaftaranPenjaluran.semester_mahasiswa,
+              jenis_jalur_diambil: latestPendaftaranPenjaluran.jenis_jalur_diambil,
+              penjaluran_baru: latestPendaftaranPenjaluran.penjaluran_baru,
+              penjaluran_sebelumnya: latestPendaftaranPenjaluran.penjaluran_sebelumnya,
+              periode: latestPendaftaranPenjaluran.periode
+                ? {
+                    id: latestPendaftaranPenjaluran.periode.id,
+                    label_periode: latestPendaftaranPenjaluran.periode.label_periode,
+                    tahun_akademik: latestPendaftaranPenjaluran.periode.tahun_akademik,
+                    semester: latestPendaftaranPenjaluran.periode.semester,
+                  }
+                : null,
+            }
+          : null,
+        bimbingan_progress: eligibility,
+        jadwal_sidang: serializeJadwalRow(registration.jadwalSidang),
+      },
+    });
+  } catch (error) {
+    console.error("Error di getSekretarisSidangRegistrantDetail:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat memuat detail pendaftar sidang.",
       error: error.message,
     });
   }

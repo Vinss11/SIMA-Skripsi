@@ -96,6 +96,13 @@ router.get(
   authorizeSekretarisAccess,
   sidangAkhirController.getSekretarisSidangQueue
 );
+router.get(
+  "/sidang/queue/:id",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.getSekretarisSidangRegistrantDetail
+);
 router.post(
   "/sidang/assign",
   authenticateToken,
