@@ -31,6 +31,18 @@ const MASTER_TOPIK_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
+const TOPIK_CLUSTER_CODE_BY_LABEL = {
+  Sirkel: "SIRKEL",
+  Siber: "SIBER",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
+const TOPIK_CLUSTER_LABEL_BY_CODE = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
 const PERIODE_FORM_INITIAL = {
   ketua_itsc_dosen_id: "",
   ketua_sirkel_dosen_id: "",
@@ -142,6 +154,42 @@ function normalizeResearchClusterCode(value) {
   if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
   if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
   return raw;
+}
+
+function normalizeTopikClusterCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === "SIRKER") return "SIRKEL";
+  if (raw.includes("SISTEM INFORMASI") || raw.includes("REKAYASA PERANGKAT LUNAK") || raw.includes("SIRKEL")) {
+    return "SIRKEL";
+  }
+  if (raw.includes("SIBER")) return "SIBER";
+  if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
+  if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (TOPIK_CLUSTER_LABEL_BY_CODE[raw]) return raw;
+  return null;
+}
+
+function normalizeTopikClusterLabel(value) {
+  const code = normalizeTopikClusterCode(value);
+  if (!code) return null;
+  return TOPIK_CLUSTER_LABEL_BY_CODE[code] || null;
+}
+
+function resolveTopikClusterFromKode(kode) {
+  const normalizedKode = String(kode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!normalizedKode) return null;
+  const prefix = normalizedKode.replace(/[0-9].*$/, "");
+  const code = normalizeTopikClusterCode(prefix);
+  if (!code) return null;
+  return {
+    code,
+    label: TOPIK_CLUSTER_LABEL_BY_CODE[code] || null,
+  };
 }
 
 function buildNavItems(isSekretaris) {
@@ -297,6 +345,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     deskripsi: "",
     cluster: "Sirkel",
   });
+  const allowedTopikClusters = useMemo(() => {
+    const klasterRows = Array.isArray(kuotaData?.dosen?.klasters) ? kuotaData.dosen.klasters : [];
+    const labels = [];
+    for (const item of klasterRows) {
+      const normalized = normalizeTopikClusterLabel(item?.kode || item?.nama);
+      if (normalized && !labels.includes(normalized)) {
+        labels.push(normalized);
+      }
+    }
+    return labels.length > 0 ? labels : TOPIK_CLUSTER_OPTIONS;
+  }, [kuotaData?.dosen?.klasters]);
   const [savingTopik, setSavingTopik] = useState(false);
 
   const [topikUploadFile, setTopikUploadFile] = useState(null);
@@ -372,6 +431,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setIsBimbinganReviewListMode(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    setTopikForm((prev) => {
+      if (allowedTopikClusters.includes(prev.cluster)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
+      };
+    });
+  }, [allowedTopikClusters]);
 
   const fetchWithAuth = useCallback(
     async (path, options = {}) => {
@@ -1352,15 +1423,35 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const handleTopikApiSubmit = async (event) => {
     event.preventDefault();
+    const normalizedCluster = normalizeTopikClusterLabel(topikForm.cluster);
     const payload = {
       kode: topikForm.kode.trim().toUpperCase(),
       judul: topikForm.judul.trim(),
       deskripsi: topikForm.deskripsi.trim(),
-      cluster: topikForm.cluster,
+      cluster: normalizedCluster || topikForm.cluster,
     };
 
     if (!payload.kode || !payload.judul || !payload.cluster) {
       showErrorToast("Kode topik, judul, dan cluster wajib diisi.");
+      return;
+    }
+
+    if (!allowedTopikClusters.includes(payload.cluster)) {
+      showErrorToast(`Cluster yang bisa dipilih hanya: ${allowedTopikClusters.join(", ")}.`);
+      return;
+    }
+
+    const kodeCluster = resolveTopikClusterFromKode(payload.kode);
+    if (!kodeCluster || !kodeCluster.label) {
+      showErrorToast("Format kode topik tidak valid. Gunakan prefix: SIRKEL, SIBER, ITSC, atau MVK.");
+      return;
+    }
+
+    if (kodeCluster.label !== payload.cluster) {
+      const expectedCode = TOPIK_CLUSTER_CODE_BY_LABEL[payload.cluster] || payload.cluster;
+      showErrorToast(
+        `Kode topik ${payload.kode} tidak sesuai dengan cluster ${payload.cluster}. Prefix kode harus ${expectedCode}.`
+      );
       return;
     }
 
@@ -1374,7 +1465,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         kode: "",
         judul: "",
         deskripsi: "",
-        cluster: "Sirkel",
+        cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
       });
       showSuccessToast("Topik berhasil ditambahkan.");
       await loadAllData();
@@ -3231,12 +3322,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             onChange={handleTopikFormChange}
                             className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
                           >
-                            {TOPIK_CLUSTER_OPTIONS.map((cluster) => (
+                            {allowedTopikClusters.map((cluster) => (
                               <option key={cluster} value={cluster}>
                                 {cluster}
                               </option>
                             ))}
                           </select>
+                          <p className="mt-1 text-xs text-[#6b789e]">
+                            Opsi cluster mengikuti assignment cluster dosen login.
+                          </p>
                         </div>
                         <div className="lg:col-span-2">
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Judul Topik</label>

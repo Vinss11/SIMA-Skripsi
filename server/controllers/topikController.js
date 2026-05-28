@@ -1,4 +1,4 @@
-const { Topik, Dosen, Mahasiswa, SekretarisProdi } = require("../models");
+const { Topik, Dosen, Mahasiswa, SekretarisProdi, DosenKlaster, Klaster } = require("../models");
 const { Op } = require("sequelize");
 
 const CLUSTER_NORMALIZATION_MAP = {
@@ -11,6 +11,84 @@ const CLUSTER_NORMALIZATION_MAP = {
 function normalizeClusterInput(value) {
   const key = String(value || "").trim().toLowerCase();
   return CLUSTER_NORMALIZATION_MAP[key] || null;
+}
+
+const CLUSTER_LABEL_BY_CODE = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
+
+function normalizeClusterCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === "SIRKER") return "SIRKEL";
+  if (raw.includes("SISTEM INFORMASI") || raw.includes("REKAYASA PERANGKAT LUNAK") || raw.includes("SIRKEL")) {
+    return "SIRKEL";
+  }
+  if (raw.includes("SIBER")) return "SIBER";
+  if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
+  if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (CLUSTER_LABEL_BY_CODE[raw]) return raw;
+  return null;
+}
+
+function resolveClusterFromTopikKode(kode) {
+  const normalizedKode = String(kode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!normalizedKode) return null;
+  const prefix = normalizedKode.replace(/[0-9].*$/, "");
+  const clusterCode = normalizeClusterCode(prefix);
+  if (!clusterCode) return null;
+  return {
+    code: clusterCode,
+    label: CLUSTER_LABEL_BY_CODE[clusterCode] || null,
+  };
+}
+
+function buildClusterKodeMismatchMessage(kode, clusterLabel) {
+  const selectedCode = normalizeClusterCode(clusterLabel);
+  if (!selectedCode) {
+    return "Cluster topik tidak valid.";
+  }
+  return `Kode topik ${kode} tidak sesuai dengan cluster ${clusterLabel}. Prefix kode harus ${selectedCode}.`;
+}
+
+async function getAllowedClusterLabelsForDosen(dosenId) {
+  if (!Number.isInteger(Number(dosenId)) || Number(dosenId) <= 0) {
+    return [];
+  }
+
+  const memberships = await DosenKlaster.findAll({
+    where: { dosen_id: Number(dosenId) },
+    include: [
+      {
+        model: Klaster,
+        as: "klaster",
+        attributes: ["kode", "nama"],
+      },
+    ],
+    attributes: ["id"],
+  });
+
+  const labels = new Set();
+  for (const row of memberships) {
+    const fromCode = normalizeClusterCode(row?.klaster?.kode);
+    if (fromCode && CLUSTER_LABEL_BY_CODE[fromCode]) {
+      labels.add(CLUSTER_LABEL_BY_CODE[fromCode]);
+      continue;
+    }
+    const fromName = normalizeClusterCode(row?.klaster?.nama);
+    if (fromName && CLUSTER_LABEL_BY_CODE[fromName]) {
+      labels.add(CLUSTER_LABEL_BY_CODE[fromName]);
+    }
+  }
+
+  return [...labels];
 }
 
 async function resolveActorDosenId(req) {
@@ -183,6 +261,20 @@ exports.createTopic = async (req, res) => {
       });
     }
 
+    const kodeCluster = resolveClusterFromTopikKode(normalizedKode);
+    if (!kodeCluster || !kodeCluster.label) {
+      return res.status(400).json({
+        success: false,
+        message: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
+      });
+    }
+    if (kodeCluster.label !== normalizedCluster) {
+      return res.status(400).json({
+        success: false,
+        message: buildClusterKodeMismatchMessage(normalizedKode, normalizedCluster),
+      });
+    }
+
     if (req.user.role === "admin") {
       dosen_id = Number(dosenIdInput);
       if (!Number.isInteger(dosen_id) || dosen_id <= 0) {
@@ -206,6 +298,14 @@ exports.createTopic = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: `Kode topik ${normalizedKode} sudah digunakan.`,
+      });
+    }
+
+    const allowedClusterLabels = await getAllowedClusterLabelsForDosen(dosen_id);
+    if (allowedClusterLabels.length > 0 && !allowedClusterLabels.includes(normalizedCluster)) {
+      return res.status(403).json({
+        success: false,
+        message: `Anda hanya boleh membuat topik pada cluster: ${allowedClusterLabels.join(", ")}.`,
       });
     }
 
@@ -327,6 +427,31 @@ exports.updateTopic = async (req, res) => {
       }
       topic.cluster = normalizedCluster;
     }
+
+    const nextKode = String(topic.kode || "").trim().toUpperCase();
+    const nextCluster = normalizeClusterInput(topic.cluster);
+    const kodeCluster = resolveClusterFromTopikKode(nextKode);
+    if (!kodeCluster || !kodeCluster.label) {
+      return res.status(400).json({
+        success: false,
+        message: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
+      });
+    }
+    if (!nextCluster || kodeCluster.label !== nextCluster) {
+      return res.status(400).json({
+        success: false,
+        message: buildClusterKodeMismatchMessage(nextKode, nextCluster || topic.cluster),
+      });
+    }
+
+    const allowedClusterLabels = await getAllowedClusterLabelsForDosen(topic.dosen_id);
+    if (allowedClusterLabels.length > 0 && !allowedClusterLabels.includes(nextCluster)) {
+      return res.status(403).json({
+        success: false,
+        message: `Topik ini hanya boleh berada di cluster: ${allowedClusterLabels.join(", ")}.`,
+      });
+    }
+
     if (status) topic.status = status;
 
     await topic.save();

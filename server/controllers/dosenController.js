@@ -2654,6 +2654,15 @@ exports.getKuotaSendiri = async (req, res) => {
 
     const dosen = await Dosen.findByPk(dosen_id, {
       attributes: ["id", "nik", "nama", "email", "kuota_bimbingan"],
+      include: [
+        {
+          model: Klaster,
+          as: "klasters",
+          attributes: ["id", "kode", "nama"],
+          through: { attributes: [] },
+          required: false,
+        },
+      ],
     });
 
     if (!dosen) {
@@ -2679,6 +2688,13 @@ exports.getKuotaSendiri = async (req, res) => {
           id: dosen.id,
           nama: dosen.nama,
           nik: dosen.nik,
+          klasters: Array.isArray(dosen.klasters)
+            ? dosen.klasters.map((item) => ({
+                id: item.id,
+                kode: item.kode,
+                nama: item.nama,
+              }))
+            : [],
         },
         kuota: kuotaInfo,
         mahasiswa_bimbingan: mahasiswas,

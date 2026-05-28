@@ -1,7 +1,7 @@
 const XLSX = require("xlsx");
 const fs = require("fs");
 const { Op } = require("sequelize");
-const { Topik, Dosen, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
+const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
 const {
   STRUKTURAL_POSITIONS,
   normalizeJabatanStrukturalInput,
@@ -106,6 +106,91 @@ const KLASTER_INPUT_ALIAS = {
   "multimedia dan visi komputer": "MVK",
   "sistem siber": "SIBER",
 };
+
+const TOPIK_CLUSTER_LABEL_BY_CODE = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
+
+function normalizeTopikClusterCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === "SIRKER") return "SIRKEL";
+  if (raw.includes("SISTEM INFORMASI") || raw.includes("REKAYASA PERANGKAT LUNAK") || raw.includes("SIRKEL")) {
+    return "SIRKEL";
+  }
+  if (raw.includes("SIBER")) return "SIBER";
+  if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
+  if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (TOPIK_CLUSTER_LABEL_BY_CODE[raw]) return raw;
+  return null;
+}
+
+function normalizeTopikClusterLabel(value) {
+  const code = normalizeTopikClusterCode(value);
+  if (!code) return null;
+  return TOPIK_CLUSTER_LABEL_BY_CODE[code] || null;
+}
+
+function resolveTopikClusterFromKode(kode) {
+  const normalizedKode = String(kode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "")
+    .replace(/[^A-Z0-9]/g, "");
+  if (!normalizedKode) return null;
+  const prefix = normalizedKode.replace(/[0-9].*$/, "");
+  const code = normalizeTopikClusterCode(prefix);
+  if (!code) return null;
+  return {
+    code,
+    label: TOPIK_CLUSTER_LABEL_BY_CODE[code] || null,
+  };
+}
+
+async function getAllowedTopikClustersForDosen(dosenId, transaction, cache) {
+  const numericDosenId = Number(dosenId);
+  if (!Number.isInteger(numericDosenId) || numericDosenId <= 0) {
+    return [];
+  }
+
+  if (cache.has(numericDosenId)) {
+    return cache.get(numericDosenId);
+  }
+
+  const memberships = await DosenKlaster.findAll({
+    where: { dosen_id: numericDosenId },
+    include: [
+      {
+        model: Klaster,
+        as: "klaster",
+        attributes: ["kode", "nama"],
+      },
+    ],
+    attributes: ["id"],
+    transaction,
+  });
+
+  const labels = new Set();
+  for (const row of memberships) {
+    const codeFromKode = normalizeTopikClusterCode(row?.klaster?.kode);
+    if (codeFromKode && TOPIK_CLUSTER_LABEL_BY_CODE[codeFromKode]) {
+      labels.add(TOPIK_CLUSTER_LABEL_BY_CODE[codeFromKode]);
+      continue;
+    }
+
+    const codeFromNama = normalizeTopikClusterCode(row?.klaster?.nama);
+    if (codeFromNama && TOPIK_CLUSTER_LABEL_BY_CODE[codeFromNama]) {
+      labels.add(TOPIK_CLUSTER_LABEL_BY_CODE[codeFromNama]);
+    }
+  }
+
+  const finalLabels = [...labels];
+  cache.set(numericDosenId, finalLabels);
+  return finalLabels;
+}
 
 function parseKlasterListInput(rawKlasterValue, klasterMap) {
   if (rawKlasterValue === null || rawKlasterValue === undefined || rawKlasterValue === "") {
@@ -257,6 +342,7 @@ exports.uploadTopics = async (req, res) => {
       failed: [],
       total: data.length,
     };
+    const allowedClusterCache = new Map();
 
     // Proses setiap baris
     for (let i = 0; i < data.length; i++) {
@@ -289,13 +375,35 @@ exports.uploadTopics = async (req, res) => {
           continue;
         }
 
-        // Validasi cluster
-        const validClusters = ["Sirkel", "Siber", "ITSC", "MVK"];
-        if (!validClusters.includes(cluster)) {
+        const normalizedKode = String(kode || "").trim().toUpperCase();
+        const normalizedJudul = String(judul || "").trim();
+        const normalizedCluster = normalizeTopikClusterLabel(cluster);
+
+        if (!normalizedCluster) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `Cluster tidak valid. Harus salah satu dari: ${validClusters.join(", ")}`,
+            error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
+          });
+          continue;
+        }
+
+        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
+        if (!kodeCluster || !kodeCluster.label) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
+          });
+          continue;
+        }
+        if (kodeCluster.label !== normalizedCluster) {
+          const expectedPrefix =
+            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
           });
           continue;
         }
@@ -325,9 +433,19 @@ exports.uploadTopics = async (req, res) => {
           continue;
         }
 
+        const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, t, allowedClusterCache);
+        if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Cluster ${normalizedCluster} tidak terdaftar untuk dosen ${dosen.nama}. Cluster yang diizinkan: ${allowedClusters.join(", ")}.`,
+          });
+          continue;
+        }
+
         // Cek apakah kode topik sudah ada
         const existingTopik = await Topik.findOne({
-          where: { kode: kode },
+          where: { kode: normalizedKode },
           transaction: t,
         });
 
@@ -335,7 +453,7 @@ exports.uploadTopics = async (req, res) => {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: `Kode topik ${kode} sudah ada di database`,
+            error: `Kode topik ${normalizedKode} sudah ada di database`,
           });
           continue;
         }
@@ -343,10 +461,10 @@ exports.uploadTopics = async (req, res) => {
         // Insert topik ke database
         const newTopik = await Topik.create(
           {
-            kode: kode.trim(),
-            judul: judul.trim(),
+            kode: normalizedKode,
+            judul: normalizedJudul,
             deskripsi: deskripsi ? deskripsi.trim() : null,
-            cluster: cluster.trim(),
+            cluster: normalizedCluster,
             dosen_id: dosen.id,
             status: "available",
           },
