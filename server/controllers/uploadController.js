@@ -9,6 +9,12 @@ const {
 } = require("../constants/jabatanStruktural");
 
 const TEMPLATE_HEADERS = {
+  topik: [
+    { key: "kode topik", label: "Kode Topik" },
+    { key: "judul", label: "Judul" },
+    { key: "deskripsi", label: "Deskripsi" },
+    { key: "cluster", label: "Cluster" },
+  ],
   dosen: [
     { key: "nik", label: "NIK" },
     { key: "nama", label: "Nama" },
@@ -192,6 +198,81 @@ async function getAllowedTopikClustersForDosen(dosenId, transaction, cache) {
   return finalLabels;
 }
 
+async function resolveActorDosenForTopikUpload(req, transaction = null) {
+  if (req.user?.role === "dosen") {
+    return Dosen.findByPk(req.user.id, {
+      attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+      transaction: transaction || undefined,
+    });
+  }
+
+  if (req.user?.role !== "sekretaris_prodi") return null;
+
+  const username = String(req.user?.username || "").trim();
+  const where = [];
+  if (username) {
+    where.push({ nik: username });
+    where.push({ email: username.toLowerCase() });
+    where.push({ kode_dosen: username.toUpperCase() });
+  }
+  if (where.length > 0) {
+    const dosenByUsername = await Dosen.findOne({
+      where: { [Op.or]: where },
+      attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+      transaction: transaction || undefined,
+    });
+    if (dosenByUsername) return dosenByUsername;
+  }
+
+  const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
+    attributes: ["nik", "email", "jabatan"],
+    transaction: transaction || undefined,
+  });
+  if (!sekretaris) return null;
+
+  const fallbackWhere = [];
+  if (sekretaris.nik) fallbackWhere.push({ nik: String(sekretaris.nik).trim() });
+  if (sekretaris.email) fallbackWhere.push({ email: String(sekretaris.email).trim().toLowerCase() });
+  if (fallbackWhere.length > 0) {
+    const dosenByIdentity = await Dosen.findOne({
+      where: { [Op.or]: fallbackWhere },
+      attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+      transaction: transaction || undefined,
+    });
+    if (dosenByIdentity) return dosenByIdentity;
+  }
+
+  if (sekretaris.jabatan) {
+    const dosenByJabatan = await Dosen.findOne({
+      where: { jabatan_struktural: sekretaris.jabatan },
+      attributes: ["id", "nik", "kode_dosen", "email", "nama", "jabatan_struktural"],
+      transaction: transaction || undefined,
+    });
+    if (dosenByJabatan) return dosenByJabatan;
+  }
+
+  return null;
+}
+
+function extractTopikUploadValues(rawRow = {}) {
+  return {
+    kode: rawRow["Kode Topik"] || rawRow.kode || rawRow.KODE || "",
+    judul: rawRow.Judul || rawRow.judul || rawRow.JUDUL || "",
+    deskripsi: rawRow.Deskripsi || rawRow.deskripsi || rawRow.DESKRIPSI || "",
+    cluster: rawRow.Cluster || rawRow.cluster || rawRow.CLUSTER || "",
+    dosenIdentifier:
+      rawRow["NIK Dosen"] ||
+      rawRow.nik ||
+      rawRow.NIK ||
+      rawRow["Kode Dosen"] ||
+      rawRow.kode_dosen ||
+      rawRow["Email Dosen"] ||
+      rawRow.email_dosen ||
+      rawRow.dosen_identifier ||
+      "",
+  };
+}
+
 function parseKlasterListInput(rawKlasterValue, klasterMap) {
   if (rawKlasterValue === null || rawKlasterValue === undefined || rawKlasterValue === "") {
     return {
@@ -324,6 +405,20 @@ exports.uploadTopics = async (req, res) => {
     const workbook = XLSX.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
+    const headers = getSheetHeaders(sheet);
+    const templateValidation = validateTemplateHeaders(headers, "topik");
+    if (!templateValidation.isValid) {
+      fs.unlinkSync(filePath);
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "File yang diupload bukan template topik yang valid.",
+        detail: {
+          missing_columns: templateValidation.missingLabels,
+          expected_columns: templateValidation.expectedLabels,
+        },
+      });
+    }
     const data = XLSX.utils.sheet_to_json(sheet);
 
     console.log(`📄 Memproses ${data.length} baris data dari Excel...`);
@@ -475,6 +570,7 @@ exports.uploadTopics = async (req, res) => {
           row: rowNumber,
           kode: newTopik.kode,
           judul: newTopik.judul,
+          cluster: newTopik.cluster,
           dosen: dosen.nama,
         });
       } catch (error) {
@@ -528,6 +624,410 @@ exports.uploadTopics = async (req, res) => {
   }
 };
 
+// POST /api/admin/upload/topics/preview - Preview Excel topik tanpa menyimpan ke DB
+exports.previewUploadTopics = async (req, res) => {
+  try {
+    const actorDosen = await resolveActorDosenForTopikUpload(req);
+    if ((req.user?.role === "dosen" || req.user?.role === "sekretaris_prodi") && !actorDosen) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen sehingga tidak bisa upload topik.",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "File Excel harus di-upload",
+      });
+    }
+
+    const filePath = req.file.path;
+    const workbook = XLSX.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const headers = getSheetHeaders(sheet);
+    const templateValidation = validateTemplateHeaders(headers, "topik");
+    if (!templateValidation.isValid) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: "File yang diupload bukan template topik yang valid.",
+        detail: {
+          missing_columns: templateValidation.missingLabels,
+          expected_columns: templateValidation.expectedLabels,
+        },
+      });
+    }
+
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    fs.unlinkSync(filePath);
+
+    if (data.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "File Excel kosong atau format tidak sesuai",
+      });
+    }
+
+    const validRows = [];
+    const failedRows = [];
+    const allowedClusterCache = new Map();
+    const kodeInFileSet = new Set();
+
+    for (let index = 0; index < data.length; index++) {
+      const row = data[index];
+      const rowNumber = index + 2;
+      try {
+        const rowValues = extractTopikUploadValues(row);
+        const kode = rowValues.kode;
+        const judul = rowValues.judul;
+        const cluster = rowValues.cluster;
+        const dosenIdentifier = actorDosen
+          ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
+          : rowValues.dosenIdentifier;
+
+        if (!kode || !judul || !cluster || (!actorDosen && !dosenIdentifier)) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: actorDosen
+              ? "Field wajib tidak lengkap (Kode Topik, Judul, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
+          });
+          continue;
+        }
+
+        const normalizedKode = String(kode || "").trim().toUpperCase();
+        const normalizedJudul = String(judul || "").trim();
+        const normalizedCluster = normalizeTopikClusterLabel(cluster);
+        const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
+
+        if (!normalizedCluster) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
+          });
+          continue;
+        }
+
+        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
+        if (!kodeCluster || !kodeCluster.label) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
+          });
+          continue;
+        }
+        if (kodeCluster.label !== normalizedCluster) {
+          const expectedPrefix =
+            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
+          });
+          continue;
+        }
+
+        if (kodeInFileSet.has(normalizedKode)) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: `Kode topik ${normalizedKode} duplikat di file upload.`,
+          });
+          continue;
+        }
+
+        const normalizedIdentifier = String(dosenIdentifier || "").trim();
+        let dosen = actorDosen;
+        if (!dosen) {
+          dosen = await Dosen.findOne({
+            where: {
+              [Op.or]: [
+                { nik: normalizedIdentifier },
+                { kode_dosen: normalizedIdentifier.toUpperCase() },
+                { email: normalizedIdentifier.toLowerCase() },
+              ],
+            },
+          });
+        }
+        if (!dosen) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: `Dosen dengan identifier "${normalizedIdentifier}" tidak ditemukan di database`,
+          });
+          continue;
+        }
+
+        const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, null, allowedClusterCache);
+        if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: `Cluster ${normalizedCluster} tidak terdaftar untuk dosen ${dosen.nama}. Cluster yang diizinkan: ${allowedClusters.join(", ")}.`,
+          });
+          continue;
+        }
+
+        const existingTopik = await Topik.findOne({ where: { kode: normalizedKode }, attributes: ["id"] });
+        if (existingTopik) {
+          failedRows.push({
+            row: rowNumber,
+            data: row,
+            error: `Kode topik ${normalizedKode} sudah ada di database`,
+          });
+          continue;
+        }
+
+        kodeInFileSet.add(normalizedKode);
+        validRows.push({
+          row: rowNumber,
+          kode: normalizedKode,
+          judul: normalizedJudul,
+          deskripsi: normalizedDeskripsi,
+          cluster: normalizedCluster,
+        });
+      } catch (error) {
+        failedRows.push({
+          row: rowNumber,
+          data: row,
+          error: error.message,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Preview selesai. Valid: ${validRows.length}, Tidak valid: ${failedRows.length}.`,
+      data: {
+        total: data.length,
+        valid: validRows.length,
+        invalid: failedRows.length,
+        detail_valid: validRows,
+        detail_invalid: failedRows,
+        detail_berhasil: validRows,
+        detail_gagal: failedRows,
+      },
+    });
+  } catch (error) {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    console.error("Error di previewUploadTopics:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/admin/upload/topics/commit - Simpan data preview topik ke database
+exports.commitUploadTopics = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const actorDosen = await resolveActorDosenForTopikUpload(req, t);
+    if ((req.user?.role === "dosen" || req.user?.role === "sekretaris_prodi") && !actorDosen) {
+      await t.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen sehingga tidak bisa menyimpan topik.",
+      });
+    }
+
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (rows.length === 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tidak ada data valid untuk disimpan.",
+      });
+    }
+
+    const results = {
+      success: [],
+      failed: [],
+      total: rows.length,
+    };
+    const allowedClusterCache = new Map();
+    const kodeInFileSet = new Set();
+
+    for (let index = 0; index < rows.length; index++) {
+      const payloadRow = rows[index];
+      const rowNumber = Number(payloadRow?.row) || index + 1;
+      try {
+        const rowValues = extractTopikUploadValues(payloadRow);
+        const kode = rowValues.kode;
+        const judul = rowValues.judul;
+        const cluster = rowValues.cluster;
+        const dosenIdentifier = actorDosen
+          ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
+          : rowValues.dosenIdentifier;
+
+        if (!kode || !judul || !cluster || (!actorDosen && !dosenIdentifier)) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: actorDosen
+              ? "Field wajib tidak lengkap (Kode Topik, Judul, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
+          });
+          continue;
+        }
+
+        const normalizedKode = String(kode || "").trim().toUpperCase();
+        const normalizedJudul = String(judul || "").trim();
+        const normalizedCluster = normalizeTopikClusterLabel(cluster);
+        const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
+
+        if (!normalizedCluster) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
+          });
+          continue;
+        }
+
+        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
+        if (!kodeCluster || !kodeCluster.label) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
+          });
+          continue;
+        }
+        if (kodeCluster.label !== normalizedCluster) {
+          const expectedPrefix =
+            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
+          });
+          continue;
+        }
+
+        if (kodeInFileSet.has(normalizedKode)) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: `Kode topik ${normalizedKode} duplikat di request simpan.`,
+          });
+          continue;
+        }
+
+        const normalizedIdentifier = String(dosenIdentifier || "").trim();
+        let dosen = actorDosen;
+        if (!dosen) {
+          dosen = await Dosen.findOne({
+            where: {
+              [Op.or]: [
+                { nik: normalizedIdentifier },
+                { kode_dosen: normalizedIdentifier.toUpperCase() },
+                { email: normalizedIdentifier.toLowerCase() },
+              ],
+            },
+            transaction: t,
+          });
+        }
+        if (!dosen) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: `Dosen dengan identifier "${normalizedIdentifier}" tidak ditemukan di database`,
+          });
+          continue;
+        }
+
+        const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, t, allowedClusterCache);
+        if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: `Cluster ${normalizedCluster} tidak terdaftar untuk dosen ${dosen.nama}. Cluster yang diizinkan: ${allowedClusters.join(", ")}.`,
+          });
+          continue;
+        }
+
+        const existingTopik = await Topik.findOne({
+          where: { kode: normalizedKode },
+          attributes: ["id"],
+          transaction: t,
+        });
+        if (existingTopik) {
+          results.failed.push({
+            row: rowNumber,
+            data: payloadRow,
+            error: `Kode topik ${normalizedKode} sudah ada di database`,
+          });
+          continue;
+        }
+
+        const topik = await Topik.create(
+          {
+            kode: normalizedKode,
+            judul: normalizedJudul,
+            deskripsi: normalizedDeskripsi,
+            cluster: normalizedCluster,
+            dosen_id: dosen.id,
+            status: "available",
+          },
+          { transaction: t }
+        );
+
+        kodeInFileSet.add(normalizedKode);
+        results.success.push({
+          row: rowNumber,
+          kode: topik.kode,
+          judul: topik.judul,
+          cluster: topik.cluster,
+          dosen: dosen.nama,
+        });
+      } catch (error) {
+        results.failed.push({
+          row: rowNumber,
+          data: payloadRow,
+          error: error.message,
+        });
+      }
+    }
+
+    if (results.success.length > 0) {
+      await t.commit();
+    } else {
+      await t.rollback();
+    }
+
+    return res.status(200).json({
+      success: results.success.length > 0,
+      message: `Simpan topik selesai. Berhasil: ${results.success.length}, Gagal: ${results.failed.length}`,
+      data: {
+        total: results.total,
+        berhasil: results.success.length,
+        gagal: results.failed.length,
+        detail_berhasil: results.success,
+        detail_gagal: results.failed,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) {
+      await t.rollback();
+    }
+    console.error("Error di commitUploadTopics:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
 // GET /api/upload/template - Download template Excel Topik
 exports.downloadTemplate = (req, res) => {
   try {
@@ -537,28 +1037,24 @@ exports.downloadTemplate = (req, res) => {
         Judul: "Contoh Judul Topik Penelitian",
         Deskripsi: "Deskripsi singkat tentang topik penelitian ini",
         Cluster: "Sirkel",
-        "NIK Dosen": "900000001",
       },
       {
         "Kode Topik": "SIBER03",
         Judul: "Implementasi Blockchain untuk Keamanan Data",
         Deskripsi: "Penelitian implementasi blockchain dalam sistem keamanan data",
         Cluster: "Siber",
-        "NIK Dosen": "900000002",
       },
       {
         "Kode Topik": "ITSC05",
         Judul: "Sistem Informasi Manajemen Perpustakaan",
         Deskripsi: "Pengembangan sistem informasi untuk manajemen perpustakaan digital",
         Cluster: "ITSC",
-        "NIK Dosen": "900000003",
       },
       {
         "Kode Topik": "MVK02",
         Judul: "Analisis Sentimen Media Sosial Menggunakan Deep Learning",
         Deskripsi: "Penelitian analisis sentimen pada data Twitter menggunakan LSTM",
         Cluster: "MVK",
-        "NIK Dosen": "900000004",
       },
     ];
 
@@ -571,7 +1067,6 @@ exports.downloadTemplate = (req, res) => {
       { wch: 50 }, // Judul
       { wch: 60 }, // Deskripsi
       { wch: 10 }, // Cluster
-      { wch: 20 }, // NIK Dosen
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Topik");

@@ -68,6 +68,29 @@ router.post(
   uploadController.uploadTopics
 );
 
+router.post(
+  "/topics/preview",
+  authenticateToken,
+  authorizeRole("admin", "dosen", "sekretaris_prodi"),
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
+      }
+      next();
+    });
+  },
+  uploadController.previewUploadTopics
+);
+
+router.post(
+  "/topics/commit",
+  authenticateToken,
+  authorizeRole("admin", "dosen", "sekretaris_prodi"),
+  uploadController.commitUploadTopics
+);
+
 // ========== MAHASISWA ROUTES (ADMIN ONLY) ==========
 
 router.get("/mahasiswa-template", uploadController.downloadMahasiswaTemplate);

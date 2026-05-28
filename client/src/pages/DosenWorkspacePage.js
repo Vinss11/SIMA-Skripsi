@@ -30,6 +30,8 @@ const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
+const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
+const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
 const TOPIK_CLUSTER_CODE_BY_LABEL = {
   Sirkel: "SIRKEL",
@@ -190,6 +192,17 @@ function resolveTopikClusterFromKode(kode) {
     code,
     label: TOPIK_CLUSTER_LABEL_BY_CODE[code] || null,
   };
+}
+
+function pickTopikUploadField(rawRow, candidates) {
+  if (!rawRow || typeof rawRow !== "object") return "";
+  for (const key of candidates) {
+    const value = rawRow[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
 }
 
 function buildNavItems(isSekretaris) {
@@ -356,11 +369,63 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
     return labels.length > 0 ? labels : TOPIK_CLUSTER_OPTIONS;
   }, [kuotaData?.dosen?.klasters]);
-  const [savingTopik, setSavingTopik] = useState(false);
-
   const [topikUploadFile, setTopikUploadFile] = useState(null);
   const [uploadingTopik, setUploadingTopik] = useState(false);
+  const [savingUploadedTopik, setSavingUploadedTopik] = useState(false);
   const [uploadTopikResult, setUploadTopikResult] = useState(null);
+  const [topikUploadPreviewPage, setTopikUploadPreviewPage] = useState(1);
+  const topikUploadPreviewRows = useMemo(() => {
+    const successRows = Array.isArray(uploadTopikResult?.data?.detail_berhasil)
+      ? uploadTopikResult.data.detail_berhasil
+      : [];
+    const failedRows = Array.isArray(uploadTopikResult?.data?.detail_gagal)
+      ? uploadTopikResult.data.detail_gagal
+      : [];
+
+    const normalizedSuccess = successRows.map((item, index) => ({
+      key: `ok-${item?.row ?? index}-${item?.kode ?? index}`,
+      nomor: index + 1,
+      baris: item?.row ?? "-",
+      kode: String(item?.kode || "-"),
+      cluster: String(item?.cluster || "-"),
+      judul: String(item?.judul || "-"),
+      status: "valid",
+      pesan_error: "-",
+    }));
+
+    const normalizedFailed = failedRows.map((item, index) => {
+      const rawRow = item?.data || {};
+      return {
+        key: `err-${item?.row ?? index}-${index}`,
+        nomor: normalizedSuccess.length + index + 1,
+        baris: item?.row ?? "-",
+        kode: pickTopikUploadField(rawRow, ["Kode Topik", "kode", "KODE"]) || "-",
+        cluster: pickTopikUploadField(rawRow, ["Cluster", "cluster", "CLUSTER"]) || "-",
+        judul: pickTopikUploadField(rawRow, ["Judul", "judul", "JUDUL"]) || "-",
+        status: "error",
+        pesan_error: String(item?.error || "Data tidak valid."),
+      };
+    });
+
+    return [...normalizedSuccess, ...normalizedFailed];
+  }, [uploadTopikResult]);
+  const topikUploadPreviewRowsLimited = useMemo(
+    () => topikUploadPreviewRows.slice(0, TOPIK_UPLOAD_PREVIEW_MAX_ROWS),
+    [topikUploadPreviewRows]
+  );
+  const topikUploadPreviewTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(topikUploadPreviewRowsLimited.length / TOPIK_UPLOAD_PREVIEW_PAGE_SIZE)),
+    [topikUploadPreviewRowsLimited.length]
+  );
+  const topikUploadPreviewRowsPaged = useMemo(() => {
+    const start = (topikUploadPreviewPage - 1) * TOPIK_UPLOAD_PREVIEW_PAGE_SIZE;
+    return topikUploadPreviewRowsLimited.slice(start, start + TOPIK_UPLOAD_PREVIEW_PAGE_SIZE);
+  }, [topikUploadPreviewPage, topikUploadPreviewRowsLimited]);
+  const topikUploadValidRows = useMemo(
+    () => (Array.isArray(uploadTopikResult?.data?.detail_valid) ? uploadTopikResult.data.detail_valid : []),
+    [uploadTopikResult]
+  );
+  const [savingTopik, setSavingTopik] = useState(false);
 
   const [pendaftaranRows, setPendaftaranRows] = useState([]);
   const [pendaftaranSearch, setPendaftaranSearch] = useState("");
@@ -431,6 +496,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setIsBimbinganReviewListMode(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    setTopikUploadPreviewPage(1);
+  }, [uploadTopikResult]);
+
+  useEffect(() => {
+    if (topikUploadPreviewPage > topikUploadPreviewTotalPages) {
+      setTopikUploadPreviewPage(topikUploadPreviewTotalPages);
+    }
+  }, [topikUploadPreviewPage, topikUploadPreviewTotalPages]);
 
   useEffect(() => {
     setTopikForm((prev) => {
@@ -1492,7 +1567,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       const formData = new FormData();
       formData.append("file", topikUploadFile);
 
-      const response = await fetch(`${apiBaseUrl}/api/admin/upload/topics`, {
+      const response = await fetch(`${apiBaseUrl}/api/admin/upload/topics/preview`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
@@ -1523,22 +1598,49 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
 
       if (!response.ok || !json) {
+        if (json) {
+          setUploadTopikResult(json);
+        }
         throw new Error(json?.message || "Upload topik gagal diproses.");
       }
 
       setUploadTopikResult(json);
       if (json.success) {
-        showSuccessToast("Upload topik berhasil diproses.");
-        await loadAllData();
+        showSuccessToast("Preview topik berhasil dibuat.");
       } else {
-        showErrorToast(json.message || "Upload topik selesai dengan kegagalan.");
+        showErrorToast(json.message || "Preview topik selesai dengan kegagalan.");
       }
     } catch (uploadError) {
       if (uploadError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(uploadError.message || "Gagal upload topik.");
+        showErrorToast(uploadError.message || "Gagal memproses preview topik.");
       }
     } finally {
       setUploadingTopik(false);
+    }
+  };
+
+  const handleSaveUploadedTopik = async () => {
+    if (topikUploadValidRows.length === 0) {
+      showErrorToast("Belum ada data valid untuk disimpan.");
+      return;
+    }
+
+    setSavingUploadedTopik(true);
+    try {
+      await fetchWithAuth("/api/admin/upload/topics/commit", {
+        method: "POST",
+        body: JSON.stringify({ rows: topikUploadValidRows }),
+      });
+      showSuccessToast("Topik valid berhasil disimpan ke database.");
+      setUploadTopikResult(null);
+      setTopikUploadFile(null);
+      await loadAllData();
+    } catch (saveError) {
+      if (saveError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(saveError.message || "Gagal menyimpan topik hasil preview.");
+      }
+    } finally {
+      setSavingUploadedTopik(false);
     }
   };
 
@@ -3286,18 +3388,135 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <Upload className="h-4 w-4" />
-                          {uploadingTopik ? "Mengupload..." : "Upload Topik"}
+                          {uploadingTopik ? "Mengupload..." : "Upload Template"}
                         </button>
                       </form>
+                      <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
+                        <p className="text-sm font-bold text-[#1e2f57]">
+                          {uploadTopikResult?.message || "Preview topik akan tampil di sini setelah upload template."}
+                        </p>
+                        <p className="mt-1 text-sm text-[#42527c]">
+                          Valid: {uploadTopikResult?.data?.valid ?? 0} | Tidak valid: {uploadTopikResult?.data?.invalid ?? 0}
+                        </p>
+                        <p className="mt-1 text-xs text-[#5d6c91]">
+                          Preview menampilkan maksimal {TOPIK_UPLOAD_PREVIEW_MAX_ROWS} data (5 data per halaman).
+                        </p>
 
-                      {uploadTopikResult ? (
-                        <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
-                          <p className="text-sm font-bold text-[#1e2f57]">{uploadTopikResult.message}</p>
-                          <p className="mt-1 text-sm text-[#42527c]">
-                            Berhasil: {uploadTopikResult?.data?.berhasil ?? 0} | Gagal: {uploadTopikResult?.data?.gagal ?? 0}
-                          </p>
+                        {Array.isArray(uploadTopikResult?.detail?.missing_columns) &&
+                        uploadTopikResult.detail.missing_columns.length > 0 ? (
+                          <div className="mt-3 rounded-md border border-[#f0d7d7] bg-[#fff7f7] p-3 text-sm text-[#963838]">
+                            <p className="font-semibold">Template tidak valid.</p>
+                            <p className="mt-1">
+                              Kolom yang belum sesuai: {uploadTopikResult.detail.missing_columns.join(", ")}.
+                            </p>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
+                          <div className="overflow-x-auto">
+                            <table className="w-full min-w-[1020px] table-auto">
+                              <thead className="bg-[#f4f7ff] text-left text-sm font-bold text-[#2f4473]">
+                                <tr>
+                                  <th className="px-3 py-2">No</th>
+                                  <th className="px-3 py-2">Baris Excel</th>
+                                  <th className="px-3 py-2">Kode Topik</th>
+                                  <th className="px-3 py-2">Cluster</th>
+                                  <th className="px-3 py-2">Judul Topik</th>
+                                  <th className="px-3 py-2">Status</th>
+                                  <th className="px-3 py-2">Pesan Error</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {topikUploadPreviewRowsPaged.length > 0 ? (
+                                  topikUploadPreviewRowsPaged.map((row) => (
+                                    <tr
+                                      key={row.key}
+                                      className={`border-t border-[#ecf1fb] text-sm text-[#23345d] ${
+                                        row.status === "error" ? "bg-[#fff8f8]" : "bg-white"
+                                      }`}
+                                    >
+                                      <td className="px-3 py-2">{row.nomor}</td>
+                                      <td className="px-3 py-2">{row.baris}</td>
+                                      <td className="px-3 py-2">{row.kode}</td>
+                                      <td className="px-3 py-2">{row.cluster}</td>
+                                      <td className="px-3 py-2">{row.judul}</td>
+                                      <td className="px-3 py-2">
+                                        <span
+                                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
+                                            row.status === "error"
+                                              ? "bg-[#ffe3e3] text-[#a93d3d]"
+                                              : "bg-[#def4e8] text-[#117246]"
+                                          }`}
+                                        >
+                                          {row.status === "error" ? "Tidak Valid" : "Valid"}
+                                        </span>
+                                      </td>
+                                      <td className={`px-3 py-2 ${row.status === "error" ? "text-[#a93d3d]" : ""}`}>
+                                        {row.pesan_error}
+                                      </td>
+                                    </tr>
+                                  ))
+                                ) : (
+                                  <tr className="border-t border-[#ecf1fb] text-sm text-[#5d6c91]">
+                                    <td className="px-3 py-4 text-center" colSpan={7}>
+                                      Belum ada data preview.
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
-                      ) : null}
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-xs text-[#5d6c91]">
+                            Menampilkan {topikUploadPreviewRowsLimited.length === 0 ? 0 : (topikUploadPreviewPage - 1) * TOPIK_UPLOAD_PREVIEW_PAGE_SIZE + 1}
+                            {" - "}
+                            {Math.min(
+                              topikUploadPreviewPage * TOPIK_UPLOAD_PREVIEW_PAGE_SIZE,
+                              topikUploadPreviewRowsLimited.length
+                            )}{" "}
+                            dari {topikUploadPreviewRowsLimited.length} data preview.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setTopikUploadPreviewPage((prev) => Math.max(1, prev - 1))}
+                              disabled={topikUploadPreviewPage <= 1}
+                              className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-xs font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Sebelumnya
+                            </button>
+                            <span className="text-xs font-semibold text-[#314778]">
+                              Halaman {topikUploadPreviewPage} / {topikUploadPreviewTotalPages}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTopikUploadPreviewPage((prev) =>
+                                  Math.min(topikUploadPreviewTotalPages, prev + 1)
+                                )
+                              }
+                              disabled={topikUploadPreviewPage >= topikUploadPreviewTotalPages}
+                              className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-xs font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              Berikutnya
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex justify-end">
+                          <button
+                            type="button"
+                            onClick={handleSaveUploadedTopik}
+                            disabled={savingUploadedTopik || topikUploadValidRows.length === 0}
+                            className="inline-flex items-center gap-2 rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <FileSpreadsheet className="h-4 w-4" />
+                            {savingUploadedTopik ? "Menyimpan..." : "Simpan ke Database"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
 
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
