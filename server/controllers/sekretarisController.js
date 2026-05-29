@@ -11,6 +11,7 @@ const {
   Topik,
   RiwayatPersetujuan,
   KlasterKetuaPeriode,
+  MasterPenanggungJawabPenjaluran,
   SekretarisProdi,
   sequelize,
 } = require("../models");
@@ -24,6 +25,134 @@ const RESEARCH_CLUSTER_LABELS = {
   SIBER: "Sistem Siber",
   MVK: "Multimedia & Visi Komputer",
 };
+const PERIODE_ROLE_FIELD_DEFINITIONS = [
+  {
+    kode: "ITSC",
+    field: "ketua_itsc_dosen_id",
+    label: "Ketua cluster ITSC (Informatika Teori & Sistem Cerdas)",
+    association: "ketuaItscDosen",
+  },
+  {
+    kode: "SIRKEL",
+    field: "ketua_sirkel_dosen_id",
+    label: "Ketua cluster SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)",
+    association: "ketuaSirkelDosen",
+  },
+  {
+    kode: "SIBER",
+    field: "ketua_siber_dosen_id",
+    label: "Ketua cluster SIBER (Sistem Siber)",
+    association: "ketuaSiberDosen",
+  },
+  {
+    kode: "MVK",
+    field: "ketua_mvk_dosen_id",
+    label: "Ketua cluster MVK (Multimedia & Visi Komputer)",
+    association: "ketuaMvkDosen",
+  },
+  {
+    field: "pengawas_magang_dosen_id",
+    label: "Dosen pengawas magang",
+    association: "pengawasMagangDosen",
+  },
+  {
+    field: "pengawas_pengabdian_dosen_id",
+    label: "Dosen pengampu jalur pengabdian masyarakat",
+    association: "pengawasPengabdianDosen",
+  },
+  {
+    field: "pengawas_perintisan_bisnis_dosen_id",
+    label: "Dosen pengampu jalur perintisan bisnis",
+    association: "pengawasPerintisanBisnisDosen",
+  },
+];
+
+const MASTER_PENANGGUNG_JAWAB_INCLUDE = PERIODE_ROLE_FIELD_DEFINITIONS.map((item) => ({
+  model: Dosen,
+  as: item.association,
+  attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+  required: false,
+}));
+
+MASTER_PENANGGUNG_JAWAB_INCLUDE.push({
+  model: SekretarisProdi,
+  as: "updatedBySekretaris",
+  attributes: ["id", "nik", "nama", "jabatan"],
+  required: false,
+});
+
+function parsePositiveId(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function buildRolePayloadFromRequest(body = {}) {
+  const payload = {};
+  for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+    payload[item.field] = parsePositiveId(body?.[item.field]);
+  }
+  return payload;
+}
+
+function mergeRolePayloadWithMaster(payload, masterRow) {
+  const merged = { ...payload };
+  for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+    if (!parsePositiveId(merged[item.field])) {
+      merged[item.field] = parsePositiveId(masterRow?.[item.field]);
+    }
+  }
+  return merged;
+}
+
+function formatDosenMini(dosen) {
+  if (!dosen) return null;
+  return {
+    id: dosen.id,
+    kode_dosen: dosen.kode_dosen || null,
+    nik: dosen.nik || null,
+    nama: dosen.nama || null,
+    email: dosen.email || null,
+  };
+}
+
+function serializeMasterPenanggungJawab(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    ketua_itsc_dosen_id: row.ketua_itsc_dosen_id || null,
+    ketua_sirkel_dosen_id: row.ketua_sirkel_dosen_id || null,
+    ketua_siber_dosen_id: row.ketua_siber_dosen_id || null,
+    ketua_mvk_dosen_id: row.ketua_mvk_dosen_id || null,
+    pengawas_magang_dosen_id: row.pengawas_magang_dosen_id || null,
+    pengawas_pengabdian_dosen_id: row.pengawas_pengabdian_dosen_id || null,
+    pengawas_perintisan_bisnis_dosen_id: row.pengawas_perintisan_bisnis_dosen_id || null,
+    ketua_itsc_dosen: formatDosenMini(row.ketuaItscDosen),
+    ketua_sirkel_dosen: formatDosenMini(row.ketuaSirkelDosen),
+    ketua_siber_dosen: formatDosenMini(row.ketuaSiberDosen),
+    ketua_mvk_dosen: formatDosenMini(row.ketuaMvkDosen),
+    pengawas_magang_dosen: formatDosenMini(row.pengawasMagangDosen),
+    pengawas_pengabdian_dosen: formatDosenMini(row.pengawasPengabdianDosen),
+    pengawas_perintisan_bisnis_dosen: formatDosenMini(row.pengawasPerintisanBisnisDosen),
+    updated_by: row.updatedBySekretaris
+      ? {
+          id: row.updatedBySekretaris.id,
+          nik: row.updatedBySekretaris.nik || null,
+          nama: row.updatedBySekretaris.nama || null,
+          jabatan: row.updatedBySekretaris.jabatan || null,
+        }
+      : null,
+    updatedAt: row.updatedAt,
+    createdAt: row.createdAt,
+  };
+}
+
+async function fetchLatestMasterPenanggungJawab(options = {}) {
+  return MasterPenanggungJawabPenjaluran.findOne({
+    include: MASTER_PENANGGUNG_JAWAB_INCLUDE,
+    order: [["updatedAt", "DESC"]],
+    ...options,
+  });
+}
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -725,7 +854,7 @@ exports.rejectPendaftaran = async (req, res) => {
 // GET /api/sekretaris/periode
 exports.getPeriodeOverview = async (req, res) => {
   try {
-    const [periodes, dosenOptions, klasterRows, dosenKlasterRows] = await Promise.all([
+    const [periodes, dosenOptions, klasterRows, dosenKlasterRows, masterPenanggungJawab] = await Promise.all([
       PeriodePenjaluran.findAll({
         include: [
           {
@@ -783,6 +912,7 @@ exports.getPeriodeOverview = async (req, res) => {
           [{ model: Dosen, as: "dosen" }, "nama", "ASC"],
         ],
       }),
+      fetchLatestMasterPenanggungJawab(),
     ]);
 
     const klasterByCode = new Map(
@@ -862,11 +992,329 @@ exports.getPeriodeOverview = async (req, res) => {
         periodes: mappedPeriodes,
         dosen_options: dosenOptions,
         ketua_klaster_options: ketuaKlasterOptions,
+        master_penanggung_jawab: serializeMasterPenanggungJawab(masterPenanggungJawab),
       },
     });
   } catch (error) {
     console.error("Error di getPeriodeOverview:", error);
     res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/periode/master-penanggung-jawab
+exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const rolePayload = buildRolePayloadFromRequest(req.body || {});
+    const fieldErrors = {};
+
+    for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+      if (!parsePositiveId(rolePayload[item.field])) {
+        fieldErrors[item.field] = `${item.label} wajib dipilih.`;
+      }
+    }
+
+    const klasterRows = await Klaster.findAll({
+      attributes: ["id", "kode", "nama"],
+      transaction: t,
+    });
+    const klasterByCode = new Map(
+      RESEARCH_CLUSTER_CODES.map((kode) => [
+        kode,
+        {
+          klaster_ids: [],
+        },
+      ])
+    );
+    for (const row of klasterRows) {
+      const mappedCode = resolveResearchClusterCode(row);
+      if (!mappedCode || !klasterByCode.has(mappedCode)) continue;
+      const target = klasterByCode.get(mappedCode);
+      target.klaster_ids.push(row.id);
+    }
+
+    const ketuaMappings = PERIODE_ROLE_FIELD_DEFINITIONS.filter((item) => item.kode).map((item) => ({
+      ...item,
+      klasterIds: klasterByCode.get(item.kode)?.klaster_ids || [],
+      dosenId: parsePositiveId(rolePayload[item.field]),
+    }));
+
+    for (const item of ketuaMappings) {
+      if (!Array.isArray(item.klasterIds) || item.klasterIds.length === 0) {
+        fieldErrors[item.field] = `Klaster ${item.kode} belum tersedia di master klaster.`;
+      }
+    }
+
+    const allDosenIds = [
+      ...new Set(
+        PERIODE_ROLE_FIELD_DEFINITIONS.map((item) => parsePositiveId(rolePayload[item.field])).filter(Boolean)
+      ),
+    ];
+    const dosenRows = await Dosen.findAll({
+      where: {
+        id: {
+          [Op.in]: allDosenIds,
+        },
+      },
+      attributes: ["id", "kode_dosen", "nik", "nama", "email"],
+      transaction: t,
+    });
+    const dosenById = new Map(dosenRows.map((item) => [item.id, item]));
+
+    for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+      const dosenId = parsePositiveId(rolePayload[item.field]);
+      if (dosenId && !dosenById.has(dosenId)) {
+        fieldErrors[item.field] = `${item.label} tidak ditemukan.`;
+      }
+    }
+
+    const membershipRows = await DosenKlaster.findAll({
+      where: {
+        dosen_id: {
+          [Op.in]: ketuaMappings.map((item) => item.dosenId).filter(Boolean),
+        },
+        klaster_id: {
+          [Op.in]: [...new Set(ketuaMappings.flatMap((item) => item.klasterIds || []))],
+        },
+      },
+      attributes: ["klaster_id", "dosen_id"],
+      transaction: t,
+    });
+    const membershipSet = new Set(membershipRows.map((item) => `${item.klaster_id}:${item.dosen_id}`));
+    for (const item of ketuaMappings) {
+      if (!item.dosenId || !Array.isArray(item.klasterIds) || item.klasterIds.length === 0) continue;
+      const isMember = item.klasterIds.some((klasterId) => membershipSet.has(`${klasterId}:${item.dosenId}`));
+      if (!isMember) {
+        fieldErrors[item.field] = `Dosen terpilih bukan anggota klaster ${item.kode}.`;
+      }
+    }
+
+    if (Object.keys(fieldErrors).length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Validasi master data gagal. Periksa field yang ditandai.",
+        detail: fieldErrors,
+      });
+    }
+
+    const latestMaster = await MasterPenanggungJawabPenjaluran.findOne({
+      order: [["updatedAt", "DESC"]],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (latestMaster) {
+      for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+        latestMaster[item.field] = parsePositiveId(rolePayload[item.field]);
+      }
+      latestMaster.updated_by_sekretaris_id = req.user?.id || null;
+      await latestMaster.save({ transaction: t });
+    } else {
+      const createPayload = {};
+      for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+        createPayload[item.field] = parsePositiveId(rolePayload[item.field]);
+      }
+      createPayload.updated_by_sekretaris_id = req.user?.id || null;
+      await MasterPenanggungJawabPenjaluran.create(createPayload, { transaction: t });
+    }
+
+    const savedMaster = await fetchLatestMasterPenanggungJawab({ transaction: t });
+    await t.commit();
+
+    return res.json({
+      success: true,
+      message: "Master data penanggung jawab penjaluran berhasil disimpan.",
+      data: serializeMasterPenanggungJawab(savedMaster),
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di saveMasterPenanggungJawabPeriode:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/master-dosen/kuota-overview
+exports.getMasterDosenKuotaOverview = async (req, res) => {
+  try {
+    const dosens = await Dosen.findAll({
+      attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+      order: [["nama", "ASC"]],
+    });
+
+    const dosensWithKuota = await Promise.all(
+      dosens.map(async (dosen) => {
+        const kuotaInfo = await dosen.getKuotaInfo();
+        return {
+          id: dosen.id,
+          kode_dosen: dosen.kode_dosen || null,
+          nik: dosen.nik || null,
+          nama: dosen.nama || null,
+          email: dosen.email || null,
+          jabatan_struktural: dosen.jabatan_struktural || null,
+          kuota: kuotaInfo,
+        };
+      })
+    );
+
+    const summary = {
+      total_dosen: dosensWithKuota.length,
+      total_kuota: dosensWithKuota.reduce((sum, row) => sum + Number(row.kuota?.total || 0), 0),
+      total_terpakai: dosensWithKuota.reduce((sum, row) => sum + Number(row.kuota?.terpakai || 0), 0),
+      total_sisa: dosensWithKuota.reduce((sum, row) => sum + Number(row.kuota?.sisa || 0), 0),
+      dosen_penuh: dosensWithKuota.filter((row) => Boolean(row.kuota?.is_penuh)).length,
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        summary,
+        dosens: dosensWithKuota,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getMasterDosenKuotaOverview:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// PUT /api/sekretaris/master-dosen/kuota
+exports.setMasterDosenKuota = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const rawKuota = Number(req.body?.kuota_bimbingan);
+    const mode = String(req.body?.mode || "all").toLowerCase();
+    const selectedIdsRaw = Array.isArray(req.body?.dosen_ids) ? req.body.dosen_ids : [];
+
+    if (!Number.isInteger(rawKuota) || rawKuota < 1) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "kuota_bimbingan harus berupa angka bulat dan minimal 1.",
+      });
+    }
+
+    const selectedIds = [...new Set(selectedIdsRaw.map((item) => Number(item)).filter((id) => Number.isInteger(id) && id > 0))];
+    let targetDosens = [];
+
+    if (mode === "selected") {
+      if (selectedIds.length === 0) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Pilih minimal satu dosen untuk mode selected.",
+        });
+      }
+      targetDosens = await Dosen.findAll({
+        where: { id: { [Op.in]: selectedIds } },
+        attributes: ["id", "nama", "nik", "kode_dosen", "kuota_bimbingan"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (targetDosens.length !== selectedIds.length) {
+        await t.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "Sebagian dosen yang dipilih tidak ditemukan.",
+        });
+      }
+    } else if (mode === "all") {
+      targetDosens = await Dosen.findAll({
+        attributes: ["id", "nama", "nik", "kode_dosen", "kuota_bimbingan"],
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+      if (targetDosens.length === 0) {
+        await t.rollback();
+        return res.status(404).json({
+          success: false,
+          message: "Belum ada data dosen.",
+        });
+      }
+    } else {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "mode tidak valid. Gunakan 'all' atau 'selected'.",
+      });
+    }
+
+    const updatedRows = [];
+    let changedCount = 0;
+    for (const dosen of targetDosens) {
+      const oldKuota = Number(dosen.kuota_bimbingan || 0);
+      if (oldKuota !== rawKuota) {
+        dosen.kuota_bimbingan = rawKuota;
+        await dosen.save({ transaction: t });
+        changedCount += 1;
+      }
+
+      const kuotaInfo = await dosen.getKuotaInfo();
+      if (rawKuota > oldKuota && !kuotaInfo.is_penuh) {
+        await Topik.update(
+          { status: "available" },
+          {
+            where: {
+              dosen_id: dosen.id,
+              status: "unavailable",
+            },
+            transaction: t,
+          }
+        );
+      } else if (kuotaInfo.is_penuh) {
+        await Topik.update(
+          { status: "unavailable" },
+          {
+            where: {
+              dosen_id: dosen.id,
+              status: "available",
+            },
+            transaction: t,
+          }
+        );
+      }
+
+      updatedRows.push({
+        id: dosen.id,
+        nama: dosen.nama || null,
+        nik: dosen.nik || null,
+        kode_dosen: dosen.kode_dosen || null,
+        kuota_lama: oldKuota,
+        kuota_baru: rawKuota,
+        kuota: kuotaInfo,
+      });
+    }
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message:
+        mode === "all"
+          ? `Kuota berhasil diatur menjadi ${rawKuota} untuk semua dosen (${targetDosens.length} dosen).`
+          : `Kuota berhasil diatur menjadi ${rawKuota} untuk ${targetDosens.length} dosen terpilih.`,
+      data: {
+        mode,
+        total_target: targetDosens.length,
+        total_berubah: changedCount,
+        rows: updatedRows,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di setMasterDosenKuota:", error);
+    return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,
@@ -1234,45 +1682,42 @@ exports.openPeriodePendaftaran = async (req, res) => {
     const semester = normalizeText(req.body?.semester).toLowerCase();
     const tanggalMulaiRaw = normalizeText(req.body?.tanggal_mulai);
     const tanggalSelesaiRaw = normalizeText(req.body?.tanggal_selesai);
-    const pengawasMagangDosenId = Number(req.body?.pengawas_magang_dosen_id);
-    const pengawasPengabdianDosenId = Number(req.body?.pengawas_pengabdian_dosen_id);
-    const pengawasPerintisanBisnisDosenId = Number(req.body?.pengawas_perintisan_bisnis_dosen_id);
-
-    const ketuaFieldMap = [
-      { kode: "ITSC", field: "ketua_itsc_dosen_id", label: "Ketua cluster ITSC (Informatika Teori & Sistem Cerdas)" },
-      { kode: "SIRKEL", field: "ketua_sirkel_dosen_id", label: "Ketua cluster SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)" },
-      { kode: "SIBER", field: "ketua_siber_dosen_id", label: "Ketua cluster SIBER (Sistem Siber)" },
-      { kode: "MVK", field: "ketua_mvk_dosen_id", label: "Ketua cluster MVK (Multimedia & Visi Komputer)" },
-    ];
-    const ketuaFallbackDosenId = Number(req.body?.ketua_penelitian_dosen_id);
-    const ketuaPayload = {};
-    for (const item of ketuaFieldMap) {
-      ketuaPayload[item.field] = Number(req.body?.[item.field]);
-    }
-    const allKetuaEmpty = ketuaFieldMap.every(
-      (item) => !Number.isInteger(ketuaPayload[item.field]) || ketuaPayload[item.field] <= 0
-    );
-    if (allKetuaEmpty && Number.isInteger(ketuaFallbackDosenId) && ketuaFallbackDosenId > 0) {
+    const ketuaFieldMap = PERIODE_ROLE_FIELD_DEFINITIONS.filter((item) => item.kode);
+    const rolePayloadFromRequest = buildRolePayloadFromRequest(req.body || {});
+    const ketuaFallbackDosenId = parsePositiveId(req.body?.ketua_penelitian_dosen_id);
+    const allKetuaEmpty = ketuaFieldMap.every((item) => !parsePositiveId(rolePayloadFromRequest[item.field]));
+    if (allKetuaEmpty && ketuaFallbackDosenId) {
       for (const item of ketuaFieldMap) {
-        ketuaPayload[item.field] = ketuaFallbackDosenId;
+        rolePayloadFromRequest[item.field] = ketuaFallbackDosenId;
       }
     }
+
+    const masterPenanggungJawab = await fetchLatestMasterPenanggungJawab({ transaction: t });
+    const rolePayload = mergeRolePayloadWithMaster(rolePayloadFromRequest, masterPenanggungJawab);
+
+    const pengawasMagangDosenId = parsePositiveId(rolePayload.pengawas_magang_dosen_id);
+    const pengawasPengabdianDosenId = parsePositiveId(rolePayload.pengawas_pengabdian_dosen_id);
+    const pengawasPerintisanBisnisDosenId = parsePositiveId(
+      rolePayload.pengawas_perintisan_bisnis_dosen_id
+    );
 
     const fieldErrors = {};
 
     for (const item of ketuaFieldMap) {
-      if (!Number.isInteger(ketuaPayload[item.field]) || ketuaPayload[item.field] <= 0) {
-        fieldErrors[item.field] = `${item.label} wajib dipilih.`;
+      if (!parsePositiveId(rolePayload[item.field])) {
+        fieldErrors[item.field] = `${item.label} wajib dipilih di Master Data penanggung jawab.`;
       }
     }
-    if (!Number.isInteger(pengawasMagangDosenId) || pengawasMagangDosenId <= 0) {
-      fieldErrors.pengawas_magang_dosen_id = "Dosen pengawas magang wajib dipilih.";
+    if (!pengawasMagangDosenId) {
+      fieldErrors.pengawas_magang_dosen_id = "Dosen pengawas magang wajib dipilih di Master Data penanggung jawab.";
     }
-    if (!Number.isInteger(pengawasPengabdianDosenId) || pengawasPengabdianDosenId <= 0) {
-      fieldErrors.pengawas_pengabdian_dosen_id = "Dosen pengampu jalur pengabdian masyarakat wajib dipilih.";
+    if (!pengawasPengabdianDosenId) {
+      fieldErrors.pengawas_pengabdian_dosen_id =
+        "Dosen pengampu jalur pengabdian masyarakat wajib dipilih di Master Data penanggung jawab.";
     }
-    if (!Number.isInteger(pengawasPerintisanBisnisDosenId) || pengawasPerintisanBisnisDosenId <= 0) {
-      fieldErrors.pengawas_perintisan_bisnis_dosen_id = "Dosen pengampu jalur perintisan bisnis wajib dipilih.";
+    if (!pengawasPerintisanBisnisDosenId) {
+      fieldErrors.pengawas_perintisan_bisnis_dosen_id =
+        "Dosen pengampu jalur perintisan bisnis wajib dipilih di Master Data penanggung jawab.";
     }
 
     if (!validateTahunAkademik(tahunAkademik)) {
@@ -1427,7 +1872,7 @@ exports.openPeriodePendaftaran = async (req, res) => {
       ...item,
       klasterIds: klasterByCode.get(item.kode)?.klaster_ids || [],
       preferredKlasterId: klasterByCode.get(item.kode)?.preferred_klaster_id || null,
-      dosenId: Number(ketuaPayload[item.field]),
+      dosenId: parsePositiveId(rolePayload[item.field]),
     }));
 
     for (const item of ketuaMappings) {
@@ -1443,7 +1888,7 @@ exports.openPeriodePendaftaran = async (req, res) => {
           pengawasPengabdianDosenId,
           pengawasPerintisanBisnisDosenId,
         ]),
-    ].filter((id) => Number.isInteger(id) && id > 0);
+    ].filter((id) => parsePositiveId(id));
 
     const dosenRows = await Dosen.findAll({
       where: { id: { [Op.in]: allDosenIds } },

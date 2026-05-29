@@ -46,6 +46,41 @@ module.exports = (sequelize, DataTypes) => {
         as: "ketuaKlasterPeriodes",
       });
 
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "ketua_itsc_dosen_id",
+        as: "masterKetuaItscPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "ketua_sirkel_dosen_id",
+        as: "masterKetuaSirkelPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "ketua_siber_dosen_id",
+        as: "masterKetuaSiberPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "ketua_mvk_dosen_id",
+        as: "masterKetuaMvkPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "pengawas_magang_dosen_id",
+        as: "masterPengawasMagangPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "pengawas_pengabdian_dosen_id",
+        as: "masterPengawasPengabdianPeriodes",
+      });
+
+      Dosen.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "pengawas_perintisan_bisnis_dosen_id",
+        as: "masterPengawasPerintisanBisnisPeriodes",
+      });
+
       Dosen.hasMany(models.PeriodePenjaluran, {
         foreignKey: "ketua_penelitian_dosen_id",
         as: "periodeKetuaPenelitian",

@@ -19,6 +19,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "created_by_sekretaris_id",
         as: "periodeSidangCreated",
       });
+
+      SekretarisProdi.hasMany(models.MasterPenanggungJawabPenjaluran, {
+        foreignKey: "updated_by_sekretaris_id",
+        as: "masterPenanggungJawabUpdated",
+      });
     }
 
     async comparePassword(candidatePassword) {

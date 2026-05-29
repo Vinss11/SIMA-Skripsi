@@ -1,0 +1,10 @@
+const path = require("path");
+
+require("dotenv").config({ path: path.resolve(__dirname, ".env") });
+
+module.exports = {
+  config: path.resolve(__dirname, "config", "config.json"),
+  "models-path": path.resolve(__dirname, "models"),
+  "seeders-path": path.resolve(__dirname, "seeders"),
+  "migrations-path": path.resolve(__dirname, "migrations"),
+};

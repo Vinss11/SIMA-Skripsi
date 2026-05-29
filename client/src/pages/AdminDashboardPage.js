@@ -55,6 +55,8 @@ const TAB_HEADERS = {
 };
 
 const DOSEN_PAGE_SIZE = 20;
+const DOSEN_UPLOAD_PREVIEW_MAX_ROWS = 10;
+const DOSEN_UPLOAD_PREVIEW_PAGE_SIZE = 5;
 const JABATAN_STRUKTURAL_OPTIONS = [
   "Ketua Jurusan Informatika",
   "Sekretaris Jurusan Informatika",
@@ -222,6 +224,9 @@ function UploadPanel({
       }
 
       if (!response.ok || !data) {
+        if (data) {
+          setUploadResult(data);
+        }
         throw new Error(data?.message || "Upload gagal diproses.");
       }
 
@@ -311,6 +316,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const [isUploadingDosen, setIsUploadingDosen] = useState(false);
   const [isUploadingMahasiswa, setIsUploadingMahasiswa] = useState(false);
   const [isDownloadingDosen, setIsDownloadingDosen] = useState(false);
+  const [dosenUploadPreviewPage, setDosenUploadPreviewPage] = useState(1);
   const [dosenQuery, setDosenQuery] = useState("");
   const [dosenMode, setDosenMode] = useState("list");
   const [dosenPage, setDosenPage] = useState(1);
@@ -458,6 +464,72 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     });
   }, [dosenRows, dosenQuery]);
 
+  const dosenUploadPreviewRows = useMemo(() => {
+    const successRows = Array.isArray(uploadDosenResult?.data?.detail_berhasil)
+      ? uploadDosenResult.data.detail_berhasil
+      : [];
+    const failedRows = Array.isArray(uploadDosenResult?.data?.detail_gagal)
+      ? uploadDosenResult.data.detail_gagal
+      : [];
+
+    const pickField = (row, keys) => {
+      const source = row && typeof row === "object" ? row : {};
+      for (const key of keys) {
+        const value = source[key];
+        if (value !== undefined && value !== null && String(value).trim()) {
+          return String(value).trim();
+        }
+      }
+      return "-";
+    };
+
+    const normalizedSuccess = successRows.map((item, index) => ({
+      key: `dosen-upload-ok-${item?.row ?? index}-${item?.kode_dosen ?? index}`,
+      nomor: index + 1,
+      baris: item?.row ?? "-",
+      nama: item?.nama || "-",
+      email: item?.email || "-",
+      nik: item?.nik || "-",
+      klaster: item?.klaster || "-",
+      kuota: item?.kuota_bimbingan ?? "-",
+      status: "valid",
+      pesan_error: "-",
+    }));
+
+    const normalizedFailed = failedRows.map((item, index) => {
+      const raw = item?.data || {};
+      return {
+        key: `dosen-upload-err-${item?.row ?? index}-${index}`,
+        nomor: normalizedSuccess.length + index + 1,
+        baris: item?.row ?? "-",
+        nama: pickField(raw, ["Nama", "nama", "NAMA"]),
+        email: pickField(raw, ["Email", "email", "EMAIL"]),
+        nik: pickField(raw, ["NIK", "Nik", "nik", "Nip"]),
+        klaster: pickField(raw, ["Klaster", "klaster", "KLASTER", "Cluster", "cluster", "CLUSTER"]),
+        kuota: pickField(raw, ["Kuota Bimbingan", "kuota_bimbingan", "KUOTA_BIMBINGAN"]),
+        status: "error",
+        pesan_error: String(item?.error || "Data tidak valid."),
+      };
+    });
+
+    return [...normalizedSuccess, ...normalizedFailed];
+  }, [uploadDosenResult]);
+
+  const dosenUploadPreviewRowsLimited = useMemo(
+    () => dosenUploadPreviewRows.slice(0, DOSEN_UPLOAD_PREVIEW_MAX_ROWS),
+    [dosenUploadPreviewRows]
+  );
+
+  const dosenUploadPreviewTotalPages = useMemo(
+    () => Math.max(1, Math.ceil(dosenUploadPreviewRowsLimited.length / DOSEN_UPLOAD_PREVIEW_PAGE_SIZE)),
+    [dosenUploadPreviewRowsLimited.length]
+  );
+
+  const dosenUploadPreviewRowsPaged = useMemo(() => {
+    const start = (dosenUploadPreviewPage - 1) * DOSEN_UPLOAD_PREVIEW_PAGE_SIZE;
+    return dosenUploadPreviewRowsLimited.slice(start, start + DOSEN_UPLOAD_PREVIEW_PAGE_SIZE);
+  }, [dosenUploadPreviewPage, dosenUploadPreviewRowsLimited]);
+
   const totalDosenPages = useMemo(
     () => Math.max(1, Math.ceil(filteredDosenRows.length / DOSEN_PAGE_SIZE)),
     [filteredDosenRows.length]
@@ -486,6 +558,16 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
       setSelectedDosen(null);
     }
   }, [dosenMode]);
+
+  useEffect(() => {
+    setDosenUploadPreviewPage(1);
+  }, [uploadDosenResult]);
+
+  useEffect(() => {
+    if (dosenUploadPreviewPage > dosenUploadPreviewTotalPages) {
+      setDosenUploadPreviewPage(dosenUploadPreviewTotalPages);
+    }
+  }, [dosenUploadPreviewPage, dosenUploadPreviewTotalPages]);
 
   useLayoutEffect(() => {
     const cancelPendingRaf = () => {
@@ -1024,6 +1106,109 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                   onUploadSuccess={loadData}
                   extraNote="Format kolom: NIK, Nama, Gelar, Email, Jabatan Struktural, Klaster, Kuota Bimbingan. NIK boleh dikosongkan."
                 />
+
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <h3 className="text-lg font-black text-[#1b274b]">Grid Preview Upload Dosen</h3>
+                  <p className="mt-1 text-sm text-[#5d6c91]">
+                    Menampilkan maksimal {DOSEN_UPLOAD_PREVIEW_MAX_ROWS} data hasil upload terakhir (5 data per halaman).
+                  </p>
+
+                  <div className="mt-3 overflow-auto rounded-lg border border-[#e6ecf8]">
+                    <table className="min-w-[1200px] text-left text-sm">
+                      <thead>
+                        <tr className="border-y border-[#e6ecf8] bg-[#f8fbff] text-[#4d5e89]">
+                          <th className="px-3 py-2 font-semibold">No</th>
+                          <th className="px-3 py-2 font-semibold">Baris</th>
+                          <th className="px-3 py-2 font-semibold">Nama</th>
+                          <th className="px-3 py-2 font-semibold">Email</th>
+                          <th className="px-3 py-2 font-semibold">NIK</th>
+                          <th className="px-3 py-2 font-semibold">Klaster</th>
+                          <th className="px-3 py-2 font-semibold">Kuota</th>
+                          <th className="px-3 py-2 font-semibold">Status</th>
+                          <th className="px-3 py-2 font-semibold">Pesan Error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dosenUploadPreviewRowsPaged.length > 0 ? (
+                          dosenUploadPreviewRowsPaged.map((row) => (
+                            <tr
+                              key={row.key}
+                              className={`border-b border-[#eff3fb] ${
+                                row.status === "error" ? "bg-[#fff8f8]" : "bg-white"
+                              }`}
+                            >
+                              <td className="px-3 py-2">{row.nomor}</td>
+                              <td className="px-3 py-2">{row.baris}</td>
+                              <td className="px-3 py-2">{row.nama}</td>
+                              <td className="px-3 py-2">{row.email}</td>
+                              <td className="px-3 py-2">{row.nik}</td>
+                              <td className="px-3 py-2">{row.klaster}</td>
+                              <td className="px-3 py-2">{row.kuota}</td>
+                              <td className="px-3 py-2">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
+                                    row.status === "error"
+                                      ? "bg-[#ffe3e3] text-[#a93d3d]"
+                                      : "bg-[#def4e8] text-[#117246]"
+                                  }`}
+                                >
+                                  {row.status === "error" ? "Tidak Valid" : "Valid"}
+                                </span>
+                              </td>
+                              <td className={`px-3 py-2 ${row.status === "error" ? "text-[#a93d3d]" : ""}`}>
+                                {row.pesan_error}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td className="px-3 py-5 text-center text-sm font-semibold text-[#7b88ab]" colSpan={9}>
+                              Belum ada data preview upload dosen.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                    <p className="text-sm text-[#4f5e86]">
+                      Menampilkan{" "}
+                      {dosenUploadPreviewRowsLimited.length === 0
+                        ? 0
+                        : (dosenUploadPreviewPage - 1) * DOSEN_UPLOAD_PREVIEW_PAGE_SIZE + 1}{" "}
+                      -{" "}
+                      {Math.min(
+                        dosenUploadPreviewPage * DOSEN_UPLOAD_PREVIEW_PAGE_SIZE,
+                        dosenUploadPreviewRowsLimited.length
+                      )}{" "}
+                      dari {dosenUploadPreviewRowsLimited.length} data preview.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setDosenUploadPreviewPage((prev) => Math.max(1, prev - 1))}
+                        disabled={dosenUploadPreviewPage <= 1}
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Sebelumnya
+                      </button>
+                      <span className="text-sm font-semibold text-[#314778]">
+                        Halaman {dosenUploadPreviewPage} / {dosenUploadPreviewTotalPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDosenUploadPreviewPage((prev) => Math.min(dosenUploadPreviewTotalPages, prev + 1))
+                        }
+                        disabled={dosenUploadPreviewPage >= dosenUploadPreviewTotalPages}
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Berikutnya
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
                 <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
                   <h3 className="text-xl font-black text-[#1b274b]">Form Tambah Dosen</h3>

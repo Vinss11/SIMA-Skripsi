@@ -30,6 +30,10 @@ const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
+const MASTER_DOSEN_TAB_OPTIONS = [
+  { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
+  { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
+];
 const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
@@ -45,7 +49,46 @@ const TOPIK_CLUSTER_LABEL_BY_CODE = {
   ITSC: "ITSC",
   MVK: "MVK",
 };
-const PERIODE_FORM_INITIAL = {
+const PERIODE_MASTER_KETUA_FIELDS = [
+  {
+    key: "ketua_itsc_dosen_id",
+    code: "ITSC",
+    label: "Ketua ITSC (Informatika Teori & Sistem Cerdas)",
+  },
+  {
+    key: "ketua_sirkel_dosen_id",
+    code: "SIRKEL",
+    label: "Ketua SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)",
+  },
+  {
+    key: "ketua_siber_dosen_id",
+    code: "SIBER",
+    label: "Ketua SIBER (Sistem Siber)",
+  },
+  {
+    key: "ketua_mvk_dosen_id",
+    code: "MVK",
+    label: "Ketua MVK (Multimedia & Visi Komputer)",
+  },
+];
+const PERIODE_MASTER_JALUR_FIELDS = [
+  {
+    key: "pengawas_magang_dosen_id",
+    label: "Dosen Pengawas Magang",
+    optionLabel: "Pilih dosen pengawas magang",
+  },
+  {
+    key: "pengawas_pengabdian_dosen_id",
+    label: "Dosen Pengampu Pengabdian Masyarakat",
+    optionLabel: "Pilih dosen pengampu pengabdian",
+  },
+  {
+    key: "pengawas_perintisan_bisnis_dosen_id",
+    label: "Dosen Pengampu Perintisan Bisnis",
+    optionLabel: "Pilih dosen pengampu perintisan bisnis",
+  },
+];
+const PERIODE_MASTER_INITIAL = {
   ketua_itsc_dosen_id: "",
   ketua_sirkel_dosen_id: "",
   ketua_siber_dosen_id: "",
@@ -53,6 +96,8 @@ const PERIODE_FORM_INITIAL = {
   pengawas_magang_dosen_id: "",
   pengawas_pengabdian_dosen_id: "",
   pengawas_perintisan_bisnis_dosen_id: "",
+};
+const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
   semester: "ganjil",
   tanggal_mulai: "",
@@ -222,6 +267,7 @@ function buildNavItems(isSekretaris) {
 
   return [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "master-dosen", label: "Master Dosen", icon: Users },
     { id: "master-mahasiswa", label: "Master Mahasiswa", icon: GraduationCap },
     { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
     { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
@@ -301,6 +347,11 @@ function buildTabHeaders(isSekretaris) {
 
   return {
     ...baseHeaders,
+    "master-dosen": {
+      icon: Users,
+      title: "Master Dosen",
+      subtitle: "Atur penanggung jawab penjaluran dan kuota bimbingan dosen.",
+    },
     penjaluran: {
       icon: ListChecks,
       title: "Manajemen Penjaluran",
@@ -323,6 +374,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const navItems = useMemo(() => buildNavItems(isSekretaris), [isSekretaris]);
   const tabHeaders = useMemo(() => buildTabHeaders(isSekretaris), [isSekretaris]);
   const [activeTab, setActiveTab] = useState("dashboard");
+  const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
   const [topikMode, setTopikMode] = useState("list");
 
   const [loading, setLoading] = useState(true);
@@ -351,6 +403,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [masterTopikRows, setMasterTopikRows] = useState([]);
   const [masterTopikQuery, setMasterTopikQuery] = useState("");
   const [masterTopikPage, setMasterTopikPage] = useState(1);
+  const [masterDosenKuotaOverview, setMasterDosenKuotaOverview] = useState({
+    summary: null,
+    dosens: [],
+  });
+  const [masterDosenKuotaQuery, setMasterDosenKuotaQuery] = useState("");
+  const [masterDosenKuotaPage, setMasterDosenKuotaPage] = useState(1);
+  const [masterDosenKuotaMode, setMasterDosenKuotaMode] = useState("all");
+  const [masterDosenKuotaValue, setMasterDosenKuotaValue] = useState("5");
+  const [masterDosenSelectedDosenIds, setMasterDosenSelectedDosenIds] = useState([]);
+  const [savingMasterDosenKuota, setSavingMasterDosenKuota] = useState(false);
 
   const [topikForm, setTopikForm] = useState({
     kode: "",
@@ -439,7 +501,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     periodes: [],
     dosen_options: [],
     ketua_klaster_options: [],
+    master_penanggung_jawab: null,
   });
+  const [periodeMasterForm, setPeriodeMasterForm] = useState({ ...PERIODE_MASTER_INITIAL });
+  const [periodeMasterErrors, setPeriodeMasterErrors] = useState({});
+  const [savingPeriodeMaster, setSavingPeriodeMaster] = useState(false);
   const [periodeForm, setPeriodeForm] = useState({ ...PERIODE_FORM_INITIAL });
   const [periodeFormErrors, setPeriodeFormErrors] = useState({});
   const [periodeMode, setPeriodeMode] = useState("list");
@@ -470,6 +536,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [rowActionLoadingId, setRowActionLoadingId] = useState(null);
   const [exportingPendaftaran, setExportingPendaftaran] = useState(false);
 
+  const periodeMasterSource = useMemo(
+    () => (periodeOverview?.master_penanggung_jawab && typeof periodeOverview.master_penanggung_jawab === "object"
+      ? periodeOverview.master_penanggung_jawab
+      : null),
+    [periodeOverview?.master_penanggung_jawab]
+  );
+
   const sessionExpiredRef = useRef(false);
   const activeTabHeader = tabHeaders[activeTab] || tabHeaders.dashboard;
   const isPeriodeReadonly =
@@ -484,6 +557,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       (activeTab === "submissions" && submissionMode === "list") ||
       activeTab === "permohonan-extend" ||
       activeTab === "pamit" ||
+      (isSekretaris && activeTab === "master-dosen") ||
       (isSekretaris && activeTab === "master-topik") ||
       (activeTab === "topik" && topikMode === "list") ||
       (isSekretaris && activeTab === "penjaluran") ||
@@ -496,6 +570,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setIsBimbinganReviewListMode(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!(isSekretaris && activeTab === "master-dosen")) {
+      setMasterDosenSelectedDosenIds([]);
+      setMasterDosenKuotaMode("all");
+    }
+  }, [activeTab, isSekretaris]);
 
   useEffect(() => {
     setTopikUploadPreviewPage(1);
@@ -518,6 +599,34 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       };
     });
   }, [allowedTopikClusters]);
+
+  useEffect(() => {
+    const nextMasterForm = {
+      ketua_itsc_dosen_id: periodeMasterSource?.ketua_itsc_dosen_id
+        ? String(periodeMasterSource.ketua_itsc_dosen_id)
+        : "",
+      ketua_sirkel_dosen_id: periodeMasterSource?.ketua_sirkel_dosen_id
+        ? String(periodeMasterSource.ketua_sirkel_dosen_id)
+        : "",
+      ketua_siber_dosen_id: periodeMasterSource?.ketua_siber_dosen_id
+        ? String(periodeMasterSource.ketua_siber_dosen_id)
+        : "",
+      ketua_mvk_dosen_id: periodeMasterSource?.ketua_mvk_dosen_id
+        ? String(periodeMasterSource.ketua_mvk_dosen_id)
+        : "",
+      pengawas_magang_dosen_id: periodeMasterSource?.pengawas_magang_dosen_id
+        ? String(periodeMasterSource.pengawas_magang_dosen_id)
+        : "",
+      pengawas_pengabdian_dosen_id: periodeMasterSource?.pengawas_pengabdian_dosen_id
+        ? String(periodeMasterSource.pengawas_pengabdian_dosen_id)
+        : "",
+      pengawas_perintisan_bisnis_dosen_id: periodeMasterSource?.pengawas_perintisan_bisnis_dosen_id
+        ? String(periodeMasterSource.pengawas_perintisan_bisnis_dosen_id)
+        : "",
+    };
+    setPeriodeMasterForm(nextMasterForm);
+    setPeriodeMasterErrors({});
+  }, [periodeMasterSource]);
 
   const fetchWithAuth = useCallback(
     async (path, options = {}) => {
@@ -599,6 +708,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (isSekretaris) {
       promises.push(fetchWithAuth("/api/sekretaris/pendaftaran"));
       promises.push(fetchWithAuth("/api/sekretaris/periode"));
+      promises.push(fetchWithAuth("/api/sekretaris/master-dosen/kuota-overview"));
       promises.push(fetchWithAuth("/api/topics"));
     }
 
@@ -613,6 +723,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       mahasiswaMasterResult,
       pendaftaranResult,
       periodeResult,
+      masterDosenKuotaResult,
       masterTopikResult,
     ] = results;
 
@@ -669,6 +780,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           ketua_klaster_options: Array.isArray(periodPayload.ketua_klaster_options)
             ? periodPayload.ketua_klaster_options
             : [],
+          master_penanggung_jawab: periodPayload.master_penanggung_jawab || null,
         });
       } else {
         setPeriodeOverview({
@@ -677,6 +789,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           periodes: [],
           dosen_options: [],
           ketua_klaster_options: [],
+          master_penanggung_jawab: null,
         });
         issues.push(periodeResult?.reason?.message || "Gagal memuat data periode.");
       }
@@ -687,6 +800,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         setMasterTopikRows([]);
         issues.push(masterTopikResult?.reason?.message || "Gagal memuat master topik.");
       }
+
+      if (masterDosenKuotaResult?.status === "fulfilled") {
+        const payload = masterDosenKuotaResult.value || {};
+        setMasterDosenKuotaOverview({
+          summary: payload.summary || null,
+          dosens: Array.isArray(payload.dosens) ? payload.dosens : [],
+        });
+      } else {
+        setMasterDosenKuotaOverview({ summary: null, dosens: [] });
+        issues.push(masterDosenKuotaResult?.reason?.message || "Gagal memuat data kuota dosen.");
+      }
       setKetuaKlasterOverview({
         active_periode: null,
         periode_terpilih: null,
@@ -696,6 +820,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setKetuaKlasterPeriodeId("");
     } else {
       setMasterTopikRows([]);
+      setPeriodeOverview({
+        active_periode: null,
+        draft_periode: null,
+        periodes: [],
+        dosen_options: [],
+        ketua_klaster_options: [],
+        master_penanggung_jawab: null,
+      });
+      setMasterDosenKuotaOverview({ summary: null, dosens: [] });
       setKetuaKlasterOverview({
         active_periode: null,
         periode_terpilih: null,
@@ -981,6 +1114,78 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
     return map;
   }, [periodeReadonlyRoles.rows]);
+
+  const masterDosenKuotaRows = useMemo(
+    () => (Array.isArray(masterDosenKuotaOverview?.dosens) ? masterDosenKuotaOverview.dosens : []),
+    [masterDosenKuotaOverview?.dosens]
+  );
+  const filteredMasterDosenKuotaRows = useMemo(() => {
+    const keyword = masterDosenKuotaQuery.trim().toLowerCase();
+    if (!keyword) return masterDosenKuotaRows;
+    return masterDosenKuotaRows.filter((row) => {
+      const haystack = [
+        row?.kode_dosen,
+        row?.nik,
+        row?.nama,
+        row?.email,
+        row?.jabatan_struktural,
+        row?.kuota?.total,
+        row?.kuota?.terpakai,
+        row?.kuota?.sisa,
+      ]
+        .filter((item) => item !== null && item !== undefined && String(item).trim() !== "")
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [masterDosenKuotaQuery, masterDosenKuotaRows]);
+  const totalMasterDosenKuotaPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredMasterDosenKuotaRows.length / DOSEN_GRID_PAGE_SIZE)),
+    [filteredMasterDosenKuotaRows.length]
+  );
+  const pagedMasterDosenKuotaRows = useMemo(() => {
+    const start = (masterDosenKuotaPage - 1) * DOSEN_GRID_PAGE_SIZE;
+    return filteredMasterDosenKuotaRows.slice(start, start + DOSEN_GRID_PAGE_SIZE);
+  }, [filteredMasterDosenKuotaRows, masterDosenKuotaPage]);
+  const masterDosenKuotaRangeStart =
+    filteredMasterDosenKuotaRows.length === 0
+      ? 0
+      : (masterDosenKuotaPage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
+  const masterDosenKuotaRangeEnd = Math.min(
+    masterDosenKuotaPage * DOSEN_GRID_PAGE_SIZE,
+    filteredMasterDosenKuotaRows.length
+  );
+  const pagedMasterDosenKuotaIds = useMemo(
+    () =>
+      pagedMasterDosenKuotaRows
+        .map((row) => Number(row?.id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    [pagedMasterDosenKuotaRows]
+  );
+  const isMasterDosenKuotaPageAllSelected = useMemo(() => {
+    if (pagedMasterDosenKuotaIds.length === 0) return false;
+    const selectedSet = new Set(masterDosenSelectedDosenIds.map((item) => Number(item)));
+    return pagedMasterDosenKuotaIds.every((id) => selectedSet.has(id));
+  }, [masterDosenSelectedDosenIds, pagedMasterDosenKuotaIds]);
+  const masterPeriodeMissingLabels = useMemo(() => {
+    const fields = [
+      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({ key: item.key, label: item.label })),
+      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({ key: item.key, label: item.label })),
+    ];
+    return fields
+      .filter((item) => !String(periodeMasterForm?.[item.key] || "").trim())
+      .map((item) => item.label);
+  }, [periodeMasterForm]);
+
+  useEffect(() => {
+    setMasterDosenKuotaPage(1);
+  }, [masterDosenKuotaQuery]);
+
+  useEffect(() => {
+    if (masterDosenKuotaPage > totalMasterDosenKuotaPages) {
+      setMasterDosenKuotaPage(totalMasterDosenKuotaPages);
+    }
+  }, [masterDosenKuotaPage, totalMasterDosenKuotaPages]);
 
   const filteredKetuaKlasterRows = useMemo(() => {
     const rows = Array.isArray(ketuaKlasterOverview.rows) ? ketuaKlasterOverview.rows : [];
@@ -1764,31 +1969,165 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   };
 
-  const handleOpenPeriode = async () => {
-    const fieldErrors = {};
-    const tahunAkademik = periodeForm.tahun_akademik.trim();
-    const tahunRegex = /^\d{4}\/\d{4}$/;
-    const ketuaFields = [
-      { key: "ketua_itsc_dosen_id", label: "Ketua cluster ITSC (Informatika Teori & Sistem Cerdas)" },
-      { key: "ketua_sirkel_dosen_id", label: "Ketua cluster SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)" },
-      { key: "ketua_siber_dosen_id", label: "Ketua cluster SIBER (Sistem Siber)" },
-      { key: "ketua_mvk_dosen_id", label: "Ketua cluster MVK (Multimedia & Visi Komputer)" },
-    ];
+  const handlePeriodeMasterInputChange = (event) => {
+    const { name, value } = event.target;
+    setPeriodeMasterForm((prev) => ({ ...prev, [name]: value }));
+    setPeriodeMasterErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
 
-    ketuaFields.forEach((item) => {
-      if (!periodeForm[item.key]) {
+  const handleSavePeriodeMaster = async () => {
+    const fieldErrors = {};
+    const allMasterFields = [
+      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({
+        key: item.key,
+        label: item.label,
+      })),
+      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({
+        key: item.key,
+        label: item.label,
+      })),
+    ];
+    allMasterFields.forEach((item) => {
+      if (!periodeMasterForm[item.key]) {
         fieldErrors[item.key] = `${item.label} wajib dipilih.`;
       }
     });
-    if (!periodeForm.pengawas_magang_dosen_id) {
-      fieldErrors.pengawas_magang_dosen_id = "Dosen pengawas magang wajib dipilih.";
+
+    if (Object.keys(fieldErrors).length > 0) {
+      setPeriodeMasterErrors(fieldErrors);
+      showErrorToast("Master data penanggung jawab belum lengkap.");
+      return;
     }
-    if (!periodeForm.pengawas_pengabdian_dosen_id) {
-      fieldErrors.pengawas_pengabdian_dosen_id = "Dosen pengampu jalur pengabdian masyarakat wajib dipilih.";
+
+    setPeriodeMasterErrors({});
+    setSavingPeriodeMaster(true);
+    try {
+      await fetchWithAuth("/api/sekretaris/periode/master-penanggung-jawab", {
+        method: "POST",
+        body: JSON.stringify({
+          ketua_itsc_dosen_id: Number(periodeMasterForm.ketua_itsc_dosen_id),
+          ketua_sirkel_dosen_id: Number(periodeMasterForm.ketua_sirkel_dosen_id),
+          ketua_siber_dosen_id: Number(periodeMasterForm.ketua_siber_dosen_id),
+          ketua_mvk_dosen_id: Number(periodeMasterForm.ketua_mvk_dosen_id),
+          pengawas_magang_dosen_id: Number(periodeMasterForm.pengawas_magang_dosen_id),
+          pengawas_pengabdian_dosen_id: Number(periodeMasterForm.pengawas_pengabdian_dosen_id),
+          pengawas_perintisan_bisnis_dosen_id: Number(
+            periodeMasterForm.pengawas_perintisan_bisnis_dosen_id
+          ),
+        }),
+      });
+      showSuccessToast("Master data penanggung jawab berhasil disimpan.");
+      await loadAllData();
+    } catch (saveError) {
+      if (saveError?.message !== "__SESSION_EXPIRED__") {
+        if (saveError?.detail && typeof saveError.detail === "object") {
+          setPeriodeMasterErrors(saveError.detail);
+          return;
+        }
+        showErrorToast(saveError.message || "Gagal menyimpan master data penanggung jawab.");
+      }
+    } finally {
+      setSavingPeriodeMaster(false);
     }
-    if (!periodeForm.pengawas_perintisan_bisnis_dosen_id) {
-      fieldErrors.pengawas_perintisan_bisnis_dosen_id = "Dosen pengampu jalur perintisan bisnis wajib dipilih.";
+  };
+
+  const handleToggleMasterDosenKuotaRow = (dosenId) => {
+    const parsedId = Number(dosenId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) return;
+    setMasterDosenSelectedDosenIds((prev) => {
+      const exists = prev.some((item) => Number(item) === parsedId);
+      if (exists) {
+        return prev.filter((item) => Number(item) !== parsedId);
+      }
+      return [...prev, parsedId];
+    });
+  };
+
+  const handleToggleMasterDosenKuotaPage = () => {
+    if (pagedMasterDosenKuotaIds.length === 0) return;
+    setMasterDosenSelectedDosenIds((prev) => {
+      const set = new Set(prev.map((item) => Number(item)));
+      if (isMasterDosenKuotaPageAllSelected) {
+        pagedMasterDosenKuotaIds.forEach((id) => set.delete(id));
+      } else {
+        pagedMasterDosenKuotaIds.forEach((id) => set.add(id));
+      }
+      return [...set];
+    });
+  };
+
+  const handleSaveMasterDosenKuota = async () => {
+    const parsedKuota = Number(masterDosenKuotaValue);
+    if (!Number.isInteger(parsedKuota) || parsedKuota < 1) {
+      showErrorToast("Kuota bimbingan wajib angka bulat minimal 1.");
+      return;
     }
+
+    const selectedIds = [...new Set(masterDosenSelectedDosenIds.map((item) => Number(item)).filter((id) => Number.isInteger(id) && id > 0))];
+    if (masterDosenKuotaMode === "selected" && selectedIds.length === 0) {
+      showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
+      return;
+    }
+
+    const konfirmasi = await Swal.fire({
+      title: "Simpan kuota bimbingan?",
+      html:
+        masterDosenKuotaMode === "all"
+          ? `Kuota akan diatur menjadi <b>${parsedKuota}</b> untuk <b>semua dosen</b>.`
+          : `Kuota akan diatur menjadi <b>${parsedKuota}</b> untuk <b>${selectedIds.length} dosen terpilih</b>.`,
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Ya, simpan",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#117246",
+    });
+    if (!konfirmasi.isConfirmed) return;
+
+    setSavingMasterDosenKuota(true);
+    try {
+      const payload = await fetchWithAuth("/api/sekretaris/master-dosen/kuota", {
+        method: "PUT",
+        body: JSON.stringify({
+          mode: masterDosenKuotaMode,
+          kuota_bimbingan: parsedKuota,
+          dosen_ids: masterDosenKuotaMode === "selected" ? selectedIds : [],
+        }),
+      });
+      showSuccessToast(payload?.message || "Kuota bimbingan berhasil diperbarui.");
+      if (masterDosenKuotaMode === "selected") {
+        setMasterDosenSelectedDosenIds([]);
+      }
+      await loadAllData();
+    } catch (errorSave) {
+      if (errorSave?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(errorSave.message || "Gagal menyimpan kuota bimbingan.");
+      }
+    } finally {
+      setSavingMasterDosenKuota(false);
+    }
+  };
+
+  const handleOpenPeriode = async () => {
+    const fieldErrors = {};
+    const masterErrors = {};
+    const tahunAkademik = periodeForm.tahun_akademik.trim();
+    const tahunRegex = /^\d{4}\/\d{4}$/;
+
+    const allMasterFields = [
+      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({ key: item.key, label: item.label })),
+      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({ key: item.key, label: item.label })),
+    ];
+    allMasterFields.forEach((item) => {
+      if (!periodeMasterForm[item.key]) {
+        masterErrors[item.key] = `${item.label} belum diatur di master data.`;
+      }
+    });
+
     if (!tahunAkademik) {
       fieldErrors.tahun_akademik = "Tahun akademik wajib diisi.";
     } else if (!tahunRegex.test(tahunAkademik)) {
@@ -1812,15 +2151,23 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       fieldErrors.tanggal_selesai = "Tanggal selesai harus setelah tanggal mulai.";
     }
 
+    if (Object.keys(masterErrors).length > 0) {
+      setPeriodeMasterErrors(masterErrors);
+      setPeriodeFormErrors(fieldErrors);
+      showErrorToast("Lengkapi master data penanggung jawab terlebih dahulu.");
+      return;
+    }
+    setPeriodeMasterErrors({});
+
     if (Object.keys(fieldErrors).length > 0) {
       setPeriodeFormErrors(fieldErrors);
       return;
     }
     setPeriodeFormErrors({});
 
-    const ketuaSummary = ketuaFields
+    const ketuaSummary = PERIODE_MASTER_KETUA_FIELDS
       .map((item) => {
-        const dosen = periodeDosenMap.get(Number(periodeForm[item.key]));
+        const dosen = periodeDosenMap.get(Number(periodeMasterForm[item.key]));
         return `${item.label}: <b>${dosen?.nama || "-"}</b>`;
       })
       .join("<br>");
@@ -1830,9 +2177,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       html: `
         Periode yang akan dibuka:<br><b>${formatLabel(periodeForm.semester)} ${tahunAkademik}</b><br><br>
         ${ketuaSummary}<br><br>
-        Pengawas Magang: <b>${periodeDosenMap.get(Number(periodeForm.pengawas_magang_dosen_id))?.nama || "-"}</b><br>
-        Pengampu Pengabdian Masyarakat: <b>${periodeDosenMap.get(Number(periodeForm.pengawas_pengabdian_dosen_id))?.nama || "-"}</b><br>
-        Pengampu Perintisan Bisnis: <b>${periodeDosenMap.get(Number(periodeForm.pengawas_perintisan_bisnis_dosen_id))?.nama || "-"}</b>
+        Pengawas Magang: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_magang_dosen_id))?.nama || "-"}</b><br>
+        Pengampu Pengabdian Masyarakat: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_pengabdian_dosen_id))?.nama || "-"}</b><br>
+        Pengampu Perintisan Bisnis: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_perintisan_bisnis_dosen_id))?.nama || "-"}</b>
       `,
       icon: "question",
       showCancelButton: true,
@@ -1847,13 +2194,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       await fetchWithAuth("/api/sekretaris/periode/open", {
         method: "POST",
         body: JSON.stringify({
-          ketua_itsc_dosen_id: Number(periodeForm.ketua_itsc_dosen_id),
-          ketua_sirkel_dosen_id: Number(periodeForm.ketua_sirkel_dosen_id),
-          ketua_siber_dosen_id: Number(periodeForm.ketua_siber_dosen_id),
-          ketua_mvk_dosen_id: Number(periodeForm.ketua_mvk_dosen_id),
-          pengawas_magang_dosen_id: Number(periodeForm.pengawas_magang_dosen_id),
-          pengawas_pengabdian_dosen_id: Number(periodeForm.pengawas_pengabdian_dosen_id),
-          pengawas_perintisan_bisnis_dosen_id: Number(periodeForm.pengawas_perintisan_bisnis_dosen_id),
+          ketua_itsc_dosen_id: Number(periodeMasterForm.ketua_itsc_dosen_id),
+          ketua_sirkel_dosen_id: Number(periodeMasterForm.ketua_sirkel_dosen_id),
+          ketua_siber_dosen_id: Number(periodeMasterForm.ketua_siber_dosen_id),
+          ketua_mvk_dosen_id: Number(periodeMasterForm.ketua_mvk_dosen_id),
+          pengawas_magang_dosen_id: Number(periodeMasterForm.pengawas_magang_dosen_id),
+          pengawas_pengabdian_dosen_id: Number(periodeMasterForm.pengawas_pengabdian_dosen_id),
+          pengawas_perintisan_bisnis_dosen_id: Number(
+            periodeMasterForm.pengawas_perintisan_bisnis_dosen_id
+          ),
           tahun_akademik: tahunAkademik,
           semester: periodeForm.semester,
           tanggal_mulai: periodeForm.tanggal_mulai || null,
@@ -1869,7 +2218,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     } catch (openError) {
       if (openError?.message !== "__SESSION_EXPIRED__") {
         if (openError?.detail && typeof openError.detail === "object") {
-          setPeriodeFormErrors(openError.detail);
+          const nextPeriodeErrors = {};
+          const nextMasterErrors = {};
+          const masterKeys = new Set([
+            ...PERIODE_MASTER_KETUA_FIELDS.map((item) => item.key),
+            ...PERIODE_MASTER_JALUR_FIELDS.map((item) => item.key),
+          ]);
+          Object.entries(openError.detail).forEach(([key, message]) => {
+            if (masterKeys.has(key)) {
+              nextMasterErrors[key] = message;
+            } else {
+              nextPeriodeErrors[key] = message;
+            }
+          });
+          setPeriodeFormErrors(nextPeriodeErrors);
+          setPeriodeMasterErrors(nextMasterErrors);
           return;
         }
         showErrorToast(openError.message || "Gagal membuka periode.");
@@ -3124,6 +3487,324 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               </div>
             ) : null}
 
+            {!loading && isSekretaris && activeTab === "master-dosen" ? (
+              <div
+                className={
+                  masterDosenTab === "kuota-bimbingan"
+                    ? "flex min-h-0 flex-1 flex-col gap-4"
+                    : "space-y-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                }
+              >
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <p className="text-lg font-black text-[#1b274b]">Menu Master Dosen</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    {MASTER_DOSEN_TAB_OPTIONS.map((item) => (
+                      <button
+                        key={`master-dosen-tab-${item.key}`}
+                        type="button"
+                        onClick={() => setMasterDosenTab(item.key)}
+                        className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
+                          masterDosenTab === item.key
+                            ? "border-[#2f63e3] bg-[#2f63e3] text-white"
+                            : "border-[#d3dbef] text-[#345087] hover:bg-[#f4f7ff]"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {masterDosenTab === "penanggung-jawab" ? (
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-black text-[#1b274b]">
+                          Master Data Penanggung Jawab Penjaluran
+                        </p>
+                        <p className="mt-1 text-sm text-[#5d6c91]">
+                          Atur ketua cluster dan pembimbing jalur yang akan dipakai otomatis saat periode penjaluran dibuka.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSavePeriodeMaster}
+                        disabled={savingPeriodeMaster}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingPeriodeMaster ? "Menyimpan..." : "Simpan Master Data"}
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                      {PERIODE_MASTER_KETUA_FIELDS.map((item) => {
+                        const clusterOption = periodeKetuaKlasterOptions.find(
+                          (row) => String(row.kode || "").toUpperCase() === item.code
+                        );
+                        const kandidat = Array.isArray(clusterOption?.kandidat_dosen)
+                          ? clusterOption.kandidat_dosen
+                          : [];
+                        return (
+                          <div key={`master-dosen-ketua-${item.code}`}>
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
+                            <select
+                              name={item.key}
+                              value={periodeMasterForm[item.key]}
+                              onChange={handlePeriodeMasterInputChange}
+                              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                                periodeMasterErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                              }`}
+                            >
+                              <option value="">Pilih dosen ketua {item.code}</option>
+                              {kandidat.map((dosen) => (
+                                <option key={`master-dosen-ketua-${item.code}-${dosen.id}`} value={dosen.id}>
+                                  {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
+                                </option>
+                              ))}
+                            </select>
+                            {periodeMasterErrors[item.key] ? (
+                              <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
+                      {PERIODE_MASTER_JALUR_FIELDS.map((item) => (
+                        <div key={`master-dosen-jalur-${item.key}`}>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
+                          <select
+                            name={item.key}
+                            value={periodeMasterForm[item.key]}
+                            onChange={handlePeriodeMasterInputChange}
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              periodeMasterErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                            }`}
+                          >
+                            <option value="">{item.optionLabel}</option>
+                            {periodeDosenOptions.map((dosen) => (
+                              <option key={`master-dosen-${item.key}-${dosen.id}`} value={dosen.id}>
+                                {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
+                              </option>
+                            ))}
+                          </select>
+                          {periodeMasterErrors[item.key] ? (
+                            <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {masterDosenTab === "kuota-bimbingan" ? (
+                  <>
+                    <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={loadAllData}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                        >
+                          <RefreshCcw className="h-4 w-4" />
+                          Refresh
+                        </button>
+                        <select
+                          value={masterDosenKuotaMode}
+                          onChange={(event) => setMasterDosenKuotaMode(event.target.value)}
+                          className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                        >
+                          <option value="all">Set untuk semua dosen</option>
+                          <option value="selected">Set untuk dosen terpilih</option>
+                        </select>
+                        <input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={masterDosenKuotaValue}
+                          onChange={(event) => setMasterDosenKuotaValue(event.target.value)}
+                          placeholder="Kuota bimbingan"
+                          className="w-[180px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingMasterDosenKuota}
+                          onClick={handleSaveMasterDosenKuota}
+                          className="inline-flex items-center gap-2 rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {savingMasterDosenKuota ? "Menyimpan..." : "Simpan Kuota"}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
+                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Total Dosen</p>
+                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
+                          {masterDosenKuotaOverview?.summary?.total_dosen ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Total Kuota</p>
+                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
+                          {masterDosenKuotaOverview?.summary?.total_kuota ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Terpakai</p>
+                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
+                          {masterDosenKuotaOverview?.summary?.total_terpakai ?? 0}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Sisa</p>
+                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
+                          {masterDosenKuotaOverview?.summary?.total_sisa ?? 0}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                        <h3 className="text-lg font-black text-[#1b274b]">Grid Kuota Dosen</h3>
+                        <div className="flex items-center gap-2">
+                          {masterDosenKuotaMode === "selected" ? (
+                            <span className="rounded-full bg-[#eef3ff] px-3 py-1 text-xs font-bold text-[#2f63e3]">
+                              Dipilih: {masterDosenSelectedDosenIds.length}
+                            </span>
+                          ) : null}
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                            <input
+                              type="text"
+                              value={masterDosenKuotaQuery}
+                              onChange={(event) => setMasterDosenKuotaQuery(event.target.value)}
+                              placeholder="Cari dosen, email, jabatan..."
+                              className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                        <table className="w-full min-w-[1400px] text-left text-sm">
+                          <thead>
+                            <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">
+                                <input
+                                  type="checkbox"
+                                  checked={isMasterDosenKuotaPageAllSelected}
+                                  onChange={handleToggleMasterDosenKuotaPage}
+                                  disabled={masterDosenKuotaMode !== "selected"}
+                                  className="h-4 w-4 accent-[#2f63e3]"
+                                />
+                              </th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode/NIK</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama Dosen</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jabatan Struktural</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa Bimbingan</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Sisa Kuota</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredMasterDosenKuotaRows.length > 0
+                              ? pagedMasterDosenKuotaRows.map((row, index) => {
+                                  const rowId = Number(row?.id);
+                                  const isChecked = masterDosenSelectedDosenIds.some(
+                                    (item) => Number(item) === rowId
+                                  );
+                                  return (
+                                    <tr key={`master-dosen-kuota-${row.id}`} className="border-b border-[#eff3fb]">
+                                      <td className="px-3 py-2">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => handleToggleMasterDosenKuotaRow(rowId)}
+                                          disabled={masterDosenKuotaMode !== "selected"}
+                                          className="h-4 w-4 accent-[#2f63e3]"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {(masterDosenKuotaPage - 1) * DOSEN_GRID_PAGE_SIZE + index + 1}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {row.kode_dosen || "-"}
+                                        <div className="text-xs text-[#7080a6]">{row.nik || "-"}</div>
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        <p className="font-semibold text-[#1f3160]">{row.nama || "-"}</p>
+                                        <p className="text-xs text-[#6a779a]">{row.email || "-"}</p>
+                                      </td>
+                                      <td className="px-3 py-2">{row.jabatan_struktural || "-"}</td>
+                                      <td className="px-3 py-2">{row.kuota?.total ?? 0}</td>
+                                      <td className="px-3 py-2">{row.kuota?.terpakai ?? 0}</td>
+                                      <td className="px-3 py-2">{row.kuota?.sisa ?? 0}</td>
+                                      <td className="px-3 py-2">
+                                        {row.kuota?.is_penuh ? (
+                                          <span className="rounded-full bg-[#ffe5e5] px-2 py-1 text-xs font-bold text-[#b13a3a]">
+                                            Penuh
+                                          </span>
+                                        ) : (
+                                          <span className="rounded-full bg-[#e8f8ef] px-2 py-1 text-xs font-bold text-[#127947]">
+                                            Tersedia
+                                          </span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              : null}
+                          </tbody>
+                        </table>
+
+                        {filteredMasterDosenKuotaRows.length === 0 ? (
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                            Data kuota dosen tidak ditemukan.
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                        <p className="text-sm text-[#4f5e86]">
+                          Menampilkan {masterDosenKuotaRangeStart} - {masterDosenKuotaRangeEnd} dari{" "}
+                          {filteredMasterDosenKuotaRows.length} data dosen.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setMasterDosenKuotaPage((prev) => Math.max(1, prev - 1))}
+                            disabled={masterDosenKuotaPage === 1}
+                            className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Sebelumnya
+                          </button>
+                          <span className="text-sm font-semibold text-[#314778]">
+                            Halaman {masterDosenKuotaPage} / {totalMasterDosenKuotaPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMasterDosenKuotaPage((prev) =>
+                                Math.min(totalMasterDosenKuotaPages, prev + 1)
+                              )
+                            }
+                            disabled={masterDosenKuotaPage >= totalMasterDosenKuotaPages}
+                            className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Berikutnya
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
+
             {!loading && isSekretaris && activeTab === "master-topik" ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -3877,6 +4558,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         setPeriodeMode("list");
                         setEditingPeriode(null);
                         setPeriodeFormErrors({});
+                        setPeriodeMasterErrors({});
                         setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
                       }}
                       disabled={periodeMode === "list"}
@@ -3900,6 +4582,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         setEditingPeriode(null);
                         setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
                         setPeriodeFormErrors({});
+                        setPeriodeMasterErrors({});
                       }}
                       className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                         periodeMode === "open"
@@ -4017,186 +4700,60 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                     <h3 className="text-lg font-black text-[#1b274b]">Buka Periode Baru</h3>
                     <p className="mt-1 text-sm text-[#5d6c91]">
-                      Tetapkan dosen penanggung jawab jalur, lalu isi periode yang akan dibuka.
+                      Gunakan master data penanggung jawab, lalu isi detail periode yang akan dibuka.
                     </p>
 
                     <div className="mt-4 space-y-4">
                       <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <p className="text-sm font-black text-[#1b274b]">
-                          1. Ketua Cluster Penelitian
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Pilih dosen ketua untuk setiap cluster penelitian.
-                        </p>
-
-                        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                          {[
-                            {
-                              key: "ketua_itsc_dosen_id",
-                              code: "ITSC",
-                              label: "Ketua ITSC (Informatika Teori & Sistem Cerdas)",
-                            },
-                            {
-                              key: "ketua_sirkel_dosen_id",
-                              code: "SIRKEL",
-                              label: "Ketua SIRKEL (Sistem Informasi & Rekayasa Perangkat Lunak)",
-                            },
-                            {
-                              key: "ketua_siber_dosen_id",
-                              code: "SIBER",
-                              label: "Ketua SIBER (Sistem Siber)",
-                            },
-                            {
-                              key: "ketua_mvk_dosen_id",
-                              code: "MVK",
-                              label: "Ketua MVK (Multimedia & Visi Komputer)",
-                            },
-                          ].map((item) => {
-                            const clusterOption = periodeKetuaKlasterOptions.find(
-                              (row) => String(row.kode || "").toUpperCase() === item.code
-                            );
-                            const kandidat = Array.isArray(clusterOption?.kandidat_dosen)
-                              ? clusterOption.kandidat_dosen
-                              : [];
-                            return (
-                              <div key={`periode-ketua-${item.code}`}>
-                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                                  {item.label}
-                                </label>
-                                <select
-                                  name={item.key}
-                                  value={periodeForm[item.key]}
-                                  onChange={handlePeriodeInputChange}
-                                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                                    periodeFormErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
-                                  }`}
-                                >
-                                  <option value="">Pilih dosen ketua {item.code}</option>
-                                  {kandidat.map((dosen) => (
-                                    <option key={`periode-ketua-${item.code}-${dosen.id}`} value={dosen.id}>
-                                      {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                                    </option>
-                                  ))}
-                                </select>
-                                {periodeFormErrors[item.key] ? (
-                                  <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeFormErrors[item.key]}</p>
-                                ) : null}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <p className="text-sm font-black text-[#1b274b]">
-                          2. Penanggung Jawab Jalur Magang
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Pilih dosen pengawas untuk alur penjaluran jalur magang.
-                        </p>
-
-                        <div className="mt-3">
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Dosen Pengawas Magang</label>
-                          <select
-                            name="pengawas_magang_dosen_id"
-                            value={periodeForm.pengawas_magang_dosen_id}
-                            onChange={handlePeriodeInputChange}
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              periodeFormErrors.pengawas_magang_dosen_id ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
-                            }`}
-                          >
-                            <option value="">Pilih dosen pengawas magang</option>
-                            {periodeDosenOptions.map((dosen) => (
-                              <option key={`periode-pengawas-magang-${dosen.id}`} value={dosen.id}>
-                                {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                              </option>
-                            ))}
-                          </select>
-                          {periodeFormErrors.pengawas_magang_dosen_id ? (
-                            <p className="mt-1 text-xs font-semibold text-[#c23737]">
-                              {periodeFormErrors.pengawas_magang_dosen_id}
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-black text-[#1b274b]">
+                              1. Preview Master Penanggung Jawab (Read Only)
                             </p>
-                          ) : null}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <p className="text-sm font-black text-[#1b274b]">
-                          3. Penanggung Jawab Jalur Pengabdian Masyarakat
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Pilih dosen pengampu untuk alur penjaluran jalur pengabdian masyarakat.
-                        </p>
-
-                        <div className="mt-3">
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                            Dosen Pengampu Pengabdian Masyarakat
-                          </label>
-                          <select
-                            name="pengawas_pengabdian_dosen_id"
-                            value={periodeForm.pengawas_pengabdian_dosen_id}
-                            onChange={handlePeriodeInputChange}
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              periodeFormErrors.pengawas_pengabdian_dosen_id
-                                ? "border-[#dc4b4b] bg-[#fff7f7]"
-                                : "border-[#d3dbef]"
-                            }`}
-                          >
-                            <option value="">Pilih dosen pengampu pengabdian</option>
-                            {periodeDosenOptions.map((dosen) => (
-                              <option key={`periode-pengawas-pengabdian-${dosen.id}`} value={dosen.id}>
-                                {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                              </option>
-                            ))}
-                          </select>
-                          {periodeFormErrors.pengawas_pengabdian_dosen_id ? (
-                            <p className="mt-1 text-xs font-semibold text-[#c23737]">
-                              {periodeFormErrors.pengawas_pengabdian_dosen_id}
+                            <p className="mt-1 text-sm text-[#5d6c91]">
+                              Pengaturan ketua cluster dan pembimbing jalur dikelola dari menu Master Dosen.
                             </p>
-                          ) : null}
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <p className="text-sm font-black text-[#1b274b]">
-                          4. Penanggung Jawab Jalur Perintisan Bisnis
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Pilih dosen pengampu untuk alur penjaluran jalur perintisan bisnis.
-                        </p>
-
-                        <div className="mt-3">
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                            Dosen Pengampu Perintisan Bisnis
-                          </label>
-                          <select
-                            name="pengawas_perintisan_bisnis_dosen_id"
-                            value={periodeForm.pengawas_perintisan_bisnis_dosen_id}
-                            onChange={handlePeriodeInputChange}
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              periodeFormErrors.pengawas_perintisan_bisnis_dosen_id
-                                ? "border-[#dc4b4b] bg-[#fff7f7]"
-                                : "border-[#d3dbef]"
-                            }`}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab("master-dosen");
+                              setMasterDosenTab("penanggung-jawab");
+                            }}
+                            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
                           >
-                            <option value="">Pilih dosen pengampu perintisan bisnis</option>
-                            {periodeDosenOptions.map((dosen) => (
-                              <option key={`periode-pengawas-perintisan-${dosen.id}`} value={dosen.id}>
-                                {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                              </option>
+                            Buka Master Dosen
+                          </button>
+                        </div>
+
+                        {masterPeriodeMissingLabels.length > 0 ? (
+                          <div className="mt-3 rounded-lg border border-[#f5d0d0] bg-[#fff3f3] px-3 py-2 text-sm font-semibold text-[#a33f3f]">
+                            Master data belum lengkap. Lengkapi dulu: {masterPeriodeMissingLabels.join(", ")}.
+                          </div>
+                        ) : null}
+
+                        <div className="mt-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
+                          <p className="text-xs font-black uppercase tracking-wide text-[#4e5d87]">Preview Penanggung Jawab</p>
+                          <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
+                            {PERIODE_MASTER_KETUA_FIELDS.map((item) => (
+                              <p key={`periode-master-preview-ketua-${item.key}`} className="text-sm text-[#2c3d68]">
+                                <span className="font-semibold">{item.label}:</span>{" "}
+                                {periodeDosenMap.get(Number(periodeMasterForm[item.key]))?.nama || "-"}
+                              </p>
                             ))}
-                          </select>
-                          {periodeFormErrors.pengawas_perintisan_bisnis_dosen_id ? (
-                            <p className="mt-1 text-xs font-semibold text-[#c23737]">
-                              {periodeFormErrors.pengawas_perintisan_bisnis_dosen_id}
-                            </p>
-                          ) : null}
+                            {PERIODE_MASTER_JALUR_FIELDS.map((item) => (
+                              <p key={`periode-master-preview-jalur-${item.key}`} className="text-sm text-[#2c3d68]">
+                                <span className="font-semibold">{item.label}:</span>{" "}
+                                {periodeDosenMap.get(Number(periodeMasterForm[item.key]))?.nama || "-"}
+                              </p>
+                            ))}
+                          </div>
                         </div>
                       </section>
 
                       <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                         <p className="text-sm font-black text-[#1b274b]">
-                          5. Detail Periode Penjaluran
+                          2. Detail Periode Penjaluran
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
                           Isi periode akademik yang akan dibuka.
