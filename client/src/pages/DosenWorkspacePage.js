@@ -88,6 +88,7 @@ const PERIODE_MASTER_JALUR_FIELDS = [
     optionLabel: "Pilih dosen pengampu perintisan bisnis",
   },
 ];
+const PERIODE_MASTER_ALL_FIELDS = [...PERIODE_MASTER_KETUA_FIELDS, ...PERIODE_MASTER_JALUR_FIELDS];
 const PERIODE_MASTER_INITIAL = {
   ketua_itsc_dosen_id: "",
   ketua_sirkel_dosen_id: "",
@@ -97,6 +98,13 @@ const PERIODE_MASTER_INITIAL = {
   pengawas_pengabdian_dosen_id: "",
   pengawas_perintisan_bisnis_dosen_id: "",
 };
+function buildPeriodeMasterSearchInitial() {
+  const next = {};
+  for (const item of PERIODE_MASTER_ALL_FIELDS) {
+    next[item.key] = "";
+  }
+  return next;
+}
 const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
   semester: "ganjil",
@@ -504,6 +512,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     master_penanggung_jawab: null,
   });
   const [periodeMasterForm, setPeriodeMasterForm] = useState({ ...PERIODE_MASTER_INITIAL });
+  const [periodeMasterSearchQueryByField, setPeriodeMasterSearchQueryByField] = useState(
+    buildPeriodeMasterSearchInitial
+  );
+  const [debouncedPeriodeMasterSearchQueryByField, setDebouncedPeriodeMasterSearchQueryByField] = useState(
+    buildPeriodeMasterSearchInitial
+  );
+  const [activePeriodeMasterSearchField, setActivePeriodeMasterSearchField] = useState("");
   const [periodeMasterErrors, setPeriodeMasterErrors] = useState({});
   const [savingPeriodeMaster, setSavingPeriodeMaster] = useState(false);
   const [periodeForm, setPeriodeForm] = useState({ ...PERIODE_FORM_INITIAL });
@@ -625,8 +640,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         : "",
     };
     setPeriodeMasterForm(nextMasterForm);
+    setPeriodeMasterSearchQueryByField(buildPeriodeMasterSearchInitial());
+    setDebouncedPeriodeMasterSearchQueryByField(buildPeriodeMasterSearchInitial());
+    setActivePeriodeMasterSearchField("");
     setPeriodeMasterErrors({});
   }, [periodeMasterSource]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedPeriodeMasterSearchQueryByField(periodeMasterSearchQueryByField);
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [periodeMasterSearchQueryByField]);
 
   const fetchWithAuth = useCallback(
     async (path, options = {}) => {
@@ -1168,14 +1193,33 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     return pagedMasterDosenKuotaIds.every((id) => selectedSet.has(id));
   }, [masterDosenSelectedDosenIds, pagedMasterDosenKuotaIds]);
   const masterPeriodeMissingLabels = useMemo(() => {
-    const fields = [
-      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({ key: item.key, label: item.label })),
-      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({ key: item.key, label: item.label })),
-    ];
-    return fields
+    return PERIODE_MASTER_ALL_FIELDS
       .filter((item) => !String(periodeMasterForm?.[item.key] || "").trim())
       .map((item) => item.label);
   }, [periodeMasterForm]);
+  const periodeMasterSelectedDosenIdsByField = useMemo(() => {
+    const map = {};
+    for (const item of PERIODE_MASTER_ALL_FIELDS) {
+      const parsedId = Number(periodeMasterForm?.[item.key]);
+      map[item.key] = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+    }
+    return map;
+  }, [periodeMasterForm]);
+  const periodeMasterOptionsByField = useMemo(() => {
+    const next = {};
+    for (const ketuaField of PERIODE_MASTER_KETUA_FIELDS) {
+      const clusterOption = periodeKetuaKlasterOptions.find(
+        (row) => String(row?.kode || "").toUpperCase() === ketuaField.code
+      );
+      next[ketuaField.key] = Array.isArray(clusterOption?.kandidat_dosen)
+        ? clusterOption.kandidat_dosen
+        : [];
+    }
+    for (const jalurField of PERIODE_MASTER_JALUR_FIELDS) {
+      next[jalurField.key] = periodeDosenOptions;
+    }
+    return next;
+  }, [periodeDosenOptions, periodeKetuaKlasterOptions]);
 
   useEffect(() => {
     setMasterDosenKuotaPage(1);
@@ -1969,38 +2013,119 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   };
 
-  const handlePeriodeMasterInputChange = (event) => {
-    const { name, value } = event.target;
-    setPeriodeMasterForm((prev) => ({ ...prev, [name]: value }));
+  const validatePeriodeMasterUniqueAssignments = useCallback((formValues) => {
+    const duplicatesByField = {};
+    const assignedMap = new Map();
+
+    for (const item of PERIODE_MASTER_ALL_FIELDS) {
+      const dosenId = Number(formValues?.[item.key]);
+      if (!Number.isInteger(dosenId) || dosenId <= 0) continue;
+      if (!assignedMap.has(dosenId)) {
+        assignedMap.set(dosenId, []);
+      }
+      assignedMap.get(dosenId).push(item.key);
+    }
+
+    for (const fieldKeys of assignedMap.values()) {
+      if (fieldKeys.length < 2) continue;
+      for (const fieldKey of fieldKeys) {
+        duplicatesByField[fieldKey] = "Dosen yang sama tidak boleh dipilih untuk lebih dari satu peran.";
+      }
+    }
+
+    return duplicatesByField;
+  }, []);
+
+  const handlePeriodeMasterSearchQueryChange = (fieldKey, value) => {
+    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: value }));
+  };
+
+  const handlePeriodeMasterSearchFocus = (fieldKey) => {
+    setActivePeriodeMasterSearchField(fieldKey);
+  };
+
+  const handlePeriodeMasterSearchBlur = (fieldKey) => {
+    window.setTimeout(() => {
+      setActivePeriodeMasterSearchField((prev) => (prev === fieldKey ? "" : prev));
+    }, 120);
+  };
+
+  const handleSelectPeriodeMasterDosen = (fieldKey, dosenId) => {
+    const parsedId = Number(dosenId);
+    if (!Number.isInteger(parsedId) || parsedId <= 0) return;
+    setPeriodeMasterForm((prev) => ({ ...prev, [fieldKey]: String(parsedId) }));
+    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
+    setDebouncedPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
+    setActivePeriodeMasterSearchField("");
     setPeriodeMasterErrors((prev) => {
-      if (!prev[name]) return prev;
+      if (!prev[fieldKey]) return prev;
       const next = { ...prev };
-      delete next[name];
+      delete next[fieldKey];
       return next;
     });
   };
 
+  const handleClearPeriodeMasterDosen = (fieldKey) => {
+    setPeriodeMasterForm((prev) => ({ ...prev, [fieldKey]: "" }));
+    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
+    setDebouncedPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
+    setActivePeriodeMasterSearchField("");
+    setPeriodeMasterErrors((prev) => {
+      if (!prev[fieldKey]) return prev;
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
+  };
+
+  const getPeriodeMasterCandidateRows = useCallback(
+    (fieldKey) => {
+      const options = Array.isArray(periodeMasterOptionsByField[fieldKey])
+        ? periodeMasterOptionsByField[fieldKey]
+        : [];
+      if (options.length === 0) return [];
+
+      const currentSelectedId = Number(periodeMasterForm?.[fieldKey]);
+      const selectedByOtherFields = new Set(
+        PERIODE_MASTER_ALL_FIELDS.map((item) => item.key)
+          .filter((key) => key !== fieldKey)
+          .map((key) => Number(periodeMasterForm?.[key]))
+          .filter((id) => Number.isInteger(id) && id > 0)
+      );
+      const searchQuery = String(debouncedPeriodeMasterSearchQueryByField?.[fieldKey] || "")
+        .trim()
+        .toLowerCase();
+
+      return options
+        .filter((row) => {
+          const rowId = Number(row?.id);
+          if (!Number.isInteger(rowId) || rowId <= 0) return false;
+          if (rowId === currentSelectedId) return true;
+          return !selectedByOtherFields.has(rowId);
+        })
+        .filter((row) => {
+          if (!searchQuery) return true;
+          const haystack = `${String(row?.nama || "")} ${String(row?.nik || "")}`.toLowerCase();
+          return haystack.includes(searchQuery);
+        })
+        .slice(0, 8);
+    },
+    [periodeMasterForm, periodeMasterOptionsByField, debouncedPeriodeMasterSearchQueryByField]
+  );
+
   const handleSavePeriodeMaster = async () => {
     const fieldErrors = {};
-    const allMasterFields = [
-      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({
-        key: item.key,
-        label: item.label,
-      })),
-      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({
-        key: item.key,
-        label: item.label,
-      })),
-    ];
-    allMasterFields.forEach((item) => {
+    PERIODE_MASTER_ALL_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
         fieldErrors[item.key] = `${item.label} wajib dipilih.`;
       }
     });
+    const duplicateErrors = validatePeriodeMasterUniqueAssignments(periodeMasterForm);
+    Object.assign(fieldErrors, duplicateErrors);
 
     if (Object.keys(fieldErrors).length > 0) {
       setPeriodeMasterErrors(fieldErrors);
-      showErrorToast("Master data penanggung jawab belum lengkap.");
+      showErrorToast("Master data penanggung jawab belum valid.");
       return;
     }
 
@@ -2074,6 +2199,33 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return;
     }
 
+    const selectedSet = new Set(selectedIds);
+    const targetRows =
+      masterDosenKuotaMode === "all"
+        ? masterDosenKuotaRows
+        : masterDosenKuotaRows.filter((row) => selectedSet.has(Number(row?.id)));
+    const invalidKuotaRows = targetRows
+      .map((row) => {
+        const sisa = Number(row?.kuota?.sisa || 0);
+        const terpakai = Number(row?.kuota?.terpakai || 0);
+        const minimalKuota = Math.max(1, sisa, terpakai);
+        return {
+          nama: row?.nama || row?.kode_dosen || row?.nik || "Dosen",
+          minimalKuota,
+          sisa,
+          terpakai,
+        };
+      })
+      .filter((row) => parsedKuota < row.minimalKuota);
+
+    if (invalidKuotaRows.length > 0) {
+      const contoh = invalidKuotaRows[0];
+      showErrorToast(
+        `Kuota ${parsedKuota} tidak valid. Contoh: ${contoh.nama} minimal ${contoh.minimalKuota} (sisa ${contoh.sisa}, terpakai ${contoh.terpakai}).`
+      );
+      return;
+    }
+
     const konfirmasi = await Swal.fire({
       title: "Simpan kuota bimbingan?",
       html:
@@ -2118,15 +2270,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     const tahunAkademik = periodeForm.tahun_akademik.trim();
     const tahunRegex = /^\d{4}\/\d{4}$/;
 
-    const allMasterFields = [
-      ...PERIODE_MASTER_KETUA_FIELDS.map((item) => ({ key: item.key, label: item.label })),
-      ...PERIODE_MASTER_JALUR_FIELDS.map((item) => ({ key: item.key, label: item.label })),
-    ];
-    allMasterFields.forEach((item) => {
+    PERIODE_MASTER_ALL_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
         masterErrors[item.key] = `${item.label} belum diatur di master data.`;
       }
     });
+    const duplicateMasterErrors = validatePeriodeMasterUniqueAssignments(periodeMasterForm);
+    Object.assign(masterErrors, duplicateMasterErrors);
 
     if (!tahunAkademik) {
       fieldErrors.tahun_akademik = "Tahun akademik wajib diisi.";
@@ -2154,7 +2304,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (Object.keys(masterErrors).length > 0) {
       setPeriodeMasterErrors(masterErrors);
       setPeriodeFormErrors(fieldErrors);
-      showErrorToast("Lengkapi master data penanggung jawab terlebih dahulu.");
+      showErrorToast("Periksa validasi master data penanggung jawab terlebih dahulu.");
       return;
     }
     setPeriodeMasterErrors({});
@@ -3491,7 +3641,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               <div
                 className={
                   masterDosenTab === "kuota-bimbingan"
-                    ? "flex min-h-0 flex-1 flex-col gap-4"
+                    ? "space-y-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                     : "space-y-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 }
               >
@@ -3517,51 +3667,93 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
                 {masterDosenTab === "penanggung-jawab" ? (
                   <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-black text-[#1b274b]">
-                          Master Data Penanggung Jawab Penjaluran
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Atur ketua cluster dan pembimbing jalur yang akan dipakai otomatis saat periode penjaluran dibuka.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSavePeriodeMaster}
-                        disabled={savingPeriodeMaster}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {savingPeriodeMaster ? "Menyimpan..." : "Simpan Master Data"}
-                      </button>
+                    <div>
+                      <p className="text-sm font-black text-[#1b274b]">
+                        Master Data Penanggung Jawab Penjaluran
+                      </p>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Atur ketua cluster dan pembimbing jalur yang akan dipakai otomatis saat periode penjaluran dibuka.
+                      </p>
                     </div>
 
                     <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                       {PERIODE_MASTER_KETUA_FIELDS.map((item) => {
-                        const clusterOption = periodeKetuaKlasterOptions.find(
-                          (row) => String(row.kode || "").toUpperCase() === item.code
+                        const selectedId = periodeMasterSelectedDosenIdsByField[item.key];
+                        const selectedDosen = selectedId ? periodeDosenMap.get(Number(selectedId)) : null;
+                        const searchValue = String(periodeMasterSearchQueryByField[item.key] || "");
+                        const debouncedSearchValue = String(
+                          debouncedPeriodeMasterSearchQueryByField[item.key] || ""
                         );
-                        const kandidat = Array.isArray(clusterOption?.kandidat_dosen)
-                          ? clusterOption.kandidat_dosen
-                          : [];
+                        const searchResults = getPeriodeMasterCandidateRows(item.key);
+                        const shouldShowResults =
+                          activePeriodeMasterSearchField === item.key && searchValue.trim().length > 0;
+                        const isDebouncing =
+                          searchValue.trim().length > 0 &&
+                          searchValue.trim().toLowerCase() !== debouncedSearchValue.trim().toLowerCase();
                         return (
-                          <div key={`master-dosen-ketua-${item.code}`}>
+                          <div
+                            key={`master-dosen-ketua-${item.code}`}
+                            className="rounded-lg border border-[#e6ecf8] bg-[#fbfcff] p-3"
+                          >
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
-                            <select
-                              name={item.key}
-                              value={periodeMasterForm[item.key]}
-                              onChange={handlePeriodeMasterInputChange}
-                              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                                periodeMasterErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
-                              }`}
-                            >
-                              <option value="">Pilih dosen ketua {item.code}</option>
-                              {kandidat.map((dosen) => (
-                                <option key={`master-dosen-ketua-${item.code}-${dosen.id}`} value={dosen.id}>
-                                  {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                                </option>
-                              ))}
-                            </select>
+                            {selectedDosen ? (
+                              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-[#d9e3fb] bg-[#eef3ff] px-3 py-2">
+                                <div>
+                                  <p className="text-sm font-bold text-[#1f3160]">{selectedDosen.nama || "-"}</p>
+                                  <p className="text-xs text-[#5c6c92]">NIK: {selectedDosen.nik || "-"}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClearPeriodeMasterDosen(item.key)}
+                                  className="rounded-md border border-[#c7d5f5] px-2 py-1 text-xs font-semibold text-[#37548d] hover:bg-[#f5f8ff]"
+                                >
+                                  Ganti
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="mb-2 text-xs font-semibold text-[#7080a6]">Belum ada dosen yang dipilih.</p>
+                            )}
+                            <div className="relative">
+                              <input
+                                type="text"
+                                value={searchValue}
+                                onFocus={() => handlePeriodeMasterSearchFocus(item.key)}
+                                onBlur={() => handlePeriodeMasterSearchBlur(item.key)}
+                                onChange={(event) =>
+                                  handlePeriodeMasterSearchQueryChange(item.key, event.target.value)
+                                }
+                                placeholder={`Cari nama atau NIK dosen ketua ${item.code}`}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                                  periodeMasterErrors[item.key]
+                                    ? "border-[#dc4b4b] bg-[#fff7f7]"
+                                    : "border-[#d3dbef]"
+                                }`}
+                              />
+                              {shouldShowResults ? (
+                                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-44 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+                                  {isDebouncing ? (
+                                    <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
+                                  ) : searchResults.length > 0 ? (
+                                    searchResults.map((dosen) => (
+                                      <button
+                                        key={`master-dosen-ketua-${item.code}-${dosen.id}`}
+                                        type="button"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen.id)}
+                                        className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
+                                      >
+                                        <span className="font-semibold">{dosen.nama || "-"}</span>
+                                        <span className="text-xs text-[#5d6c91]">NIK: {dosen.nik || "-"}</span>
+                                      </button>
+                                    ))
+                                  ) : (
+                                    <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">
+                                      Dosen tidak ditemukan.
+                                    </p>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
                             {periodeMasterErrors[item.key] ? (
                               <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p>
                             ) : null}
@@ -3571,29 +3763,99 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
 
                     <div className="mt-3 grid grid-cols-1 gap-3 xl:grid-cols-3">
-                      {PERIODE_MASTER_JALUR_FIELDS.map((item) => (
-                        <div key={`master-dosen-jalur-${item.key}`}>
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
-                          <select
-                            name={item.key}
-                            value={periodeMasterForm[item.key]}
-                            onChange={handlePeriodeMasterInputChange}
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              periodeMasterErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
-                            }`}
+                      {PERIODE_MASTER_JALUR_FIELDS.map((item) => {
+                        const selectedId = periodeMasterSelectedDosenIdsByField[item.key];
+                        const selectedDosen = selectedId ? periodeDosenMap.get(Number(selectedId)) : null;
+                        const searchValue = String(periodeMasterSearchQueryByField[item.key] || "");
+                        const debouncedSearchValue = String(
+                          debouncedPeriodeMasterSearchQueryByField[item.key] || ""
+                        );
+                        const searchResults = getPeriodeMasterCandidateRows(item.key);
+                        const shouldShowResults =
+                          activePeriodeMasterSearchField === item.key && searchValue.trim().length > 0;
+                        const isDebouncing =
+                          searchValue.trim().length > 0 &&
+                          searchValue.trim().toLowerCase() !== debouncedSearchValue.trim().toLowerCase();
+                        return (
+                          <div
+                            key={`master-dosen-jalur-${item.key}`}
+                            className="rounded-lg border border-[#e6ecf8] bg-[#fbfcff] p-3"
                           >
-                            <option value="">{item.optionLabel}</option>
-                            {periodeDosenOptions.map((dosen) => (
-                              <option key={`master-dosen-${item.key}-${dosen.id}`} value={dosen.id}>
-                                {dosen.nama} ({dosen.kode_dosen || dosen.nik || "-"})
-                              </option>
-                            ))}
-                          </select>
-                          {periodeMasterErrors[item.key] ? (
-                            <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p>
-                          ) : null}
-                        </div>
-                      ))}
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
+                            {selectedDosen ? (
+                              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-[#d9e3fb] bg-[#eef3ff] px-3 py-2">
+                                <div>
+                                  <p className="text-sm font-bold text-[#1f3160]">{selectedDosen.nama || "-"}</p>
+                                  <p className="text-xs text-[#5c6c92]">NIK: {selectedDosen.nik || "-"}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleClearPeriodeMasterDosen(item.key)}
+                                  className="rounded-md border border-[#c7d5f5] px-2 py-1 text-xs font-semibold text-[#37548d] hover:bg-[#f5f8ff]"
+                                >
+                                  Ganti
+                                </button>
+                              </div>
+                            ) : (
+                              <p className="mb-2 text-xs font-semibold text-[#7080a6]">Belum ada dosen yang dipilih.</p>
+                            )}
+                            <div className="relative">
+                              <input
+                                type="text"
+                                value={searchValue}
+                                onFocus={() => handlePeriodeMasterSearchFocus(item.key)}
+                                onBlur={() => handlePeriodeMasterSearchBlur(item.key)}
+                                onChange={(event) =>
+                                  handlePeriodeMasterSearchQueryChange(item.key, event.target.value)
+                                }
+                                placeholder={`Cari nama atau NIK untuk ${item.label.toLowerCase()}`}
+                                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                                  periodeMasterErrors[item.key]
+                                    ? "border-[#dc4b4b] bg-[#fff7f7]"
+                                    : "border-[#d3dbef]"
+                                }`}
+                              />
+                              {shouldShowResults ? (
+                                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-44 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+                                  {isDebouncing ? (
+                                    <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
+                                  ) : searchResults.length > 0 ? (
+                                    searchResults.map((dosen) => (
+                                      <button
+                                        key={`master-dosen-${item.key}-${dosen.id}`}
+                                        type="button"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen.id)}
+                                        className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
+                                      >
+                                        <span className="font-semibold">{dosen.nama || "-"}</span>
+                                        <span className="text-xs text-[#5d6c91]">NIK: {dosen.nik || "-"}</span>
+                                      </button>
+                                    ))
+                                  ) : (
+                                    <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">
+                                      Dosen tidak ditemukan.
+                                    </p>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                            {periodeMasterErrors[item.key] ? (
+                              <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={handleSavePeriodeMaster}
+                        disabled={savingPeriodeMaster}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingPeriodeMaster ? "Menyimpan..." : "Simpan Master Data"}
+                      </button>
                     </div>
                   </div>
                 ) : null}
@@ -3604,12 +3866,31 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <div className="flex flex-wrap items-center gap-2">
                         <button
                           type="button"
+                          onClick={() => setMasterDosenTab("penanggung-jawab")}
+                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff]"
+                          aria-label="Kembali ke tab penanggung jawab"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={loadAllData}
                           className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
                         >
                           <RefreshCcw className="h-4 w-4" />
                           Refresh
                         </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3">
+                        <h3 className="text-lg font-black text-[#1b274b]">Set Kuota Dosen</h3>
+                        <p className="text-sm text-[#5d6c91]">
+                          Atur kuota bimbingan untuk semua dosen atau hanya dosen tertentu.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
                         <select
                           value={masterDosenKuotaMode}
                           onChange={(event) => setMasterDosenKuotaMode(event.target.value)}
@@ -3638,34 +3919,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-4">
-                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
-                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Total Dosen</p>
-                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
-                          {masterDosenKuotaOverview?.summary?.total_dosen ?? 0}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
-                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Total Kuota</p>
-                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
-                          {masterDosenKuotaOverview?.summary?.total_kuota ?? 0}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
-                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Terpakai</p>
-                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
-                          {masterDosenKuotaOverview?.summary?.total_terpakai ?? 0}
-                        </p>
-                      </div>
-                      <div className="rounded-lg border border-[#e4e9f6] bg-white p-3 shadow-sm">
-                        <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da5]">Sisa</p>
-                        <p className="mt-1 text-2xl font-black text-[#1b274b]">
-                          {masterDosenKuotaOverview?.summary?.total_sisa ?? 0}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                         <h3 className="text-lg font-black text-[#1b274b]">Grid Kuota Dosen</h3>
                         <div className="flex items-center gap-2">
@@ -3687,7 +3941,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </div>
 
-                      <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                      <div className="relative mt-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                         <table className="w-full min-w-[1400px] text-left text-sm">
                           <thead>
                             <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">

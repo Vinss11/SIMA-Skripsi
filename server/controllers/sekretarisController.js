@@ -104,6 +104,29 @@ function mergeRolePayloadWithMaster(payload, masterRow) {
   return merged;
 }
 
+function buildDuplicateRoleFieldErrors(rolePayload = {}) {
+  const duplicateErrors = {};
+  const assignmentByDosenId = new Map();
+
+  for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+    const dosenId = parsePositiveId(rolePayload[item.field]);
+    if (!dosenId) continue;
+    if (!assignmentByDosenId.has(dosenId)) {
+      assignmentByDosenId.set(dosenId, []);
+    }
+    assignmentByDosenId.get(dosenId).push(item.field);
+  }
+
+  for (const fieldKeys of assignmentByDosenId.values()) {
+    if (!Array.isArray(fieldKeys) || fieldKeys.length < 2) continue;
+    for (const fieldKey of fieldKeys) {
+      duplicateErrors[fieldKey] = "Dosen yang sama tidak boleh dipilih untuk lebih dari satu peran.";
+    }
+  }
+
+  return duplicateErrors;
+}
+
 function formatDosenMini(dosen) {
   if (!dosen) return null;
   return {
@@ -1017,6 +1040,7 @@ exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
         fieldErrors[item.field] = `${item.label} wajib dipilih.`;
       }
     }
+    Object.assign(fieldErrors, buildDuplicateRoleFieldErrors(rolePayload));
 
     const klasterRows = await Klaster.findAll({
       attributes: ["id", "kode", "nama"],
@@ -1248,6 +1272,38 @@ exports.setMasterDosenKuota = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "mode tidak valid. Gunakan 'all' atau 'selected'.",
+      });
+    }
+
+    const invalidKuotaRows = [];
+    for (const dosen of targetDosens) {
+      const kuotaInfoSaatIni = await dosen.getKuotaInfo();
+      const sisaSaatIni = Number(kuotaInfoSaatIni?.sisa || 0);
+      const terpakaiSaatIni = Number(kuotaInfoSaatIni?.terpakai || 0);
+      const minimalKuota = Math.max(1, sisaSaatIni, terpakaiSaatIni);
+      if (rawKuota < minimalKuota) {
+        invalidKuotaRows.push({
+          id: dosen.id,
+          nama: dosen.nama || null,
+          nik: dosen.nik || null,
+          kode_dosen: dosen.kode_dosen || null,
+          sisa_saat_ini: sisaSaatIni,
+          terpakai_saat_ini: terpakaiSaatIni,
+          minimal_kuota: minimalKuota,
+        });
+      }
+    }
+
+    if (invalidKuotaRows.length > 0) {
+      await t.rollback();
+      const contoh = invalidKuotaRows[0];
+      const labelContoh = contoh.nama || contoh.kode_dosen || contoh.nik || `ID ${contoh.id}`;
+      return res.status(400).json({
+        success: false,
+        message: `Kuota ${rawKuota} tidak valid. Contoh: ${labelContoh} minimal ${contoh.minimal_kuota} (sisa ${contoh.sisa_saat_ini}, terpakai ${contoh.terpakai_saat_ini}).`,
+        detail: {
+          invalid_rows: invalidKuotaRows,
+        },
       });
     }
 
@@ -1702,6 +1758,7 @@ exports.openPeriodePendaftaran = async (req, res) => {
     );
 
     const fieldErrors = {};
+    Object.assign(fieldErrors, buildDuplicateRoleFieldErrors(rolePayload));
 
     for (const item of ketuaFieldMap) {
       if (!parsePositiveId(rolePayload[item.field])) {
