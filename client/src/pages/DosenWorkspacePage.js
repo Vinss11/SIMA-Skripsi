@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft,
   BookOpenCheck,
@@ -14,6 +15,7 @@ import {
   RefreshCcw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Upload,
   GraduationCap,
   UserCircle2,
@@ -30,6 +32,13 @@ const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
+const MAHASISWA_MASTER_FILTER_INITIAL = {
+  angkatan: "",
+  semester_penjaluran: "",
+  periode: "",
+  penjaluran: "",
+  tipe_pendaftaran: "",
+};
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
@@ -105,6 +114,20 @@ function buildPeriodeMasterSearchInitial() {
   }
   return next;
 }
+
+function buildMahasiswaMasterPeriodeFilterValue(row) {
+  const periodeLabel = String(row?.periode_label || "").trim();
+  if (periodeLabel) return periodeLabel;
+
+  const tahunAkademik = String(row?.tahun_akademik || "").trim();
+  const semesterAkademik = String(row?.semester_akademik || "").trim();
+  if (tahunAkademik && semesterAkademik) {
+    return `${tahunAkademik} - ${formatLabel(semesterAkademik)}`;
+  }
+  if (tahunAkademik) return tahunAkademik;
+  if (semesterAkademik) return formatLabel(semesterAkademik);
+  return "";
+}
 const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
   semester: "ganjil",
@@ -148,6 +171,16 @@ function formatLabel(value) {
   return String(value)
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatPeriodeMasterDosenInputLabel(dosen) {
+  if (!dosen) return "";
+  const nama = String(dosen?.nama || "").trim();
+  const nik = String(dosen?.nik || "").trim();
+  if (nama && nik) return `${nama} - NIK: ${nik}`;
+  if (nama) return nama;
+  if (nik) return `NIK: ${nik}`;
+  return "";
 }
 
 function escapeHtml(value) {
@@ -343,11 +376,6 @@ function buildTabHeaders(isSekretaris) {
       title: "Dashboard Dosen",
       subtitle: "Ringkasan review pengajuan, status pamit, topik aktif, dan kuota bimbingan.",
     },
-    "master-mahasiswa": {
-      icon: GraduationCap,
-      title: "Master Data Mahasiswa",
-      subtitle: "Lihat histori penjaluran mahasiswa secara lengkap dalam mode baca.",
-    },
     "mahasiswa-bimbingan": {
       icon: GraduationCap,
       title: "Mahasiswa Bimbingan",
@@ -401,6 +429,11 @@ function buildTabHeaders(isSekretaris) {
 
   return {
     ...baseHeaders,
+    "master-mahasiswa": {
+      icon: GraduationCap,
+      title: "Master Data Mahasiswa",
+      subtitle: "Lihat histori penjaluran mahasiswa secara lengkap dalam mode baca.",
+    },
     "master-dosen": {
       icon: Users,
       title: "Master Dosen",
@@ -548,6 +581,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [pendaftaranPage, setPendaftaranPage] = useState(1);
   const [mahasiswaMasterRows, setMahasiswaMasterRows] = useState([]);
   const [mahasiswaMasterQuery, setMahasiswaMasterQuery] = useState("");
+  const [mahasiswaMasterFilters, setMahasiswaMasterFilters] = useState({
+    ...MAHASISWA_MASTER_FILTER_INITIAL,
+  });
+  const [mahasiswaMasterFilterDraft, setMahasiswaMasterFilterDraft] = useState({
+    ...MAHASISWA_MASTER_FILTER_INITIAL,
+  });
+  const [showMahasiswaMasterFilterPanel, setShowMahasiswaMasterFilterPanel] = useState(false);
+  const [mahasiswaMasterFilterPopupLayout, setMahasiswaMasterFilterPopupLayout] = useState({
+    top: 0,
+    left: 0,
+    width: 430,
+    maxHeight: 520,
+  });
   const [mahasiswaMasterPage, setMahasiswaMasterPage] = useState(1);
   const [periodeOverview, setPeriodeOverview] = useState({
     active_periode: null,
@@ -605,7 +651,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   );
 
   const sessionExpiredRef = useRef(false);
+  const mahasiswaMasterFilterTriggerRef = useRef(null);
+  const mahasiswaMasterFilterPopupRef = useRef(null);
   const activeTabHeader = tabHeaders[activeTab] || tabHeaders.dashboard;
+  const availableTabIds = useMemo(
+    () => navSections.flatMap((section) => section.items.map((item) => item.id)),
+    [navSections]
+  );
   const isPeriodeReadonly =
     String(editingPeriode?.status || (editingPeriode?.is_active ? "active" : "closed")).toLowerCase() ===
     "closed";
@@ -631,6 +683,94 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setIsBimbinganReviewListMode(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!availableTabIds.includes(activeTab)) {
+      setActiveTab("dashboard");
+    }
+  }, [activeTab, availableTabIds]);
+
+  useEffect(() => {
+    if (!showMahasiswaMasterFilterPanel) return undefined;
+    const handleMouseDown = (event) => {
+      const withinTrigger = mahasiswaMasterFilterTriggerRef.current?.contains(event.target);
+      const withinPopup = mahasiswaMasterFilterPopupRef.current?.contains(event.target);
+      if (withinTrigger || withinPopup) return;
+      setShowMahasiswaMasterFilterPanel(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setShowMahasiswaMasterFilterPanel(false);
+      }
+    };
+    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showMahasiswaMasterFilterPanel]);
+
+  useEffect(() => {
+    if (!(activeTab === "master-mahasiswa" || activeTab === "mahasiswa-bimbingan")) {
+      setShowMahasiswaMasterFilterPanel(false);
+    }
+  }, [activeTab]);
+
+  const updateMahasiswaMasterFilterPopupLayout = useCallback(() => {
+    const triggerElement = mahasiswaMasterFilterTriggerRef.current;
+    if (!triggerElement || typeof window === "undefined") return;
+
+    const triggerRect = triggerElement.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 12;
+    const gap = 8;
+    const preferredWidth = 430;
+    const maxAllowedWidth = Math.max(250, viewportWidth - margin * 2);
+    const width = Math.min(preferredWidth, maxAllowedWidth);
+
+    let left = triggerRect.right - width;
+    if (left < margin) left = margin;
+    if (left + width > viewportWidth - margin) {
+      left = viewportWidth - margin - width;
+    }
+
+    const availableBelow = viewportHeight - triggerRect.bottom - gap - margin;
+    const availableAbove = triggerRect.top - gap - margin;
+    const openUp = availableBelow < 360 && availableAbove > availableBelow;
+    const maxHeight = Math.max(
+      280,
+      Math.min(620, openUp ? Math.max(280, availableAbove) : Math.max(280, availableBelow))
+    );
+
+    let top = openUp ? triggerRect.top - gap - maxHeight : triggerRect.bottom + gap;
+    if (top < margin) top = margin;
+    if (top + maxHeight > viewportHeight - margin) {
+      top = viewportHeight - margin - maxHeight;
+    }
+
+    setMahasiswaMasterFilterPopupLayout({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showMahasiswaMasterFilterPanel) return undefined;
+    updateMahasiswaMasterFilterPopupLayout();
+    const handleWindowReposition = () => {
+      updateMahasiswaMasterFilterPopupLayout();
+    };
+    window.addEventListener("resize", handleWindowReposition);
+    window.addEventListener("scroll", handleWindowReposition, true);
+    return () => {
+      window.removeEventListener("resize", handleWindowReposition);
+      window.removeEventListener("scroll", handleWindowReposition, true);
+    };
+  }, [showMahasiswaMasterFilterPanel, updateMahasiswaMasterFilterPopupLayout]);
 
   useEffect(() => {
     if (!(isSekretaris && activeTab === "master-dosen")) {
@@ -685,9 +825,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         ? String(periodeMasterSource.pengawas_perintisan_bisnis_dosen_id)
         : "",
     };
+    const nextSearchQuery = buildPeriodeMasterSearchInitial();
+    for (const item of PERIODE_MASTER_ALL_FIELDS) {
+      const associationKey = item.key.replace(/_id$/, "");
+      nextSearchQuery[item.key] = formatPeriodeMasterDosenInputLabel(periodeMasterSource?.[associationKey]);
+    }
     setPeriodeMasterForm(nextMasterForm);
-    setPeriodeMasterSearchQueryByField(buildPeriodeMasterSearchInitial());
-    setDebouncedPeriodeMasterSearchQueryByField(buildPeriodeMasterSearchInitial());
+    setPeriodeMasterSearchQueryByField(nextSearchQuery);
+    setDebouncedPeriodeMasterSearchQueryByField(nextSearchQuery);
     setActivePeriodeMasterSearchField("");
     setPeriodeMasterErrors({});
   }, [periodeMasterSource]);
@@ -1411,11 +1556,88 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       : mahasiswaMasterHistoryRows;
   }, [activeTab, mahasiswaBimbinganHistoryRows, mahasiswaMasterHistoryRows]);
 
+  const mahasiswaMasterFilterOptions = useMemo(() => {
+    const angkatanSet = new Set();
+    const semesterPenjaluranSet = new Set();
+    const periodeSet = new Set();
+    const penjaluranSet = new Set();
+    const tipePendaftaranSet = new Set();
+
+    for (const row of mahasiswaRowsByActiveTab) {
+      if (row?.angkatan) {
+        angkatanSet.add(String(row.angkatan).trim());
+      }
+      const semesterPenjaluran = Number(row?.semester_penjaluran_aktif || row?.semester_penjaluran_ke || 0);
+      if (Number.isFinite(semesterPenjaluran) && semesterPenjaluran > 0) {
+        semesterPenjaluranSet.add(String(semesterPenjaluran));
+      }
+      const periodeValue = buildMahasiswaMasterPeriodeFilterValue(row);
+      if (periodeValue) {
+        periodeSet.add(periodeValue);
+      }
+      if (row?.nama_penjaluran) {
+        penjaluranSet.add(String(row.nama_penjaluran).trim());
+      }
+      if (row?.jalur) {
+        tipePendaftaranSet.add(String(row.jalur).trim().toLowerCase());
+      }
+    }
+
+    const jalurOrder = ["baru", "ulang", "alih"];
+    const tipePendaftaranList = jalurOrder
+      .filter((item) => tipePendaftaranSet.has(item))
+      .concat(
+        Array.from(tipePendaftaranSet)
+          .filter((item) => !jalurOrder.includes(item))
+          .sort((a, b) => a.localeCompare(b, "id"))
+      );
+
+    return {
+      angkatan: Array.from(angkatanSet).sort((a, b) => Number(b) - Number(a)),
+      semester_penjaluran: Array.from(semesterPenjaluranSet).sort((a, b) => Number(a) - Number(b)),
+      periode: Array.from(periodeSet).sort((a, b) => a.localeCompare(b, "id")),
+      penjaluran: Array.from(penjaluranSet).sort((a, b) => a.localeCompare(b, "id")),
+      tipe_pendaftaran: tipePendaftaranList,
+    };
+  }, [mahasiswaRowsByActiveTab]);
+
   const filteredMahasiswaMasterRows = useMemo(() => {
+    const selectedAngkatan = String(mahasiswaMasterFilters.angkatan || "").trim();
+    const selectedSemesterPenjaluran = String(mahasiswaMasterFilters.semester_penjaluran || "").trim();
+    const selectedPeriode = String(mahasiswaMasterFilters.periode || "").trim();
+    const selectedPenjaluran = String(mahasiswaMasterFilters.penjaluran || "").trim().toLowerCase();
+    const selectedTipePendaftaran = String(mahasiswaMasterFilters.tipe_pendaftaran || "")
+      .trim()
+      .toLowerCase();
     const keyword = mahasiswaMasterQuery.trim().toLowerCase();
-    if (!keyword) return mahasiswaRowsByActiveTab;
 
     return mahasiswaRowsByActiveTab.filter((row) => {
+      if (selectedAngkatan && String(row?.angkatan || "").trim() !== selectedAngkatan) {
+        return false;
+      }
+
+      const semesterPenjaluran = String(
+        Number(row?.semester_penjaluran_aktif || row?.semester_penjaluran_ke || 0) || ""
+      );
+      if (selectedSemesterPenjaluran && semesterPenjaluran !== selectedSemesterPenjaluran) {
+        return false;
+      }
+
+      const periodeValue = buildMahasiswaMasterPeriodeFilterValue(row);
+      if (selectedPeriode && periodeValue !== selectedPeriode) {
+        return false;
+      }
+
+      if (selectedPenjaluran && String(row?.nama_penjaluran || "").trim().toLowerCase() !== selectedPenjaluran) {
+        return false;
+      }
+
+      if (selectedTipePendaftaran && String(row?.jalur || "").trim().toLowerCase() !== selectedTipePendaftaran) {
+        return false;
+      }
+
+      if (!keyword) return true;
+
       const haystack = [
         row.nim,
         row.nama,
@@ -1434,6 +1656,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         row.nama_penjaluran,
         row.pembimbing_ta,
         row.pendaftaran_status,
+        `tipe ${formatLabel(row.jalur)}`,
       ]
         .filter(Boolean)
         .join(" ")
@@ -1441,7 +1664,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
       return haystack.includes(keyword);
     });
-  }, [mahasiswaRowsByActiveTab, mahasiswaMasterQuery]);
+  }, [mahasiswaRowsByActiveTab, mahasiswaMasterFilters, mahasiswaMasterQuery]);
 
   const totalMahasiswaMasterPages = useMemo(
     () => Math.max(1, Math.ceil(filteredMahasiswaMasterRows.length / MAHASISWA_MASTER_PAGE_SIZE)),
@@ -1461,10 +1684,76 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     mahasiswaMasterPage * MAHASISWA_MASTER_PAGE_SIZE,
     filteredMahasiswaMasterRows.length
   );
+  const mahasiswaMasterActiveFilterChips = useMemo(() => {
+    const chips = [];
+    const angkatan = String(mahasiswaMasterFilters.angkatan || "").trim();
+    const semesterPenjaluran = String(mahasiswaMasterFilters.semester_penjaluran || "").trim();
+    const periode = String(mahasiswaMasterFilters.periode || "").trim();
+    const penjaluran = String(mahasiswaMasterFilters.penjaluran || "").trim();
+    const tipePendaftaran = String(mahasiswaMasterFilters.tipe_pendaftaran || "").trim();
+
+    if (angkatan) {
+      chips.push({ key: "angkatan", label: `Angkatan: ${angkatan}` });
+    }
+    if (semesterPenjaluran) {
+      chips.push({
+        key: "semester_penjaluran",
+        label: `Semester Penjaluran: ${semesterPenjaluran}`,
+      });
+    }
+    if (periode) {
+      chips.push({ key: "periode", label: `Periode: ${periode}` });
+    }
+    if (penjaluran) {
+      chips.push({ key: "penjaluran", label: `Penjaluran: ${penjaluran}` });
+    }
+    if (tipePendaftaran) {
+      chips.push({ key: "tipe_pendaftaran", label: `Tipe: ${formatLabel(tipePendaftaran)}` });
+    }
+
+    return chips;
+  }, [mahasiswaMasterFilters]);
+  const hasMahasiswaMasterActiveFilters = useMemo(() => {
+    return mahasiswaMasterActiveFilterChips.length > 0;
+  }, [mahasiswaMasterActiveFilterChips]);
+  const hasMahasiswaMasterDraftFilters = useMemo(() => {
+    return Object.values(mahasiswaMasterFilterDraft).some((value) => String(value || "").trim().length > 0);
+  }, [mahasiswaMasterFilterDraft]);
+  const isMahasiswaMasterFilterDraftDirty = useMemo(() => {
+    return Object.keys(MAHASISWA_MASTER_FILTER_INITIAL).some(
+      (key) =>
+        String(mahasiswaMasterFilterDraft[key] || "").trim() !==
+        String(mahasiswaMasterFilters[key] || "").trim()
+    );
+  }, [mahasiswaMasterFilterDraft, mahasiswaMasterFilters]);
+
+  const handleToggleMahasiswaMasterFilterPanel = useCallback(() => {
+    setShowMahasiswaMasterFilterPanel((prev) => {
+      const next = !prev;
+      if (next) {
+        setMahasiswaMasterFilterDraft({ ...mahasiswaMasterFilters });
+        window.requestAnimationFrame(() => {
+          updateMahasiswaMasterFilterPopupLayout();
+        });
+      }
+      return next;
+    });
+  }, [mahasiswaMasterFilters, updateMahasiswaMasterFilterPopupLayout]);
+
+  const handleApplyMahasiswaMasterFilters = useCallback(() => {
+    setMahasiswaMasterFilters({ ...mahasiswaMasterFilterDraft });
+    setShowMahasiswaMasterFilterPanel(false);
+  }, [mahasiswaMasterFilterDraft]);
+
+  const handleResetMahasiswaMasterFilters = useCallback(() => {
+    setMahasiswaMasterFilters({ ...MAHASISWA_MASTER_FILTER_INITIAL });
+    setMahasiswaMasterFilterDraft({ ...MAHASISWA_MASTER_FILTER_INITIAL });
+    setShowMahasiswaMasterFilterPanel(false);
+  }, []);
 
   useEffect(() => {
     setMahasiswaMasterPage(1);
-  }, [mahasiswaMasterQuery]);
+  }, [mahasiswaMasterFilters, mahasiswaMasterQuery]);
 
   useEffect(() => {
     if (mahasiswaMasterPage > totalMahasiswaMasterPages) {
@@ -2084,6 +2373,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const handlePeriodeMasterSearchQueryChange = (fieldKey, value) => {
     setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: value }));
+    setPeriodeMasterForm((prev) => {
+      const selectedId = Number(prev?.[fieldKey]);
+      if (!Number.isInteger(selectedId) || selectedId <= 0) return prev;
+      const selectedDosen = periodeDosenMap.get(selectedId);
+      const selectedLabel = formatPeriodeMasterDosenInputLabel(selectedDosen);
+      if (String(value).trim().toLowerCase() === selectedLabel.trim().toLowerCase()) {
+        return prev;
+      }
+      return { ...prev, [fieldKey]: "" };
+    });
+    setPeriodeMasterErrors((prev) => {
+      if (!prev[fieldKey]) return prev;
+      const next = { ...prev };
+      delete next[fieldKey];
+      return next;
+    });
   };
 
   const handlePeriodeMasterSearchFocus = (fieldKey) => {
@@ -2096,25 +2401,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }, 120);
   };
 
-  const handleSelectPeriodeMasterDosen = (fieldKey, dosenId) => {
-    const parsedId = Number(dosenId);
+  const handleSelectPeriodeMasterDosen = (fieldKey, dosenValue) => {
+    const parsedId = Number(dosenValue?.id ?? dosenValue);
     if (!Number.isInteger(parsedId) || parsedId <= 0) return;
+    const selectedDosen = typeof dosenValue === "object" && dosenValue
+      ? dosenValue
+      : periodeDosenMap.get(parsedId);
+    const selectedLabel = formatPeriodeMasterDosenInputLabel(selectedDosen);
     setPeriodeMasterForm((prev) => ({ ...prev, [fieldKey]: String(parsedId) }));
-    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
-    setDebouncedPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
-    setActivePeriodeMasterSearchField("");
-    setPeriodeMasterErrors((prev) => {
-      if (!prev[fieldKey]) return prev;
-      const next = { ...prev };
-      delete next[fieldKey];
-      return next;
-    });
-  };
-
-  const handleClearPeriodeMasterDosen = (fieldKey) => {
-    setPeriodeMasterForm((prev) => ({ ...prev, [fieldKey]: "" }));
-    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
-    setDebouncedPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: "" }));
+    setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: selectedLabel }));
+    setDebouncedPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: selectedLabel }));
     setActivePeriodeMasterSearchField("");
     setPeriodeMasterErrors((prev) => {
       if (!prev[fieldKey]) return prev;
@@ -2702,6 +2998,205 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   };
 
+  const mahasiswaMasterFilterPopup = showMahasiswaMasterFilterPanel && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={mahasiswaMasterFilterPopupRef}
+          className="fixed z-[120] rounded-xl border border-[#dbe5f8] bg-white shadow-xl"
+          style={{
+            top: `${mahasiswaMasterFilterPopupLayout.top}px`,
+            left: `${mahasiswaMasterFilterPopupLayout.left}px`,
+            width: `${mahasiswaMasterFilterPopupLayout.width}px`,
+            maxHeight: `${mahasiswaMasterFilterPopupLayout.maxHeight}px`,
+          }}
+        >
+          <div className="border-b border-[#e5ecf9] px-4 py-3">
+            <p className="text-base font-bold text-[#1e315f]">Filter Data Mahasiswa</p>
+            <p className="text-xs text-[#60709a]">Atur filter bertumpuk, lalu klik Terapkan.</p>
+          </div>
+          <div
+            className="space-y-3 overflow-auto p-3"
+            style={{ maxHeight: `${Math.max(160, mahasiswaMasterFilterPopupLayout.maxHeight - 126)}px` }}
+          >
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Angkatan</p>
+                <button
+                  type="button"
+                  onClick={() => setMahasiswaMasterFilterDraft((prev) => ({ ...prev, angkatan: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.angkatan}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    angkatan: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua angkatan</option>
+                {mahasiswaMasterFilterOptions.angkatan.map((item) => (
+                  <option key={`filter-angkatan-${item}`} value={item}>
+                    Angkatan {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Semester Penjaluran</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMahasiswaMasterFilterDraft((prev) => ({
+                      ...prev,
+                      semester_penjaluran: "",
+                    }))
+                  }
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.semester_penjaluran}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    semester_penjaluran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua semester penjaluran</option>
+                {mahasiswaMasterFilterOptions.semester_penjaluran.map((item) => (
+                  <option key={`filter-semester-penjaluran-${item}`} value={item}>
+                    Semester Penjaluran {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Periode Pendaftaran</p>
+                <button
+                  type="button"
+                  onClick={() => setMahasiswaMasterFilterDraft((prev) => ({ ...prev, periode: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.periode}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    periode: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua periode pendaftaran</option>
+                {mahasiswaMasterFilterOptions.periode.map((item) => (
+                  <option key={`filter-periode-${item}`} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Penjaluran</p>
+                <button
+                  type="button"
+                  onClick={() => setMahasiswaMasterFilterDraft((prev) => ({ ...prev, penjaluran: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.penjaluran}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    penjaluran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua penjaluran</option>
+                {mahasiswaMasterFilterOptions.penjaluran.map((item) => (
+                  <option key={`filter-penjaluran-${item}`} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Tipe Pendaftaran</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMahasiswaMasterFilterDraft((prev) => ({
+                      ...prev,
+                      tipe_pendaftaran: "",
+                    }))
+                  }
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.tipe_pendaftaran}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    tipe_pendaftaran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua tipe daftar</option>
+                {mahasiswaMasterFilterOptions.tipe_pendaftaran.map((item) => (
+                  <option key={`filter-tipe-pendaftaran-${item}`} value={item}>
+                    {formatLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-[#e5ecf9] px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setMahasiswaMasterFilterDraft({ ...MAHASISWA_MASTER_FILTER_INITIAL })}
+              disabled={!hasMahasiswaMasterDraftFilters}
+              className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Reset all
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyMahasiswaMasterFilters}
+              disabled={!isMahasiswaMasterFilterDraftDirty}
+              className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Terapkan
+            </button>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
     <div className="h-screen overflow-hidden bg-[#f2f3f7]">
       <header className="fixed inset-x-0 top-0 bg-[#2f63e3] text-white shadow-sm">
@@ -2856,9 +3351,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               </div>
             ) : null}
 
-            {!loading && (activeTab === "master-mahasiswa" || activeTab === "mahasiswa-bimbingan") ? (
+            {!loading &&
+            ((isSekretaris && activeTab === "master-mahasiswa") || activeTab === "mahasiswa-bimbingan") ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black text-[#1b274b]">
                       {activeTab === "mahasiswa-bimbingan"
@@ -2872,14 +3368,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                       <input
                         type="text"
                         value={mahasiswaMasterQuery}
                         onChange={(event) => setMahasiswaMasterQuery(event.target.value)}
-                        placeholder="Cari NIM, nama, periode, jalur, pembimbing..."
+                        placeholder="Cari NIM, nama, periode, penjaluran, pembimbing..."
                         className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
@@ -2891,8 +3387,59 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <RefreshCcw className="h-4 w-4" />
                       Refresh
                     </button>
+                    <div className="relative" ref={mahasiswaMasterFilterTriggerRef}>
+                      <button
+                        type="button"
+                        onClick={handleToggleMahasiswaMasterFilterPanel}
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                          showMahasiswaMasterFilterPanel || hasMahasiswaMasterActiveFilters
+                            ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
+                            : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                        }`}
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                        Filter
+                        {hasMahasiswaMasterActiveFilters ? (
+                          <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+                            {mahasiswaMasterActiveFilterChips.length}
+                          </span>
+                        ) : null}
+                      </button>
+
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleResetMahasiswaMasterFilters}
+                      disabled={!hasMahasiswaMasterActiveFilters}
+                      className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reset
+                    </button>
                   </div>
                 </div>
+
+                {hasMahasiswaMasterActiveFilters ? (
+                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[#e5ebf8] bg-[#f9fbff] px-3 py-2">
+                    {mahasiswaMasterActiveFilterChips.map((chip) => (
+                      <span
+                        key={`chip-filter-master-mahasiswa-${chip.key}`}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#ccdbfa] bg-white px-2.5 py-1 text-xs font-semibold text-[#2a4175]"
+                      >
+                        {chip.label}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMahasiswaMasterFilters((prev) => ({ ...prev, [chip.key]: "" }))
+                          }
+                          className="rounded-full border border-[#cfdbf5] px-1 text-[10px] font-bold text-[#5f719d] hover:bg-[#eef3ff]"
+                          aria-label={`Hapus filter ${chip.label}`}
+                        >
+                          x
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[2300px] text-left text-sm">
@@ -3735,13 +4282,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       {PERIODE_MASTER_KETUA_FIELDS.map((item) => {
                         const selectedId = periodeMasterSelectedDosenIdsByField[item.key];
                         const selectedDosen = selectedId ? periodeDosenMap.get(Number(selectedId)) : null;
+                        const selectedLabel = formatPeriodeMasterDosenInputLabel(selectedDosen);
                         const searchValue = String(periodeMasterSearchQueryByField[item.key] || "");
                         const debouncedSearchValue = String(
                           debouncedPeriodeMasterSearchQueryByField[item.key] || ""
                         );
                         const searchResults = getPeriodeMasterCandidateRows(item.key);
                         const shouldShowResults =
-                          activePeriodeMasterSearchField === item.key && searchValue.trim().length > 0;
+                          activePeriodeMasterSearchField === item.key &&
+                          searchValue.trim().length > 0 &&
+                          searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
                         const isDebouncing =
                           searchValue.trim().length > 0 &&
                           searchValue.trim().toLowerCase() !== debouncedSearchValue.trim().toLowerCase();
@@ -3751,23 +4301,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             className="rounded-lg border border-[#e6ecf8] bg-[#fbfcff] p-3"
                           >
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
-                            {selectedDosen ? (
-                              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-[#d9e3fb] bg-[#eef3ff] px-3 py-2">
-                                <div>
-                                  <p className="text-sm font-bold text-[#1f3160]">{selectedDosen.nama || "-"}</p>
-                                  <p className="text-xs text-[#5c6c92]">NIK: {selectedDosen.nik || "-"}</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleClearPeriodeMasterDosen(item.key)}
-                                  className="rounded-md border border-[#c7d5f5] px-2 py-1 text-xs font-semibold text-[#37548d] hover:bg-[#f5f8ff]"
-                                >
-                                  Ganti
-                                </button>
-                              </div>
-                            ) : (
-                              <p className="mb-2 text-xs font-semibold text-[#7080a6]">Belum ada dosen yang dipilih.</p>
-                            )}
                             <div className="relative">
                               <input
                                 type="text"
@@ -3794,7 +4327,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         key={`master-dosen-ketua-${item.code}-${dosen.id}`}
                                         type="button"
                                         onMouseDown={(event) => event.preventDefault()}
-                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen.id)}
+                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
                                         className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
                                       >
                                         <span className="font-semibold">{dosen.nama || "-"}</span>
@@ -3821,13 +4354,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       {PERIODE_MASTER_JALUR_FIELDS.map((item) => {
                         const selectedId = periodeMasterSelectedDosenIdsByField[item.key];
                         const selectedDosen = selectedId ? periodeDosenMap.get(Number(selectedId)) : null;
+                        const selectedLabel = formatPeriodeMasterDosenInputLabel(selectedDosen);
                         const searchValue = String(periodeMasterSearchQueryByField[item.key] || "");
                         const debouncedSearchValue = String(
                           debouncedPeriodeMasterSearchQueryByField[item.key] || ""
                         );
                         const searchResults = getPeriodeMasterCandidateRows(item.key);
                         const shouldShowResults =
-                          activePeriodeMasterSearchField === item.key && searchValue.trim().length > 0;
+                          activePeriodeMasterSearchField === item.key &&
+                          searchValue.trim().length > 0 &&
+                          searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
                         const isDebouncing =
                           searchValue.trim().length > 0 &&
                           searchValue.trim().toLowerCase() !== debouncedSearchValue.trim().toLowerCase();
@@ -3837,23 +4373,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             className="rounded-lg border border-[#e6ecf8] bg-[#fbfcff] p-3"
                           >
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label}</label>
-                            {selectedDosen ? (
-                              <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-[#d9e3fb] bg-[#eef3ff] px-3 py-2">
-                                <div>
-                                  <p className="text-sm font-bold text-[#1f3160]">{selectedDosen.nama || "-"}</p>
-                                  <p className="text-xs text-[#5c6c92]">NIK: {selectedDosen.nik || "-"}</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleClearPeriodeMasterDosen(item.key)}
-                                  className="rounded-md border border-[#c7d5f5] px-2 py-1 text-xs font-semibold text-[#37548d] hover:bg-[#f5f8ff]"
-                                >
-                                  Ganti
-                                </button>
-                              </div>
-                            ) : (
-                              <p className="mb-2 text-xs font-semibold text-[#7080a6]">Belum ada dosen yang dipilih.</p>
-                            )}
                             <div className="relative">
                               <input
                                 type="text"
@@ -3880,7 +4399,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         key={`master-dosen-${item.key}-${dosen.id}`}
                                         type="button"
                                         onMouseDown={(event) => event.preventDefault()}
-                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen.id)}
+                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
                                         className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
                                       >
                                         <span className="font-semibold">{dosen.nama || "-"}</span>
@@ -5499,6 +6018,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           </main>
         </div>
       </div>
+      {mahasiswaMasterFilterPopup}
     </div>
   );
 }

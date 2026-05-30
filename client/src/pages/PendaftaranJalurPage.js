@@ -54,7 +54,21 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     penjaluran_sebelumnya: "",
     penjaluran_baru: "",
   });
+  const [dosenSearchQueryByField, setDosenSearchQueryByField] = useState({});
+  const [debouncedDosenSearchQueryByField, setDebouncedDosenSearchQueryByField] = useState({});
+  const [activeDosenSearchField, setActiveDosenSearchField] = useState("");
   const pendaftaranDitutup = !loadingPeriode && !periodeAktif;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedDosenSearchQueryByField(dosenSearchQueryByField);
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [dosenSearchQueryByField]);
+
+  const setFormField = (name, value) => {
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
 
   const handleChange = (event) => {
     const { name } = event.target;
@@ -75,7 +89,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       return;
     }
 
-    setFormData((prev) => ({ ...prev, [name]: value }));
+    setFormField(name, value);
   };
 
   const renderRadioGroup = ({ name, value, options, disabled = false }) => (
@@ -107,9 +121,73 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     </div>
   );
 
-  const formatDosenLabel = (dosen) => {
-    const identifier = dosen.nik || dosen.kode_dosen || dosen.email || "-";
-    return `${dosen.nama} (${identifier})`;
+  const getOrderedDosenOptions = ({ prioritizeNoBimbingan = false }) => {
+    const prioritasNoBimbingan = prioritizeNoBimbingan
+      ? dosenOptions.filter((dosen) => dosen.is_no_bimbingan && !dosen.is_kuota_penuh)
+      : [];
+    const dosenLainnya = prioritizeNoBimbingan
+      ? dosenOptions.filter((dosen) => !(dosen.is_no_bimbingan && !dosen.is_kuota_penuh))
+      : dosenOptions;
+    return [...prioritasNoBimbingan, ...dosenLainnya];
+  };
+
+  const findSelectedDosenByValue = (selectedValue) => {
+    const normalizedValue = String(selectedValue || "").trim();
+    if (!normalizedValue) return null;
+    if (normalizedValue === NO_DOSEN_OPTION_VALUE) {
+      return {
+        id: NO_DOSEN_OPTION_VALUE,
+        nama: "Belum dapat dosen pembimbing",
+        nik: null,
+        is_no_supervisor_option: true,
+      };
+    }
+    return dosenOptions.find((dosen) => String(dosen.id) === normalizedValue) || null;
+  };
+
+  const formatDosenInputLabel = (dosen) => {
+    if (!dosen) return "";
+    const nama = String(dosen.nama || "").trim();
+    const nik = String(dosen.nik || "").trim();
+    if (dosen.is_no_supervisor_option) return nama || "Belum dapat dosen pembimbing";
+    if (nama && nik) return `${nama} - NIK: ${nik}`;
+    if (nama) return nama;
+    if (nik) return `NIK: ${nik}`;
+    return "";
+  };
+
+  const handleDosenSearchQueryChange = (fieldName, value) => {
+    setDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: value }));
+    setFormData((prev) => {
+      const selectedDosen = findSelectedDosenByValue(prev?.[fieldName]);
+      if (!selectedDosen) return prev;
+      const selectedLabel = formatDosenInputLabel(selectedDosen);
+      if (String(value).trim().toLowerCase() === selectedLabel.trim().toLowerCase()) {
+        return prev;
+      }
+      return { ...prev, [fieldName]: "" };
+    });
+  };
+
+  const handleDosenSearchFocus = (fieldName) => {
+    setActiveDosenSearchField(fieldName);
+  };
+
+  const handleDosenSearchBlur = (fieldName) => {
+    window.setTimeout(() => {
+      setActiveDosenSearchField((prev) => (prev === fieldName ? "" : prev));
+    }, 120);
+  };
+
+  const handleSelectDosenOption = (fieldName, optionValue) => {
+    const selectedDosen =
+      typeof optionValue === "object" && optionValue ? optionValue : findSelectedDosenByValue(optionValue);
+    const selectedId = typeof optionValue === "object" && optionValue ? optionValue.id : optionValue;
+    const selectedLabel = formatDosenInputLabel(selectedDosen);
+    setFormField(fieldName, String(selectedId));
+    setDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: selectedLabel }));
+    setDebouncedDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: selectedLabel }));
+    setActiveDosenSearchField("");
   };
 
   const renderDosenSelect = ({
@@ -118,35 +196,118 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     value,
     disabled = false,
     prioritizeNoBimbingan = false,
-        disableKuotaPenuh = false,
+    disableKuotaPenuh = false,
     allowNoSupervisorOption = false,
   }) => {
-    const prioritasNoBimbingan = prioritizeNoBimbingan
-      ? dosenOptions.filter((dosen) => dosen.is_no_bimbingan && !dosen.is_kuota_penuh)
-      : [];
-    const dosenLainnya = prioritizeNoBimbingan
-      ? dosenOptions.filter((dosen) => !(dosen.is_no_bimbingan && !dosen.is_kuota_penuh))
-      : dosenOptions;
-    const dropdownOptions = [...prioritasNoBimbingan, ...dosenLainnya];
+    const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan });
+    const searchValue = String(dosenSearchQueryByField?.[name] || "");
+    const debouncedSearchValue = String(debouncedDosenSearchQueryByField?.[name] || "");
+    const normalizedSearch = debouncedSearchValue.trim().toLowerCase();
+    const normalizedRawSearch = searchValue.trim().toLowerCase();
+    const isDebouncing = normalizedRawSearch.length > 0 && normalizedRawSearch !== normalizedSearch;
+
+    const selectedDosen = findSelectedDosenByValue(value);
+    const selectedLabel = formatDosenInputLabel(selectedDosen);
+
+    const candidateRows = (() => {
+      const rows = [];
+      if (allowNoSupervisorOption) {
+        rows.push({
+          id: NO_DOSEN_OPTION_VALUE,
+          nama: "Belum dapat dosen pembimbing",
+          nik: null,
+          is_kuota_penuh: false,
+          is_no_supervisor_option: true,
+        });
+      }
+
+      for (const dosen of dropdownOptions) {
+        rows.push({
+          id: dosen.id,
+          nama: dosen.nama,
+          nik: dosen.nik || null,
+          kode_dosen: dosen.kode_dosen || null,
+          email: dosen.email || null,
+          is_kuota_penuh: Boolean(dosen.is_kuota_penuh),
+          is_no_supervisor_option: false,
+        });
+      }
+
+      return rows
+        .filter((row) => {
+          if (!normalizedSearch) return true;
+          const haystack = `${row.nama || ""} ${row.nik || ""} ${row.kode_dosen || ""} ${row.email || ""}`.toLowerCase();
+          return haystack.includes(normalizedSearch);
+        })
+        .slice(0, 8);
+    })();
+
+    const inputValue = searchValue || selectedLabel;
+    const shouldShowResults =
+      activeDosenSearchField === name &&
+      searchValue.trim().length > 0 &&
+      searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
+    const isDisabledField = disabled || loadingDosen;
 
     return (
       <div>
         <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
-        <select
-          name={name}
-          value={value}
-          disabled={disabled || loadingDosen}
-          onChange={handleChange}
-          className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm text-[#203462] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:bg-[#f2f5fc] disabled:text-[#8b95af]"
-        >
-          <option value="">{loadingDosen ? "Memuat data dosen..." : "Pilih dosen"}</option>
-          {allowNoSupervisorOption ? <option value={NO_DOSEN_OPTION_VALUE}>Belum dapat dosen pembimbing</option> : null}
-          {dropdownOptions.map((dosen) => (
-            <option key={`${name}-${dosen.id}`} value={dosen.id} disabled={disableKuotaPenuh && dosen.is_kuota_penuh}>
-              {formatDosenLabel(dosen)}
-            </option>
-          ))}
-        </select>
+        <div className="relative">
+          <input
+            type="text"
+            value={inputValue}
+            disabled={isDisabledField}
+            onFocus={() => handleDosenSearchFocus(name)}
+            onBlur={() => handleDosenSearchBlur(name)}
+            onChange={(event) => handleDosenSearchQueryChange(name, event.target.value)}
+            placeholder={loadingDosen ? "Memuat data dosen..." : "Cari nama atau NIK dosen"}
+            className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm text-[#203462] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:bg-[#f2f5fc] disabled:text-[#8b95af]"
+          />
+          {shouldShowResults ? (
+            <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-48 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+              {isDebouncing ? (
+                <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
+              ) : candidateRows.length > 0 ? (
+                candidateRows.map((row) => {
+                  const isDisabledRow =
+                    row.is_no_supervisor_option !== true &&
+                    disableKuotaPenuh &&
+                    row.is_kuota_penuh;
+                  return (
+                    <button
+                      key={`${name}-candidate-${row.id}`}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => {
+                        if (isDisabledRow) return;
+                        handleSelectDosenOption(name, row.id);
+                      }}
+                      disabled={isDisabledRow}
+                      className={`flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                        isDisabledRow
+                          ? "cursor-not-allowed bg-[#f8fafc] text-[#98a3c0]"
+                          : "text-[#213460] hover:bg-[#f4f7ff]"
+                      }`}
+                    >
+                      <span className="font-semibold">{row.nama || "-"}</span>
+                      <span className="text-xs">
+                        {row.is_no_supervisor_option ? (
+                          "Tanpa dosen"
+                        ) : isDisabledRow ? (
+                          "Kuota penuh"
+                        ) : (
+                          `NIK: ${row.nik || "-"}`
+                        )}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
       </div>
     );
   };
@@ -676,4 +837,3 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 }
 
 export default PendaftaranJalurPage;
-
