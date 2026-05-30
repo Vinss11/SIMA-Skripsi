@@ -2,9 +2,21 @@ import React, { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, ClipboardPlus, Loader2, Send } from "lucide-react";
 
 const PENDAFTARAN_OPTIONS = [
-  { value: "baru", label: "Baru" },
-  { value: "ulang", label: "Ulang" },
-  { value: "alih", label: "Alih" },
+  {
+    value: "baru",
+    label: "Baru",
+    description: "Pendaftaran pertama kali untuk menentukan jalur skripsi.",
+  },
+  {
+    value: "ulang",
+    label: "Ulang",
+    description: "Mengajukan kembali jalur yang sama karena pengajuan sebelumnya belum dilanjutkan.",
+  },
+  {
+    value: "alih",
+    label: "Alih",
+    description: "Berpindah dari jalur sebelumnya ke jalur skripsi yang berbeda.",
+  },
 ];
 
 const JALUR_OPTIONS = [
@@ -17,6 +29,8 @@ const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
 const NIM_REGEX = /^\d{8}$/;
 const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
 const NO_DOSEN_OPTION_VALUE = "__NO_DOSEN_PEMBIMBING__";
+const buildMahasiswaEmailFromNim = (nim) =>
+  nim && nim.length > 0 ? `${nim}@${MAHASISWA_EMAIL_DOMAIN}`.toLowerCase() : "";
 
 function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [periodeAktif, setPeriodeAktif] = useState(null);
@@ -48,6 +62,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
     if (name === "nim") {
       value = value.replace(/\D/g, "").slice(0, 8);
+      const generatedEmail = buildMahasiswaEmailFromNim(value);
+      setFormData((prev) => ({ ...prev, nim: value, email: generatedEmail }));
+      return;
     }
 
     if (name === "nama") {
@@ -55,7 +72,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     }
 
     if (name === "email") {
-      value = value.trim().toLowerCase();
+      return;
     }
 
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -249,8 +266,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   };
 
   const validateStepOne = () => {
-    if (!formData.email || !formData.nim || !formData.nama || !formData.dosen_pembimbing_akademik_id) {
-      return "Lengkapi data umum terlebih dahulu (Email, NIM, Nama, dan Dosen Pembimbing Akademik).";
+    if (!formData.nim || !formData.nama || !formData.dosen_pembimbing_akademik_id) {
+      return "Lengkapi data umum terlebih dahulu (NIM, Nama, dan Dosen Pembimbing Akademik).";
     }
 
     const nim = formData.nim.trim();
@@ -266,10 +283,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       return "Nama hanya boleh huruf, spasi, titik, apostrof, dan tanda hubung.";
     }
 
-    const expectedEmail = `${nim}@${MAHASISWA_EMAIL_DOMAIN}`;
+    const expectedEmail = buildMahasiswaEmailFromNim(nim);
     const email = formData.email.trim().toLowerCase();
     if (email !== expectedEmail) {
-      return `Format email wajib ${expectedEmail}.`;
+      return `Email otomatis harus sesuai format ${expectedEmail}.`;
     }
 
     return "";
@@ -343,14 +360,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
     try {
       setIsSubmitting(true);
+      const normalizedNim = formData.nim.trim();
+      const generatedEmail = buildMahasiswaEmailFromNim(normalizedNim);
       const response = await fetch(`${apiBaseUrl}/api/pendaftaran/submit`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          email: formData.email.trim(),
-          nim: formData.nim.trim(),
+          email: generatedEmail,
+          nim: normalizedNim,
           nama: formData.nama.trim(),
           pendaftaran: formData.pendaftaran,
           dosen_pembimbing_akademik_id: Number(formData.dosen_pembimbing_akademik_id),
@@ -369,8 +388,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         throw new Error(data?.message || "Pendaftaran gagal diproses.");
       }
 
-      const registeredEmail = formData.email.trim().toLowerCase();
-      const registeredNim = formData.nim.trim();
+      const registeredEmail = generatedEmail;
+      const registeredNim = normalizedNim;
       const registerPayload = {
         ...data.data,
         registered_email: registeredEmail,
@@ -433,17 +452,19 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                 <h2 className="text-lg font-black text-[#1a315f]">Informasi Umum</h2>
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email</label>
+                    <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email UII (Otomatis)</label>
                     <input
                       name="email"
-                      type="email"
+                      type="text"
                       value={formData.email}
-                      onChange={handleChange}
-                      maxLength={27}
-                      placeholder="22523001@students.uii.ac.id"
-                      className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                      readOnly
+                      disabled
+                      placeholder="Terisi otomatis dari NIM"
+                      className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
                     />
-                    <p className="mt-1 text-xs text-[#6477a8]">Format wajib: NIM@students.uii.ac.id</p>
+                    <p className="mt-1 text-xs text-[#6477a8]">
+                      Format otomatis: NIM@{MAHASISWA_EMAIL_DOMAIN}
+                    </p>
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-semibold text-[#324c86]">NIM</label>
@@ -485,6 +506,24 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     value: formData.pendaftaran,
                     options: PENDAFTARAN_OPTIONS,
                   })}
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    {PENDAFTARAN_OPTIONS.map((option) => {
+                      const isActive = formData.pendaftaran === option.value;
+                      return (
+                        <div
+                          key={`keterangan-${option.value}`}
+                          className={`rounded-lg border px-3 py-2 ${
+                            isActive
+                              ? "border-[#a9bff5] bg-[#f1f5ff]"
+                              : "border-[#e2e8f6] bg-[#fbfcff]"
+                          }`}
+                        >
+                          <p className="text-sm font-bold text-[#21396f]">{option.label}</p>
+                          <p className="mt-1 text-xs text-[#53689a]">{option.description}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </section>
             ) : null}
@@ -637,5 +676,4 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 }
 
 export default PendaftaranJalurPage;
-
 

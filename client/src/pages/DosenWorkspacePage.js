@@ -258,35 +258,81 @@ function pickTopikUploadField(rawRow, candidates) {
   return "";
 }
 
-function buildNavItems(isSekretaris) {
+function buildNavSections(isSekretaris) {
   if (!isSekretaris) {
     return [
-      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-      { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
-      { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
-      { id: "dokumen-sidang-review", label: "Review Dokumen Sidang", icon: FileSpreadsheet },
-      { id: "ketersediaan-sidang", label: "Ketersediaan Sidang", icon: CalendarRange },
-      { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
-      { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
-      { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
-      { id: "topik", label: "Manajemen Topik", icon: BookOpenCheck },
+      {
+        key: "umum",
+        label: "Umum",
+        items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }],
+      },
+      {
+        key: "mahasiswa",
+        label: "Mahasiswa",
+        items: [
+          { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
+          { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
+          { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
+          { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
+          { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
+        ],
+      },
+      {
+        key: "dosen",
+        label: "Dosen",
+        items: [{ id: "topik", label: "Manajemen Topik", icon: BookOpenCheck }],
+      },
+      {
+        key: "sidang",
+        label: "Sidang",
+        items: [
+          { id: "dokumen-sidang-review", label: "Review Dokumen Sidang", icon: FileSpreadsheet },
+          { id: "ketersediaan-sidang", label: "Ketersediaan Sidang", icon: CalendarRange },
+        ],
+      },
     ];
   }
 
   return [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "master-dosen", label: "Master Dosen", icon: Users },
-    { id: "master-mahasiswa", label: "Master Mahasiswa", icon: GraduationCap },
-    { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
-    { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
-    { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
-    { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
-    { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
-    { id: "topik", label: "Manajemen Topik", icon: BookOpenCheck },
-    { id: "master-topik", label: "Master Topik", icon: BookOpenCheck },
-    { id: "penjaluran", label: "Manajemen Penjaluran", icon: ListChecks },
-    { id: "periode", label: "Manajemen Periode", icon: CalendarRange },
-    { id: "sidang-akhir", label: "Manajemen Sidang", icon: CalendarRange },
+    {
+      key: "umum",
+      label: "Umum",
+      items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }],
+    },
+    {
+      key: "mahasiswa",
+      label: "Mahasiswa",
+      items: [
+        { id: "master-mahasiswa", label: "Master Mahasiswa", icon: GraduationCap },
+        { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
+        { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
+        { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
+        { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
+        { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
+      ],
+    },
+    {
+      key: "dosen",
+      label: "Dosen",
+      items: [
+        { id: "master-dosen", label: "Master Dosen", icon: Users },
+        { id: "topik", label: "Manajemen Topik", icon: BookOpenCheck },
+        { id: "master-topik", label: "Master Topik", icon: BookOpenCheck },
+      ],
+    },
+    {
+      key: "penjaluran",
+      label: "Penjaluran",
+      items: [
+        { id: "penjaluran", label: "Manajemen Penjaluran", icon: ListChecks },
+        { id: "periode", label: "Manajemen Periode", icon: CalendarRange },
+      ],
+    },
+    {
+      key: "sidang",
+      label: "Sidang",
+      items: [{ id: "sidang-akhir", label: "Manajemen Sidang", icon: CalendarRange }],
+    },
   ];
 }
 
@@ -379,7 +425,7 @@ function buildTabHeaders(isSekretaris) {
 }
 
 function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, isSekretaris = false }) {
-  const navItems = useMemo(() => buildNavItems(isSekretaris), [isSekretaris]);
+  const navSections = useMemo(() => buildNavSections(isSekretaris), [isSekretaris]);
   const tabHeaders = useMemo(() => buildTabHeaders(isSekretaris), [isSekretaris]);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
@@ -2692,24 +2738,33 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         <div className="grid h-full grid-cols-1 gap-4 lg:grid-cols-[240px_minmax(0,1fr)] xl:grid-cols-[260px_minmax(0,1fr)]">
           <aside className="h-full rounded-xl border border-[#dce4f7] bg-white p-2 shadow-sm lg:overflow-y-auto">
             <p className="px-3 pb-2 pt-1 text-xs font-bold uppercase tracking-[0.08em] text-[#7d89a8]">Navigasi</p>
-            <div className="space-y-1">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setActiveTab(item.id)}
-                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
-                      isActive ? "bg-[#2f63e3] text-white" : "text-[#405070] hover:bg-[#f2f6ff]"
-                    }`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </button>
-                );
-              })}
+            <div className="space-y-3">
+              {navSections.map((section) => (
+                <div key={`nav-section-${section.key}`}>
+                  <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.08em] text-[#8a96b5]">
+                    {section.label}
+                  </p>
+                  <div className="space-y-1">
+                    {(section.items || []).map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => setActiveTab(item.id)}
+                          className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
+                            isActive ? "bg-[#2f63e3] text-white" : "text-[#405070] hover:bg-[#f2f6ff]"
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
             <button
               type="button"
