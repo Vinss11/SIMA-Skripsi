@@ -477,6 +477,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [loadingSubmissionDetail, setLoadingSubmissionDetail] = useState(false);
   const [submissionDecision, setSubmissionDecision] = useState("approve");
   const [submissionKeterangan, setSubmissionKeterangan] = useState("");
+  const [submissionTopikFocusSlot, setSubmissionTopikFocusSlot] = useState("");
   const [izinLanjutRows, setIzinLanjutRows] = useState([]);
   const [izinLanjutQuery, setIzinLanjutQuery] = useState("");
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
@@ -1240,6 +1241,30 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
     return map;
   }, [masterTopikRows, topikRows]);
+  const submissionReviewTopikOptions = useMemo(() => {
+    const rows = Array.isArray(submissionDetail?.detail_pengajuan?.topik_dipilih)
+      ? submissionDetail.detail_pengajuan.topik_dipilih
+      : [];
+    return [...rows].sort((left, right) => {
+      const leftSlot = Number(left?.slot ?? 0);
+      const rightSlot = Number(right?.slot ?? 0);
+      return leftSlot - rightSlot;
+    });
+  }, [submissionDetail]);
+  const submissionReviewTopikFocused = useMemo(() => {
+    if (submissionReviewTopikOptions.length === 0) return null;
+    const selected = submissionReviewTopikOptions.find(
+      (item) => String(item?.slot ?? "") === String(submissionTopikFocusSlot || "")
+    );
+    return selected || submissionReviewTopikOptions[0];
+  }, [submissionReviewTopikOptions, submissionTopikFocusSlot]);
+  const submissionReviewTopikIsSingleDosen = useMemo(() => {
+    if (submissionReviewTopikOptions.length <= 1) return true;
+    const dosenSet = new Set(
+      submissionReviewTopikOptions.map((item) => String(item?.dosen || "").trim()).filter(Boolean)
+    );
+    return dosenSet.size <= 1;
+  }, [submissionReviewTopikOptions]);
 
   const pagedSubmissions = useMemo(() => {
     const start = (submissionPage - 1) * DOSEN_GRID_PAGE_SIZE;
@@ -1829,13 +1854,30 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setSubmissionDetail(null);
       setSubmissionKeterangan("");
       setSubmissionDecision("approve");
+      setSubmissionTopikFocusSlot("");
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (submissionReviewTopikOptions.length === 0) {
+      if (submissionTopikFocusSlot) {
+        setSubmissionTopikFocusSlot("");
+      }
+      return;
+    }
+    const hasSelectedSlot = submissionReviewTopikOptions.some(
+      (item) => String(item?.slot ?? "") === String(submissionTopikFocusSlot || "")
+    );
+    if (!hasSelectedSlot) {
+      setSubmissionTopikFocusSlot(String(submissionReviewTopikOptions[0]?.slot ?? ""));
+    }
+  }, [submissionReviewTopikOptions, submissionTopikFocusSlot]);
 
   const handleOpenSubmissionReview = async (id, defaultDecision = "approve") => {
     setSelectedSubmissionId(id);
     setSubmissionDecision(defaultDecision === "reject" ? "reject" : "approve");
     setSubmissionKeterangan("");
+    setSubmissionTopikFocusSlot("");
     setLoadingSubmissionDetail(true);
     try {
       const detail = await fetchWithAuth(`/api/dosen/submissions/${id}`);
@@ -1857,6 +1899,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     setSubmissionDetail(null);
     setSubmissionKeterangan("");
     setSubmissionDecision("approve");
+    setSubmissionTopikFocusSlot("");
+  };
+
+  const handleRefreshSubmissionReview = async () => {
+    if (!selectedSubmissionId) return;
+    setLoadingSubmissionDetail(true);
+    try {
+      const detail = await fetchWithAuth(`/api/dosen/submissions/${selectedSubmissionId}`);
+      setSubmissionDetail(detail || null);
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || "Gagal memuat ulang detail pengajuan.");
+      }
+    } finally {
+      setLoadingSubmissionDetail(false);
+    }
   };
 
   const handleSubmitSubmissionDecision = async () => {
@@ -3511,29 +3569,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
                   </div>
 
-                  {hasMahasiswaMasterActiveFilters ? (
-                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[#e5ebf8] bg-[#f9fbff] px-3 py-2">
-                      {mahasiswaMasterActiveFilterChips.map((chip) => (
-                        <span
-                          key={`chip-filter-master-mahasiswa-${chip.key}`}
-                          className="inline-flex items-center gap-2 rounded-full border border-[#ccdbfa] bg-white px-2.5 py-1 text-xs font-semibold text-[#2a4175]"
-                        >
-                          {chip.label}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setMahasiswaMasterFilters((prev) => ({ ...prev, [chip.key]: "" }))
-                            }
-                            className="rounded-full border border-[#cfdbf5] px-1 text-[10px] font-bold text-[#5f719d] hover:bg-[#eef3ff]"
-                            aria-label={`Hapus filter ${chip.label}`}
-                          >
-                            x
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-
                   <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[2300px] text-left text-sm">
                     <thead>
@@ -3884,208 +3919,212 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 ) : null}
 
                 {submissionMode === "review" ? (
-                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <div className="mb-4 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={handleBackToSubmissionList}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
-                        title="Kembali ke grid pengajuan"
-                      >
-                        <ArrowLeft className="h-4 w-4" />
-                      </button>
-                      <div>
-                        <h3 className="text-lg font-black text-[#1b274b]">Detail Pengajuan Mahasiswa</h3>
-                        <p className="text-sm text-[#5d6c91]">Lihat detail dan riwayat keputusan pengajuan mahasiswa.</p>
+                  <div className="flex min-h-0 flex-1 flex-col gap-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleBackToSubmissionList}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                          title="Kembali ke grid pengajuan"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRefreshSubmissionReview}
+                          disabled={loadingSubmissionDetail}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCcw className="h-4 w-4" />
+                          Refresh
+                        </button>
                       </div>
                     </div>
 
-                    {loadingSubmissionDetail ? (
-                      <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-6 text-center text-sm font-semibold text-[#60709a]">
-                        Memuat detail pengajuan...
-                      </div>
-                    ) : null}
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Detail Pengajuan Mahasiswa</h3>
+                      <p className="text-sm text-[#5d6c91]">Lihat detail pengajuan mahasiswa sebelum memberi keputusan.</p>
+
+                      {loadingSubmissionDetail ? (
+                        <div className="mt-4 rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-6 text-center text-sm font-semibold text-[#60709a]">
+                          Memuat detail pengajuan...
+                        </div>
+                      ) : null}
+
+                      {!loadingSubmissionDetail && submissionDetail ? (
+                        <div className="mt-4 space-y-4">
+                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+                            <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                              <h4 className="text-sm font-black text-[#1b274b]">Data Mahasiswa</h4>
+                              <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
+                                <p><span className="font-semibold">NIM:</span> {submissionDetail.mahasiswa?.nim || "-"}</p>
+                                <p><span className="font-semibold">Nama:</span> {submissionDetail.mahasiswa?.nama || "-"}</p>
+                                <p><span className="font-semibold">Email:</span> {submissionDetail.mahasiswa?.email || "-"}</p>
+                                <p><span className="font-semibold">Angkatan:</span> {submissionDetail.mahasiswa?.angkatan || "-"}</p>
+                              </div>
+                            </div>
+                            <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                              <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Pengajuan</h4>
+                              <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
+                                <p><span className="font-semibold">Jenis Jalur:</span> {formatLabel(submissionDetail.jenis_jalur)}</p>
+                                <p><span className="font-semibold">Tipe:</span> {formatLabel(submissionDetail.tipe_pengajuan)}</p>
+                                <p><span className="font-semibold">Diajukan:</span> {formatDateTime(submissionDetail.diajukan_pada)}</p>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-semibold text-[#324c86]">Status:</span>
+                                  <span
+                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                                      submissionDetail.status
+                                    )}`}
+                                  >
+                                    {formatLabel(submissionDetail.status)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                            <h4 className="text-sm font-black text-[#1b274b]">Detail Topik Diajukan</h4>
+                            {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
+                              <div className="mt-3 space-y-3">
+                                <div className="grid grid-cols-1 gap-3 xl:grid-cols-[300px,minmax(0,1fr)]">
+                                  <div>
+                                    <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Topik Pilihan Mahasiswa</label>
+                                    <select
+                                      value={String(submissionTopikFocusSlot || "")}
+                                      onChange={(event) => setSubmissionTopikFocusSlot(event.target.value)}
+                                      className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                                    >
+                                      {submissionReviewTopikOptions.length > 0 ? (
+                                        submissionReviewTopikOptions.map((topik) => (
+                                          <option key={`submission-topik-option-${topik.slot}-${topik.kode}`} value={String(topik.slot)}>
+                                            Pilihan {topik.slot} - {topik.kode || "-"}
+                                          </option>
+                                        ))
+                                      ) : (
+                                        <option value="">Tidak ada topik pilihan</option>
+                                      )}
+                                    </select>
+                                    <p className="mt-2 text-xs text-[#5f7098]">
+                                      Keputusan approve/tolak berlaku untuk seluruh paket topik pengajuan.
+                                    </p>
+                                  </div>
+                                  <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                                    <div className="grid grid-cols-1 gap-2 text-sm text-[#2f426f]">
+                                      <p><span className="font-semibold">Slot:</span> {submissionReviewTopikFocused?.slot || "-"}</p>
+                                      <p><span className="font-semibold">Kode Topik:</span> {submissionReviewTopikFocused?.kode || "-"}</p>
+                                      <p><span className="font-semibold">Judul Topik:</span> {submissionReviewTopikFocused?.judul || "-"}</p>
+                                      <p><span className="font-semibold">Dosen:</span> {submissionReviewTopikFocused?.dosen || "-"}</p>
+                                    </div>
+                                  </div>
+                                </div>
+                                {submissionReviewTopikOptions.length > 1 ? (
+                                  <div className="rounded-md border border-[#dbe4f8] bg-[#f9fbff] px-3 py-2 text-xs font-semibold text-[#4d5f8f]">
+                                    Mahasiswa mengajukan {submissionReviewTopikOptions.length} topik.
+                                    {submissionReviewTopikIsSingleDosen
+                                      ? " Semua topik berada pada dosen yang sama."
+                                      : " Topik berasal dari dosen yang berbeda."}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <div className="mt-3 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                                <div className="space-y-2 text-sm text-[#324c86]">
+                                  <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
+                                  <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
+                                  <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
 
                     {!loadingSubmissionDetail && submissionDetail ? (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                          <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
-                            <h4 className="text-sm font-black text-[#1b274b]">Data Mahasiswa</h4>
-                            <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                              <p><span className="font-semibold">NIM:</span> {submissionDetail.mahasiswa?.nim || "-"}</p>
-                              <p><span className="font-semibold">Nama:</span> {submissionDetail.mahasiswa?.nama || "-"}</p>
-                              <p><span className="font-semibold">Email:</span> {submissionDetail.mahasiswa?.email || "-"}</p>
-                              <p><span className="font-semibold">Angkatan:</span> {submissionDetail.mahasiswa?.angkatan || "-"}</p>
+                      <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        {submissionDetail.status === "pending" ? (
+                          <>
+                            <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan</h4>
+                            <p className="mt-1 text-sm text-[#5d6c91]">
+                              Mode keputusan aktif:{" "}
+                              <span className={submissionDecision === "approve" ? "font-bold text-[#137748]" : "font-bold text-[#b73a3a]"}>
+                                {submissionDecision === "approve" ? "Approve Pengajuan" : "Tolak Pengajuan"}
+                              </span>
+                            </p>
+                            <div className="mt-3">
+                              <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                {submissionDecision === "approve" ? "Catatan Persetujuan" : "Alasan Penolakan"}
+                              </label>
+                              <textarea
+                                rows={4}
+                                value={submissionKeterangan}
+                                onChange={(event) => setSubmissionKeterangan(event.target.value)}
+                                placeholder={
+                                  submissionDecision === "approve"
+                                    ? "Isi catatan persetujuan..."
+                                    : "Isi alasan penolakan..."
+                                }
+                                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                              />
                             </div>
-                          </div>
-                          <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                            <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Pengajuan</h4>
-                            <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                              <p><span className="font-semibold">Jenis Jalur:</span> {formatLabel(submissionDetail.jenis_jalur)}</p>
-                              <p><span className="font-semibold">Tipe:</span> {formatLabel(submissionDetail.tipe_pengajuan)}</p>
-                              <p><span className="font-semibold">Diajukan:</span> {formatDateTime(submissionDetail.diajukan_pada)}</p>
-                              <div className="flex items-center gap-2">
-                                <span className="font-semibold text-[#324c86]">Status:</span>
-                                <span
-                                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                    submissionDetail.status
-                                  )}`}
-                                >
-                                  {formatLabel(submissionDetail.status)}
-                                </span>
-                              </div>
+                            <div className="mt-4 flex justify-end">
+                              <button
+                                type="button"
+                                disabled={rowActionLoadingId === selectedSubmissionId}
+                                onClick={handleSubmitSubmissionDecision}
+                                className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition ${
+                                  submissionDecision === "approve"
+                                    ? "bg-[#137748] hover:brightness-110"
+                                    : "bg-[#b73a3a] hover:brightness-110"
+                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                              >
+                                {rowActionLoadingId === selectedSubmissionId
+                                  ? "Memproses..."
+                                  : submissionDecision === "approve"
+                                  ? "Simpan Approve"
+                                  : "Simpan Tolak"}
+                              </button>
                             </div>
-                          </div>
-                        </div>
-
-                        <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                          <h4 className="text-sm font-black text-[#1b274b]">Detail Topik/Judul</h4>
-                          {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
-                            <div className="mt-3 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                              <table className="w-full min-w-[700px] text-left text-sm">
-                                <thead>
-                                  <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
-                                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Slot</th>
-                                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
-                                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
-                                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dosen</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {(submissionDetail.detail_pengajuan?.topik_dipilih || []).map((topik) => (
-                                    <tr key={`review-topik-${topik.slot}-${topik.kode}`} className="border-b border-[#eff3fb]">
-                                      <td className="px-3 py-2">{topik.slot}</td>
-                                      <td className="px-3 py-2 font-semibold text-[#254080]">{topik.kode}</td>
-                                      <td className="px-3 py-2">{topik.judul || "-"}</td>
-                                      <td className="px-3 py-2">{topik.dosen || "-"}</td>
-                                    </tr>
-                                  ))}
-                                </tbody>
-                              </table>
-                            </div>
-                          ) : (
-                            <div className="mt-3 space-y-2 text-sm text-[#324c86]">
-                              <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
-                              <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
-                              <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                          {submissionDetail.status === "pending" ? (
-                            <>
-                              <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan</h4>
+                          </>
+                        ) : (
+                          <>
+                            <h4 className="text-sm font-black text-[#1b274b]">Riwayat Keputusan</h4>
+                            {Array.isArray(submissionDetail.riwayat_persetujuan) &&
+                            submissionDetail.riwayat_persetujuan.length > 0 ? (
                               <div className="mt-3 space-y-3">
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setSubmissionDecision("approve")}
-                                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${
-                                      submissionDecision === "approve"
-                                        ? "bg-[#137748] text-white"
-                                        : "border border-[#cfe3d8] bg-white text-[#1e6f45]"
-                                    }`}
+                                {submissionDetail.riwayat_persetujuan.map((item, index) => (
+                                  <div
+                                    key={`riwayat-keputusan-${item.tanggal_keputusan || index}`}
+                                    className="rounded-lg border border-[#e7ecf8] bg-[#f9fbff] p-3"
                                   >
-                                    Approve
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSubmissionDecision("reject")}
-                                    className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${
-                                      submissionDecision === "reject"
-                                        ? "bg-[#b73a3a] text-white"
-                                        : "border border-[#f0cfcf] bg-white text-[#9f3535]"
-                                    }`}
-                                  >
-                                    Tolak
-                                  </button>
-                                </div>
-
-                                <div>
-                                  <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                                    {submissionDecision === "approve" ? "Alasan/Catatan Persetujuan" : "Alasan Penolakan"}
-                                  </label>
-                                  <textarea
-                                    rows={4}
-                                    value={submissionKeterangan}
-                                    onChange={(event) => setSubmissionKeterangan(event.target.value)}
-                                    placeholder={
-                                      submissionDecision === "approve"
-                                        ? "Isi catatan persetujuan..."
-                                        : "Isi alasan penolakan..."
-                                    }
-                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                                  />
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <h4 className="text-sm font-black text-[#1b274b]">Riwayat Keputusan</h4>
-                              {Array.isArray(submissionDetail.riwayat_persetujuan) &&
-                              submissionDetail.riwayat_persetujuan.length > 0 ? (
-                                <div className="mt-3 space-y-3">
-                                  {submissionDetail.riwayat_persetujuan.map((item, index) => (
-                                    <div
-                                      key={`riwayat-keputusan-${item.tanggal_keputusan || index}`}
-                                      className="rounded-lg border border-[#e7ecf8] bg-[#f9fbff] p-3"
-                                    >
-                                      <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <span
-                                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                            item.status
-                                          )}`}
-                                        >
-                                          {formatLabel(item.status)}
-                                        </span>
-                                        <span className="text-xs font-semibold text-[#5d6c91]">
-                                          {item.dosen?.nama || "Dosen"} | {formatDateTime(item.tanggal_keputusan)}
-                                        </span>
-                                      </div>
-                                      <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[#4f5f88]">
-                                        {item.status === "approved" ? "Alasan Approve" : "Alasan Reject"}
-                                      </p>
-                                      <p className="mt-1 text-sm text-[#2f426f]">{item.keterangan || "-"}</p>
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                      <span
+                                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                                          item.status
+                                        )}`}
+                                      >
+                                        {formatLabel(item.status)}
+                                      </span>
+                                      <span className="text-xs font-semibold text-[#5d6c91]">
+                                        {item.dosen?.nama || "Dosen"} | {formatDateTime(item.tanggal_keputusan)}
+                                      </span>
                                     </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <div className="mt-3 rounded-lg border border-[#e9edf8] bg-[#f7f9ff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
-                                  Belum ada riwayat keputusan untuk pengajuan ini.
-                                </div>
-                              )}
-                            </>
-                          )}
-                        </div>
-
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={handleBackToSubmissionList}
-                            className="rounded-lg border border-[#d3dbef] bg-white px-4 py-2 text-sm font-semibold text-[#2a3f75] transition hover:bg-[#f3f7ff]"
-                          >
-                            Kembali
-                          </button>
-                          {submissionDetail.status === "pending" ? (
-                            <button
-                              type="button"
-                              disabled={rowActionLoadingId === selectedSubmissionId}
-                              onClick={handleSubmitSubmissionDecision}
-                              className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition ${
-                                submissionDecision === "approve"
-                                  ? "bg-[#137748] hover:brightness-110"
-                                  : "bg-[#b73a3a] hover:brightness-110"
-                              } disabled:cursor-not-allowed disabled:opacity-60`}
-                            >
-                              {rowActionLoadingId === selectedSubmissionId
-                                ? "Memproses..."
-                                : submissionDecision === "approve"
-                                ? "Simpan Approve"
-                                : "Simpan Tolak"}
-                            </button>
-                          ) : null}
-                        </div>
+                                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[#4f5f88]">
+                                      {item.status === "approved" ? "Alasan Approve" : "Alasan Reject"}
+                                    </p>
+                                    <p className="mt-1 text-sm text-[#2f426f]">{item.keterangan || "-"}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="mt-3 rounded-lg border border-[#e9edf8] bg-[#f7f9ff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                                Belum ada riwayat keputusan untuk pengajuan ini.
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
                     ) : null}
                   </div>
