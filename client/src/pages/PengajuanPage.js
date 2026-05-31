@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { FileEdit, Info, Lightbulb, RotateCcw, Search, Send } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal } from "lucide-react";
+import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
@@ -51,21 +52,21 @@ function isHttpUrl(value) {
 }
 
 function statusBadge(item) {
-  if (item?.is_available) {
+  if (getTopikStatusKey(item) === "tersedia") {
     return {
       label: "Tersedia",
       className: "bg-[#e8f8ef] text-[#157a46]",
     };
   }
 
-  if (item?.status === "taken") {
+  if (getTopikStatusKey(item) === "taken") {
     return {
       label: "Sudah Diambil",
       className: "bg-[#fff0f0] text-[#b33b3b]",
     };
   }
 
-  if (item?.status === "reserved") {
+  if (getTopikStatusKey(item) === "reserved") {
     return {
       label: "Reserved",
       className: "bg-[#fff7e7] text-[#a46b00]",
@@ -75,6 +76,36 @@ function statusBadge(item) {
   return {
     label: "Tidak Tersedia",
     className: "bg-[#edf0f7] text-[#5f6b88]",
+  };
+}
+
+function getTopikStatusKey(item) {
+  if (item?.is_available) return "tersedia";
+  if (item?.status === "taken") return "taken";
+  if (item?.status === "reserved") return "reserved";
+  return "tidak_tersedia";
+}
+
+function getTopikStatusLabel(key) {
+  if (key === "tersedia") return "Tersedia";
+  if (key === "taken") return "Sudah Diambil";
+  if (key === "reserved") return "Reserved";
+  return "Tidak Tersedia";
+}
+
+function getTopikDosenFilterValue(item) {
+  const dosen = item?.dosen || {};
+  if (dosen.id !== null && dosen.id !== undefined && String(dosen.id).trim() !== "") return `id:${dosen.id}`;
+  if (dosen.nik) return `nik:${String(dosen.nik).trim()}`;
+  if (dosen.nama) return `nama:${String(dosen.nama).trim().toLowerCase()}`;
+  return "";
+}
+
+function createTopikFilterState() {
+  return {
+    cluster: "",
+    status: "",
+    dosen: "",
   };
 }
 
@@ -141,6 +172,15 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   const [topikError, setTopikError] = useState("");
   const [topikRows, setTopikRows] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTopikFilterPanel, setShowTopikFilterPanel] = useState(false);
+  const [topikFilterApplied, setTopikFilterApplied] = useState(() => createTopikFilterState());
+  const [topikFilterDraft, setTopikFilterDraft] = useState(() => createTopikFilterState());
+  const [topikFilterPopupLayout, setTopikFilterPopupLayout] = useState({
+    top: 0,
+    left: 0,
+    width: 380,
+    maxHeight: 560,
+  });
   const [selectedCodes, setSelectedCodes] = useState({
     topik_1_kode: "",
     topik_2_kode: "",
@@ -149,6 +189,11 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [topikDosenFilterQuery, setTopikDosenFilterQuery] = useState("");
+  const [showTopikDosenFilterOptions, setShowTopikDosenFilterOptions] = useState(false);
+  const topikFilterButtonRef = useRef(null);
+  const topikFilterPopupRef = useRef(null);
+  const topikDosenComboboxRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -200,18 +245,89 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
     };
   }, [apiBaseUrl, onSessionExpired, session.token]);
 
+  const topikFilterOptions = useMemo(() => {
+    const clusterSet = new Set();
+    const statusSet = new Set();
+    const dosenMap = new Map();
+
+    topikRows.forEach((item) => {
+      const clusterValue = String(item?.cluster || "").trim().toLowerCase();
+      if (clusterValue) clusterSet.add(clusterValue);
+
+      statusSet.add(getTopikStatusKey(item));
+
+      const dosenValue = getTopikDosenFilterValue(item);
+      if (dosenValue) {
+        const dosenNama = item?.dosen?.nama ? String(item.dosen.nama).trim() : "-";
+        const dosenNik = item?.dosen?.nik ? String(item.dosen.nik).trim() : "";
+        dosenMap.set(dosenValue, {
+          value: dosenValue,
+          label: dosenNik ? `${dosenNama} (${dosenNik})` : dosenNama,
+        });
+      }
+    });
+
+    const sortedClusters = Array.from(clusterSet).sort((left, right) => formatCluster(left).localeCompare(formatCluster(right)));
+    const sortedStatuses = Array.from(statusSet).sort((left, right) => getTopikStatusLabel(left).localeCompare(getTopikStatusLabel(right)));
+    const sortedDosen = Array.from(dosenMap.values()).sort((left, right) => left.label.localeCompare(right.label));
+
+    return {
+      cluster: sortedClusters,
+      status: sortedStatuses,
+      dosen: sortedDosen,
+    };
+  }, [topikRows]);
+
+  const hasAppliedTopikFilter = useMemo(
+    () => Object.values(topikFilterApplied).some((value) => String(value || "").trim() !== ""),
+    [topikFilterApplied]
+  );
+
+  const activeTopikFilterCount = useMemo(
+    () => Object.values(topikFilterApplied).filter((value) => String(value || "").trim() !== "").length,
+    [topikFilterApplied]
+  );
+
+  const selectedTopikDosenFilter = useMemo(
+    () => topikFilterOptions.dosen.find((item) => item.value === topikFilterDraft.dosen) || null,
+    [topikFilterOptions.dosen, topikFilterDraft.dosen]
+  );
+
+  const filteredTopikDosenFilterOptions = useMemo(() => {
+    const keyword = topikDosenFilterQuery.trim().toLowerCase();
+    const options = topikFilterOptions.dosen;
+    if (!keyword) return [];
+    return options.filter((item) => item.label.toLowerCase().includes(keyword)).slice(0, 40);
+  }, [topikFilterOptions.dosen, topikDosenFilterQuery]);
+
   const filteredTopik = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
-    if (!keyword) return topikRows;
 
     return topikRows.filter((item) => {
+      if (topikFilterApplied.cluster) {
+        const clusterValue = String(item?.cluster || "").trim().toLowerCase();
+        if (clusterValue !== topikFilterApplied.cluster) return false;
+      }
+
+      if (topikFilterApplied.status) {
+        const statusKey = getTopikStatusKey(item);
+        if (statusKey !== topikFilterApplied.status) return false;
+      }
+
+      if (topikFilterApplied.dosen) {
+        const dosenValue = getTopikDosenFilterValue(item);
+        if (dosenValue !== topikFilterApplied.dosen) return false;
+      }
+
+      if (!keyword) return true;
+
       const haystack = [item.kode, item.judul, item.cluster, item.dosen?.nama, item.dosen?.nik]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [topikRows, searchQuery]);
+  }, [topikRows, searchQuery, topikFilterApplied]);
 
   const availableTopik = useMemo(() => topikRows.filter((item) => item?.is_available), [topikRows]);
 
@@ -247,6 +363,138 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   const canSubmit = Boolean(selectedCodes.topik_1_kode) && !duplicateCodes && !submitLoading && !disabled;
   const isTopik2Enabled = Boolean(selectedCodes.topik_1_kode) && !disabled;
   const isTopik3Enabled = Boolean(selectedCodes.topik_1_kode && selectedCodes.topik_2_kode) && !disabled;
+  const canResetGridControl = Boolean(searchQuery.trim()) || hasAppliedTopikFilter;
+
+  const updateTopikFilterPopupLayout = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const anchor = topikFilterButtonRef.current;
+    if (!anchor) return;
+
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(400, Math.max(320, window.innerWidth - 24));
+    const spaceBelow = window.innerHeight - rect.bottom - 12;
+    const spaceAbove = rect.top - 12;
+    const maxHeight = Math.max(280, Math.min(560, Math.max(spaceBelow, spaceAbove)));
+    const showAbove = spaceBelow < 320 && spaceAbove > spaceBelow;
+
+    let top = showAbove ? rect.top - maxHeight - 8 : rect.bottom + 8;
+    top = Math.max(12, Math.min(top, window.innerHeight - maxHeight - 12));
+
+    let left = rect.right - width;
+    left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+
+    setTopikFilterPopupLayout({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showTopikFilterPanel) return undefined;
+
+    updateTopikFilterPopupLayout();
+
+    const handleOutsideClick = (event) => {
+      const target = event.target;
+      if (topikFilterPopupRef.current?.contains(target)) return;
+      if (topikFilterButtonRef.current?.contains(target)) return;
+      setShowTopikFilterPanel(false);
+    };
+
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setShowTopikFilterPanel(false);
+      }
+    };
+
+    const handleViewportChange = () => {
+      updateTopikFilterPopupLayout();
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [showTopikFilterPanel, updateTopikFilterPopupLayout]);
+
+  useEffect(() => {
+    if (!showTopikFilterPanel) {
+      setShowTopikDosenFilterOptions(false);
+      return;
+    }
+
+    const handleComboboxOutsideClick = (event) => {
+      const target = event.target;
+      if (topikDosenComboboxRef.current?.contains(target)) return;
+      setShowTopikDosenFilterOptions(false);
+    };
+
+    document.addEventListener("mousedown", handleComboboxOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleComboboxOutsideClick);
+    };
+  }, [showTopikFilterPanel]);
+
+  useEffect(() => {
+    if (showTopikDosenFilterOptions) return;
+    if (selectedTopikDosenFilter) {
+      setTopikDosenFilterQuery(selectedTopikDosenFilter.label);
+      return;
+    }
+    if (!topikFilterDraft.dosen) {
+      setTopikDosenFilterQuery("");
+    }
+  }, [selectedTopikDosenFilter, showTopikDosenFilterOptions, topikFilterDraft.dosen]);
+
+  const handleToggleTopikFilterPanel = () => {
+    setTopikFilterDraft(topikFilterApplied);
+    setShowTopikDosenFilterOptions(false);
+    setShowTopikFilterPanel((prev) => {
+      const next = !prev;
+      if (next) {
+        setTimeout(() => {
+          updateTopikFilterPopupLayout();
+        }, 0);
+      }
+      return next;
+    });
+  };
+
+  const handleApplyTopikFilter = () => {
+    setTopikFilterApplied(topikFilterDraft);
+    setShowTopikFilterPanel(false);
+    setShowTopikDosenFilterOptions(false);
+  };
+
+  const handleResetTopikFilterDraft = () => {
+    setTopikFilterDraft(createTopikFilterState());
+    setTopikDosenFilterQuery("");
+    setShowTopikDosenFilterOptions(false);
+  };
+
+  const handleResetTopikGridControl = () => {
+    setSearchQuery("");
+    setTopikFilterApplied(createTopikFilterState());
+    setTopikFilterDraft(createTopikFilterState());
+    setTopikDosenFilterQuery("");
+    setShowTopikDosenFilterOptions(false);
+    setShowTopikFilterPanel(false);
+  };
+
+  const handleTopikDosenFilterSelect = (option) => {
+    setTopikFilterDraft((prev) => ({ ...prev, dosen: option.value }));
+    setTopikDosenFilterQuery(option.label);
+    setShowTopikDosenFilterOptions(false);
+  };
 
   const optionListForSlot = (slotNumber) => {
     const selectedElsewhere = new Set(
@@ -403,16 +651,176 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
     }
   };
 
+  const topikFilterPopup =
+    showTopikFilterPanel && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={topikFilterPopupRef}
+            className="fixed z-[120] rounded-xl border border-[#dbe5f8] bg-white shadow-xl"
+            style={{
+              top: `${topikFilterPopupLayout.top}px`,
+              left: `${topikFilterPopupLayout.left}px`,
+              width: `${topikFilterPopupLayout.width}px`,
+              maxHeight: `${topikFilterPopupLayout.maxHeight}px`,
+            }}
+          >
+            <div className="border-b border-[#e5ecf9] px-4 py-3">
+              <p className="text-base font-bold text-[#1e315f]">Filter Grid Topik</p>
+              <p className="text-xs text-[#60709a]">Atur filter sesuai data grid, lalu klik Terapkan.</p>
+            </div>
+            <div
+              className="space-y-3 overflow-auto p-3"
+              style={{ maxHeight: `${Math.max(170, topikFilterPopupLayout.maxHeight - 126)}px` }}
+            >
+              <div className="rounded-lg border border-[#e6ecf8] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a4175]">Bidang</p>
+                  <button
+                    type="button"
+                    onClick={() => setTopikFilterDraft((prev) => ({ ...prev, cluster: "" }))}
+                    className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <select
+                  value={topikFilterDraft.cluster}
+                  onChange={(event) =>
+                    setTopikFilterDraft((prev) => ({
+                      ...prev,
+                      cluster: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                >
+                  <option value="">Semua bidang</option>
+                  {topikFilterOptions.cluster.map((item) => (
+                    <option key={`filter-cluster-${item}`} value={item}>
+                      {formatCluster(item)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="rounded-lg border border-[#e6ecf8] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a4175]">Dosen</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTopikFilterDraft((prev) => ({ ...prev, dosen: "" }));
+                      setTopikDosenFilterQuery("");
+                      setShowTopikDosenFilterOptions(false);
+                    }}
+                    className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <div className="relative" ref={topikDosenComboboxRef}>
+                  <input
+                    type="text"
+                    value={topikDosenFilterQuery}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      setTopikDosenFilterQuery(nextValue);
+                      setTopikFilterDraft((prev) => ({ ...prev, dosen: "" }));
+                      setShowTopikDosenFilterOptions(Boolean(nextValue.trim()));
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setShowTopikDosenFilterOptions(false);
+                      }
+                    }}
+                    placeholder="Cari nama/NIK dosen..."
+                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                  />
+                  {showTopikDosenFilterOptions && topikDosenFilterQuery.trim() ? (
+                    <div className="absolute left-0 right-0 z-20 mt-2 max-h-56 overflow-auto rounded-lg border border-[#d8e1f4] bg-white shadow-lg">
+                      {filteredTopikDosenFilterOptions.length > 0 ? (
+                        filteredTopikDosenFilterOptions.map((item) => (
+                          <button
+                            key={`filter-dosen-option-${item.value}`}
+                            type="button"
+                            onClick={() => handleTopikDosenFilterSelect(item)}
+                            className="block w-full border-b border-[#eef2fa] px-3 py-2 text-left text-sm text-[#2a4175] hover:bg-[#f3f7ff]"
+                          >
+                            {item.label}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-sm text-[#6f7ea4]">Dosen tidak ditemukan.</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+                <p className="mt-2 text-xs text-[#6f7ea4]">
+                  Ketik nama/NIK untuk mencari dosen, lalu pilih dari daftar.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#e6ecf8] p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-[#2a4175]">Status</p>
+                  <button
+                    type="button"
+                    onClick={() => setTopikFilterDraft((prev) => ({ ...prev, status: "" }))}
+                    className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <select
+                  value={topikFilterDraft.status}
+                  onChange={(event) =>
+                    setTopikFilterDraft((prev) => ({
+                      ...prev,
+                      status: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                >
+                  <option value="">Semua status</option>
+                  {topikFilterOptions.status.map((item) => (
+                    <option key={`filter-status-${item}`} value={item}>
+                      {getTopikStatusLabel(item)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-[#e5ecf9] px-4 py-3">
+              <button
+                type="button"
+                onClick={handleResetTopikFilterDraft}
+                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm font-semibold text-[#3c4e7f] hover:bg-[#f4f7ff]"
+              >
+                Reset Semua
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyTopikFilter}
+                className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110"
+              >
+                Terapkan
+              </button>
+            </div>
+          </div>,
+          document.body
+        )
+      : null;
+
   return (
     <div className="space-y-6">
       <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-black text-[#1b274b]">Grid Daftar Judul dari Dosen</h2>
             <p className="text-sm text-[#5d6c91]">
               Daftar referensi topik. Pemilihan dilakukan di form bawah (minimal 1, maksimal 3 topik).
             </p>
           </div>
+          <div className="flex flex-wrap items-center justify-end gap-2 pt-0.5">
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
             <input
@@ -422,6 +830,37 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
               onChange={(event) => setSearchQuery(event.target.value)}
               className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
             />
+          </div>
+          <button
+            ref={topikFilterButtonRef}
+            type="button"
+            onClick={handleToggleTopikFilterPanel}
+            className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+              showTopikFilterPanel || hasAppliedTopikFilter
+                ? "border-[#2f63e3] bg-[#edf3ff] text-[#234ea6]"
+                : "border-[#d1daf0] text-[#324b7f] hover:bg-[#f4f7ff]"
+            }`}
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Filter
+            {activeTopikFilterCount > 0 ? (
+              <span className="rounded-full bg-[#2f63e3] px-2 py-0.5 text-xs font-bold text-white">
+                {activeTopikFilterCount}
+              </span>
+            ) : null}
+          </button>
+          <button
+            type="button"
+            onClick={handleResetTopikGridControl}
+            disabled={!canResetGridControl}
+            className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+              canResetGridControl
+                ? "border-[#d1daf0] text-[#324b7f] hover:bg-[#f4f7ff]"
+                : "cursor-not-allowed border-[#e0e6f4] bg-[#f7f9fe] text-[#9aa7c5]"
+            }`}
+          >
+            Reset
+          </button>
           </div>
         </div>
 
@@ -486,6 +925,7 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
           </div>
         ) : null}
       </div>
+      {topikFilterPopup}
 
       <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h2 className="mb-2 text-lg font-black text-[#1b274b]">Form Pemilihan Topik (1-3 Topik)</h2>

@@ -642,6 +642,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [savingPeriode, setSavingPeriode] = useState(false);
   const [rowActionLoadingId, setRowActionLoadingId] = useState(null);
   const [exportingPendaftaran, setExportingPendaftaran] = useState(false);
+  const [exportingMahasiswaMaster, setExportingMahasiswaMaster] = useState(false);
 
   const periodeMasterSource = useMemo(
     () => (periodeOverview?.master_penanggung_jawab && typeof periodeOverview.master_penanggung_jawab === "object"
@@ -2348,6 +2349,82 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   };
 
+  const handleExportMahasiswaMaster = async () => {
+    if (!(isSekretaris && activeTab === "master-mahasiswa")) return;
+    setExportingMahasiswaMaster(true);
+    try {
+      const params = new URLSearchParams();
+      const search = mahasiswaMasterQuery.trim();
+      if (search) {
+        params.set("search", search);
+      }
+
+      const selectedAngkatan = String(mahasiswaMasterFilters?.angkatan || "").trim();
+      const selectedSemesterPenjaluran = String(mahasiswaMasterFilters?.semester_penjaluran || "").trim();
+      const selectedPeriode = String(mahasiswaMasterFilters?.periode || "").trim();
+      const selectedPenjaluran = String(mahasiswaMasterFilters?.penjaluran || "").trim();
+      const selectedTipePendaftaran = String(mahasiswaMasterFilters?.tipe_pendaftaran || "").trim();
+
+      if (selectedAngkatan) params.set("angkatan", selectedAngkatan);
+      if (selectedSemesterPenjaluran) params.set("semester_penjaluran", selectedSemesterPenjaluran);
+      if (selectedPeriode) params.set("periode", selectedPeriode);
+      if (selectedPenjaluran) params.set("penjaluran", selectedPenjaluran);
+      if (selectedTipePendaftaran) params.set("tipe_pendaftaran", selectedTipePendaftaran);
+
+      const query = params.toString() ? `?${params.toString()}` : "";
+      const response = await fetch(`${apiBaseUrl}/api/sekretaris/mahasiswa/master/export${query}`, {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      });
+
+      let exportErrorPayload = null;
+      if (!response.ok) {
+        try {
+          exportErrorPayload = await response.clone().json();
+        } catch (_parseError) {
+          exportErrorPayload = null;
+        }
+      }
+
+      const exportMessage = String(exportErrorPayload?.message || "");
+      const exportLowerMessage = exportMessage.toLowerCase();
+      const isExportTokenError =
+        exportLowerMessage.includes("token tidak valid") ||
+        exportLowerMessage.includes("token tidak ditemukan") ||
+        exportLowerMessage.includes("kadaluarsa");
+
+      if (response.status === 401 || (response.status === 403 && isExportTokenError)) {
+        if (!sessionExpiredRef.current) {
+          sessionExpiredRef.current = true;
+          onSessionExpired?.();
+        }
+        throw new Error("__SESSION_EXPIRED__");
+      }
+
+      if (!response.ok) {
+        throw new Error(exportErrorPayload?.message || "Export master data mahasiswa gagal diproses.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `export_master_mahasiswa_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showSuccessToast("Export master data mahasiswa berhasil.");
+    } catch (exportError) {
+      if (exportError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(exportError.message || "Gagal export master data mahasiswa.");
+      }
+    } finally {
+      setExportingMahasiswaMaster(false);
+    }
+  };
+
   const validatePeriodeMasterUniqueAssignments = useCallback((formValues) => {
     const duplicatesByField = {};
     const assignedMap = new Map();
@@ -3353,32 +3430,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
             {!loading &&
             ((isSekretaris && activeTab === "master-mahasiswa") || activeTab === "mahasiswa-bimbingan") ? (
-              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-[#1b274b]">
-                      {activeTab === "mahasiswa-bimbingan"
-                        ? "Grid Mahasiswa Bimbingan Dosen"
-                        : "Grid Master Data Mahasiswa"}
-                    </h3>
-                    <p className="text-sm text-[#5d6c91]">
-                      {activeTab === "mahasiswa-bimbingan"
-                        ? "Menampilkan histori penjaluran mahasiswa yang saat ini dibimbing oleh dosen yang login."
-                        : "Data ini dikelola oleh sekretaris prodi. Dosen dapat melihat histori ini secara baca saja."}
-                    </p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
-                      <input
-                        type="text"
-                        value={mahasiswaMasterQuery}
-                        onChange={(event) => setMahasiswaMasterQuery(event.target.value)}
-                        placeholder="Cari NIM, nama, periode, penjaluran, pembimbing..."
-                        className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
-                      />
-                    </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={loadAllData}
@@ -3387,61 +3441,100 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <RefreshCcw className="h-4 w-4" />
                       Refresh
                     </button>
-                    <div className="relative" ref={mahasiswaMasterFilterTriggerRef}>
+                    {isSekretaris && activeTab === "master-mahasiswa" ? (
                       <button
                         type="button"
-                        onClick={handleToggleMahasiswaMasterFilterPanel}
-                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
-                          showMahasiswaMasterFilterPanel || hasMahasiswaMasterActiveFilters
-                            ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
-                            : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
-                        }`}
+                        onClick={handleExportMahasiswaMaster}
+                        disabled={exportingMahasiswaMaster}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <SlidersHorizontal className="h-4 w-4" />
-                        Filter
-                        {hasMahasiswaMasterActiveFilters ? (
-                          <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
-                            {mahasiswaMasterActiveFilterChips.length}
-                          </span>
-                        ) : null}
+                        <Download className="h-4 w-4" />
+                        {exportingMahasiswaMaster ? "Exporting..." : "Download Excel"}
                       </button>
-
-                    </div>
-                    <button
-                      type="button"
-                      onClick={handleResetMahasiswaMasterFilters}
-                      disabled={!hasMahasiswaMasterActiveFilters}
-                      className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Reset
-                    </button>
+                    ) : null}
                   </div>
                 </div>
 
-                {hasMahasiswaMasterActiveFilters ? (
-                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[#e5ebf8] bg-[#f9fbff] px-3 py-2">
-                    {mahasiswaMasterActiveFilterChips.map((chip) => (
-                      <span
-                        key={`chip-filter-master-mahasiswa-${chip.key}`}
-                        className="inline-flex items-center gap-2 rounded-full border border-[#ccdbfa] bg-white px-2.5 py-1 text-xs font-semibold text-[#2a4175]"
-                      >
-                        {chip.label}
+                <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">
+                        {activeTab === "mahasiswa-bimbingan"
+                          ? "Grid Mahasiswa Bimbingan Dosen"
+                          : "Grid Master Data Mahasiswa"}
+                      </h3>
+                      <p className="text-sm text-[#5d6c91]">
+                        {activeTab === "mahasiswa-bimbingan"
+                          ? "Menampilkan histori penjaluran mahasiswa yang saat ini dibimbing oleh dosen yang login."
+                          : "Data ini dikelola oleh sekretaris prodi. Dosen dapat melihat histori ini secara baca saja."}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                        <input
+                          type="text"
+                          value={mahasiswaMasterQuery}
+                          onChange={(event) => setMahasiswaMasterQuery(event.target.value)}
+                          placeholder="Cari NIM, nama, periode, penjaluran, pembimbing..."
+                          className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                      </div>
+                      <div className="relative" ref={mahasiswaMasterFilterTriggerRef}>
                         <button
                           type="button"
-                          onClick={() =>
-                            setMahasiswaMasterFilters((prev) => ({ ...prev, [chip.key]: "" }))
-                          }
-                          className="rounded-full border border-[#cfdbf5] px-1 text-[10px] font-bold text-[#5f719d] hover:bg-[#eef3ff]"
-                          aria-label={`Hapus filter ${chip.label}`}
+                          onClick={handleToggleMahasiswaMasterFilterPanel}
+                          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                            showMahasiswaMasterFilterPanel || hasMahasiswaMasterActiveFilters
+                              ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
+                              : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                          }`}
                         >
-                          x
+                          <SlidersHorizontal className="h-4 w-4" />
+                          Filter
+                          {hasMahasiswaMasterActiveFilters ? (
+                            <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+                              {mahasiswaMasterActiveFilterChips.length}
+                            </span>
+                          ) : null}
                         </button>
-                      </span>
-                    ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetMahasiswaMasterFilters}
+                        disabled={!hasMahasiswaMasterActiveFilters}
+                        className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Reset
+                      </button>
+                    </div>
                   </div>
-                ) : null}
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                  {hasMahasiswaMasterActiveFilters ? (
+                    <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-[#e5ebf8] bg-[#f9fbff] px-3 py-2">
+                      {mahasiswaMasterActiveFilterChips.map((chip) => (
+                        <span
+                          key={`chip-filter-master-mahasiswa-${chip.key}`}
+                          className="inline-flex items-center gap-2 rounded-full border border-[#ccdbfa] bg-white px-2.5 py-1 text-xs font-semibold text-[#2a4175]"
+                        >
+                          {chip.label}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setMahasiswaMasterFilters((prev) => ({ ...prev, [chip.key]: "" }))
+                            }
+                            className="rounded-full border border-[#cfdbf5] px-1 text-[10px] font-bold text-[#5f719d] hover:bg-[#eef3ff]"
+                            aria-label={`Hapus filter ${chip.label}`}
+                          >
+                            x
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[2300px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -3514,7 +3607,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   ) : null}
                 </div>
 
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
                   <p className="text-sm text-[#4f5e86]">
                     Menampilkan {mahasiswaMasterRangeStart} - {mahasiswaMasterRangeEnd} dari{" "}
                     {filteredMahasiswaMasterRows.length} data mahasiswa.
@@ -3544,6 +3637,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       Berikutnya
                     </button>
                   </div>
+                </div>
                 </div>
               </div>
             ) : null}

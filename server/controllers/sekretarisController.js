@@ -449,6 +449,163 @@ function toCompactRow(item) {
   };
 }
 
+function formatEnumLabel(value) {
+  if (!value) return "-";
+  return String(value)
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatDateTimeForExport(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function buildMahasiswaMasterPeriodeFilterValue(row) {
+  const periodeLabel = String(row?.periode_label || "").trim();
+  if (periodeLabel) return periodeLabel;
+
+  const tahunAkademik = String(row?.tahun_akademik || "").trim();
+  const semesterAkademik = String(row?.semester_akademik || "").trim();
+  if (tahunAkademik && semesterAkademik) {
+    return `${tahunAkademik} - ${formatEnumLabel(semesterAkademik)}`;
+  }
+  if (tahunAkademik) return tahunAkademik;
+  if (semesterAkademik) return formatEnumLabel(semesterAkademik);
+  return "";
+}
+
+function flattenMahasiswaMasterRows(mahasiswaRows = []) {
+  return (Array.isArray(mahasiswaRows) ? mahasiswaRows : []).flatMap((mahasiswa) => {
+    const history = Array.isArray(mahasiswa?.riwayat_penjaluran) ? mahasiswa.riwayat_penjaluran : [];
+
+    if (history.length === 0) {
+      return [
+        {
+          mahasiswa_id: mahasiswa.id,
+          pendaftaran_id: null,
+          nim: mahasiswa.nim,
+          nama: mahasiswa.nama,
+          email: mahasiswa.email,
+          angkatan: mahasiswa.angkatan,
+          status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
+          dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
+          dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+          semester_penjaluran_ke: 0,
+          semester_penjaluran_aktif: mahasiswa.semester_penjaluran_aktif || 0,
+          tahun_akademik: null,
+          semester_akademik: null,
+          periode_label: null,
+          jalur: null,
+          nama_penjaluran: null,
+          pembimbing_ta: null,
+          pendaftaran_status: null,
+          tanggal_penjaluran: null,
+          updatedAt: mahasiswa.updatedAt,
+        },
+      ];
+    }
+
+    return history.map((item) => ({
+      mahasiswa_id: mahasiswa.id,
+      pendaftaran_id: item.id,
+      nim: mahasiswa.nim,
+      nama: mahasiswa.nama,
+      email: mahasiswa.email,
+      angkatan: mahasiswa.angkatan,
+      status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
+      dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
+      dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+      semester_penjaluran_ke: item.semester_penjaluran_ke || 0,
+      semester_penjaluran_aktif:
+        item.semester_penjaluran_aktif ??
+        mahasiswa.semester_penjaluran_aktif ??
+        item.semester_penjaluran_ke ??
+        0,
+      tahun_akademik: item.periode_penjaluran?.tahun_akademik || null,
+      semester_akademik: item.periode_penjaluran?.semester || null,
+      periode_label: item.periode_penjaluran?.label_periode || null,
+      jalur: item.jalur || null,
+      nama_penjaluran: item.nama_penjaluran || null,
+      pembimbing_ta: item.pembimbing_ta?.nama || null,
+      pendaftaran_status: item.status || null,
+      tanggal_penjaluran: item.createdAt || null,
+      updatedAt: item.updatedAt || mahasiswa.updatedAt,
+    }));
+  });
+}
+
+function filterMahasiswaMasterRows(rows = [], query = {}) {
+  const selectedAngkatan = String(query?.angkatan || "").trim();
+  const selectedSemesterPenjaluran = String(query?.semester_penjaluran || "").trim();
+  const selectedPeriode = String(query?.periode || "").trim();
+  const selectedPenjaluran = String(query?.penjaluran || "").trim().toLowerCase();
+  const selectedTipePendaftaran = String(query?.tipe_pendaftaran || "").trim().toLowerCase();
+  const keyword = String(query?.search || "").trim().toLowerCase();
+
+  return (Array.isArray(rows) ? rows : []).filter((row) => {
+    if (selectedAngkatan && String(row?.angkatan || "").trim() !== selectedAngkatan) {
+      return false;
+    }
+
+    const semesterPenjaluran = String(
+      Number(row?.semester_penjaluran_aktif || row?.semester_penjaluran_ke || 0) || ""
+    );
+    if (selectedSemesterPenjaluran && semesterPenjaluran !== selectedSemesterPenjaluran) {
+      return false;
+    }
+
+    const periodeValue = buildMahasiswaMasterPeriodeFilterValue(row);
+    if (selectedPeriode && periodeValue !== selectedPeriode) {
+      return false;
+    }
+
+    if (selectedPenjaluran && String(row?.nama_penjaluran || "").trim().toLowerCase() !== selectedPenjaluran) {
+      return false;
+    }
+
+    if (selectedTipePendaftaran && String(row?.jalur || "").trim().toLowerCase() !== selectedTipePendaftaran) {
+      return false;
+    }
+
+    if (!keyword) return true;
+
+    const haystack = [
+      row.nim,
+      row.nama,
+      row.email,
+      row.angkatan,
+      row.status_jalur_saat_ini,
+      row.dosen_pembimbing_akademik,
+      row.dosen_pembimbing_skripsi,
+      row.semester_penjaluran_aktif || row.semester_penjaluran_ke
+        ? `semester ${row.semester_penjaluran_aktif || row.semester_penjaluran_ke}`
+        : null,
+      row.tahun_akademik,
+      row.semester_akademik,
+      row.periode_label,
+      row.jalur,
+      row.nama_penjaluran,
+      row.pembimbing_ta,
+      row.pendaftaran_status,
+      `tipe ${formatEnumLabel(row.jalur)}`,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(keyword);
+  });
+}
+
 // GET /api/sekretaris/mahasiswa/master
 exports.getMahasiswaMasterData = async (req, res) => {
   try {
@@ -466,6 +623,84 @@ exports.getMahasiswaMasterData = async (req, res) => {
     });
   } catch (error) {
     console.error("Error di getMahasiswaMasterData (sekretaris):", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/sekretaris/mahasiswa/master/export
+exports.exportMahasiswaMasterData = async (req, res) => {
+  try {
+    const mahasiswaRows = await fetchMahasiswaMasterData({
+      status_jalur: req.query.status_jalur,
+      angkatan: req.query.angkatan,
+    });
+
+    const flattenedRows = flattenMahasiswaMasterRows(mahasiswaRows);
+    const filteredRows = filterMahasiswaMasterRows(flattenedRows, req.query);
+
+    const rows = filteredRows.map((row, index) => ({
+      No: index + 1,
+      NIM: row.nim || "-",
+      Nama: row.nama || "-",
+      Email: row.email || "-",
+      Angkatan: row.angkatan || "-",
+      "Status Jalur Saat Ini": row.status_jalur_saat_ini || "-",
+      "Semester Penjaluran":
+        row.semester_penjaluran_aktif || row.semester_penjaluran_ke
+          ? `Semester ${row.semester_penjaluran_aktif || row.semester_penjaluran_ke}`
+          : "-",
+      "Periode Penjaluran": row.periode_label || "-",
+      "Tahun Akademik": row.tahun_akademik || "-",
+      "Semester Akademik": row.semester_akademik ? formatEnumLabel(row.semester_akademik) : "-",
+      Jalur: row.jalur ? formatEnumLabel(row.jalur) : "-",
+      "Nama Penjaluran": row.nama_penjaluran ? formatEnumLabel(row.nama_penjaluran) : "-",
+      "Pembimbing TA": row.pembimbing_ta || "-",
+      DPA: row.dosen_pembimbing_akademik || "-",
+      "Dospem Skripsi": row.dosen_pembimbing_skripsi || "-",
+      "Status Pendaftaran": row.pendaftaran_status ? formatEnumLabel(row.pendaftaran_status) : "-",
+      "Tanggal Penjaluran": formatDateTimeForExport(row.tanggal_penjaluran),
+      Updated: formatDateTimeForExport(row.updatedAt),
+    }));
+
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet["!cols"] = [
+      { wch: 6 },
+      { wch: 12 },
+      { wch: 34 },
+      { wch: 34 },
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 24 },
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 12 },
+      { wch: 24 },
+      { wch: 28 },
+      { wch: 28 },
+      { wch: 28 },
+      { wch: 20 },
+      { wch: 22 },
+      { wch: 22 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Master Data Mahasiswa");
+
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    });
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=export_master_mahasiswa_${dateStamp}.xlsx`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error("Error di exportMahasiswaMasterData:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
