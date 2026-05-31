@@ -16,6 +16,15 @@ const {
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
+const {
+  isTopikParallelSubmission,
+  buildTopikListFromSubmission,
+  getTopikParallelReviewDeadline,
+  evaluateTopikParallelState,
+  ensureParallelReviewerRows,
+  finalizeTopikParallelSubmission,
+  finalizeTopikParallelSubmissionsByIds,
+} = require("../services/topikParallelReviewService");
 
 async function resolveAuthenticatedDosenId(req, transaction = null) {
   if (req.user?.role === "dosen") {
@@ -70,40 +79,25 @@ async function resolveAuthenticatedDosenId(req, transaction = null) {
 // ========== PENGAJUAN SUBMISSIONS ==========
 
 function buildTopikList(submission) {
-  return [
-    submission.topik_1_kode
-      ? {
-          slot: 1,
-          kode: submission.topik_1_kode,
-          judul: submission.topik_1_judul,
-          dosen: submission.dosen_1_nama,
-          dosen_id: submission.dosen_pilihan_1,
-        }
-      : null,
-    submission.topik_2_kode
-      ? {
-          slot: 2,
-          kode: submission.topik_2_kode,
-          judul: submission.topik_2_judul,
-          dosen: submission.dosen_2_nama,
-          dosen_id: submission.dosen_pilihan_2,
-        }
-      : null,
-    submission.topik_3_kode
-      ? {
-          slot: 3,
-          kode: submission.topik_3_kode,
-          judul: submission.topik_3_judul,
-          dosen: submission.dosen_3_nama,
-          dosen_id: submission.dosen_pilihan_3,
-        }
-      : null,
-  ].filter(Boolean);
+  return buildTopikListFromSubmission(submission).map((item) => ({
+    slot: item.slot,
+    kode: item.kode,
+    judul: item.judul,
+    dosen: item.dosen_nama,
+    dosen_id: item.dosen_id,
+  }));
 }
 
 function getApprovedTopik(submission, topikList) {
   if (submission.status !== "approved" || topikList.length === 0) {
     return null;
+  }
+
+  if (isTopikParallelSubmission(submission)) {
+    const parallelState = evaluateTopikParallelState(submission);
+    if (parallelState.approved_topik?.slot) {
+      return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
+    }
   }
 
   const rejectedCount = (submission.riwayat || []).filter((item) => item.status === "rejected").length;
@@ -187,8 +181,16 @@ function getTopikDosenApprovalStage(submission) {
     return "menunggu_set_ketua_cluster";
   }
 
-  const stage = getClusterApprovalStage(submission);
-  return stage === "non_pending_or_final" ? "non_topik_dosen_or_final" : stage;
+  if (submission.status !== "pending") {
+    return "non_topik_dosen_or_final";
+  }
+
+  const parallelState = evaluateTopikParallelState(submission);
+  if (parallelState.deadline_passed && parallelState.pending_count > 0) {
+    return "deadline_terlewati";
+  }
+
+  return "pending_review_parallel";
 }
 
 function getTopikByReviewerDosen(submission, dosenId) {
@@ -631,6 +633,39 @@ function formatIzinLanjutItem(item) {
   };
 }
 
+async function loadSubmissionDecisionById(id) {
+  return Pengajuan.findByPk(id, {
+    include: [
+      {
+        model: Mahasiswa,
+        as: "mahasiswa",
+        attributes: ["id", "nim", "nama", "email"],
+      },
+      {
+        model: Dosen,
+        as: "dosenCurrent",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: Dosen,
+        as: "prospectiveSupervisor",
+        attributes: ["id", "nik", "nama", "email"],
+      },
+      {
+        model: RiwayatPersetujuan,
+        as: "riwayat",
+        include: [
+          {
+            model: Dosen,
+            as: "dosen",
+            attributes: ["id", "nik", "nama"],
+          },
+        ],
+      },
+    ],
+  });
+}
+
 // GET /api/dosen/submissions - Dosen melihat pengajuan yang ditujukan kepadanya
 exports.getDosenSubmissions = async (req, res) => {
   try {
@@ -641,29 +676,37 @@ exports.getDosenSubmissions = async (req, res) => {
         message: "Akun ini tidak terhubung ke data dosen.",
       });
     }
-    const { tipe_pengajuan } = req.query;
+    const requestedType = String(req.query?.tipe_pengajuan || "")
+      .trim()
+      .toLowerCase();
     const isSekretarisRole = req.user?.role === "sekretaris_prodi";
+    const allowedTipe = ["topik_dosen", "judul_mandiri"];
+    if (requestedType && !allowedTipe.includes(requestedType)) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter tipe_pengajuan tidak valid. Gunakan: topik_dosen atau judul_mandiri",
+      });
+    }
 
-    const where = isSekretarisRole
+    const topikWhere = {
+      tipe_pengajuan: "topik_dosen",
+      [Op.or]: [{ dosen_pilihan_1: dosen_id }, { dosen_pilihan_2: dosen_id }, { dosen_pilihan_3: dosen_id }],
+    };
+    const judulMandiriWhere = isSekretarisRole
       ? {
+          tipe_pengajuan: "judul_mandiri",
           [Op.or]: [{ dosen_saat_ini: dosen_id }, { status: "menunggu_set_ketua_cluster" }],
         }
       : {
+          tipe_pengajuan: "judul_mandiri",
           dosen_saat_ini: dosen_id,
         };
 
-    if (tipe_pengajuan) {
-      const allowedTipe = ["topik_dosen", "judul_mandiri"];
-      if (!allowedTipe.includes(tipe_pengajuan)) {
-        return res.status(400).json({
-          success: false,
-          message: "Parameter tipe_pengajuan tidak valid. Gunakan: topik_dosen atau judul_mandiri",
-        });
-      }
-      where.tipe_pengajuan = tipe_pengajuan;
-    }
+    let where = { [Op.or]: [topikWhere, judulMandiriWhere] };
+    if (requestedType === "topik_dosen") where = topikWhere;
+    if (requestedType === "judul_mandiri") where = judulMandiriWhere;
 
-    const submissions = await Pengajuan.findAll({
+    const baseQuery = {
       where,
       include: [
         {
@@ -674,11 +717,21 @@ exports.getDosenSubmissions = async (req, res) => {
         {
           model: RiwayatPersetujuan,
           as: "riwayat",
-          attributes: ["status", "tipe_approval"],
+          attributes: ["id", "dosen_id", "status", "tipe_approval", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
+          required: false,
         },
       ],
       order: [["createdAt", "DESC"]],
-    });
+    };
+
+    let submissions = await Pengajuan.findAll(baseQuery);
+    const pendingTopikIds = submissions
+      .filter((item) => isTopikParallelSubmission(item) && item.status === "pending")
+      .map((item) => item.id);
+    if (pendingTopikIds.length > 0) {
+      await finalizeTopikParallelSubmissionsByIds(pendingTopikIds);
+      submissions = await Pengajuan.findAll(baseQuery);
+    }
 
     const compactData = submissions.map((submission) => {
       const approvalStage = getTopikDosenApprovalStage(submission);
@@ -703,19 +756,16 @@ exports.getDosenSubmissions = async (req, res) => {
       if (submission.tipe_pengajuan === "topik_dosen") {
         const topikList = buildTopikList(submission);
         const approvedTopik = getApprovedTopik(submission, topikList);
+        const parallelState = evaluateTopikParallelState(submission);
+        const reviewerDecision = parallelState.slot_decisions
+          .filter((item) => Number(item.dosen_id) === Number(dosen_id))
+          .sort((a, b) => a.slot - b.slot)[0];
         let focusedTopik = null;
 
         if (submission.status === "approved") {
           focusedTopik = approvedTopik;
-        } else if (approvalStage === "pending_dosen_pembimbing") {
-          focusedTopik = getTopikByReviewerDosen(submission, dosen_id) || topikList[0] || null;
-        } else if (
-          approvalStage === "pending_ketua_klaster" ||
-          approvalStage === "menunggu_set_ketua_cluster"
-        ) {
-          focusedTopik = getTopikWaitingKetuaKlaster(submission) || topikList[0] || null;
         } else {
-          focusedTopik = topikList[0] || null;
+          focusedTopik = getTopikByReviewerDosen(submission, dosen_id) || topikList[0] || null;
         }
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
@@ -741,8 +791,21 @@ exports.getDosenSubmissions = async (req, res) => {
               judul: approvedTopik.judul,
             }
           : null;
+        base.review_deadline_at = getTopikParallelReviewDeadline(submission);
+        base.reviewer_status = reviewerDecision?.reviewer_status || null;
+        base.reviewer_note = reviewerDecision?.reviewer_note || null;
+        base.can_review = submission.status === "pending" && reviewerDecision?.reviewer_status === "pending";
+        base.topik_review_status = parallelState.slot_decisions.map((item) => ({
+          slot: item.slot,
+          kode: item.kode,
+          dosen_id: item.dosen_id,
+          reviewer_status: item.reviewer_status,
+          reviewer_note: item.reviewer_note,
+          reviewer_decided_at: item.reviewer_decided_at,
+        }));
       } else {
         base.judul_mandiri = submission.judul_mandiri;
+        base.can_review = submission.status === "pending";
       }
 
       return base;
@@ -790,6 +853,89 @@ exports.approveSubmission = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Pengajuan tidak ditemukan",
+      });
+    }
+
+    if (isTopikParallelSubmission(submission)) {
+      await ensureParallelReviewerRows(submission, t);
+
+      const reviewerRow = await RiwayatPersetujuan.findOne({
+        where: {
+          pengajuan_id: submission.id,
+          dosen_id,
+          tipe_approval: "calon_pembimbing",
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!reviewerRow) {
+        await t.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Anda tidak terdaftar sebagai reviewer pada pengajuan topik ini.",
+        });
+      }
+
+      const preFinalize = await finalizeTopikParallelSubmission(submission.id, { transaction: t });
+      const submissionAfterPreFinalize = preFinalize.submission || submission;
+      if (submissionAfterPreFinalize.status !== "pending") {
+        await t.commit();
+        const latestData = await loadSubmissionDecisionById(submission.id);
+        return res.status(409).json({
+          success: false,
+          message: "Pengajuan ini sudah diproses dan tidak bisa di-approve lagi.",
+          data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
+
+      const lockedReviewerRow = await RiwayatPersetujuan.findByPk(reviewerRow.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!lockedReviewerRow || String(lockedReviewerRow.status || "").toLowerCase() !== "pending") {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Anda sudah memberikan keputusan sebelumnya untuk pengajuan ini.",
+        });
+      }
+
+      await lockedReviewerRow.update(
+        {
+          status: "approved",
+          keterangan: approvalNote || "Disetujui oleh dosen reviewer.",
+          tanggal_keputusan: new Date(),
+        },
+        { transaction: t }
+      );
+
+      const finalizationResult = await finalizeTopikParallelSubmission(submission.id, { transaction: t });
+
+      await t.commit();
+
+      const updatedSubmission = await loadSubmissionDecisionById(submission.id);
+      const responseData = updatedSubmission ? formatSubmissionDecisionResponse(updatedSubmission) : null;
+      const finalWinner = finalizationResult?.winner || null;
+      const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
+
+      let message = "Approve tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
+      if (finalStatus === "approved") {
+        if (Number(finalWinner?.dosen_id) === Number(dosen_id)) {
+          message = "Pengajuan final disetujui. Anda terpilih sebagai dosen pembimbing skripsi.";
+        } else {
+          message =
+            "Approve tersimpan. Pengajuan final disetujui berdasarkan prioritas mahasiswa oleh dosen lain.";
+        }
+      } else if (finalStatus === "rejected") {
+        message = "Approve tersimpan, tetapi pengajuan final ditolak karena tidak ada dosen prioritas yang disetujui.";
+      }
+
+      return res.json({
+        success: true,
+        message,
+        data: responseData,
       });
     }
 
@@ -1219,6 +1365,83 @@ exports.rejectSubmission = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Pengajuan tidak ditemukan",
+      });
+    }
+
+    if (isTopikParallelSubmission(submission)) {
+      await ensureParallelReviewerRows(submission, t);
+
+      const reviewerRow = await RiwayatPersetujuan.findOne({
+        where: {
+          pengajuan_id: submission.id,
+          dosen_id,
+          tipe_approval: "calon_pembimbing",
+        },
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!reviewerRow) {
+        await t.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Anda tidak terdaftar sebagai reviewer pada pengajuan topik ini.",
+        });
+      }
+
+      const preFinalize = await finalizeTopikParallelSubmission(submission.id, { transaction: t });
+      const submissionAfterPreFinalize = preFinalize.submission || submission;
+      if (submissionAfterPreFinalize.status !== "pending") {
+        await t.commit();
+        const latestData = await loadSubmissionDecisionById(submission.id);
+        return res.status(409).json({
+          success: false,
+          message: "Pengajuan ini sudah diproses dan tidak bisa ditolak lagi.",
+          data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
+
+      const lockedReviewerRow = await RiwayatPersetujuan.findByPk(reviewerRow.id, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!lockedReviewerRow || String(lockedReviewerRow.status || "").toLowerCase() !== "pending") {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Anda sudah memberikan keputusan sebelumnya untuk pengajuan ini.",
+        });
+      }
+
+      await lockedReviewerRow.update(
+        {
+          status: "rejected",
+          keterangan: String(keterangan || "").trim(),
+          tanggal_keputusan: new Date(),
+        },
+        { transaction: t }
+      );
+
+      const finalizationResult = await finalizeTopikParallelSubmission(submission.id, { transaction: t });
+
+      await t.commit();
+
+      const updatedSubmission = await loadSubmissionDecisionById(submission.id);
+      const responseData = updatedSubmission ? formatSubmissionDecisionResponse(updatedSubmission) : null;
+      const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
+
+      let message = "Penolakan tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
+      if (finalStatus === "approved") {
+        message = "Penolakan tersimpan. Pengajuan final tetap disetujui berdasarkan keputusan dosen lain.";
+      } else if (finalStatus === "rejected") {
+        message = "Pengajuan final ditolak karena tidak ada persetujuan hingga proses review selesai.";
+      }
+
+      return res.json({
+        success: true,
+        message,
+        data: responseData,
       });
     }
 

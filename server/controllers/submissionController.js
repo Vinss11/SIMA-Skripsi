@@ -1,5 +1,13 @@
 const { Op } = require("sequelize");
 const { Pengajuan, Mahasiswa, Dosen, Topik, RiwayatPersetujuan, PamitUlang, SekretarisProdi } = require("../models");
+const {
+  isTopikParallelSubmission,
+  buildTopikListFromSubmission,
+  getTopikParallelReviewDeadline,
+  evaluateTopikParallelState,
+  finalizeTopikParallelSubmission,
+  finalizeTopikParallelSubmissionsByIds,
+} = require("../services/topikParallelReviewService");
 
 async function resolveSekretarisAsDosenId(req, sekretarisId) {
   const sekretaris = await SekretarisProdi.findByPk(sekretarisId, {
@@ -40,35 +48,13 @@ async function resolveSekretarisAsDosenId(req, sekretarisId) {
 }
 
 function buildTopikList(submission) {
-  return [
-    submission.topik_1_kode
-      ? {
-          slot: 1,
-          kode: submission.topik_1_kode,
-          judul: submission.topik_1_judul,
-          dosen: submission.dosen_1_nama,
-          dosen_id: submission.dosen_pilihan_1,
-        }
-      : null,
-    submission.topik_2_kode
-      ? {
-          slot: 2,
-          kode: submission.topik_2_kode,
-          judul: submission.topik_2_judul,
-          dosen: submission.dosen_2_nama,
-          dosen_id: submission.dosen_pilihan_2,
-        }
-      : null,
-    submission.topik_3_kode
-      ? {
-          slot: 3,
-          kode: submission.topik_3_kode,
-          judul: submission.topik_3_judul,
-          dosen: submission.dosen_3_nama,
-          dosen_id: submission.dosen_pilihan_3,
-        }
-      : null,
-  ].filter(Boolean);
+  return buildTopikListFromSubmission(submission).map((item) => ({
+    slot: item.slot,
+    kode: item.kode,
+    judul: item.judul,
+    dosen: item.dosen_nama,
+    dosen_id: item.dosen_id,
+  }));
 }
 
 function getApprovedTopik(submission, topikList) {
@@ -76,13 +62,16 @@ function getApprovedTopik(submission, topikList) {
     return null;
   }
 
+  if (isTopikParallelSubmission(submission)) {
+    const parallelState = evaluateTopikParallelState(submission);
+    if (parallelState.approved_topik?.slot) {
+      return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
+    }
+  }
+
   const rejectedCount = (submission.riwayat || []).filter((item) => item.status === "rejected").length;
   const approvedSlot = Math.min(rejectedCount + 1, topikList.length);
   return topikList.find((item) => item.slot === approvedSlot) || null;
-}
-
-function getRiwayatApprovalType(item) {
-  return String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
 }
 
 function getTopikDosenApprovalStage(submission) {
@@ -98,21 +87,95 @@ function getTopikDosenApprovalStage(submission) {
     return "non_topik_dosen_or_final";
   }
 
-  const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
-  const hasCalonPembimbingApproved = riwayat.some(
-    (item) => item.status === "approved" && getRiwayatApprovalType(item) === "calon_pembimbing"
-  );
-  const hasKetuaKlasterDecided = riwayat.some(
-    (item) =>
-      (item.status === "approved" || item.status === "rejected") &&
-      getRiwayatApprovalType(item) === "koordinator"
-  );
-
-  if (hasCalonPembimbingApproved && !hasKetuaKlasterDecided) {
-    return "pending_ketua_klaster";
+  const parallelState = evaluateTopikParallelState(submission);
+  if (parallelState.deadline_passed && parallelState.pending_count > 0) {
+    return "deadline_terlewati";
   }
 
-  return "pending_dosen_pembimbing";
+  return "pending_review_parallel";
+}
+
+function getSubmissionDetailIncludes() {
+  return [
+    {
+      model: Mahasiswa,
+      as: "mahasiswa",
+      attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
+      include: [
+        {
+          model: Dosen,
+          as: "dosenPembimbingAkademik",
+          attributes: ["id", "nik", "nama"],
+        },
+      ],
+    },
+    {
+      model: Dosen,
+      as: "dosen1",
+      attributes: ["id", "nik", "nama", "email"],
+    },
+    {
+      model: Dosen,
+      as: "dosen2",
+      attributes: ["id", "nik", "nama", "email"],
+    },
+    {
+      model: Dosen,
+      as: "dosen3",
+      attributes: ["id", "nik", "nama", "email"],
+    },
+    {
+      model: Dosen,
+      as: "dosenCurrent",
+      attributes: ["id", "nik", "nama", "email"],
+    },
+    {
+      model: Dosen,
+      as: "prospectiveSupervisor",
+      attributes: ["id", "nik", "nama", "email"],
+    },
+    {
+      model: Pengajuan,
+      as: "pengajuanSebelumnya",
+      attributes: ["id", "topik_1_judul", "judul_mandiri", "status", "createdAt"],
+    },
+    {
+      model: PamitUlang,
+      as: "pamitUlang",
+      include: [
+        {
+          model: Pengajuan,
+          as: "pengajuanSebelumnya",
+          attributes: ["id", "topik_1_judul", "judul_mandiri"],
+          include: [
+            {
+              model: Dosen,
+              as: "dosenCurrent",
+              attributes: ["id", "nik", "nama"],
+            },
+          ],
+        },
+      ],
+    },
+    {
+      model: RiwayatPersetujuan,
+      as: "riwayat",
+      include: [
+        {
+          model: Dosen,
+          as: "dosen",
+          attributes: ["id", "nik", "nama"],
+        },
+      ],
+      required: false,
+    },
+  ];
+}
+
+async function loadSubmissionDetailById(submissionId) {
+  return Pengajuan.findByPk(Number(submissionId), {
+    include: getSubmissionDetailIncludes(),
+  });
 }
 
 // GET /api/submissions - Mahasiswa melihat pengajuan mereka
@@ -132,7 +195,7 @@ exports.getMySubmissions = async (req, res) => {
       where.tipe_pengajuan = tipe_pengajuan;
     }
 
-    const submissions = await Pengajuan.findAll({
+    const baseQuery = {
       where,
       include: [
         {
@@ -148,11 +211,21 @@ exports.getMySubmissions = async (req, res) => {
         {
           model: RiwayatPersetujuan,
           as: "riwayat",
-          attributes: ["status"],
+          attributes: ["id", "dosen_id", "status", "tipe_approval", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
+          required: false,
         },
       ],
       order: [["createdAt", "DESC"]],
-    });
+    };
+
+    let submissions = await Pengajuan.findAll(baseQuery);
+    const pendingTopikIds = submissions
+      .filter((item) => isTopikParallelSubmission(item) && item.status === "pending")
+      .map((item) => item.id);
+    if (pendingTopikIds.length > 0) {
+      await finalizeTopikParallelSubmissionsByIds(pendingTopikIds);
+      submissions = await Pengajuan.findAll(baseQuery);
+    }
 
     const topikKodes = [
       ...new Set(
@@ -169,7 +242,12 @@ exports.getMySubmissions = async (req, res) => {
         attributes: ["kode", "judul"],
       });
       topikRows.forEach((item) => {
-        topikByKode[item.kode] = item.judul;
+        const normalizedKode = String(item.kode || "")
+          .trim()
+          .toUpperCase();
+        if (normalizedKode) {
+          topikByKode[normalizedKode] = item.judul;
+        }
       });
     }
 
@@ -186,18 +264,34 @@ exports.getMySubmissions = async (req, res) => {
       };
 
       if (submission.tipe_pengajuan === "topik_dosen") {
-        const topikList = buildTopikList(submission).map((item) => ({
-          ...item,
-          judul: item.judul || topikByKode[item.kode] || null,
-        }));
+        const topikList = buildTopikList(submission).map((item) => {
+          const normalizedKode = String(item?.kode || "")
+            .trim()
+            .toUpperCase();
+          return {
+            ...item,
+            kode: normalizedKode || item.kode,
+            judul: item.judul || topikByKode[normalizedKode] || null,
+          };
+        });
         const approvedTopik = getApprovedTopik(submission, topikList);
+        const parallelState = evaluateTopikParallelState(submission);
+        const slotStateBySlot = new Map(parallelState.slot_decisions.map((item) => [Number(item.slot), item]));
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
-        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul }) => ({
-          slot,
-          kode,
-          judul,
-        }));
+        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul, dosen, dosen_id: dosenId }) => {
+          const slotState = slotStateBySlot.get(Number(slot));
+          return {
+            slot,
+            kode,
+            judul,
+            dosen: dosen || null,
+            dosen_id: dosenId || null,
+            reviewer_status: slotState?.reviewer_status || null,
+            reviewer_note: slotState?.reviewer_note || null,
+            reviewer_decided_at: slotState?.reviewer_decided_at || null,
+          };
+        });
         base.topik_disetujui = approvedTopik
           ? {
               slot: approvedTopik.slot,
@@ -206,6 +300,8 @@ exports.getMySubmissions = async (req, res) => {
             }
           : null;
         base.dosen_pembimbing = submission.dosenCurrent ? submission.dosenCurrent.nama : null;
+        base.review_deadline_at = getTopikParallelReviewDeadline(submission);
+        base.deadline_terlewati = Boolean(parallelState.deadline_passed && parallelState.pending_count > 0);
       } else {
         base.judul_mandiri = {
           judul: submission.judul_mandiri,
@@ -271,82 +367,7 @@ exports.getSubmissionById = async (req, res) => {
       }
     }
 
-    const submission = await Pengajuan.findByPk(Number(id), {
-      include: [
-        {
-          model: Mahasiswa,
-          as: "mahasiswa",
-          attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
-          include: [
-            {
-              model: Dosen,
-              as: "dosenPembimbingAkademik",
-              attributes: ["id", "nik", "nama"],
-            },
-          ],
-        },
-        {
-          model: Dosen,
-          as: "dosen1",
-          attributes: ["id", "nik", "nama", "email"],
-        },
-        {
-          model: Dosen,
-          as: "dosen2",
-          attributes: ["id", "nik", "nama", "email"],
-        },
-        {
-          model: Dosen,
-          as: "dosen3",
-          attributes: ["id", "nik", "nama", "email"],
-        },
-        {
-          model: Dosen,
-          as: "dosenCurrent",
-          attributes: ["id", "nik", "nama", "email"],
-        },
-        {
-          model: Dosen,
-          as: "prospectiveSupervisor",
-          attributes: ["id", "nik", "nama", "email"],
-        },
-        {
-          model: Pengajuan,
-          as: "pengajuanSebelumnya",
-          attributes: ["id", "topik_1_judul", "judul_mandiri", "status", "createdAt"],
-        },
-        {
-          model: PamitUlang,
-          as: "pamitUlang",
-          include: [
-            {
-              model: Pengajuan,
-              as: "pengajuanSebelumnya",
-              attributes: ["id", "topik_1_judul", "judul_mandiri"],
-              include: [
-                {
-                  model: Dosen,
-                  as: "dosenCurrent",
-                  attributes: ["id", "nik", "nama"],
-                },
-              ],
-            },
-          ],
-        },
-        {
-          model: RiwayatPersetujuan,
-          as: "riwayat",
-          include: [
-            {
-              model: Dosen,
-              as: "dosen",
-              attributes: ["id", "nik", "nama"],
-            },
-          ],
-          order: [["createdAt", "ASC"]],
-        },
-      ],
-    });
+    let submission = await loadSubmissionDetailById(Number(id));
 
     if (!submission) {
       return res.status(404).json({
@@ -383,6 +404,13 @@ exports.getSubmissionById = async (req, res) => {
       }
     }
 
+    if (isTopikParallelSubmission(submission) && submission.status === "pending") {
+      const finalizationResult = await finalizeTopikParallelSubmission(submission.id);
+      if (finalizationResult?.changed || finalizationResult?.finalized) {
+        submission = await loadSubmissionDetailById(Number(id));
+      }
+    }
+
     const riwayatOrdered = (submission.riwayat || [])
       .slice()
       .sort((a, b) => new Date(a.tanggal_keputusan || a.createdAt) - new Date(b.tanggal_keputusan || b.createdAt));
@@ -402,6 +430,13 @@ exports.getSubmissionById = async (req, res) => {
       .filter((item) => item.status === "rejected")
       .map((item) => item.keterangan)
       .filter(Boolean);
+    const topikParallelState = isTopikParallelSubmission(submission) ? evaluateTopikParallelState(submission) : null;
+    const currentReviewerDecision =
+      topikParallelState && accessorDosenId
+        ? topikParallelState.slot_decisions
+            .filter((item) => Number(item.dosen_id) === Number(accessorDosenId))
+            .sort((a, b) => a.slot - b.slot)[0] || null
+        : null;
 
     let detailPengajuan = {};
     let hasilPengajuan = {
@@ -421,13 +456,39 @@ exports.getSubmissionById = async (req, res) => {
     }
 
     if (submission.tipe_pengajuan === "topik_dosen") {
-      const topikList = buildTopikList(submission);
+      const slotStateBySlot = new Map((topikParallelState?.slot_decisions || []).map((item) => [Number(item.slot), item]));
+      const topikList = buildTopikList(submission).map((item) => {
+        const normalizedKode = String(item?.kode || "")
+          .trim()
+          .toUpperCase();
+        const slotState = slotStateBySlot.get(Number(item.slot));
+        return {
+          ...item,
+          kode: normalizedKode || item.kode,
+          reviewer_status: slotState?.reviewer_status || null,
+          reviewer_note: slotState?.reviewer_note || null,
+          reviewer_decided_at: slotState?.reviewer_decided_at || null,
+        };
+      });
       const approvedTopik = getApprovedTopik(submission, topikList);
       const dosenApproved = approvedTopik ? dosenById[Number(approvedTopik.dosen_id)] || null : null;
 
       detailPengajuan = {
         diajukan_pada: submission.createdAt,
-        topik_dipilih: topikList.map(({ slot, kode, judul, dosen }) => ({ slot, kode, judul, dosen })),
+        topik_dipilih: topikList.map(
+          ({ slot, kode, judul, dosen, dosen_id: dosenId, reviewer_status, reviewer_note, reviewer_decided_at }) => ({
+            slot,
+            kode,
+            judul,
+            dosen,
+            dosen_id: dosenId || null,
+            reviewer_status: reviewer_status || null,
+            reviewer_note: reviewer_note || null,
+            reviewer_decided_at: reviewer_decided_at || null,
+          })
+        ),
+        review_deadline_at: getTopikParallelReviewDeadline(submission),
+        deadline_terlewati: Boolean(topikParallelState?.deadline_passed && topikParallelState?.pending_count > 0),
       };
 
       hasilPengajuan.topik_disetujui = approvedTopik
@@ -469,6 +530,15 @@ exports.getSubmissionById = async (req, res) => {
       };
     }
 
+    const canReviewTopikParallel =
+      submission.tipe_pengajuan === "topik_dosen" &&
+      submission.status === "pending" &&
+      currentReviewerDecision?.reviewer_status === "pending";
+    const canReviewNonTopik =
+      submission.tipe_pengajuan !== "topik_dosen" &&
+      submission.status === "pending" &&
+      (userRole === "dosen" || userRole === "sekretaris_prodi");
+
     const responseData = {
       id: submission.id,
       jenis_jalur: submission.jenis_jalur,
@@ -477,6 +547,22 @@ exports.getSubmissionById = async (req, res) => {
       tahap_approval: getTopikDosenApprovalStage(submission),
       diajukan_pada: submission.createdAt,
       diperbarui_pada: submission.updatedAt,
+      review_deadline_at:
+        submission.tipe_pengajuan === "topik_dosen" ? getTopikParallelReviewDeadline(submission) : null,
+      reviewer_status: currentReviewerDecision?.reviewer_status || null,
+      reviewer_note: currentReviewerDecision?.reviewer_note || null,
+      can_review: Boolean(canReviewTopikParallel || canReviewNonTopik),
+      topik_review_status:
+        submission.tipe_pengajuan === "topik_dosen"
+          ? (topikParallelState?.slot_decisions || []).map((item) => ({
+              slot: item.slot,
+              kode: item.kode,
+              dosen_id: item.dosen_id,
+              reviewer_status: item.reviewer_status,
+              reviewer_note: item.reviewer_note,
+              reviewer_decided_at: item.reviewer_decided_at || null,
+            }))
+          : [],
       mahasiswa: submission.mahasiswa
         ? {
             id: submission.mahasiswa.id,

@@ -1923,6 +1923,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return;
     }
 
+    if (submissionDetail?.can_review !== true) {
+      showErrorToast("Anda tidak memiliki akses keputusan untuk pengajuan ini.");
+      return;
+    }
+
     if (submissionDecision === "reject" && !submissionKeterangan.trim()) {
       showErrorToast("Alasan penolakan wajib diisi.");
       return;
@@ -3842,7 +3847,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   <td className="px-3 py-2 align-top break-words">{formatLabel(row.tahap_approval)}</td>
                                   <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
                                   <td className="px-3 py-2 whitespace-nowrap align-top">
-                                    {row.status === "pending" ? (
+                                    {row.status === "pending" && row.can_review ? (
                                       <div className="flex items-center gap-2">
                                         <button
                                           type="button"
@@ -3869,7 +3874,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                                       >
                                         <Eye className="h-3.5 w-3.5" />
-                                        Detail
+                                        {row.status === "pending" ? "Lihat" : "Detail"}
                                       </button>
                                     )}
                                   </td>
@@ -4044,7 +4049,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
                     {!loadingSubmissionDetail && submissionDetail ? (
                       <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        {submissionDetail.status === "pending" ? (
+                        {submissionDetail.status === "pending" && submissionDetail.can_review ? (
                           <>
                             <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan</h4>
                             <p className="mt-1 text-sm text-[#5d6c91]">
@@ -4090,7 +4095,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           </>
                         ) : (
                           <>
-                            <h4 className="text-sm font-black text-[#1b274b]">Riwayat Keputusan</h4>
+                            <h4 className="text-sm font-black text-[#1b274b]">
+                              {submissionDetail.status === "pending" ? "Status Review" : "Riwayat Keputusan"}
+                            </h4>
+                            {submissionDetail.status === "pending" ? (
+                              <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                                Anda belum bisa memberi keputusan untuk pengajuan ini.
+                                {submissionDetail.reviewer_status
+                                  ? ` Status reviewer Anda: ${formatLabel(submissionDetail.reviewer_status)}.`
+                                  : ""}
+                              </div>
+                            ) : null}
                             {Array.isArray(submissionDetail.riwayat_persetujuan) &&
                             submissionDetail.riwayat_persetujuan.length > 0 ? (
                               <div className="mt-3 space-y-3">

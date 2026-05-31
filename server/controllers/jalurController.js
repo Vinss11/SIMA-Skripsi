@@ -3,6 +3,7 @@ const {
   Topik,
   Mahasiswa,
   Dosen,
+  RiwayatPersetujuan,
   PamitUlang,
   IzinLanjutSkripsi,
   PendaftaranPenjaluran,
@@ -21,6 +22,7 @@ const {
   getPeriodeWindowErrorCode,
   getPeriodeWindowMessage,
 } = require("../services/periodePenjaluranService");
+const { ensureParallelReviewerRows } = require("../services/topikParallelReviewService");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -2096,11 +2098,13 @@ exports.submitBaruTopikDosen = async (req, res) => {
         dosen_2_nama: dosen_2_nama_final,
         dosen_pilihan_3,
         dosen_3_nama: dosen_3_nama_final,
-        dosen_saat_ini: dosen_pilihan_1,
+        dosen_saat_ini: null,
         status: "pending",
       },
       { transaction: t }
     );
+
+    await ensureParallelReviewerRows(pengajuan, t);
 
     // Update mahasiswa
     await mahasiswa.update(
@@ -3028,11 +3032,13 @@ exports.submitUlangTopikDosen = async (req, res) => {
         dosen_2_nama: dosen_2_nama_final,
         dosen_pilihan_3,
         dosen_3_nama: dosen_3_nama_final,
-        dosen_saat_ini: dosen_pilihan_1,
+        dosen_saat_ini: null,
         status: "pending",
       },
       { transaction: t }
     );
+
+    await ensureParallelReviewerRows(pengajuan, t);
 
     // Update pamit dengan pengajuan_baru_id
     await pamit.update({ pengajuan_baru_id: pengajuan.id }, { transaction: t });
