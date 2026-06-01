@@ -6,6 +6,7 @@ import {
   CalendarRange,
   ClipboardList,
   Download,
+  Bell,
   Eye,
   FileSpreadsheet,
   LayoutDashboard,
@@ -164,6 +165,96 @@ function formatDateTime(value) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function parseDateTime(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getReviewCountdown(deadlineAt, now = new Date()) {
+  const deadline = parseDateTime(deadlineAt);
+  if (!deadline) {
+    return {
+      has_deadline: false,
+      is_expired: false,
+      remaining_ms: 0,
+      label: "-",
+      short_label: "-",
+      deadline,
+    };
+  }
+
+  const remainingMs = deadline.getTime() - now.getTime();
+  if (remainingMs <= 0) {
+    return {
+      has_deadline: true,
+      is_expired: true,
+      remaining_ms: 0,
+      label: "Waktu review habis",
+      short_label: "Habis",
+      deadline,
+    };
+  }
+
+  const totalSeconds = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value) => String(value).padStart(2, "0");
+
+  return {
+    has_deadline: true,
+    is_expired: false,
+    remaining_ms: remainingMs,
+    label: `${pad(hours)}j ${pad(minutes)}m ${pad(seconds)}d`,
+    short_label: `${hours}j ${pad(minutes)}m`,
+    deadline,
+  };
+}
+
+function getSubmissionTopikCount(row) {
+  if (!row || row.tipe_pengajuan !== "topik_dosen") return 0;
+  const fromDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail.length : 0;
+  if (fromDetails > 0) return fromDetails;
+  const fromCodes = Array.isArray(row.topik_dipilih) ? row.topik_dipilih.length : 0;
+  return fromCodes;
+}
+
+function hasSameDosenTopikBadge(row) {
+  if (!row || row.tipe_pengajuan !== "topik_dosen") return false;
+  const topikDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail : [];
+  if (topikDetails.length <= 1) return false;
+  const dosenSet = new Set(topikDetails.map((item) => Number(item?.dosen_id)).filter(Boolean));
+  return dosenSet.size === 1;
+}
+
+function getPeriodeStatusKey(periode) {
+  const explicitStatus = String(periode?.status || "")
+    .trim()
+    .toLowerCase();
+  if (explicitStatus) return explicitStatus;
+  return periode?.is_active ? "active" : "closed";
+}
+
+function parsePeriodeDate(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isPeriodeEnded(periode, now = new Date()) {
+  const end = parsePeriodeDate(periode?.tanggal_selesai);
+  if (!end) return false;
+  return now.getTime() > end.getTime();
+}
+
+function canEditPeriodeRow(periode, now = new Date()) {
+  const status = getPeriodeStatusKey(periode);
+  if (status === "closed") return false;
+  if (isPeriodeEnded(periode, now)) return false;
+  return status === "active" || status === "draft";
 }
 
 function formatLabel(value) {
@@ -478,6 +569,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [submissionDecision, setSubmissionDecision] = useState("approve");
   const [submissionKeterangan, setSubmissionKeterangan] = useState("");
   const [submissionTopikFocusSlot, setSubmissionTopikFocusSlot] = useState("");
+  const [submissionShowFinalSummary, setSubmissionShowFinalSummary] = useState(false);
   const [izinLanjutRows, setIzinLanjutRows] = useState([]);
   const [izinLanjutQuery, setIzinLanjutQuery] = useState("");
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
@@ -644,6 +736,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [rowActionLoadingId, setRowActionLoadingId] = useState(null);
   const [exportingPendaftaran, setExportingPendaftaran] = useState(false);
   const [exportingMahasiswaMaster, setExportingMahasiswaMaster] = useState(false);
+  const [countdownNowTs, setCountdownNowTs] = useState(() => Date.now());
+  const [showSubmissionNotificationPanel, setShowSubmissionNotificationPanel] = useState(false);
+  const [submissionNotificationSeenAt, setSubmissionNotificationSeenAt] = useState(0);
 
   const periodeMasterSource = useMemo(
     () => (periodeOverview?.master_penanggung_jawab && typeof periodeOverview.master_penanggung_jawab === "object"
@@ -655,14 +750,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const sessionExpiredRef = useRef(false);
   const mahasiswaMasterFilterTriggerRef = useRef(null);
   const mahasiswaMasterFilterPopupRef = useRef(null);
+  const submissionNotificationRef = useRef(null);
   const activeTabHeader = tabHeaders[activeTab] || tabHeaders.dashboard;
   const availableTabIds = useMemo(
     () => navSections.flatMap((section) => section.items.map((item) => item.id)),
     [navSections]
   );
-  const isPeriodeReadonly =
-    String(editingPeriode?.status || (editingPeriode?.is_active ? "active" : "closed")).toLowerCase() ===
-    "closed";
+  const countdownNowDate = useMemo(() => new Date(countdownNowTs), [countdownNowTs]);
+  const submissionNotificationStorageKey = useMemo(() => {
+    const baseId = session?.user?.id || session?.user?.username || "dosen";
+    const role = isSekretaris ? "sekretaris_prodi" : "dosen";
+    return `simps_notif_submission_seen_at_${role}_${baseId}`;
+  }, [isSekretaris, session?.user?.id, session?.user?.username]);
+  const isPeriodeReadonly = editingPeriode ? !canEditPeriodeRow(editingPeriode) : true;
   const useGridViewportLayout =
     !loading &&
     ((activeTab === "master-mahasiswa" || activeTab === "mahasiswa-bimbingan") ||
@@ -691,6 +791,34 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setActiveTab("dashboard");
     }
   }, [activeTab, availableTabIds]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCountdownNowTs(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(submissionNotificationStorageKey);
+    const parsed = Number(raw || 0);
+    setSubmissionNotificationSeenAt(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+  }, [submissionNotificationStorageKey]);
+
+  useEffect(() => {
+    if (!showSubmissionNotificationPanel) return undefined;
+    const handleOutsideClick = (event) => {
+      if (submissionNotificationRef.current?.contains(event.target)) return;
+      setShowSubmissionNotificationPanel(false);
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+    };
+  }, [showSubmissionNotificationPanel]);
 
   useEffect(() => {
     if (!showMahasiswaMasterFilterPanel) return undefined;
@@ -1064,6 +1192,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     loadAllData();
   }, [loadAllData]);
 
+  useEffect(() => {
+    const pollIntervalMs = 30000;
+    const timer = window.setInterval(async () => {
+      try {
+        const latestSubmissions = await fetchWithAuth("/api/dosen/submissions");
+        if (Array.isArray(latestSubmissions)) {
+          setSubmissions(latestSubmissions);
+        }
+      } catch (pollError) {
+        if (pollError?.message !== "__SESSION_EXPIRED__") {
+          // silent polling error
+        }
+      }
+    }, pollIntervalMs);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [fetchWithAuth]);
+
   const summary = useMemo(() => {
     const pendingSubmissions = submissions.filter((item) => item.status === "pending").length;
     const pendingPamit = pamitRows.filter((item) => item.status_dospem === "pending").length;
@@ -1089,6 +1237,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       const topikText = Array.isArray(row.topik_dipilih)
         ? row.topik_dipilih.join(" ")
         : row.judul_mandiri || "";
+      const topikCount = getSubmissionTopikCount(row);
+      const sameDosenText = hasSameDosenTopikBadge(row) ? "dosen sama" : "";
       const haystack = [
         row.id,
         row.mahasiswa?.nim,
@@ -1101,6 +1251,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         topikDetailText,
         row.topik_fokus?.judul,
         row.topik_fokus?.kode,
+        row.review_deadline_at,
+        topikCount > 0 ? `${topikCount} topik` : "",
+        sameDosenText,
       ]
         .filter(Boolean)
         .join(" ")
@@ -1228,24 +1381,31 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     () => Math.max(1, Math.ceil(filteredSubmissions.length / DOSEN_GRID_PAGE_SIZE)),
     [filteredSubmissions.length]
   );
-  const submissionTopikLookup = useMemo(() => {
-    const rows = [
-      ...(Array.isArray(topikRows) ? topikRows : []),
-      ...(Array.isArray(masterTopikRows) ? masterTopikRows : []),
-    ];
-    const map = new Map();
-    rows.forEach((item) => {
-      const kode = String(item?.kode || "").trim().toUpperCase();
-      if (!kode || map.has(kode)) return;
-      map.set(kode, item);
-    });
-    return map;
-  }, [masterTopikRows, topikRows]);
   const submissionReviewTopikOptions = useMemo(() => {
-    const rows = Array.isArray(submissionDetail?.detail_pengajuan?.topik_dipilih)
+    const allTopikRows = Array.isArray(submissionDetail?.detail_pengajuan?.topik_dipilih)
       ? submissionDetail.detail_pengajuan.topik_dipilih
       : [];
-    return [...rows].sort((left, right) => {
+    const reviewerRows = Array.isArray(submissionDetail?.reviewer_slot_decisions)
+      ? submissionDetail.reviewer_slot_decisions
+      : [];
+
+    const sourceRows =
+      submissionDetail?.tipe_pengajuan === "topik_dosen" && reviewerRows.length > 0
+        ? reviewerRows.map((reviewerItem) => {
+            const matchedTopik =
+              allTopikRows.find((topikItem) => Number(topikItem?.slot) === Number(reviewerItem?.slot)) || null;
+            return {
+              ...(matchedTopik || {}),
+              slot: reviewerItem?.slot,
+              kode: reviewerItem?.kode || matchedTopik?.kode || null,
+              reviewer_status: reviewerItem?.reviewer_status || matchedTopik?.reviewer_status || null,
+              reviewer_note: reviewerItem?.reviewer_note || matchedTopik?.reviewer_note || null,
+              reviewer_decided_at: reviewerItem?.reviewer_decided_at || matchedTopik?.reviewer_decided_at || null,
+            };
+          })
+        : allTopikRows;
+
+    return [...sourceRows].sort((left, right) => {
       const leftSlot = Number(left?.slot ?? 0);
       const rightSlot = Number(right?.slot ?? 0);
       return leftSlot - rightSlot;
@@ -1265,6 +1425,55 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     );
     return dosenSet.size <= 1;
   }, [submissionReviewTopikOptions]);
+  const submissionReviewTopikPendingOptions = useMemo(
+    () =>
+      submissionReviewTopikOptions.filter(
+        (item) => String(item?.reviewer_status || "").toLowerCase() === "pending"
+      ),
+    [submissionReviewTopikOptions]
+  );
+  const submissionReviewFirstPendingIndex = useMemo(
+    () =>
+      submissionReviewTopikOptions.findIndex(
+        (item) => String(item?.reviewer_status || "").toLowerCase() === "pending"
+      ),
+    [submissionReviewTopikOptions]
+  );
+  const submissionReviewFocusedIndex = useMemo(
+    () =>
+      submissionReviewTopikOptions.findIndex(
+        (item) => String(item?.slot ?? "") === String(submissionTopikFocusSlot || "")
+      ),
+    [submissionReviewTopikOptions, submissionTopikFocusSlot]
+  );
+  const submissionReviewMaxUnlockedIndex = useMemo(() => {
+    if (!submissionDetail?.can_review) return submissionReviewTopikOptions.length - 1;
+    if (submissionReviewFirstPendingIndex < 0) return submissionReviewTopikOptions.length - 1;
+    return submissionReviewFirstPendingIndex;
+  }, [submissionDetail?.can_review, submissionReviewFirstPendingIndex, submissionReviewTopikOptions.length]);
+  const submissionReviewCountdown = useMemo(
+    () => getReviewCountdown(submissionDetail?.review_deadline_at, countdownNowDate),
+    [countdownNowDate, submissionDetail?.review_deadline_at]
+  );
+
+  const submissionNotificationItems = useMemo(() => {
+    return submissions
+      .filter((row) => row?.status === "pending")
+      .slice()
+      .sort(
+        (left, right) =>
+          new Date(right?.diajukan_pada || right?.diperbarui_pada || 0).getTime() -
+          new Date(left?.diajukan_pada || left?.diperbarui_pada || 0).getTime()
+      );
+  }, [submissions]);
+  const unreadSubmissionNotificationCount = useMemo(() => {
+    if (submissionNotificationItems.length === 0) return 0;
+    return submissionNotificationItems.filter((item) => {
+      const createdAt = new Date(item?.diajukan_pada || item?.diperbarui_pada || 0).getTime();
+      if (!Number.isFinite(createdAt) || createdAt <= 0) return false;
+      return createdAt > Number(submissionNotificationSeenAt || 0);
+    }).length;
+  }, [submissionNotificationItems, submissionNotificationSeenAt]);
 
   const pagedSubmissions = useMemo(() => {
     const start = (submissionPage - 1) * DOSEN_GRID_PAGE_SIZE;
@@ -1855,6 +2064,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setSubmissionKeterangan("");
       setSubmissionDecision("approve");
       setSubmissionTopikFocusSlot("");
+      setSubmissionShowFinalSummary(false);
     }
   }, [activeTab]);
 
@@ -1865,19 +2075,51 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
       return;
     }
+    const pendingOption =
+      submissionReviewTopikOptions.find((item) => String(item?.reviewer_status || "").toLowerCase() === "pending") || null;
     const hasSelectedSlot = submissionReviewTopikOptions.some(
       (item) => String(item?.slot ?? "") === String(submissionTopikFocusSlot || "")
     );
+    const selectedOption = hasSelectedSlot
+      ? submissionReviewTopikOptions.find((item) => String(item?.slot ?? "") === String(submissionTopikFocusSlot || "")) || null
+      : null;
     if (!hasSelectedSlot) {
-      setSubmissionTopikFocusSlot(String(submissionReviewTopikOptions[0]?.slot ?? ""));
+      setSubmissionTopikFocusSlot(String((pendingOption || submissionReviewTopikOptions[0])?.slot ?? ""));
+      return;
     }
-  }, [submissionReviewTopikOptions, submissionTopikFocusSlot]);
+    if (
+      submissionDetail?.can_review &&
+      pendingOption &&
+      String(selectedOption?.reviewer_status || "").toLowerCase() !== "pending"
+    ) {
+      setSubmissionTopikFocusSlot(String(pendingOption.slot ?? ""));
+    }
+  }, [submissionDetail?.can_review, submissionReviewTopikOptions, submissionTopikFocusSlot]);
+
+  const markSubmissionNotificationsAsRead = useCallback(() => {
+    const nowTs = Date.now();
+    setSubmissionNotificationSeenAt(nowTs);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(submissionNotificationStorageKey, String(nowTs));
+    }
+  }, [submissionNotificationStorageKey]);
+
+  const handleToggleSubmissionNotificationPanel = () => {
+    setShowSubmissionNotificationPanel((prev) => {
+      const next = !prev;
+      if (next) {
+        markSubmissionNotificationsAsRead();
+      }
+      return next;
+    });
+  };
 
   const handleOpenSubmissionReview = async (id, defaultDecision = "approve") => {
     setSelectedSubmissionId(id);
     setSubmissionDecision(defaultDecision === "reject" ? "reject" : "approve");
     setSubmissionKeterangan("");
     setSubmissionTopikFocusSlot("");
+    setSubmissionShowFinalSummary(false);
     setLoadingSubmissionDetail(true);
     try {
       const detail = await fetchWithAuth(`/api/dosen/submissions/${id}`);
@@ -1900,6 +2142,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     setSubmissionKeterangan("");
     setSubmissionDecision("approve");
     setSubmissionTopikFocusSlot("");
+    setSubmissionShowFinalSummary(false);
+  };
+
+  const handleOpenSubmissionStepByIndex = (index) => {
+    if (index < 0 || index >= submissionReviewTopikOptions.length) return;
+    if (submissionDetail?.can_review && index > submissionReviewMaxUnlockedIndex) return;
+    const nextSlot = submissionReviewTopikOptions[index]?.slot;
+    if (!nextSlot) return;
+    setSubmissionTopikFocusSlot(String(nextSlot));
+    setSubmissionKeterangan("");
+    setSubmissionShowFinalSummary(false);
   };
 
   const handleRefreshSubmissionReview = async () => {
@@ -1933,10 +2186,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return;
     }
 
+    if (
+      submissionDetail?.tipe_pengajuan === "topik_dosen" &&
+      String(submissionReviewTopikFocused?.reviewer_status || "").toLowerCase() !== "pending"
+    ) {
+      showErrorToast("Slot topik ini sudah memiliki keputusan. Pilih slot yang masih pending.");
+      return;
+    }
+
     const isApprove = submissionDecision === "approve";
     const endpoint = isApprove
       ? `/api/dosen/submissions/${selectedSubmissionId}/approve`
       : `/api/dosen/submissions/${selectedSubmissionId}/reject`;
+    const payload = { keterangan: submissionKeterangan.trim() };
+    if (submissionDetail?.tipe_pengajuan === "topik_dosen") {
+      const selectedTopikSlot = Number(submissionTopikFocusSlot || submissionReviewTopikFocused?.slot || 0);
+      if (!Number.isInteger(selectedTopikSlot) || selectedTopikSlot <= 0) {
+        showErrorToast("Pilih topik slot yang akan diproses terlebih dahulu.");
+        return;
+      }
+      payload.topik_slot = selectedTopikSlot;
+    }
     const confirmTitle = isApprove ? "Setujui pengajuan ini?" : "Tolak pengajuan ini?";
     const confirmButtonText = isApprove ? "Ya, setujui" : "Ya, tolak";
 
@@ -1955,11 +2225,39 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     try {
       await fetchWithAuth(endpoint, {
         method: "POST",
-        body: JSON.stringify({ keterangan: submissionKeterangan.trim() }),
+        body: JSON.stringify(payload),
       });
-      showSuccessToast(isApprove ? "Pengajuan berhasil disetujui." : "Pengajuan berhasil ditolak.");
       await loadAllData();
-      handleBackToSubmissionList();
+
+      const refreshedDetail = await fetchWithAuth(`/api/dosen/submissions/${selectedSubmissionId}`);
+      setSubmissionDetail(refreshedDetail || null);
+
+      if (refreshedDetail?.tipe_pengajuan === "topik_dosen") {
+        const nextPending =
+          (Array.isArray(refreshedDetail?.reviewer_slot_decisions)
+            ? refreshedDetail.reviewer_slot_decisions.find(
+                (item) => String(item?.reviewer_status || "").toLowerCase() === "pending"
+              )
+            : null) || null;
+
+        setSubmissionKeterangan("");
+
+        if (nextPending && refreshedDetail?.can_review) {
+          setSubmissionTopikFocusSlot(String(nextPending.slot || ""));
+          setSubmissionShowFinalSummary(false);
+          showSuccessToast(
+            isApprove
+              ? "Keputusan slot topik tersimpan. Lanjutkan ke slot berikutnya."
+              : "Penolakan slot topik tersimpan. Lanjutkan ke slot berikutnya."
+          );
+        } else {
+          setSubmissionShowFinalSummary(true);
+          showSuccessToast("Semua keputusan slot topik Anda sudah tersimpan.");
+        }
+      } else {
+        showSuccessToast(isApprove ? "Pengajuan berhasil disetujui." : "Pengajuan berhasil ditolak.");
+        handleBackToSubmissionList();
+      }
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || "Gagal memproses keputusan pengajuan.");
@@ -3350,6 +3648,71 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <div ref={submissionNotificationRef} className="relative">
+              <button
+                type="button"
+                onClick={handleToggleSubmissionNotificationPanel}
+                className="relative inline-flex h-10 w-10 items-center justify-center rounded-lg border border-white/30 text-white transition hover:bg-white/20"
+                title="Notifikasi pengajuan mahasiswa"
+                aria-label="Notifikasi pengajuan mahasiswa"
+              >
+                <Bell className="h-4.5 w-4.5" />
+                {unreadSubmissionNotificationCount > 0 ? (
+                  <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-[#ff4d4f]" />
+                ) : null}
+              </button>
+
+              {showSubmissionNotificationPanel ? (
+                <div className="absolute right-0 top-12 z-50 w-[360px] rounded-xl border border-[#dbe3f7] bg-white p-3 text-[#1f3260] shadow-xl">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-sm font-black text-[#1f3260]">Notifikasi Pengajuan</p>
+                    <span className="rounded-full bg-[#eef3ff] px-2 py-0.5 text-xs font-bold text-[#2f63e3]">
+                      {submissionNotificationItems.length}
+                    </span>
+                  </div>
+                  {submissionNotificationItems.length === 0 ? (
+                    <div className="rounded-lg border border-[#e6ecf8] bg-[#f8fbff] px-3 py-2 text-xs font-semibold text-[#60709a]">
+                      Belum ada pengajuan baru.
+                    </div>
+                  ) : (
+                    <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
+                      {submissionNotificationItems.slice(0, 8).map((item) => {
+                        const topikCount = getSubmissionTopikCount(item);
+                        const deadline = getReviewCountdown(item?.review_deadline_at, countdownNowDate);
+                        return (
+                          <button
+                            key={`notif-submission-${item.id}`}
+                            type="button"
+                            onClick={() => {
+                              setShowSubmissionNotificationPanel(false);
+                              handleOpenSubmissionReview(item.id).catch(() => {});
+                            }}
+                            className="w-full rounded-lg border border-[#e6ecf8] bg-white px-3 py-2 text-left transition hover:bg-[#f4f7ff]"
+                          >
+                            <p className="text-xs font-black text-[#22386f]">
+                              {item?.mahasiswa?.nama || "Mahasiswa"} ({item?.mahasiswa?.nim || "-"})
+                            </p>
+                            <p className="mt-1 text-xs text-[#5d6d96]">
+                              {topikCount > 0 ? `${topikCount} topik` : formatLabel(item?.tipe_pengajuan)} •{" "}
+                              {formatDateTime(item?.diajukan_pada || item?.diperbarui_pada)}
+                            </p>
+                            {deadline.has_deadline ? (
+                              <p
+                                className={`mt-1 text-[11px] font-semibold ${
+                                  deadline.is_expired ? "text-[#b73a3a]" : "text-[#31559f]"
+                                }`}
+                              >
+                                {deadline.is_expired ? "Batas review terlewati." : `Sisa review: ${deadline.label}`}
+                              </p>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
             <UserCircle2 className="h-7 w-7 text-[#dde7ff]" />
             <div className="text-right">
               <p className="text-sm font-bold">{session.user?.nama}</p>
@@ -3729,7 +4092,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             type="text"
                             value={submissionQuery}
                             onChange={(event) => setSubmissionQuery(event.target.value)}
-                            placeholder="Cari NIM, nama, jalur, judul, cluster, kode..."
+                            placeholder="Cari nama, NIM, jumlah topik, status, tahap..."
                             className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                           />
                         </div>
@@ -3745,31 +4108,23 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
 
                     <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                      <table className="w-full min-w-[2060px] table-fixed text-left text-sm">
+                      <table className="w-full min-w-[1280px] table-fixed text-left text-sm">
                         <colgroup>
                           <col style={{ width: "56px" }} />
-                          <col style={{ width: "220px" }} />
-                          <col style={{ width: "120px" }} />
-                          <col style={{ width: "88px" }} />
-                          <col style={{ width: "120px" }} />
-                          <col style={{ width: "640px" }} />
-                          <col style={{ width: "110px" }} />
+                          <col style={{ width: "300px" }} />
+                          <col style={{ width: "150px" }} />
+                          <col style={{ width: "170px" }} />
                           <col style={{ width: "130px" }} />
-                          <col style={{ width: "110px" }} />
-                          <col style={{ width: "220px" }} />
-                          <col style={{ width: "170px" }} />
-                          <col style={{ width: "170px" }} />
+                          <col style={{ width: "300px" }} />
+                          <col style={{ width: "190px" }} />
+                          <col style={{ width: "120px" }} />
                         </colgroup>
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mahasiswa</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">NIM</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Jalur</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Tipe</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Judul</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Cluster</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kode Topik</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Jumlah Topik</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Status</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Tahap</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Diperbarui</th>
@@ -3777,111 +4132,102 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredSubmissions.length > 0
-                            ? pagedSubmissions.map((row, index) => {
-                                const nomorUrut = submissionRangeStart + index;
-                                const kodeTopikUtama =
-                                  row.topik_fokus?.kode ||
-                                  row.topik_disetujui?.kode ||
-                                  (Array.isArray(row.topik_dipilih) && row.topik_dipilih.length > 0
-                                    ? row.topik_dipilih[0]
-                                    : null);
-                                const normalizedKodeTopik = String(kodeTopikUtama || "")
-                                  .trim()
-                                  .toUpperCase();
-                                const topikByKode = normalizedKodeTopik
-                                  ? submissionTopikLookup.get(normalizedKodeTopik)
-                                  : null;
-                                const judulTopik =
-                                  row.tipe_pengajuan === "judul_mandiri"
-                                    ? row.judul_mandiri || "-"
-                                    : row.topik_fokus?.judul ||
-                                      row.topik_disetujui?.judul ||
-                                      topikByKode?.judul ||
-                                      (Array.isArray(row.topik_dipilih_detail)
-                                        ? row.topik_dipilih_detail.find((item) => item?.kode === normalizedKodeTopik)?.judul
-                                        : null) ||
-                                      "-";
-                                const clusterTopik =
-                                  row.tipe_pengajuan === "judul_mandiri"
-                                    ? "-"
-                                    : topikByKode?.cluster || normalizedKodeTopik.replace(/[0-9].*$/, "") || "-";
+                            {filteredSubmissions.length > 0
+                              ? pagedSubmissions.map((row, index) => {
+                                  const nomorUrut = submissionRangeStart + index;
+                                  const topikCount = getSubmissionTopikCount(row);
+                                  const hasSameDosenBadge = hasSameDosenTopikBadge(row);
+                                  const reviewCountdown =
+                                    row.tipe_pengajuan === "topik_dosen" && row.status === "pending"
+                                      ? getReviewCountdown(row.review_deadline_at, countdownNowDate)
+                                      : null;
 
-                                return (
-                                <tr key={`submission-${row.id}`} className="border-b border-[#eff3fb] align-top">
-                                  <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
-                                  <td className="px-3 py-2">
-                                    <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
-                                    <p className="text-xs text-[#61709b] whitespace-nowrap">Angkatan {row.mahasiswa?.angkatan || "-"}</p>
-                                  </td>
-                                  <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{row.mahasiswa?.nim || "-"}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">{formatLabel(row.jenis_jalur)}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">{formatLabel(row.tipe_pengajuan)}</td>
-                                  <td className="px-3 py-2 align-top">
-                                    <p
-                                      className="max-w-[620px] overflow-hidden text-ellipsis whitespace-nowrap"
-                                      title={judulTopik}
-                                    >
-                                      {judulTopik}
-                                    </p>
-                                  </td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">{clusterTopik}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">
-                                    {normalizedKodeTopik ? (
-                                      <span className="inline-flex whitespace-nowrap rounded-full bg-[#edf3ff] px-2 py-0.5 text-xs font-semibold text-[#2a4eab]">
-                                        {normalizedKodeTopik}
-                                      </span>
-                                    ) : (
-                                      "-"
-                                    )}
-                                  </td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">
-                                    <span
-                                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                        row.status
-                                      )}`}
-                                    >
-                                      {formatLabel(row.status)}
-                                    </span>
-                                  </td>
-                                  <td className="px-3 py-2 align-top break-words">{formatLabel(row.tahap_approval)}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
-                                  <td className="px-3 py-2 whitespace-nowrap align-top">
-                                    {row.status === "pending" && row.can_review ? (
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          type="button"
-                                          disabled={loadingSubmissionDetail || rowActionLoadingId === row.id}
-                                          onClick={() => handleOpenSubmissionReview(row.id, "approve")}
-                                          className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                  return (
+                                    <tr key={`submission-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                                      <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
+                                      <td className="px-3 py-2">
+                                        <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
+                                        <p className="text-xs text-[#61709b]">
+                                          Angkatan {row.mahasiswa?.angkatan || "-"} • {formatLabel(row.jenis_jalur)}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{row.mahasiswa?.nim || "-"}</td>
+                                      <td className="px-3 py-2 whitespace-nowrap align-top">
+                                        {row.tipe_pengajuan === "topik_dosen" ? (
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="inline-flex rounded-full bg-[#edf3ff] px-2.5 py-1 text-xs font-bold text-[#2f63e3]">
+                                              {topikCount > 0 ? `${topikCount} Topik` : "0 Topik"}
+                                            </span>
+                                            {hasSameDosenBadge ? (
+                                              <span className="inline-flex rounded-full bg-[#fff4d8] px-2 py-0.5 text-[11px] font-bold text-[#9b6b00]">
+                                                Dosen sama
+                                              </span>
+                                            ) : null}
+                                          </div>
+                                        ) : (
+                                          <span className="text-xs font-semibold text-[#5e6c92]">Judul Mandiri</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap align-top">
+                                        <span
+                                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                                            row.status
+                                          )}`}
                                         >
-                                          Approve
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={loadingSubmissionDetail || rowActionLoadingId === row.id}
-                                          onClick={() => handleOpenSubmissionReview(row.id, "reject")}
-                                          className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          Tolak
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={loadingSubmissionDetail}
-                                        onClick={() => handleOpenSubmissionReview(row.id, "approve")}
-                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                      >
-                                        <Eye className="h-3.5 w-3.5" />
-                                        {row.status === "pending" ? "Lihat" : "Detail"}
-                                      </button>
-                                    )}
-                                  </td>
-                                </tr>
-                                );
-                              })
-                            : null}
+                                          {formatLabel(row.status)}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2 align-top break-words">
+                                        <p className="font-semibold text-[#2a3f74]">{formatLabel(row.tahap_approval)}</p>
+                                        {reviewCountdown?.has_deadline ? (
+                                          <p
+                                            className={`mt-1 text-[11px] font-semibold ${
+                                              reviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#355da8]"
+                                            }`}
+                                          >
+                                            {reviewCountdown.is_expired
+                                              ? "Waktu review habis (72 jam)."
+                                              : `Sisa review: ${reviewCountdown.label}`}
+                                          </p>
+                                        ) : null}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
+                                      <td className="px-3 py-2 whitespace-nowrap align-top">
+                                        {row.status === "pending" && row.can_review ? (
+                                          <div className="flex items-center gap-2">
+                                            <button
+                                              type="button"
+                                              disabled={loadingSubmissionDetail}
+                                              onClick={() => handleOpenSubmissionReview(row.id, "approve")}
+                                              className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                              Approve
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={loadingSubmissionDetail}
+                                              onClick={() => handleOpenSubmissionReview(row.id, "reject")}
+                                              className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                            >
+                                              Reject
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            disabled={loadingSubmissionDetail}
+                                            onClick={() => handleOpenSubmissionReview(row.id)}
+                                            className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            <Eye className="h-3.5 w-3.5" />
+                                            Detail
+                                          </button>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              : null}
                         </tbody>
                       </table>
                       {filteredSubmissions.length === 0 ? (
@@ -3993,45 +4339,86 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             <h4 className="text-sm font-black text-[#1b274b]">Detail Topik Diajukan</h4>
                             {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
                               <div className="mt-3 space-y-3">
-                                <div className="grid grid-cols-1 gap-3 xl:grid-cols-[300px,minmax(0,1fr)]">
-                                  <div>
-                                    <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Topik Pilihan Mahasiswa</label>
-                                    <select
-                                      value={String(submissionTopikFocusSlot || "")}
-                                      onChange={(event) => setSubmissionTopikFocusSlot(event.target.value)}
-                                      className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                                    >
-                                      {submissionReviewTopikOptions.length > 0 ? (
-                                        submissionReviewTopikOptions.map((topik) => (
-                                          <option key={`submission-topik-option-${topik.slot}-${topik.kode}`} value={String(topik.slot)}>
-                                            Pilihan {topik.slot} - {topik.kode || "-"}
-                                          </option>
-                                        ))
-                                      ) : (
-                                        <option value="">Tidak ada topik pilihan</option>
-                                      )}
-                                    </select>
-                                    <p className="mt-2 text-xs text-[#5f7098]">
-                                      Keputusan approve/tolak berlaku untuk seluruh paket topik pengajuan.
+                                <div className="rounded-lg border border-[#dbe5fb] bg-[#f8fbff] px-3 py-2 text-sm text-[#324c86]">
+                                  <p className="font-semibold">
+                                    Mahasiswa: {submissionDetail.mahasiswa?.nama || "-"} | NIM: {submissionDetail.mahasiswa?.nim || "-"} |
+                                    {" "}Topik{" "}
+                                    {submissionReviewFocusedIndex >= 0 ? submissionReviewFocusedIndex + 1 : 1} dari{" "}
+                                    {Math.max(1, submissionReviewTopikOptions.length)}
+                                  </p>
+                                  {submissionReviewTopikOptions.length > 1 && submissionReviewTopikIsSingleDosen ? (
+                                    <p className="mt-1 text-xs font-semibold text-[#8a5a00]">
+                                      Semua topik berada pada dosen yang sama.
                                     </p>
-                                  </div>
-                                  <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
-                                    <div className="grid grid-cols-1 gap-2 text-sm text-[#2f426f]">
-                                      <p><span className="font-semibold">Slot:</span> {submissionReviewTopikFocused?.slot || "-"}</p>
-                                      <p><span className="font-semibold">Kode Topik:</span> {submissionReviewTopikFocused?.kode || "-"}</p>
-                                      <p><span className="font-semibold">Judul Topik:</span> {submissionReviewTopikFocused?.judul || "-"}</p>
-                                      <p><span className="font-semibold">Dosen:</span> {submissionReviewTopikFocused?.dosen || "-"}</p>
+                                  ) : null}
+                                  {submissionReviewCountdown.has_deadline ? (
+                                    <p
+                                      className={`mt-1 text-xs font-semibold ${
+                                        submissionReviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#355da8]"
+                                      }`}
+                                    >
+                                      {submissionReviewCountdown.is_expired
+                                        ? "Waktu review 72 jam telah berakhir. Sistem akan memfinalisasi otomatis."
+                                        : `Sisa waktu review 72 jam: ${submissionReviewCountdown.label} (batas: ${formatDateTime(
+                                            submissionDetail.review_deadline_at
+                                          )})`}
+                                    </p>
+                                  ) : null}
+                                </div>
+
+                                {submissionReviewTopikOptions.length > 0 ? (
+                                  <div className="overflow-x-auto rounded-lg border border-[#e3e9f8] bg-white p-2">
+                                    <div className="flex min-w-max items-stretch gap-2">
+                                      {submissionReviewTopikOptions.map((topik, index) => {
+                                        const reviewerStatus = String(topik?.reviewer_status || "pending").toLowerCase();
+                                        const isDone = reviewerStatus !== "pending";
+                                        const isActive =
+                                          String(topik?.slot ?? "") === String(submissionReviewTopikFocused?.slot ?? "");
+                                        const isLocked =
+                                          submissionDetail?.can_review &&
+                                          index > submissionReviewMaxUnlockedIndex &&
+                                          !submissionShowFinalSummary;
+                                        return (
+                                          <button
+                                            key={`submission-topik-step-${topik.slot}-${topik.kode || "none"}`}
+                                            type="button"
+                                            disabled={isLocked}
+                                            onClick={() => handleOpenSubmissionStepByIndex(index)}
+                                            className={`min-w-[190px] rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                              isActive
+                                                ? "border-[#2f63e3] bg-[#edf3ff]"
+                                                : "border-[#dde5f8] bg-white hover:bg-[#f7f9ff]"
+                                            } ${isLocked ? "cursor-not-allowed opacity-50" : ""}`}
+                                          >
+                                            <p className="font-black text-[#27407b]">
+                                              Pilihan {topik.slot || index + 1} - {topik.kode || "-"}
+                                            </p>
+                                            <p className="mt-1 text-[#5d6c91]">
+                                              {isDone ? "Selesai" : isLocked ? "Terkunci" : "Sedang diproses"}
+                                            </p>
+                                          </button>
+                                        );
+                                      })}
                                     </div>
                                   </div>
-                                </div>
-                                {submissionReviewTopikOptions.length > 1 ? (
-                                  <div className="rounded-md border border-[#dbe4f8] bg-[#f9fbff] px-3 py-2 text-xs font-semibold text-[#4d5f8f]">
-                                    Mahasiswa mengajukan {submissionReviewTopikOptions.length} topik.
-                                    {submissionReviewTopikIsSingleDosen
-                                      ? " Semua topik berada pada dosen yang sama."
-                                      : " Topik berasal dari dosen yang berbeda."}
+                                ) : (
+                                  <div className="rounded-lg border border-[#e8ecf8] bg-[#f9fbff] px-3 py-2 text-xs font-semibold text-[#5f6d95]">
+                                    Tidak ada topik pilihan untuk ditampilkan.
                                   </div>
-                                ) : null}
+                                )}
+
+                                <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                                  <div className="grid grid-cols-1 gap-2 text-sm text-[#2f426f]">
+                                    <p><span className="font-semibold">Slot:</span> {submissionReviewTopikFocused?.slot || "-"}</p>
+                                    <p><span className="font-semibold">Kode Topik:</span> {submissionReviewTopikFocused?.kode || "-"}</p>
+                                    <p><span className="font-semibold">Judul Topik:</span> {submissionReviewTopikFocused?.judul || "-"}</p>
+                                    <p><span className="font-semibold">Dosen:</span> {submissionReviewTopikFocused?.dosen || "-"}</p>
+                                    <p>
+                                      <span className="font-semibold">Status Slot:</span>{" "}
+                                      {formatLabel(submissionReviewTopikFocused?.reviewer_status || "pending")}
+                                    </p>
+                                  </div>
+                                </div>
                               </div>
                             ) : (
                               <div className="mt-3 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
@@ -4049,7 +4436,134 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
                     {!loadingSubmissionDetail && submissionDetail ? (
                       <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        {submissionDetail.status === "pending" && submissionDetail.can_review ? (
+                        {submissionDetail.tipe_pengajuan === "topik_dosen" &&
+                        submissionDetail.status === "pending" &&
+                        submissionDetail.can_review ? (
+                          submissionShowFinalSummary || submissionReviewTopikPendingOptions.length === 0 ? (
+                            <>
+                              <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Keputusan</h4>
+                              <p className="mt-1 text-sm text-[#5d6c91]">
+                                Semua slot topik sudah diproses. Silakan review ringkasan sebelum kembali ke grid.
+                              </p>
+                              <div className="mt-3 space-y-2">
+                                {submissionReviewTopikOptions.map((item) => {
+                                  const normalizedStatus = String(item?.reviewer_status || "pending").toLowerCase();
+                                  const statusLabel =
+                                    normalizedStatus === "approved"
+                                      ? "Disetujui"
+                                      : normalizedStatus === "rejected"
+                                      ? "Ditolak"
+                                      : formatLabel(normalizedStatus);
+                                  const statusClass =
+                                    normalizedStatus === "approved"
+                                      ? "bg-[#e8f8ef] text-[#127947]"
+                                      : normalizedStatus === "rejected"
+                                      ? "bg-[#fff0f0] text-[#b73a3a]"
+                                      : "bg-[#eef3ff] text-[#2f63e3]";
+                                  return (
+                                    <div
+                                      key={`submission-summary-slot-${item.slot}-${item.kode || "none"}`}
+                                      className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3"
+                                    >
+                                      <div className="flex flex-wrap items-center justify-between gap-2">
+                                        <p className="text-sm font-bold text-[#28417a]">
+                                          Pilihan {item.slot || "-"} - {item.kode || "-"}
+                                        </p>
+                                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass}`}>
+                                          {statusLabel}
+                                        </span>
+                                      </div>
+                                      <p className="mt-1 text-sm text-[#405384]">{item.judul || "-"}</p>
+                                      {item?.reviewer_note ? (
+                                        <p className="mt-1 text-xs font-semibold text-[#566797]">
+                                          Catatan: {item.reviewer_note}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-4 flex justify-end">
+                                <button
+                                  type="button"
+                                  onClick={handleBackToSubmissionList}
+                                  className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+                                >
+                                  Kembali ke Grid
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan Per Topik</h4>
+                              <p className="mt-1 text-sm text-[#5d6c91]">
+                                Anda sedang dalam mode{" "}
+                                <span className={submissionDecision === "approve" ? "font-bold text-[#137748]" : "font-bold text-[#b73a3a]"}>
+                                  {submissionDecision === "approve" ? "APPROVE" : "REJECT"}
+                                </span>
+                                {" "}sesuai tombol aksi yang dipilih di grid.
+                              </p>
+
+                              <div className="mt-3 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                                <p className="text-sm font-semibold text-[#2f426f]">Keputusan</p>
+                                <div className="mt-2">
+                                  <span
+                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                                      submissionDecision === "approve"
+                                        ? "bg-[#e8f8ef] text-[#127947]"
+                                        : "bg-[#fff0f0] text-[#b73a3a]"
+                                    }`}
+                                  >
+                                    {submissionDecision === "approve" ? "Setujui" : "Tolak"}
+                                  </span>
+                                  <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
+                                    Opsi lawan disembunyikan agar keputusan konsisten dengan tombol aksi awal.
+                                    Untuk mengganti mode, kembali ke grid lalu pilih tombol aksi lainnya.
+                                  </p>
+                                </div>
+                                <div className="mt-3">
+                                  <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                    {submissionDecision === "reject" ? "Alasan (wajib untuk tolak)" : "Catatan (opsional)"}
+                                  </label>
+                                  <textarea
+                                    rows={4}
+                                    value={submissionKeterangan}
+                                    onChange={(event) => setSubmissionKeterangan(event.target.value)}
+                                    placeholder={
+                                      submissionDecision === "reject"
+                                        ? "Isi alasan penolakan topik..."
+                                        : "Isi catatan persetujuan topik (opsional)..."
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="mt-4 flex justify-end">
+                                <button
+                                  type="button"
+                                  disabled={rowActionLoadingId === selectedSubmissionId}
+                                  onClick={handleSubmitSubmissionDecision}
+                                  className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition ${
+                                    submissionDecision === "approve"
+                                      ? "bg-[#137748] hover:brightness-110"
+                                      : "bg-[#b73a3a] hover:brightness-110"
+                                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                                >
+                                  {rowActionLoadingId === selectedSubmissionId
+                                    ? "Memproses..."
+                                    : submissionReviewTopikPendingOptions.length > 1
+                                    ? submissionDecision === "approve"
+                                      ? "Simpan Approve & Lanjut"
+                                      : "Simpan Reject & Lanjut"
+                                    : submissionDecision === "approve"
+                                    ? "Simpan Approve"
+                                    : "Simpan Reject"}
+                                </button>
+                              </div>
+                            </>
+                          )
+                        ) : submissionDetail.status === "pending" && submissionDetail.can_review ? (
                           <>
                             <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan</h4>
                             <p className="mt-1 text-sm text-[#5d6c91]">
@@ -4103,6 +4617,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 Anda belum bisa memberi keputusan untuk pengajuan ini.
                                 {submissionDetail.reviewer_status
                                   ? ` Status reviewer Anda: ${formatLabel(submissionDetail.reviewer_status)}.`
+                                  : ""}
+                                {submissionReviewCountdown.has_deadline
+                                  ? submissionReviewCountdown.is_expired
+                                    ? " Batas review 72 jam sudah terlewati."
+                                    : ` Sisa waktu review: ${submissionReviewCountdown.label}.`
                                   : ""}
                               </div>
                             ) : null}
@@ -5591,7 +6110,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           </thead>
                           <tbody>
                             {periodeRows.length > 0
-                              ? pagedPeriodeRows.map((row) => (
+                              ? pagedPeriodeRows.map((row) => {
+                                  const canEditRow = canEditPeriodeRow(row);
+                                  return (
                                   <tr key={`periode-${row.id}`} className="border-b border-[#eff3fb]">
                                     <td className="px-3 py-2">{row.label_periode || "-"}</td>
                                     <td className="px-3 py-2">{row.tahun_akademik || "-"}</td>
@@ -5614,7 +6135,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         }}
                                         className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                                       >
-                                        {row.is_active || row.status === "draft" ? (
+                                        {canEditRow ? (
                                           <>
                                             <CalendarRange className="h-3.5 w-3.5" />
                                             Edit
@@ -5628,7 +6149,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       </button>
                                     </td>
                                   </tr>
-                                ))
+                                  );
+                                })
                               : null}
                           </tbody>
                         </table>

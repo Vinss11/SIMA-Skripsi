@@ -54,6 +54,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      topik_slot: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      topik_kode: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
       tanggal_keputusan: {
         type: DataTypes.DATE,
         defaultValue: DataTypes.NOW,

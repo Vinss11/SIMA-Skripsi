@@ -11,6 +11,18 @@ const {
 
 const TOPIK_PARALLEL_REVIEW_HOURS = 72;
 const TOPIK_PARALLEL_REVIEW_MS = TOPIK_PARALLEL_REVIEW_HOURS * 60 * 60 * 1000;
+const RIWAYAT_TOPIK_PARALLEL_ATTRIBUTES = [
+  "id",
+  "dosen_id",
+  "tipe_approval",
+  "topik_slot",
+  "topik_kode",
+  "status",
+  "keterangan",
+  "tanggal_keputusan",
+  "createdAt",
+  "updatedAt",
+];
 
 function toNumber(value) {
   const parsed = Number(value);
@@ -38,6 +50,42 @@ function toDecisionDate(value, fallback = null) {
   const dateValue = new Date(value);
   if (Number.isNaN(dateValue.getTime())) return fallback;
   return dateValue;
+}
+
+function normalizeTopikSlot(value) {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) return null;
+  return parsed;
+}
+
+function buildSubmissionLock(transaction) {
+  return {
+    level: transaction.LOCK.UPDATE,
+    of: Pengajuan,
+  };
+}
+
+async function loadSubmissionWithRiwayat(submissionId, options = {}) {
+  const { transaction, lockSubmission = false } = options;
+  if (!transaction) {
+    throw new Error("Transaction wajib disediakan untuk loadSubmissionWithRiwayat.");
+  }
+
+  const submission = await Pengajuan.findByPk(submissionId, {
+    transaction,
+    ...(lockSubmission ? { lock: buildSubmissionLock(transaction) } : {}),
+  });
+
+  if (!submission) return null;
+
+  const riwayat = await RiwayatPersetujuan.findAll({
+    where: { pengajuan_id: submissionId },
+    attributes: RIWAYAT_TOPIK_PARALLEL_ATTRIBUTES,
+    transaction,
+  });
+
+  submission.setDataValue("riwayat", riwayat);
+  return submission;
 }
 
 function buildTopikListFromSubmission(submission) {
@@ -82,28 +130,44 @@ function isTopikParallelSubmission(submission) {
   return String(submission?.tipe_pengajuan || "").trim().toLowerCase() === "topik_dosen";
 }
 
-function getCalonPembimbingDecisionMap(riwayat = []) {
-  const map = new Map();
+function getCalonPembimbingDecisionLookup(riwayat = []) {
+  const bySlot = new Map();
+  const byDosenFallback = new Map();
 
   for (const item of riwayat) {
     if (normalizeApprovalType(item?.tipe_approval) !== "calon_pembimbing") continue;
     const dosenId = toNumber(item?.dosen_id);
     if (!dosenId) continue;
+    const topikSlot = normalizeTopikSlot(item?.topik_slot);
 
     const decidedAt = toDecisionDate(item?.tanggal_keputusan || item?.updatedAt || item?.createdAt, new Date(0));
-    const current = map.get(dosenId);
-    if (!current || decidedAt >= current.decided_at) {
-      map.set(dosenId, {
-        id: item?.id || null,
-        dosen_id: dosenId,
-        status_db: normalizeRiwayatStatus(item?.status),
-        keterangan: item?.keterangan || null,
-        decided_at: decidedAt,
-      });
+    const nextValue = {
+      id: item?.id || null,
+      dosen_id: dosenId,
+      topik_slot: topikSlot,
+      topik_kode: item?.topik_kode || null,
+      status_db: normalizeRiwayatStatus(item?.status),
+      keterangan: item?.keterangan || null,
+      decided_at: decidedAt,
+    };
+
+    if (topikSlot) {
+      const currentBySlot = bySlot.get(topikSlot);
+      if (!currentBySlot || decidedAt >= currentBySlot.decided_at) {
+        bySlot.set(topikSlot, nextValue);
+      }
+    } else {
+      const currentFallback = byDosenFallback.get(dosenId);
+      if (!currentFallback || decidedAt >= currentFallback.decided_at) {
+        byDosenFallback.set(dosenId, nextValue);
+      }
     }
   }
 
-  return map;
+  return {
+    by_slot: bySlot,
+    by_dosen_fallback: byDosenFallback,
+  };
 }
 
 function evaluateTopikParallelState(submission, options = {}) {
@@ -112,14 +176,18 @@ function evaluateTopikParallelState(submission, options = {}) {
   const deadlineAt = getTopikParallelReviewDeadline(submission);
   const deadlinePassed = now.getTime() >= deadlineAt.getTime();
   const riwayat = Array.isArray(submission?.riwayat) ? submission.riwayat : [];
-  const decisionMap = getCalonPembimbingDecisionMap(riwayat);
+  const decisionLookup = getCalonPembimbingDecisionLookup(riwayat);
 
   const slotDecisions = topikList.map((topik) => {
-    const reviewerDecision = topik.dosen_id ? decisionMap.get(topik.dosen_id) : null;
+    const reviewerDecision =
+      decisionLookup.by_slot.get(Number(topik.slot)) ||
+      (topik.dosen_id ? decisionLookup.by_dosen_fallback.get(Number(topik.dosen_id)) : null) ||
+      null;
     const rawStatus = normalizeRiwayatStatus(reviewerDecision?.status_db || "pending");
     const effectiveStatus = rawStatus === "pending" && deadlinePassed ? "expired" : rawStatus;
     return {
       ...topik,
+      reviewer_row_id: reviewerDecision?.id || null,
       reviewer_status: effectiveStatus,
       reviewer_status_db: rawStatus,
       reviewer_note: reviewerDecision?.keterangan || null,
@@ -160,36 +228,43 @@ async function ensureParallelReviewerRows(submission, transaction) {
   }
 
   const topikList = buildTopikListFromSubmission(submission);
-  const uniqueDosenIds = [...new Set(topikList.map((item) => toNumber(item.dosen_id)).filter(Boolean))];
-  if (uniqueDosenIds.length === 0) return { created: 0 };
+  const topikSlots = topikList.map((item) => normalizeTopikSlot(item.slot)).filter(Boolean);
+  if (topikSlots.length === 0) return { created: 0 };
 
   const existingRows = await RiwayatPersetujuan.findAll({
     where: {
       pengajuan_id: submission.id,
       tipe_approval: "calon_pembimbing",
-      dosen_id: uniqueDosenIds,
+      topik_slot: topikSlots,
     },
-    attributes: ["id", "dosen_id"],
+    attributes: ["id", "dosen_id", "topik_slot"],
     transaction,
   });
 
-  const existingSet = new Set(existingRows.map((row) => toNumber(row.dosen_id)).filter(Boolean));
+  const existingSlotSet = new Set(existingRows.map((row) => normalizeTopikSlot(row.topik_slot)).filter(Boolean));
   const now = new Date();
   let created = 0;
 
-  for (const dosenId of uniqueDosenIds) {
-    if (existingSet.has(dosenId)) continue;
+  for (const topik of topikList) {
+    const dosenId = toNumber(topik.dosen_id);
+    const topikSlot = normalizeTopikSlot(topik.slot);
+    if (!dosenId || !topikSlot) continue;
+    if (existingSlotSet.has(topikSlot)) continue;
+
     await RiwayatPersetujuan.create(
       {
         pengajuan_id: submission.id,
         dosen_id: dosenId,
         tipe_approval: "calon_pembimbing",
+        topik_slot: topikSlot,
+        topik_kode: topik.kode || null,
         status: "pending",
-        keterangan: "Menunggu keputusan dosen.",
+        keterangan: `Menunggu keputusan dosen untuk topik slot ${topikSlot}.`,
         tanggal_keputusan: submission.createdAt || now,
       },
       { transaction }
     );
+    existingSlotSet.add(topikSlot);
     created += 1;
   }
 
@@ -351,17 +426,9 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
   const transaction = externalTransaction || (await sequelize.transaction());
 
   try {
-    let submission = await Pengajuan.findByPk(submissionId, {
-      include: [
-        {
-          model: RiwayatPersetujuan,
-          as: "riwayat",
-          attributes: ["id", "dosen_id", "tipe_approval", "status", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
-          required: false,
-        },
-      ],
+    let submission = await loadSubmissionWithRiwayat(submissionId, {
       transaction,
-      lock: transaction.LOCK.UPDATE,
+      lockSubmission: true,
     });
 
     if (!submission || !isTopikParallelSubmission(submission)) {
@@ -377,26 +444,9 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
 
     const ensureResult = await ensureParallelReviewerRows(submission, transaction);
     if (ensureResult.created > 0) {
-      submission = await Pengajuan.findByPk(submissionId, {
-        include: [
-          {
-            model: RiwayatPersetujuan,
-            as: "riwayat",
-            attributes: [
-              "id",
-              "dosen_id",
-              "tipe_approval",
-              "status",
-              "keterangan",
-              "tanggal_keputusan",
-              "createdAt",
-              "updatedAt",
-            ],
-            required: false,
-          },
-        ],
+      submission = await loadSubmissionWithRiwayat(submissionId, {
         transaction,
-        lock: transaction.LOCK.UPDATE,
+        lockSubmission: true,
       });
     }
 
@@ -417,15 +467,7 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
       ? await finalizeApprovedTopikSubmission(submission, parallelState, transaction)
       : await finalizeRejectedTopikSubmission(submission, parallelState, transaction);
 
-    const refreshedSubmission = await Pengajuan.findByPk(submissionId, {
-      include: [
-        {
-          model: RiwayatPersetujuan,
-          as: "riwayat",
-          attributes: ["id", "dosen_id", "tipe_approval", "status", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
-          required: false,
-        },
-      ],
+    const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, {
       transaction,
     });
 
@@ -464,4 +506,3 @@ module.exports = {
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
 };
-

@@ -431,12 +431,19 @@ exports.getSubmissionById = async (req, res) => {
       .map((item) => item.keterangan)
       .filter(Boolean);
     const topikParallelState = isTopikParallelSubmission(submission) ? evaluateTopikParallelState(submission) : null;
-    const currentReviewerDecision =
+    const reviewerSlotDecisions =
       topikParallelState && accessorDosenId
         ? topikParallelState.slot_decisions
             .filter((item) => Number(item.dosen_id) === Number(accessorDosenId))
-            .sort((a, b) => a.slot - b.slot)[0] || null
+            .sort((a, b) => a.slot - b.slot)
+        : [];
+    const pendingReviewerDecision =
+      Array.isArray(reviewerSlotDecisions) && reviewerSlotDecisions.length > 0
+        ? reviewerSlotDecisions.find((item) => item.reviewer_status === "pending") || null
         : null;
+    const currentReviewerDecision =
+      pendingReviewerDecision ||
+      (Array.isArray(reviewerSlotDecisions) && reviewerSlotDecisions.length > 0 ? reviewerSlotDecisions[0] : null);
 
     let detailPengajuan = {};
     let hasilPengajuan = {
@@ -533,7 +540,8 @@ exports.getSubmissionById = async (req, res) => {
     const canReviewTopikParallel =
       submission.tipe_pengajuan === "topik_dosen" &&
       submission.status === "pending" &&
-      currentReviewerDecision?.reviewer_status === "pending";
+      Array.isArray(reviewerSlotDecisions) &&
+      reviewerSlotDecisions.some((item) => item.reviewer_status === "pending");
     const canReviewNonTopik =
       submission.tipe_pengajuan !== "topik_dosen" &&
       submission.status === "pending" &&
@@ -552,6 +560,16 @@ exports.getSubmissionById = async (req, res) => {
       reviewer_status: currentReviewerDecision?.reviewer_status || null,
       reviewer_note: currentReviewerDecision?.reviewer_note || null,
       can_review: Boolean(canReviewTopikParallel || canReviewNonTopik),
+      reviewer_slot_decisions:
+        submission.tipe_pengajuan === "topik_dosen" && Array.isArray(reviewerSlotDecisions)
+          ? reviewerSlotDecisions.map((item) => ({
+              slot: item.slot,
+              kode: item.kode,
+              reviewer_status: item.reviewer_status,
+              reviewer_note: item.reviewer_note,
+              reviewer_decided_at: item.reviewer_decided_at || null,
+            }))
+          : [],
       topik_review_status:
         submission.tipe_pengajuan === "topik_dosen"
           ? (topikParallelState?.slot_decisions || []).map((item) => ({

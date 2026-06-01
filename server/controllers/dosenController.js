@@ -717,7 +717,18 @@ exports.getDosenSubmissions = async (req, res) => {
         {
           model: RiwayatPersetujuan,
           as: "riwayat",
-          attributes: ["id", "dosen_id", "status", "tipe_approval", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
+          attributes: [
+            "id",
+            "dosen_id",
+            "topik_slot",
+            "topik_kode",
+            "status",
+            "tipe_approval",
+            "keterangan",
+            "tanggal_keputusan",
+            "createdAt",
+            "updatedAt",
+          ],
           required: false,
         },
       ],
@@ -757,15 +768,21 @@ exports.getDosenSubmissions = async (req, res) => {
         const topikList = buildTopikList(submission);
         const approvedTopik = getApprovedTopik(submission, topikList);
         const parallelState = evaluateTopikParallelState(submission);
-        const reviewerDecision = parallelState.slot_decisions
+        const reviewerSlotDecisions = parallelState.slot_decisions
           .filter((item) => Number(item.dosen_id) === Number(dosen_id))
-          .sort((a, b) => a.slot - b.slot)[0];
+          .sort((a, b) => a.slot - b.slot);
+        const pendingReviewerDecision = reviewerSlotDecisions.find((item) => item.reviewer_status === "pending") || null;
+        const reviewerDecision = pendingReviewerDecision || reviewerSlotDecisions[0] || null;
+        const focusedTopikByReviewerSlot =
+          reviewerDecision?.slot != null
+            ? topikList.find((item) => Number(item.slot) === Number(reviewerDecision.slot)) || null
+            : null;
         let focusedTopik = null;
 
         if (submission.status === "approved") {
           focusedTopik = approvedTopik;
         } else {
-          focusedTopik = getTopikByReviewerDosen(submission, dosen_id) || topikList[0] || null;
+          focusedTopik = focusedTopikByReviewerSlot || getTopikByReviewerDosen(submission, dosen_id) || topikList[0] || null;
         }
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
@@ -794,7 +811,16 @@ exports.getDosenSubmissions = async (req, res) => {
         base.review_deadline_at = getTopikParallelReviewDeadline(submission);
         base.reviewer_status = reviewerDecision?.reviewer_status || null;
         base.reviewer_note = reviewerDecision?.reviewer_note || null;
-        base.can_review = submission.status === "pending" && reviewerDecision?.reviewer_status === "pending";
+        base.can_review =
+          submission.status === "pending" &&
+          reviewerSlotDecisions.some((item) => item.reviewer_status === "pending");
+        base.reviewer_slot_decisions = reviewerSlotDecisions.map((item) => ({
+          slot: item.slot,
+          kode: item.kode,
+          reviewer_status: item.reviewer_status,
+          reviewer_note: item.reviewer_note,
+          reviewer_decided_at: item.reviewer_decided_at || null,
+        }));
         base.topik_review_status = parallelState.slot_decisions.map((item) => ({
           slot: item.slot,
           kode: item.kode,
@@ -842,6 +868,11 @@ exports.approveSubmission = async (req, res) => {
     }
 
     const approvalNote = String(req.body?.keterangan || "").trim();
+    const requestedTopikSlotRaw = req.body?.topik_slot;
+    const requestedTopikSlot =
+      Number.isInteger(Number(requestedTopikSlotRaw)) && Number(requestedTopikSlotRaw) > 0
+        ? Number(requestedTopikSlotRaw)
+        : null;
 
     const submission = await Pengajuan.findByPk(id, {
       transaction: t,
@@ -859,21 +890,36 @@ exports.approveSubmission = async (req, res) => {
     if (isTopikParallelSubmission(submission)) {
       await ensureParallelReviewerRows(submission, t);
 
-      const reviewerRow = await RiwayatPersetujuan.findOne({
+      const reviewerRows = await RiwayatPersetujuan.findAll({
         where: {
           pengajuan_id: submission.id,
           dosen_id,
           tipe_approval: "calon_pembimbing",
         },
+        order: [["topik_slot", "ASC"], ["id", "ASC"]],
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
 
-      if (!reviewerRow) {
+      if (!Array.isArray(reviewerRows) || reviewerRows.length === 0) {
         await t.rollback();
         return res.status(403).json({
           success: false,
           message: "Anda tidak terdaftar sebagai reviewer pada pengajuan topik ini.",
+        });
+      }
+
+      const availableSlots = reviewerRows
+        .map((item) => Number(item.topik_slot))
+        .filter((slot) => Number.isInteger(slot) && slot > 0);
+      const targetSlot =
+        requestedTopikSlot || (availableSlots.length === 1 ? availableSlots[0] : null);
+      if (!targetSlot) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "topik_slot wajib diisi untuk menentukan topik yang akan di-approve.",
+          available_slots: availableSlots,
         });
       }
 
@@ -886,6 +932,15 @@ exports.approveSubmission = async (req, res) => {
           success: false,
           message: "Pengajuan ini sudah diproses dan tidak bisa di-approve lagi.",
           data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
+
+      const reviewerRow = reviewerRows.find((item) => Number(item.topik_slot) === Number(targetSlot)) || null;
+      if (!reviewerRow) {
+        await t.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Slot topik yang dipilih tidak termasuk dalam review Anda.",
         });
       }
 
@@ -906,6 +961,15 @@ exports.approveSubmission = async (req, res) => {
         {
           status: "approved",
           keterangan: approvalNote || "Disetujui oleh dosen reviewer.",
+          topik_slot: Number(targetSlot),
+          topik_kode:
+            Number(targetSlot) === 1
+              ? submission.topik_1_kode
+              : Number(targetSlot) === 2
+              ? submission.topik_2_kode
+              : Number(targetSlot) === 3
+              ? submission.topik_3_kode
+              : lockedReviewerRow.topik_kode || null,
           tanggal_keputusan: new Date(),
         },
         { transaction: t }
@@ -1346,6 +1410,11 @@ exports.rejectSubmission = async (req, res) => {
     }
 
     const { keterangan } = req.body;
+    const requestedTopikSlotRaw = req.body?.topik_slot;
+    const requestedTopikSlot =
+      Number.isInteger(Number(requestedTopikSlotRaw)) && Number(requestedTopikSlotRaw) > 0
+        ? Number(requestedTopikSlotRaw)
+        : null;
 
     if (!keterangan) {
       await t.rollback();
@@ -1371,21 +1440,36 @@ exports.rejectSubmission = async (req, res) => {
     if (isTopikParallelSubmission(submission)) {
       await ensureParallelReviewerRows(submission, t);
 
-      const reviewerRow = await RiwayatPersetujuan.findOne({
+      const reviewerRows = await RiwayatPersetujuan.findAll({
         where: {
           pengajuan_id: submission.id,
           dosen_id,
           tipe_approval: "calon_pembimbing",
         },
+        order: [["topik_slot", "ASC"], ["id", "ASC"]],
         transaction: t,
         lock: t.LOCK.UPDATE,
       });
 
-      if (!reviewerRow) {
+      if (!Array.isArray(reviewerRows) || reviewerRows.length === 0) {
         await t.rollback();
         return res.status(403).json({
           success: false,
           message: "Anda tidak terdaftar sebagai reviewer pada pengajuan topik ini.",
+        });
+      }
+
+      const availableSlots = reviewerRows
+        .map((item) => Number(item.topik_slot))
+        .filter((slot) => Number.isInteger(slot) && slot > 0);
+      const targetSlot =
+        requestedTopikSlot || (availableSlots.length === 1 ? availableSlots[0] : null);
+      if (!targetSlot) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "topik_slot wajib diisi untuk menentukan topik yang akan ditolak.",
+          available_slots: availableSlots,
         });
       }
 
@@ -1398,6 +1482,15 @@ exports.rejectSubmission = async (req, res) => {
           success: false,
           message: "Pengajuan ini sudah diproses dan tidak bisa ditolak lagi.",
           data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
+
+      const reviewerRow = reviewerRows.find((item) => Number(item.topik_slot) === Number(targetSlot)) || null;
+      if (!reviewerRow) {
+        await t.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Slot topik yang dipilih tidak termasuk dalam review Anda.",
         });
       }
 
@@ -1418,6 +1511,15 @@ exports.rejectSubmission = async (req, res) => {
         {
           status: "rejected",
           keterangan: String(keterangan || "").trim(),
+          topik_slot: Number(targetSlot),
+          topik_kode:
+            Number(targetSlot) === 1
+              ? submission.topik_1_kode
+              : Number(targetSlot) === 2
+              ? submission.topik_2_kode
+              : Number(targetSlot) === 3
+              ? submission.topik_3_kode
+              : lockedReviewerRow.topik_kode || null,
           tanggal_keputusan: new Date(),
         },
         { transaction: t }
