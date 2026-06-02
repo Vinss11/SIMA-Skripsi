@@ -2229,35 +2229,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       });
       await loadAllData();
 
-      const refreshedDetail = await fetchWithAuth(`/api/dosen/submissions/${selectedSubmissionId}`);
-      setSubmissionDetail(refreshedDetail || null);
-
-      if (refreshedDetail?.tipe_pengajuan === "topik_dosen") {
-        const nextPending =
-          (Array.isArray(refreshedDetail?.reviewer_slot_decisions)
-            ? refreshedDetail.reviewer_slot_decisions.find(
-                (item) => String(item?.reviewer_status || "").toLowerCase() === "pending"
-              )
-            : null) || null;
-
-        setSubmissionKeterangan("");
-
-        if (nextPending && refreshedDetail?.can_review) {
-          setSubmissionTopikFocusSlot(String(nextPending.slot || ""));
-          setSubmissionShowFinalSummary(false);
-          showSuccessToast(
-            isApprove
-              ? "Keputusan slot topik tersimpan. Lanjutkan ke slot berikutnya."
-              : "Penolakan slot topik tersimpan. Lanjutkan ke slot berikutnya."
-          );
-        } else {
-          setSubmissionShowFinalSummary(true);
-          showSuccessToast("Semua keputusan slot topik Anda sudah tersimpan.");
-        }
+      if (submissionDetail?.tipe_pengajuan === "topik_dosen") {
+        showSuccessToast(isApprove ? "Slot topik berhasil disetujui." : "Slot topik berhasil ditolak.");
       } else {
         showSuccessToast(isApprove ? "Pengajuan berhasil disetujui." : "Pengajuan berhasil ditolak.");
-        handleBackToSubmissionList();
       }
+      handleBackToSubmissionList();
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || "Gagal memproses keputusan pengajuan.");
@@ -4495,7 +4472,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             </>
                           ) : (
                             <>
-                              <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan Per Topik</h4>
+                              <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan Topik</h3>
                               <p className="mt-1 text-sm text-[#5d6c91]">
                                 Anda sedang dalam mode{" "}
                                 <span className={submissionDecision === "approve" ? "font-bold text-[#137748]" : "font-bold text-[#b73a3a]"}>
@@ -4514,7 +4491,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         : "bg-[#fff0f0] text-[#b73a3a]"
                                     }`}
                                   >
-                                    {submissionDecision === "approve" ? "Setujui" : "Tolak"}
+                                    {submissionDecision === "approve" ? "APPROVE" : "REJECT"}
                                   </span>
                                   <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
                                     Opsi lawan disembunyikan agar keputusan konsisten dengan tombol aksi awal.
@@ -6694,5 +6671,4 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 }
 
 export default DosenWorkspacePage;
-
 
