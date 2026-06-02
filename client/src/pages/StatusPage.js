@@ -113,6 +113,15 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
   return formatLabel(tahap || status || "-");
 }
 
+function shouldShowTopikReviewCountdown(row) {
+  const tahap = String(row?.tahap_approval || "").toLowerCase();
+  return (
+    row?.tipe_pengajuan === "topik_dosen" &&
+    row?.status === "pending" &&
+    (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")
+  );
+}
+
 function normalizeClusterFromTopikCode(code) {
   const value = String(code || "").trim().toUpperCase();
   if (!value) return null;
@@ -620,7 +629,7 @@ function StatusPage({
                 const clusterDisplay = getClusterDisplay(row);
                 const kodeTopikDisplay = getKodeTopikDisplay(row);
                 const reviewCountdown =
-                  row.tipe_pengajuan === "topik_dosen" && row.status === "pending"
+                  shouldShowTopikReviewCountdown(row)
                     ? getReviewCountdown(row.review_deadline_at, countdownNowDate)
                     : null;
 
@@ -763,7 +772,7 @@ function StatusPage({
                 </div>
               </div>
 
-              {selectedDetail.tipe_pengajuan === "topik_dosen" &&
+              {shouldShowTopikReviewCountdown(selectedDetail) &&
               selectedDetailReviewCountdown.has_deadline ? (
                 <div
                   className={`rounded-lg border px-3 py-2 text-sm ${

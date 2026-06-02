@@ -291,6 +291,20 @@ function getSubmissionStatusBadgeClass(status) {
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
 
+function getSubmissionGridStatus(row) {
+  if (!row) return "-";
+  return row.status_dosen || row.reviewer_display_status || row.reviewer_status || row.status || "-";
+}
+
+function shouldShowTopikReviewCountdown(row) {
+  const tahap = String(row?.tahap_approval || "").toLowerCase();
+  return (
+    row?.tipe_pengajuan === "topik_dosen" &&
+    row?.status === "pending" &&
+    (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")
+  );
+}
+
 function showSuccessToast(message) {
   Swal.fire({
     toast: true,
@@ -2223,18 +2237,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     setRowActionLoadingId(selectedSubmissionId);
     try {
+      const isTopikDosenSubmission = submissionDetail?.tipe_pengajuan === "topik_dosen";
       await fetchWithAuth(endpoint, {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      await loadAllData();
+      handleBackToSubmissionList();
 
-      if (submissionDetail?.tipe_pengajuan === "topik_dosen") {
+      if (isTopikDosenSubmission) {
         showSuccessToast(isApprove ? "Slot topik berhasil disetujui." : "Slot topik berhasil ditolak.");
       } else {
         showSuccessToast(isApprove ? "Pengajuan berhasil disetujui." : "Pengajuan berhasil ditolak.");
       }
-      handleBackToSubmissionList();
+      try {
+        await loadAllData();
+      } catch (refreshError) {
+        if (refreshError?.message !== "__SESSION_EXPIRED__") {
+          showErrorToast(refreshError.message || "Keputusan tersimpan, tetapi grid gagal direfresh.");
+        }
+      }
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || "Gagal memproses keputusan pengajuan.");
@@ -3655,7 +3676,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
                       {submissionNotificationItems.slice(0, 8).map((item) => {
                         const topikCount = getSubmissionTopikCount(item);
-                        const deadline = getReviewCountdown(item?.review_deadline_at, countdownNowDate);
+                        const deadline = shouldShowTopikReviewCountdown(item)
+                          ? getReviewCountdown(item?.review_deadline_at, countdownNowDate)
+                          : null;
                         return (
                           <button
                             key={`notif-submission-${item.id}`}
@@ -3673,7 +3696,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               {topikCount > 0 ? `${topikCount} topik` : formatLabel(item?.tipe_pengajuan)} •{" "}
                               {formatDateTime(item?.diajukan_pada || item?.diperbarui_pada)}
                             </p>
-                            {deadline.has_deadline ? (
+                            {deadline?.has_deadline ? (
                               <p
                                 className={`mt-1 text-[11px] font-semibold ${
                                   deadline.is_expired ? "text-[#b73a3a]" : "text-[#31559f]"
@@ -4114,8 +4137,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   const nomorUrut = submissionRangeStart + index;
                                   const topikCount = getSubmissionTopikCount(row);
                                   const hasSameDosenBadge = hasSameDosenTopikBadge(row);
+                                  const gridStatus = getSubmissionGridStatus(row);
                                   const reviewCountdown =
-                                    row.tipe_pengajuan === "topik_dosen" && row.status === "pending"
+                                    shouldShowTopikReviewCountdown(row)
                                       ? getReviewCountdown(row.review_deadline_at, countdownNowDate)
                                       : null;
 
@@ -4148,10 +4172,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       <td className="px-3 py-2 whitespace-nowrap align-top">
                                         <span
                                           className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                            row.status
+                                            gridStatus
                                           )}`}
                                         >
-                                          {formatLabel(row.status)}
+                                          {formatLabel(gridStatus)}
                                         </span>
                                       </td>
                                       <td className="px-3 py-2 align-top break-words">
@@ -4328,7 +4352,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       Semua topik berada pada dosen yang sama.
                                     </p>
                                   ) : null}
-                                  {submissionReviewCountdown.has_deadline ? (
+                                  {shouldShowTopikReviewCountdown(submissionDetail) &&
+                                  submissionReviewCountdown.has_deadline ? (
                                     <p
                                       className={`mt-1 text-xs font-semibold ${
                                         submissionReviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#355da8]"
@@ -6671,4 +6696,3 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 }
 
 export default DosenWorkspacePage;
-

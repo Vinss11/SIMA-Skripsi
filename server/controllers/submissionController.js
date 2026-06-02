@@ -58,15 +58,19 @@ function buildTopikList(submission) {
 }
 
 function getApprovedTopik(submission, topikList) {
-  if (submission.status !== "approved" || topikList.length === 0) {
+  if (topikList.length === 0) {
     return null;
   }
 
   if (isTopikParallelSubmission(submission)) {
     const parallelState = evaluateTopikParallelState(submission);
-    if (parallelState.approved_topik?.slot) {
+    if (parallelState.approved_topik?.slot && (submission.status !== "pending" || parallelState.can_finalize)) {
       return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
     }
+  }
+
+  if (submission.status !== "approved") {
+    return null;
   }
 
   const rejectedCount = (submission.riwayat || []).filter((item) => item.status === "rejected").length;
@@ -88,6 +92,15 @@ function getTopikDosenApprovalStage(submission) {
   }
 
   const parallelState = evaluateTopikParallelState(submission);
+  const hasKetuaKlasterDecided = (submission.riwayat || []).some(
+    (item) =>
+      (item.status === "approved" || item.status === "rejected") &&
+      String(item?.tipe_approval || "calon_pembimbing").toLowerCase() === "koordinator"
+  );
+  if (parallelState.can_finalize && parallelState.approved_topik && !hasKetuaKlasterDecided) {
+    return "pending_ketua_klaster";
+  }
+
   if (parallelState.deadline_passed && parallelState.pending_count > 0) {
     return "deadline_terlewati";
   }
@@ -211,7 +224,18 @@ exports.getMySubmissions = async (req, res) => {
         {
           model: RiwayatPersetujuan,
           as: "riwayat",
-          attributes: ["id", "dosen_id", "status", "tipe_approval", "keterangan", "tanggal_keputusan", "createdAt", "updatedAt"],
+          attributes: [
+            "id",
+            "dosen_id",
+            "status",
+            "tipe_approval",
+            "topik_slot",
+            "topik_kode",
+            "keterangan",
+            "tanggal_keputusan",
+            "createdAt",
+            "updatedAt",
+          ],
           required: false,
         },
       ],
@@ -449,6 +473,7 @@ exports.getSubmissionById = async (req, res) => {
     let hasilPengajuan = {
       status_pengajuan: submission.status,
     };
+    let approvedTopikForResponse = null;
 
     if (submission.status === "approved") {
       hasilPengajuan.alasan_persetujuan =
@@ -478,6 +503,7 @@ exports.getSubmissionById = async (req, res) => {
         };
       });
       const approvedTopik = getApprovedTopik(submission, topikList);
+      approvedTopikForResponse = approvedTopik;
       const dosenApproved = approvedTopik ? dosenById[Number(approvedTopik.dosen_id)] || null : null;
 
       detailPengajuan = {
@@ -542,6 +568,14 @@ exports.getSubmissionById = async (req, res) => {
       submission.status === "pending" &&
       Array.isArray(reviewerSlotDecisions) &&
       reviewerSlotDecisions.some((item) => item.reviewer_status === "pending");
+    const topikApprovalStage =
+      submission.tipe_pengajuan === "topik_dosen" ? getTopikDosenApprovalStage(submission) : null;
+    const canReviewKetuaClusterTopik =
+      submission.tipe_pengajuan === "topik_dosen" &&
+      submission.status === "pending" &&
+      topikApprovalStage === "pending_ketua_klaster" &&
+      accessorDosenId &&
+      Number(submission.dosen_saat_ini) === Number(accessorDosenId);
     const canReviewNonTopik =
       submission.tipe_pengajuan !== "topik_dosen" &&
       submission.status === "pending" &&
@@ -552,16 +586,29 @@ exports.getSubmissionById = async (req, res) => {
       jenis_jalur: submission.jenis_jalur,
       tipe_pengajuan: submission.tipe_pengajuan,
       status: submission.status,
-      tahap_approval: getTopikDosenApprovalStage(submission),
+      tahap_approval: topikApprovalStage || getTopikDosenApprovalStage(submission),
       diajukan_pada: submission.createdAt,
       diperbarui_pada: submission.updatedAt,
       review_deadline_at:
         submission.tipe_pengajuan === "topik_dosen" ? getTopikParallelReviewDeadline(submission) : null,
-      reviewer_status: currentReviewerDecision?.reviewer_status || null,
-      reviewer_note: currentReviewerDecision?.reviewer_note || null,
-      can_review: Boolean(canReviewTopikParallel || canReviewNonTopik),
+      reviewer_status: canReviewKetuaClusterTopik ? "pending" : currentReviewerDecision?.reviewer_status || null,
+      reviewer_note: canReviewKetuaClusterTopik
+        ? "Menunggu keputusan ketua cluster."
+        : currentReviewerDecision?.reviewer_note || null,
+      review_context: canReviewKetuaClusterTopik ? "ketua_klaster" : "calon_pembimbing",
+      can_review: Boolean(canReviewTopikParallel || canReviewKetuaClusterTopik || canReviewNonTopik),
       reviewer_slot_decisions:
-        submission.tipe_pengajuan === "topik_dosen" && Array.isArray(reviewerSlotDecisions)
+        canReviewKetuaClusterTopik && approvedTopikForResponse
+          ? [
+              {
+                slot: approvedTopikForResponse.slot,
+                kode: approvedTopikForResponse.kode,
+                reviewer_status: "pending",
+                reviewer_note: "Menunggu keputusan ketua cluster.",
+                reviewer_decided_at: null,
+              },
+            ]
+          : submission.tipe_pengajuan === "topik_dosen" && Array.isArray(reviewerSlotDecisions)
           ? reviewerSlotDecisions.map((item) => ({
               slot: item.slot,
               kode: item.kode,

@@ -17,6 +17,11 @@ const {
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
 const { parseInputDateForJakarta } = require("../services/periodePenjaluranService");
+const {
+  buildTopikListFromSubmission,
+  evaluateTopikParallelState,
+  isTopikParallelSubmission,
+} = require("../services/topikParallelReviewService");
 
 const RESEARCH_CLUSTER_CODES = ["ITSC", "SIRKEL", "SIBER", "MVK"];
 const RESEARCH_CLUSTER_LABELS = {
@@ -216,12 +221,18 @@ function getRiwayatApprovalType(item) {
 }
 
 function getTopikWaitingKetuaKlaster(submission) {
-  const topikList = [
-    submission.topik_1_kode ? { slot: 1, kode: submission.topik_1_kode } : null,
-    submission.topik_2_kode ? { slot: 2, kode: submission.topik_2_kode } : null,
-    submission.topik_3_kode ? { slot: 3, kode: submission.topik_3_kode } : null,
-  ].filter(Boolean);
+  const topikList = buildTopikListFromSubmission(submission).map((item) => ({
+    slot: item.slot,
+    kode: item.kode,
+  }));
   if (topikList.length === 0) return null;
+
+  if (isTopikParallelSubmission(submission)) {
+    const parallelState = evaluateTopikParallelState(submission);
+    if (parallelState.approved_topik?.slot) {
+      return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
+    }
+  }
 
   const rejectedCalonCount = (submission.riwayat || []).filter(
     (item) => item.status === "rejected" && getRiwayatApprovalType(item) === "calon_pembimbing"
@@ -326,7 +337,18 @@ async function routeWaitingSubmissionsToKetuaCluster({
       {
         model: RiwayatPersetujuan,
         as: "riwayat",
-        attributes: ["id", "status", "tipe_approval", "dosen_id", "createdAt"],
+        attributes: [
+          "id",
+          "status",
+          "tipe_approval",
+          "dosen_id",
+          "topik_slot",
+          "topik_kode",
+          "keterangan",
+          "tanggal_keputusan",
+          "createdAt",
+          "updatedAt",
+        ],
         required: false,
       },
     ],

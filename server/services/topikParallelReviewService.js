@@ -1,10 +1,15 @@
 "use strict";
 
+const { Op } = require("sequelize");
 const {
   Pengajuan,
   Mahasiswa,
   Topik,
   Dosen,
+  Klaster,
+  KlasterKetuaPeriode,
+  PendaftaranPenjaluran,
+  PeriodePenjaluran,
   RiwayatPersetujuan,
   sequelize,
 } = require("../models");
@@ -45,6 +50,33 @@ function normalizeApprovalType(value) {
     .toLowerCase();
 }
 
+function normalizeJenisJalurPenelitian(value) {
+  const raw = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!raw) return "";
+  if (raw === "pengabdian kepada masyarakat" || raw === "pengabdian masyarakat") return "pengabdian";
+  if (raw === "perintisan bisnis") return "perintisan_bisnis";
+  return raw.replace(/\s+/g, "_");
+}
+
+function normalizeTopikClusterCode(clusterValue) {
+  const value = String(clusterValue || "")
+    .trim()
+    .toUpperCase();
+  if (!value) return null;
+  if (value === "SIRKEL") return "SIRKEL";
+  if (value === "SIBER") return "SIBER";
+  if (value === "ITSC") return "ITSC";
+  if (value === "MVK") return "MVK";
+  if (value.includes("SISTEM INFORMASI") || value.includes("REKAYASA PERANGKAT LUNAK")) return "SIRKEL";
+  if (value.includes("SIBER")) return "SIBER";
+  if (value.includes("INTELLIGENT") || value.includes("CERDAS") || value.includes("ITSC")) return "ITSC";
+  if (value.includes("MULTIMEDIA") || value.includes("VISI KOMPUTER") || value.includes("MVK")) return "MVK";
+  if (value.includes("MEDIS") || value.includes("SAINS DATA") || value.includes("SDATA")) return "ITSC";
+  return value;
+}
+
 function toDecisionDate(value, fallback = null) {
   if (!value) return fallback;
   const dateValue = new Date(value);
@@ -63,6 +95,20 @@ function buildSubmissionLock(transaction) {
     level: transaction.LOCK.UPDATE,
     of: Pengajuan,
   };
+}
+
+function getSubmissionRiwayatRows(submission) {
+  if (Array.isArray(submission?.riwayat)) return submission.riwayat;
+  if (typeof submission?.getDataValue === "function") {
+    const value = submission.getDataValue("riwayat");
+    if (Array.isArray(value)) return value;
+  }
+  if (typeof submission?.get === "function") {
+    const value = submission.get("riwayat");
+    if (Array.isArray(value)) return value;
+  }
+  if (Array.isArray(submission?.dataValues?.riwayat)) return submission.dataValues.riwayat;
+  return [];
 }
 
 async function loadSubmissionWithRiwayat(submissionId, options = {}) {
@@ -85,6 +131,7 @@ async function loadSubmissionWithRiwayat(submissionId, options = {}) {
   });
 
   submission.setDataValue("riwayat", riwayat);
+  submission.riwayat = riwayat;
   return submission;
 }
 
@@ -130,6 +177,142 @@ function isTopikParallelSubmission(submission) {
   return String(submission?.tipe_pengajuan || "").trim().toLowerCase() === "topik_dosen";
 }
 
+async function isSubmissionPenelitianTrack(submission, transaction) {
+  if (!submission?.mahasiswa_id) {
+    return isTopikParallelSubmission(submission);
+  }
+
+  const latestPendaftaran = await PendaftaranPenjaluran.findOne({
+    where: {
+      mahasiswa_id: submission.mahasiswa_id,
+      status: { [Op.in]: ["approved", "processed", "submitted"] },
+    },
+    attributes: ["jalur", "jenis_jalur_diambil", "penjaluran_baru", "penjaluran_sebelumnya"],
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+
+  if (!latestPendaftaran) {
+    return isTopikParallelSubmission(submission);
+  }
+
+  const jalur = String(latestPendaftaran.jalur || "").toLowerCase();
+  const jenisRaw =
+    jalur === "alih"
+      ? latestPendaftaran.penjaluran_baru
+      : latestPendaftaran.jenis_jalur_diambil ||
+        latestPendaftaran.penjaluran_baru ||
+        latestPendaftaran.penjaluran_sebelumnya;
+  const jenis = normalizeJenisJalurPenelitian(jenisRaw);
+
+  if (!jenis) {
+    return isTopikParallelSubmission(submission);
+  }
+
+  return jenis === "penelitian";
+}
+
+async function resolveKetuaKlasterByTopikKode(topikKode, transaction) {
+  if (!topikKode) {
+    return {
+      ok: false,
+      reason: "TOPIK_NOT_FOUND",
+      message: "Topik yang disetujui tidak ditemukan.",
+    };
+  }
+
+  const topik = await Topik.findOne({
+    where: { kode: topikKode },
+    attributes: ["kode", "cluster"],
+    transaction,
+  });
+  if (!topik) {
+    return {
+      ok: false,
+      reason: "TOPIK_NOT_FOUND",
+      message: `Topik ${topikKode} tidak ditemukan.`,
+    };
+  }
+
+  const kodePrefix = String(topik.kode || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[0-9].*$/, "");
+  const klasterKode = normalizeTopikClusterCode(topik.cluster) || normalizeTopikClusterCode(kodePrefix);
+  if (!klasterKode) {
+    return {
+      ok: false,
+      reason: "CLUSTER_NOT_FOUND",
+      message: `Klaster topik ${topikKode} tidak valid atau belum diisi.`,
+    };
+  }
+
+  const klaster = await Klaster.findOne({
+    where: { kode: klasterKode },
+    attributes: ["id", "kode", "nama"],
+    transaction,
+  });
+  if (!klaster) {
+    return {
+      ok: false,
+      reason: "CLUSTER_NOT_FOUND",
+      message: `Master klaster ${klasterKode} belum tersedia.`,
+    };
+  }
+
+  const periodeAktif = await PeriodePenjaluran.findOne({
+    where: { is_active: true },
+    attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+    order: [["updatedAt", "DESC"]],
+    transaction,
+  });
+  if (!periodeAktif) {
+    return {
+      ok: false,
+      reason: "NO_ACTIVE_PERIODE",
+      message: "Belum ada periode penjaluran aktif. Sekretaris prodi harus membuka periode terlebih dahulu.",
+    };
+  }
+
+  const ketuaKlaster = await KlasterKetuaPeriode.findOne({
+    where: {
+      klaster_id: klaster.id,
+      periode_penjaluran_id: periodeAktif.id,
+    },
+    attributes: ["id", "dosen_id", "klaster_id", "periode_penjaluran_id"],
+    include: [
+      {
+        model: Dosen,
+        as: "ketuaDosen",
+        attributes: ["id", "nik", "nama", "email"],
+        required: true,
+      },
+    ],
+    transaction,
+  });
+
+  if (!ketuaKlaster) {
+    return {
+      ok: false,
+      reason: "KETUA_NOT_SET",
+      message: `Ketua cluster untuk ${klaster.kode} pada periode ${periodeAktif.label_periode} belum ditetapkan.`,
+      detail: {
+        klaster: klaster.kode,
+        periode: periodeAktif.label_periode,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    reason: "OK",
+    topik,
+    klaster,
+    periode: periodeAktif,
+    ketuaKlaster,
+  };
+}
+
 function getCalonPembimbingDecisionLookup(riwayat = []) {
   const bySlot = new Map();
   const byDosenFallback = new Map();
@@ -170,12 +353,21 @@ function getCalonPembimbingDecisionLookup(riwayat = []) {
   };
 }
 
+function hasKoordinatorDecision(submission) {
+  const riwayat = getSubmissionRiwayatRows(submission);
+  return riwayat.some(
+    (item) =>
+      normalizeApprovalType(item?.tipe_approval) === "koordinator" &&
+      ["approved", "rejected"].includes(normalizeRiwayatStatus(item?.status))
+  );
+}
+
 function evaluateTopikParallelState(submission, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const topikList = buildTopikListFromSubmission(submission);
   const deadlineAt = getTopikParallelReviewDeadline(submission);
   const deadlinePassed = now.getTime() >= deadlineAt.getTime();
-  const riwayat = Array.isArray(submission?.riwayat) ? submission.riwayat : [];
+  const riwayat = getSubmissionRiwayatRows(submission);
   const decisionLookup = getCalonPembimbingDecisionLookup(riwayat);
 
   const slotDecisions = topikList.map((topik) => {
@@ -293,6 +485,70 @@ async function finalizeApprovedTopikSubmission(submission, parallelState, transa
   const winner = parallelState.approved_topik;
   if (!winner?.kode || !winner?.dosen_id) {
     return { success: false, reason: "TOPIK_WINNER_NOT_FOUND" };
+  }
+
+  const requiresKetuaCluster = await isSubmissionPenelitianTrack(submission, transaction);
+  if (requiresKetuaCluster) {
+    const ketuaResolution = await resolveKetuaKlasterByTopikKode(winner.kode, transaction);
+    if (!ketuaResolution.ok) {
+      await submission.update(
+        {
+          status: "menunggu_set_ketua_cluster",
+          alasan_persetujuan:
+            submission.alasan_persetujuan ||
+            `Disetujui dosen pembimbing untuk topik slot ${winner.slot}. Menunggu penetapan ketua cluster.`,
+          alasan_penolakan: null,
+          dosen_saat_ini: null,
+        },
+        { transaction }
+      );
+
+      return {
+        success: true,
+        final_status: "menunggu_set_ketua_cluster",
+        winner,
+        routed_to_ketua_cluster: false,
+        waiting_ketua_cluster: true,
+        ketua_resolution: ketuaResolution,
+      };
+    }
+
+    await submission.update(
+      {
+        status: "pending",
+        alasan_persetujuan:
+          submission.alasan_persetujuan ||
+          `Disetujui dosen pembimbing untuk topik slot ${winner.slot}. Menunggu review ketua cluster ${ketuaResolution.klaster.kode}.`,
+        alasan_penolakan: null,
+        dosen_saat_ini: ketuaResolution.ketuaKlaster.dosen_id,
+      },
+      { transaction }
+    );
+
+    const releaseCodes = buildTopikListFromSubmission(submission)
+      .map((item) => item.kode)
+      .filter((kode) => kode && kode !== winner.kode);
+    if (releaseCodes.length > 0) {
+      await Topik.update(
+        { status: "available" },
+        {
+          where: {
+            kode: releaseCodes,
+            status: "reserved",
+          },
+          transaction,
+        }
+      );
+    }
+
+    return {
+      success: true,
+      final_status: "pending",
+      winner,
+      routed_to_ketua_cluster: true,
+      waiting_ketua_cluster: false,
+      ketua_resolution: ketuaResolution,
+    };
   }
 
   await submission.update(
@@ -452,6 +708,27 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
 
     const parallelState = evaluateTopikParallelState(submission);
 
+    const alreadyWaitingKetuaCluster =
+      submission.status === "pending" &&
+      parallelState.can_finalize &&
+      parallelState.approved_topik &&
+      submission.dosen_saat_ini &&
+      !hasKoordinatorDecision(submission);
+    if (alreadyWaitingKetuaCluster) {
+      if (!externalTransaction) await transaction.commit();
+      return {
+        success: true,
+        changed: ensureResult.created > 0,
+        finalized: false,
+        final_status: submission.status,
+        winner: parallelState.approved_topik,
+        routed_to_ketua_cluster: true,
+        waiting_ketua_cluster: false,
+        submission,
+        parallel_state: parallelState,
+      };
+    }
+
     if (submission.status !== "pending" || !parallelState.can_finalize) {
       if (!externalTransaction) await transaction.commit();
       return {
@@ -479,6 +756,9 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
       finalized: true,
       final_status: finalizationResult.final_status,
       winner: finalizationResult.winner || null,
+      routed_to_ketua_cluster: Boolean(finalizationResult.routed_to_ketua_cluster),
+      waiting_ketua_cluster: Boolean(finalizationResult.waiting_ketua_cluster),
+      ketua_resolution: finalizationResult.ketua_resolution || null,
       submission: refreshedSubmission,
       parallel_state: evaluateTopikParallelState(refreshedSubmission),
     };

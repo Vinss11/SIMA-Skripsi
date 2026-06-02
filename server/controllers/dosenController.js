@@ -89,15 +89,19 @@ function buildTopikList(submission) {
 }
 
 function getApprovedTopik(submission, topikList) {
-  if (submission.status !== "approved" || topikList.length === 0) {
+  if (topikList.length === 0) {
     return null;
   }
 
   if (isTopikParallelSubmission(submission)) {
     const parallelState = evaluateTopikParallelState(submission);
-    if (parallelState.approved_topik?.slot) {
+    if (parallelState.approved_topik?.slot && (submission.status !== "pending" || parallelState.can_finalize)) {
       return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
     }
+  }
+
+  if (submission.status !== "approved") {
+    return null;
   }
 
   const rejectedCount = (submission.riwayat || []).filter((item) => item.status === "rejected").length;
@@ -186,6 +190,15 @@ function getTopikDosenApprovalStage(submission) {
   }
 
   const parallelState = evaluateTopikParallelState(submission);
+  const hasKetuaKlasterDecided = (submission.riwayat || []).some(
+    (item) =>
+      (item.status === "approved" || item.status === "rejected") &&
+      getRiwayatApprovalType(item) === "koordinator"
+  );
+  if (parallelState.can_finalize && parallelState.approved_topik && !hasKetuaKlasterDecided) {
+    return "pending_ketua_klaster";
+  }
+
   if (parallelState.deadline_passed && parallelState.pending_count > 0) {
     return "deadline_terlewati";
   }
@@ -229,11 +242,49 @@ function getTopikWaitingKetuaKlaster(submission) {
   const topikList = buildTopikList(submission);
   if (topikList.length === 0) return null;
 
+  if (isTopikParallelSubmission(submission)) {
+    const parallelState = evaluateTopikParallelState(submission);
+    if (parallelState.approved_topik?.slot) {
+      return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
+    }
+  }
+
   const rejectedCalonCount = (submission.riwayat || []).filter(
     (item) => item.status === "rejected" && getRiwayatApprovalType(item) === "calon_pembimbing"
   ).length;
   const approvedSlot = Math.min(rejectedCalonCount + 1, topikList.length);
   return topikList.find((item) => item.slot === approvedSlot) || null;
+}
+
+async function attachSubmissionRiwayat(submission, transaction) {
+  if (!submission?.id) return [];
+  const riwayat = await RiwayatPersetujuan.findAll({
+    where: { pengajuan_id: submission.id },
+    attributes: [
+      "id",
+      "status",
+      "tipe_approval",
+      "dosen_id",
+      "topik_slot",
+      "topik_kode",
+      "keterangan",
+      "tanggal_keputusan",
+      "createdAt",
+      "updatedAt",
+    ],
+    transaction,
+  });
+  submission.setDataValue("riwayat", riwayat);
+  submission.riwayat = riwayat;
+  return riwayat;
+}
+
+function isKetuaClusterReviewTurnForDosen(submission, dosenId) {
+  if (!isTopikParallelSubmission(submission) || submission.status !== "pending") return false;
+  return (
+    getTopikDosenApprovalStage(submission) === "pending_ketua_klaster" &&
+    Number(submission.dosen_saat_ini) === Number(dosenId)
+  );
 }
 
 function normalizeTopikClusterCode(clusterValue) {
@@ -690,7 +741,12 @@ exports.getDosenSubmissions = async (req, res) => {
 
     const topikWhere = {
       tipe_pengajuan: "topik_dosen",
-      [Op.or]: [{ dosen_pilihan_1: dosen_id }, { dosen_pilihan_2: dosen_id }, { dosen_pilihan_3: dosen_id }],
+      [Op.or]: [
+        { dosen_pilihan_1: dosen_id },
+        { dosen_pilihan_2: dosen_id },
+        { dosen_pilihan_3: dosen_id },
+        { dosen_saat_ini: dosen_id },
+      ],
     };
     const judulMandiriWhere = isSekretarisRole
       ? {
@@ -773,13 +829,28 @@ exports.getDosenSubmissions = async (req, res) => {
           .sort((a, b) => a.slot - b.slot);
         const pendingReviewerDecision = reviewerSlotDecisions.find((item) => item.reviewer_status === "pending") || null;
         const reviewerDecision = pendingReviewerDecision || reviewerSlotDecisions[0] || null;
+        const isKetuaClusterReviewer =
+          submission.status === "pending" &&
+          approvalStage === "pending_ketua_klaster" &&
+          Number(submission.dosen_saat_ini) === Number(dosen_id);
+        const completedReviewerStatus = (() => {
+          if (reviewerSlotDecisions.length === 0) return null;
+          if (reviewerSlotDecisions.some((item) => item.reviewer_status === "pending")) return "pending";
+          if (reviewerSlotDecisions.some((item) => item.reviewer_status === "approved")) return "approved";
+          if (reviewerSlotDecisions.every((item) => ["rejected", "expired"].includes(item.reviewer_status))) {
+            return "rejected";
+          }
+          return reviewerSlotDecisions[0]?.reviewer_status || null;
+        })();
         const focusedTopikByReviewerSlot =
           reviewerDecision?.slot != null
             ? topikList.find((item) => Number(item.slot) === Number(reviewerDecision.slot)) || null
             : null;
         let focusedTopik = null;
 
-        if (submission.status === "approved") {
+        if (isKetuaClusterReviewer) {
+          focusedTopik = approvedTopik;
+        } else if (submission.status === "approved") {
           focusedTopik = approvedTopik;
         } else {
           focusedTopik = focusedTopikByReviewerSlot || getTopikByReviewerDosen(submission, dosen_id) || topikList[0] || null;
@@ -810,10 +881,13 @@ exports.getDosenSubmissions = async (req, res) => {
           : null;
         base.review_deadline_at = getTopikParallelReviewDeadline(submission);
         base.reviewer_status = reviewerDecision?.reviewer_status || null;
+        base.status_dosen = isKetuaClusterReviewer ? "pending" : completedReviewerStatus || reviewerDecision?.reviewer_status || null;
+        base.review_context = isKetuaClusterReviewer ? "ketua_klaster" : "calon_pembimbing";
         base.reviewer_note = reviewerDecision?.reviewer_note || null;
         base.can_review =
-          submission.status === "pending" &&
-          reviewerSlotDecisions.some((item) => item.reviewer_status === "pending");
+          isKetuaClusterReviewer ||
+          (submission.status === "pending" &&
+            reviewerSlotDecisions.some((item) => item.reviewer_status === "pending"));
         base.reviewer_slot_decisions = reviewerSlotDecisions.map((item) => ({
           slot: item.slot,
           kode: item.kode,
@@ -887,7 +961,13 @@ exports.approveSubmission = async (req, res) => {
       });
     }
 
+    let isKetuaClusterReviewTurn = false;
     if (isTopikParallelSubmission(submission)) {
+      await attachSubmissionRiwayat(submission, t);
+      isKetuaClusterReviewTurn = isKetuaClusterReviewTurnForDosen(submission, dosen_id);
+    }
+
+    if (isTopikParallelSubmission(submission) && !isKetuaClusterReviewTurn) {
       await ensureParallelReviewerRows(submission, t);
 
       const reviewerRows = await RiwayatPersetujuan.findAll({
@@ -985,7 +1065,13 @@ exports.approveSubmission = async (req, res) => {
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
       let message = "Approve tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
-      if (finalStatus === "approved") {
+      if (finalizationResult?.routed_to_ketua_cluster) {
+        message = `Approve tersimpan. Pengajuan diteruskan ke ketua cluster ${
+          finalizationResult?.ketua_resolution?.klaster?.kode || ""
+        }.`.trim();
+      } else if (finalizationResult?.waiting_ketua_cluster || finalStatus === "menunggu_set_ketua_cluster") {
+        message = "Approve tersimpan. Pengajuan menunggu penetapan ketua cluster oleh sekretaris prodi.";
+      } else if (finalStatus === "approved") {
         if (Number(finalWinner?.dosen_id) === Number(dosen_id)) {
           message = "Pengajuan final disetujui. Anda terpilih sebagai dosen pembimbing skripsi.";
         } else {
@@ -1026,7 +1112,18 @@ exports.approveSubmission = async (req, res) => {
       }),
       RiwayatPersetujuan.findAll({
         where: { pengajuan_id: submission.id },
-        attributes: ["id", "status", "tipe_approval", "tanggal_keputusan", "createdAt"],
+        attributes: [
+          "id",
+          "dosen_id",
+          "status",
+          "tipe_approval",
+          "topik_slot",
+          "topik_kode",
+          "keterangan",
+          "tanggal_keputusan",
+          "createdAt",
+          "updatedAt",
+        ],
         transaction: t,
       }),
     ]);
@@ -1437,7 +1534,13 @@ exports.rejectSubmission = async (req, res) => {
       });
     }
 
+    let isKetuaClusterReviewTurn = false;
     if (isTopikParallelSubmission(submission)) {
+      await attachSubmissionRiwayat(submission, t);
+      isKetuaClusterReviewTurn = isKetuaClusterReviewTurnForDosen(submission, dosen_id);
+    }
+
+    if (isTopikParallelSubmission(submission) && !isKetuaClusterReviewTurn) {
       await ensureParallelReviewerRows(submission, t);
 
       const reviewerRows = await RiwayatPersetujuan.findAll({
@@ -1534,7 +1637,13 @@ exports.rejectSubmission = async (req, res) => {
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
       let message = "Penolakan tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
-      if (finalStatus === "approved") {
+      if (finalizationResult?.routed_to_ketua_cluster) {
+        message = `Penolakan tersimpan. Pengajuan diteruskan ke ketua cluster ${
+          finalizationResult?.ketua_resolution?.klaster?.kode || ""
+        } berdasarkan topik yang disetujui dosen lain.`.trim();
+      } else if (finalizationResult?.waiting_ketua_cluster || finalStatus === "menunggu_set_ketua_cluster") {
+        message = "Penolakan tersimpan. Pengajuan menunggu penetapan ketua cluster oleh sekretaris prodi.";
+      } else if (finalStatus === "approved") {
         message = "Penolakan tersimpan. Pengajuan final tetap disetujui berdasarkan keputusan dosen lain.";
       } else if (finalStatus === "rejected") {
         message = "Pengajuan final ditolak karena tidak ada persetujuan hingga proses review selesai.";
@@ -1570,7 +1679,18 @@ exports.rejectSubmission = async (req, res) => {
       }),
       RiwayatPersetujuan.findAll({
         where: { pengajuan_id: submission.id },
-        attributes: ["id", "status", "tipe_approval", "tanggal_keputusan", "createdAt"],
+        attributes: [
+          "id",
+          "dosen_id",
+          "status",
+          "tipe_approval",
+          "topik_slot",
+          "topik_kode",
+          "keterangan",
+          "tanggal_keputusan",
+          "createdAt",
+          "updatedAt",
+        ],
         transaction: t,
       }),
     ]);
