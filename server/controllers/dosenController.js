@@ -3086,6 +3086,109 @@ exports.rejectPamitDPA = async (req, res) => {
 
 // ========== KUOTA MANAGEMENT ENDPOINTS ==========
 
+async function getDosenPenjaluranResponsibilities(dosenId) {
+  const activePeriode = await PeriodePenjaluran.findOne({
+    where: {
+      [Op.or]: [{ status: "active" }, { is_active: true }],
+    },
+    attributes: [
+      "id",
+      "label_periode",
+      "tahun_akademik",
+      "semester",
+      "status",
+      "is_active",
+      "pengawas_magang_dosen_id",
+      "pengawas_pengabdian_dosen_id",
+      "pengawas_perintisan_bisnis_dosen_id",
+    ],
+    order: [["updatedAt", "DESC"]],
+  });
+
+  if (!activePeriode) {
+    return {
+      active_periode: null,
+      items: [],
+    };
+  }
+
+  const items = [];
+  const ketuaRows = await KlasterKetuaPeriode.findAll({
+    where: {
+      periode_penjaluran_id: activePeriode.id,
+      dosen_id: dosenId,
+    },
+    include: [
+      {
+        model: Klaster,
+        as: "klaster",
+        attributes: ["id", "kode", "nama"],
+        required: false,
+      },
+    ],
+    order: [[{ model: Klaster, as: "klaster" }, "kode", "ASC"]],
+  });
+
+  for (const row of ketuaRows) {
+    const kode = row.klaster?.kode || "-";
+    items.push({
+      type: "ketua_klaster",
+      key: `ketua_klaster_${kode}`,
+      label: `Ketua Cluster ${kode}`,
+      klaster: row.klaster
+        ? {
+            id: row.klaster.id,
+            kode: row.klaster.kode,
+            nama: row.klaster.nama,
+          }
+        : null,
+    });
+  }
+
+  const jalurResponsibilities = [
+    {
+      field: "pengawas_magang_dosen_id",
+      type: "pengawas_magang",
+      key: "pengawas_magang",
+      label: "Dosen Pengawas Magang",
+    },
+    {
+      field: "pengawas_pengabdian_dosen_id",
+      type: "pengawas_pengabdian",
+      key: "pengawas_pengabdian",
+      label: "Dosen Pengampu Pengabdian Masyarakat",
+    },
+    {
+      field: "pengawas_perintisan_bisnis_dosen_id",
+      type: "pengawas_perintisan_bisnis",
+      key: "pengawas_perintisan_bisnis",
+      label: "Dosen Pengampu Perintisan Bisnis",
+    },
+  ];
+
+  for (const item of jalurResponsibilities) {
+    if (Number(activePeriode?.[item.field]) === Number(dosenId)) {
+      items.push({
+        type: item.type,
+        key: item.key,
+        label: item.label,
+      });
+    }
+  }
+
+  return {
+    active_periode: {
+      id: activePeriode.id,
+      label_periode: activePeriode.label_periode || null,
+      tahun_akademik: activePeriode.tahun_akademik || null,
+      semester: activePeriode.semester || null,
+      status: activePeriode.status || (activePeriode.is_active ? "active" : "closed"),
+      is_active: activePeriode.status === "active" || activePeriode.is_active === true,
+    },
+    items,
+  };
+}
+
 // GET /api/dosen/kuota - Dosen cek kuota sendiri
 exports.getKuotaSendiri = async (req, res) => {
   try {
@@ -3118,6 +3221,7 @@ exports.getKuotaSendiri = async (req, res) => {
     }
 
     const kuotaInfo = await dosen.getKuotaInfo();
+    const tanggungJawabPenjaluran = await getDosenPenjaluranResponsibilities(dosen_id);
 
     // Dapatkan list mahasiswa bimbingan
     const mahasiswas = await Mahasiswa.findAll({
@@ -3140,8 +3244,10 @@ exports.getKuotaSendiri = async (req, res) => {
                 nama: item.nama,
               }))
             : [],
+          tanggung_jawab_penjaluran: tanggungJawabPenjaluran.items,
         },
         kuota: kuotaInfo,
+        tanggung_jawab_penjaluran: tanggungJawabPenjaluran,
         mahasiswa_bimbingan: mahasiswas,
       },
     });

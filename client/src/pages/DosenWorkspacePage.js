@@ -274,6 +274,23 @@ function formatPeriodeMasterDosenInputLabel(dosen) {
   return "";
 }
 
+function buildPeriodeMasterFormFromSource(source) {
+  const next = { ...PERIODE_MASTER_INITIAL };
+  for (const item of PERIODE_MASTER_ALL_FIELDS) {
+    next[item.key] = source?.[item.key] ? String(source[item.key]) : "";
+  }
+  return next;
+}
+
+function buildPeriodeMasterSearchFromSource(source) {
+  const next = buildPeriodeMasterSearchInitial();
+  for (const item of PERIODE_MASTER_ALL_FIELDS) {
+    const associationKey = item.key.replace(/_id$/, "");
+    next[item.key] = formatPeriodeMasterDosenInputLabel(source?.[associationKey]);
+  }
+  return next;
+}
+
 function escapeHtml(value) {
   return String(value ?? "-")
     .replace(/&/g, "&amp;")
@@ -281,6 +298,175 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function getMagangPayload(row) {
+  const payload = row?.payload;
+  return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+}
+
+function formatMagangPayloadValue(value) {
+  if (value === undefined || value === null || value === "") return "-";
+  if (Array.isArray(value)) {
+    const joined = value.map((item) => formatMagangPayloadValue(item)).filter((item) => item !== "-").join(", ");
+    return joined || "-";
+  }
+  if (typeof value === "boolean") return value ? "Ya" : "Tidak";
+  if (typeof value === "object") {
+    if (value.nama) return String(value.nama);
+    if (value.name) return String(value.name);
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function pickMagangPayloadText(row, keys) {
+  const payload = getMagangPayload(row);
+  for (const key of keys) {
+    const value = payload[key];
+    const formatted = formatMagangPayloadValue(value);
+    if (formatted !== "-") return formatted;
+  }
+  return "-";
+}
+
+function getMagangCompanyName(row) {
+  const payload = getMagangPayload(row);
+  const snapshot = payload.mitra_snapshot && typeof payload.mitra_snapshot === "object" ? payload.mitra_snapshot : {};
+  return (
+    formatMagangPayloadValue(payload.company_name) !== "-"
+      ? formatMagangPayloadValue(payload.company_name)
+      : formatMagangPayloadValue(payload.chosen_institution) !== "-"
+      ? formatMagangPayloadValue(payload.chosen_institution)
+      : formatMagangPayloadValue(snapshot.nama)
+  );
+}
+
+function getMagangCompanyTypeLabel(row) {
+  const companyType = String(getMagangPayload(row).company_type || "").toLowerCase();
+  if (companyType === "partner_company") return "Mitra";
+  if (companyType === "non_partner_company") return "Non Mitra";
+  return formatLabel(companyType || "-");
+}
+
+function getMagangReviewStatus(row) {
+  return row?.workflow_status || row?.form_lanjutan_status || "-";
+}
+
+function getMagangStatusBadgeClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "approved") return "bg-[#137748] text-white";
+  if (normalized === "rejected") return "bg-[#b73a3a] text-white";
+  if (normalized === "review_dosen_magang") return "bg-[#eaf1ff] text-[#2756b8]";
+  if (normalized === "review_sekprodi") return "bg-[#fff4d8] text-[#9b6b00]";
+  if (normalized === "submitted") return "bg-[#fdf1d4] text-[#a06a00]";
+  return "bg-[#eef2fb] text-[#5c6d95]";
+}
+
+function getMagangDetailFields(row) {
+  const payload = getMagangPayload(row);
+  const sector =
+    payload.company_sector === "other"
+      ? formatMagangPayloadValue(payload.company_sector_other)
+      : formatLabel(payload.company_sector);
+  const proposedPosition =
+    payload.proposed_position === "other"
+      ? formatMagangPayloadValue(payload.proposed_position_other)
+      : formatLabel(payload.proposed_position);
+  const applicationMethod =
+    payload.internship_application_method === "other"
+      ? formatMagangPayloadValue(payload.internship_application_method_other)
+      : formatLabel(payload.internship_application_method);
+
+  return [
+    ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
+    ["Email", row?.mahasiswa?.email || "-"],
+    ["Angkatan", row?.mahasiswa?.angkatan || "-"],
+    ["Periode", row?.periode?.label_periode || "-"],
+    ["Status Review", row?.workflow_status_label || formatLabel(getMagangReviewStatus(row))],
+    ["Tipe Perusahaan", getMagangCompanyTypeLabel(row)],
+    ["Institusi Dipilih", payload.chosen_institution],
+    ["Nama Perusahaan", getMagangCompanyName(row)],
+    ["Alamat Institusi", payload.complete_address_of_institution],
+    ["Sektor Perusahaan", sector],
+    ["Posisi Diajukan", proposedPosition],
+    ["Nomor Telepon", payload.phone_number],
+    ["Tanggal Apply", payload.tanggal_apply],
+    ["Metode Apply", payload.metode_apply],
+    ["Bukti Apply", payload.bukti_apply],
+    ["Website Perusahaan", payload.internship_company_website_url],
+    ["URL Vacancy", payload.internship_vacancy_url],
+    ["Catatan Dokumen Pendukung", payload.supporting_documents_note],
+    ["CV", payload.cv_file_name],
+    ["Portfolio", payload.portfolio_file_name],
+    ["Transkrip", payload.transcript_file_name],
+    ["Dokumen Pendukung Lain", payload.other_supporting_documents_file_name],
+    ["Tahun Berdiri", payload.year_of_establishment],
+    ["Jumlah Karyawan", payload.number_of_employees],
+    ["Metode Pendaftaran Magang", applicationMethod],
+    ["Proses Seleksi", payload.selection_processes],
+  ];
+}
+
+function getMagangTimelineHtml(row) {
+  const timeline = Array.isArray(getMagangPayload(row).workflow_timeline)
+    ? getMagangPayload(row).workflow_timeline
+    : [];
+  if (timeline.length === 0) {
+    return `<div style="border:1px solid #e4e9f6;border-radius:8px;padding:10px;background:#f8fbff;color:#65749b;font-weight:600;">Belum ada timeline workflow.</div>`;
+  }
+
+  return timeline
+    .map((item) => {
+      const actor = formatLabel(item?.actor || "-");
+      const status = formatLabel(item?.status || "-");
+      const at = formatDateTime(item?.at);
+      return `
+        <div style="border:1px solid #e4e9f6;border-radius:8px;padding:10px;background:#f8fbff;margin-top:8px;">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
+            <b>${escapeHtml(status)}</b>
+            <span style="font-size:12px;color:#60709a;">${escapeHtml(at)}</span>
+          </div>
+          <p style="margin:4px 0 0;color:#42537d;">${escapeHtml(actor)}</p>
+          <p style="margin:4px 0 0;color:#2f426f;">${escapeHtml(item?.note || "-")}</p>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function getPengampuReviewStatus(row) {
+  return row?.workflow_status || row?.form_lanjutan_status || "-";
+}
+
+function getPengampuReviewSummary(row) {
+  return formatMagangPayloadValue(getMagangPayload(row).ringkasan);
+}
+
+function getPengampuReviewNote(row) {
+  return formatMagangPayloadValue(getMagangPayload(row).catatan);
+}
+
+function getPengampuReviewStatusBadgeClass(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "approved") return "bg-[#137748] text-white";
+  if (normalized === "rejected") return "bg-[#b73a3a] text-white";
+  if (normalized === "submitted") return "bg-[#fdf1d4] text-[#a06a00]";
+  return "bg-[#eef2fb] text-[#5c6d95]";
+}
+
+function getPengampuReviewDetailFields(row, config) {
+  return [
+    ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
+    ["Email", row?.mahasiswa?.email || "-"],
+    ["Angkatan", row?.mahasiswa?.angkatan || "-"],
+    ["Periode", row?.periode?.label_periode || "-"],
+    ["Jalur", formatLabel(config?.jalur || row?.jalur)],
+    ["Status Review", row?.workflow_status_label || formatLabel(getPengampuReviewStatus(row))],
+    [config?.summaryLabel || "Ringkasan", getPengampuReviewSummary(row)],
+    [config?.noteLabel || "Catatan", getPengampuReviewNote(row)],
+    ["Tanggal Dikirim", formatDateTime(row?.submitted_at || row?.createdAt)],
+  ];
 }
 
 function getSubmissionStatusBadgeClass(status) {
@@ -396,9 +582,68 @@ function pickTopikUploadField(rawRow, candidates) {
   return "";
 }
 
-function buildNavSections(isSekretaris) {
+const DOSEN_PENGAMPU_REVIEW_TABS = {
+  pengabdian: {
+    jalur: "pengabdian",
+    tabId: "pengabdian-review",
+    responsibilityType: "pengawas_pengabdian",
+    endpointSlug: "pengabdian",
+    menuLabel: "Review Pengabdian",
+    title: "Review Pengabdian Masyarakat",
+    gridTitle: "Grid Review Pengabdian Masyarakat",
+    subtitle: "Review form jalur pengabdian masyarakat yang masuk ke dosen pengampu.",
+    subjectLabel: "Program Pengabdian",
+    summaryLabel: "Ringkasan Pengabdian",
+    noteLabel: "Catatan Pengabdian",
+    emptyMessage: "Belum ada review pengabdian masyarakat yang menunggu keputusan.",
+    approveSuccess: "Pengajuan pengabdian masyarakat berhasil disetujui.",
+    rejectSuccess: "Pengajuan pengabdian masyarakat berhasil ditolak.",
+  },
+  perintisan_bisnis: {
+    jalur: "perintisan_bisnis",
+    tabId: "perintisan-review",
+    responsibilityType: "pengawas_perintisan_bisnis",
+    endpointSlug: "perintisan-bisnis",
+    menuLabel: "Review Perintisan Bisnis",
+    title: "Review Perintisan Bisnis",
+    gridTitle: "Grid Review Perintisan Bisnis",
+    subtitle: "Review form jalur perintisan bisnis yang masuk ke dosen pengampu.",
+    subjectLabel: "Rencana Bisnis",
+    summaryLabel: "Ringkasan Perintisan Bisnis",
+    noteLabel: "Catatan Perintisan Bisnis",
+    emptyMessage: "Belum ada review perintisan bisnis yang menunggu keputusan.",
+    approveSuccess: "Pengajuan perintisan bisnis berhasil disetujui.",
+    rejectSuccess: "Pengajuan perintisan bisnis berhasil ditolak.",
+  },
+};
+
+const DOSEN_PENGAMPU_REVIEW_CONFIG_BY_TAB = Object.values(DOSEN_PENGAMPU_REVIEW_TABS).reduce(
+  (acc, item) => {
+    acc[item.tabId] = item;
+    return acc;
+  },
+  {}
+);
+
+function buildNavSections(isSekretaris, responsibilityItems = []) {
   if (!isSekretaris) {
-    return [
+    const specialItems = [];
+    const hasKetuaClusterResponsibility = responsibilityItems.some((item) => item?.type === "ketua_klaster");
+    const hasPengawasMagangResponsibility = responsibilityItems.some((item) => item?.type === "pengawas_magang");
+    if (hasKetuaClusterResponsibility) {
+      specialItems.push({ id: "ketua-cluster-review", label: "Review Ketua Cluster", icon: ShieldAlert });
+    }
+    if (hasPengawasMagangResponsibility) {
+      specialItems.push({ id: "magang-review", label: "Review Magang", icon: ClipboardList });
+    }
+    for (const item of Object.values(DOSEN_PENGAMPU_REVIEW_TABS)) {
+      const hasResponsibility = responsibilityItems.some((responsibility) => responsibility?.type === item.responsibilityType);
+      if (hasResponsibility) {
+        specialItems.push({ id: item.tabId, label: item.menuLabel, icon: ClipboardList });
+      }
+    }
+
+    const sections = [
       {
         key: "umum",
         label: "Umum",
@@ -420,6 +665,15 @@ function buildNavSections(isSekretaris) {
         label: "Dosen",
         items: [{ id: "topik", label: "Manajemen Topik", icon: BookOpenCheck }],
       },
+      ...(specialItems.length > 0
+        ? [
+            {
+              key: "tugas-khusus",
+              label: "Tugas Khusus",
+              items: specialItems,
+            },
+          ]
+        : []),
       {
         key: "sidang",
         label: "Sidang",
@@ -429,6 +683,7 @@ function buildNavSections(isSekretaris) {
         ],
       },
     ];
+    return sections;
   }
 
   return [
@@ -506,6 +761,26 @@ function buildTabHeaders(isSekretaris) {
       title: "Pengajuan Mahasiswa",
       subtitle: "Review pengajuan judul mahasiswa, lalu putuskan approve atau tolak.",
     },
+    "ketua-cluster-review": {
+      icon: ShieldAlert,
+      title: "Review Ketua Cluster",
+      subtitle: "Review pengajuan topik yang sudah disetujui dosen pembimbing dan menunggu keputusan ketua cluster.",
+    },
+    "magang-review": {
+      icon: ClipboardList,
+      title: "Review Magang",
+      subtitle: "Review permintaan surat rekomendasi magang yang masuk ke dosen pengawas magang.",
+    },
+    "pengabdian-review": {
+      icon: ClipboardList,
+      title: DOSEN_PENGAMPU_REVIEW_TABS.pengabdian.title,
+      subtitle: DOSEN_PENGAMPU_REVIEW_TABS.pengabdian.subtitle,
+    },
+    "perintisan-review": {
+      icon: ClipboardList,
+      title: DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis.title,
+      subtitle: DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis.subtitle,
+    },
     "permohonan-extend": {
       icon: ShieldAlert,
       title: "Permohonan Extend",
@@ -563,8 +838,6 @@ function buildTabHeaders(isSekretaris) {
 }
 
 function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, isSekretaris = false }) {
-  const navSections = useMemo(() => buildNavSections(isSekretaris), [isSekretaris]);
-  const tabHeaders = useMemo(() => buildTabHeaders(isSekretaris), [isSekretaris]);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
   const [topikMode, setTopikMode] = useState("list");
@@ -589,7 +862,35 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
   const [pamitRows, setPamitRows] = useState([]);
   const [pamitPage, setPamitPage] = useState(1);
+  const [magangReviewRows, setMagangReviewRows] = useState([]);
+  const [magangReviewQuery, setMagangReviewQuery] = useState("");
+  const [magangReviewPage, setMagangReviewPage] = useState(1);
+  const [magangReviewActionId, setMagangReviewActionId] = useState(null);
+  const [pengampuReviewRowsByJalur, setPengampuReviewRowsByJalur] = useState({
+    pengabdian: [],
+    perintisan_bisnis: [],
+  });
+  const [pengampuReviewQueryByJalur, setPengampuReviewQueryByJalur] = useState({
+    pengabdian: "",
+    perintisan_bisnis: "",
+  });
+  const [pengampuReviewPageByJalur, setPengampuReviewPageByJalur] = useState({
+    pengabdian: 1,
+    perintisan_bisnis: 1,
+  });
+  const [pengampuReviewActionId, setPengampuReviewActionId] = useState(null);
   const [kuotaData, setKuotaData] = useState(null);
+  const penjaluranResponsibilityItems = useMemo(
+    () => (Array.isArray(kuotaData?.tanggung_jawab_penjaluran?.items)
+      ? kuotaData.tanggung_jawab_penjaluran.items
+      : []),
+    [kuotaData?.tanggung_jawab_penjaluran?.items]
+  );
+  const navSections = useMemo(
+    () => buildNavSections(isSekretaris, penjaluranResponsibilityItems),
+    [isSekretaris, penjaluranResponsibilityItems]
+  );
+  const tabHeaders = useMemo(() => buildTabHeaders(isSekretaris), [isSekretaris]);
 
   const [topikRows, setTopikRows] = useState([]);
   const [topikQuery, setTopikQuery] = useState("");
@@ -709,6 +1010,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     dosen_options: [],
     ketua_klaster_options: [],
     master_penanggung_jawab: null,
+    penanggung_jawab_lock: null,
   });
   const [periodeMasterForm, setPeriodeMasterForm] = useState({ ...PERIODE_MASTER_INITIAL });
   const [periodeMasterSearchQueryByField, setPeriodeMasterSearchQueryByField] = useState(
@@ -719,6 +1021,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   );
   const [activePeriodeMasterSearchField, setActivePeriodeMasterSearchField] = useState("");
   const [periodeMasterErrors, setPeriodeMasterErrors] = useState({});
+  const [periodeMasterEditMode, setPeriodeMasterEditMode] = useState(false);
   const [savingPeriodeMaster, setSavingPeriodeMaster] = useState(false);
   const [periodeForm, setPeriodeForm] = useState({ ...PERIODE_FORM_INITIAL });
   const [periodeFormErrors, setPeriodeFormErrors] = useState({});
@@ -766,6 +1069,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const mahasiswaMasterFilterPopupRef = useRef(null);
   const submissionNotificationRef = useRef(null);
   const activeTabHeader = tabHeaders[activeTab] || tabHeaders.dashboard;
+  const isSubmissionReviewTabActive = activeTab === "submissions" || activeTab === "ketua-cluster-review";
+  const activePengampuReviewConfig = DOSEN_PENGAMPU_REVIEW_CONFIG_BY_TAB[activeTab] || null;
+  const activePengampuReviewJalur = activePengampuReviewConfig?.jalur || "";
+  const activePengampuReviewRows = useMemo(
+    () => (activePengampuReviewJalur ? pengampuReviewRowsByJalur[activePengampuReviewJalur] || [] : []),
+    [activePengampuReviewJalur, pengampuReviewRowsByJalur]
+  );
+  const activePengampuReviewQuery = activePengampuReviewJalur
+    ? pengampuReviewQueryByJalur[activePengampuReviewJalur] || ""
+    : "";
+  const activePengampuReviewPage = activePengampuReviewJalur
+    ? pengampuReviewPageByJalur[activePengampuReviewJalur] || 1
+    : 1;
   const availableTabIds = useMemo(
     () => navSections.flatMap((section) => section.items.map((item) => item.id)),
     [navSections]
@@ -776,6 +1092,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     const role = isSekretaris ? "sekretaris_prodi" : "dosen";
     return `simps_notif_submission_seen_at_${role}_${baseId}`;
   }, [isSekretaris, session?.user?.id, session?.user?.username]);
+  const penanggungJawabLock = periodeOverview?.penanggung_jawab_lock || null;
+  const isPeriodeMasterConfigured = Boolean(periodeMasterSource?.id);
+  const isPeriodeMasterLocked = Boolean(penanggungJawabLock?.locked);
+  const isPeriodeMasterFormEditable =
+    !isPeriodeMasterLocked && (!isPeriodeMasterConfigured || periodeMasterEditMode);
+  const periodeMasterLockMessage =
+    penanggungJawabLock?.message ||
+    "Penanggung jawab penjaluran belum dapat diubah saat ada periode atau pengajuan aktif.";
   const isPeriodeReadonly = editingPeriode ? !canEditPeriodeRow(editingPeriode) : true;
   const useGridViewportLayout =
     !loading &&
@@ -783,7 +1107,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       (activeTab === "bimbingan-review" && isBimbinganReviewListMode) ||
       activeTab === "dokumen-sidang-review" ||
       activeTab === "ketersediaan-sidang" ||
-      (activeTab === "submissions" && submissionMode === "list") ||
+      (isSubmissionReviewTabActive && submissionMode === "list") ||
+      activeTab === "magang-review" ||
+      Boolean(activePengampuReviewConfig) ||
       activeTab === "permohonan-extend" ||
       activeTab === "pamit" ||
       (isSekretaris && activeTab === "master-dosen") ||
@@ -946,39 +1272,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [allowedTopikClusters]);
 
   useEffect(() => {
-    const nextMasterForm = {
-      ketua_itsc_dosen_id: periodeMasterSource?.ketua_itsc_dosen_id
-        ? String(periodeMasterSource.ketua_itsc_dosen_id)
-        : "",
-      ketua_sirkel_dosen_id: periodeMasterSource?.ketua_sirkel_dosen_id
-        ? String(periodeMasterSource.ketua_sirkel_dosen_id)
-        : "",
-      ketua_siber_dosen_id: periodeMasterSource?.ketua_siber_dosen_id
-        ? String(periodeMasterSource.ketua_siber_dosen_id)
-        : "",
-      ketua_mvk_dosen_id: periodeMasterSource?.ketua_mvk_dosen_id
-        ? String(periodeMasterSource.ketua_mvk_dosen_id)
-        : "",
-      pengawas_magang_dosen_id: periodeMasterSource?.pengawas_magang_dosen_id
-        ? String(periodeMasterSource.pengawas_magang_dosen_id)
-        : "",
-      pengawas_pengabdian_dosen_id: periodeMasterSource?.pengawas_pengabdian_dosen_id
-        ? String(periodeMasterSource.pengawas_pengabdian_dosen_id)
-        : "",
-      pengawas_perintisan_bisnis_dosen_id: periodeMasterSource?.pengawas_perintisan_bisnis_dosen_id
-        ? String(periodeMasterSource.pengawas_perintisan_bisnis_dosen_id)
-        : "",
-    };
-    const nextSearchQuery = buildPeriodeMasterSearchInitial();
-    for (const item of PERIODE_MASTER_ALL_FIELDS) {
-      const associationKey = item.key.replace(/_id$/, "");
-      nextSearchQuery[item.key] = formatPeriodeMasterDosenInputLabel(periodeMasterSource?.[associationKey]);
-    }
+    const nextMasterForm = buildPeriodeMasterFormFromSource(periodeMasterSource);
+    const nextSearchQuery = buildPeriodeMasterSearchFromSource(periodeMasterSource);
     setPeriodeMasterForm(nextMasterForm);
     setPeriodeMasterSearchQueryByField(nextSearchQuery);
     setDebouncedPeriodeMasterSearchQueryByField(nextSearchQuery);
     setActivePeriodeMasterSearchField("");
     setPeriodeMasterErrors({});
+    setPeriodeMasterEditMode(false);
   }, [periodeMasterSource]);
 
   useEffect(() => {
@@ -1063,6 +1364,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       fetchWithAuth("/api/dosen/pamit-mahasiswa"),
       dosenId ? fetchWithAuth(`/api/topics?dosen_id=${dosenId}`) : Promise.resolve([]),
       fetchWithAuth(mahasiswaMasterPath),
+      !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/magang/reviews") : Promise.resolve([]),
+      !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/pengabdian/reviews") : Promise.resolve([]),
+      !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/perintisan-bisnis/reviews") : Promise.resolve([]),
     ];
 
     if (isSekretaris) {
@@ -1081,6 +1385,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       pamitResult,
       topikResult,
       mahasiswaMasterResult,
+      magangReviewResult,
+      pengabdianReviewResult,
+      perintisanReviewResult,
       pendaftaranResult,
       periodeResult,
       masterDosenKuotaResult,
@@ -1122,6 +1429,35 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       issues.push(mahasiswaMasterResult?.reason?.message || "Gagal memuat master data mahasiswa.");
     }
 
+    if (magangReviewResult?.status === "fulfilled") {
+      setMagangReviewRows(Array.isArray(magangReviewResult.value) ? magangReviewResult.value : []);
+    } else {
+      setMagangReviewRows([]);
+      if (!isSekretaris) {
+        issues.push(magangReviewResult?.reason?.message || "Gagal memuat review magang.");
+      }
+    }
+
+    const nextPengampuRows = {
+      pengabdian: [],
+      perintisan_bisnis: [],
+    };
+    if (pengabdianReviewResult?.status === "fulfilled") {
+      nextPengampuRows.pengabdian = Array.isArray(pengabdianReviewResult.value)
+        ? pengabdianReviewResult.value
+        : [];
+    } else if (!isSekretaris) {
+      issues.push(pengabdianReviewResult?.reason?.message || "Gagal memuat review pengabdian masyarakat.");
+    }
+    if (perintisanReviewResult?.status === "fulfilled") {
+      nextPengampuRows.perintisan_bisnis = Array.isArray(perintisanReviewResult.value)
+        ? perintisanReviewResult.value
+        : [];
+    } else if (!isSekretaris) {
+      issues.push(perintisanReviewResult?.reason?.message || "Gagal memuat review perintisan bisnis.");
+    }
+    setPengampuReviewRowsByJalur(nextPengampuRows);
+
     if (isSekretaris) {
       if (pendaftaranResult?.status === "fulfilled") {
         setPendaftaranRows(Array.isArray(pendaftaranResult.value) ? pendaftaranResult.value : []);
@@ -1141,6 +1477,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             ? periodPayload.ketua_klaster_options
             : [],
           master_penanggung_jawab: periodPayload.master_penanggung_jawab || null,
+          penanggung_jawab_lock: periodPayload.penanggung_jawab_lock || null,
         });
       } else {
         setPeriodeOverview({
@@ -1150,6 +1487,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           dosen_options: [],
           ketua_klaster_options: [],
           master_penanggung_jawab: null,
+          penanggung_jawab_lock: null,
         });
         issues.push(periodeResult?.reason?.message || "Gagal memuat data periode.");
       }
@@ -1187,6 +1525,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         dosen_options: [],
         ketua_klaster_options: [],
         master_penanggung_jawab: null,
+        penanggung_jawab_lock: null,
       });
       setMasterDosenKuotaOverview({ summary: null, dosens: [] });
       setKetuaKlasterOverview({
@@ -1240,11 +1579,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     };
   }, [submissions, pamitRows, topikRows, kuotaData]);
 
+  const contextualSubmissions = useMemo(() => {
+    if (activeTab !== "ketua-cluster-review") return submissions;
+    return submissions.filter((row) => {
+      const context = String(row?.review_context || "").toLowerCase();
+      const stage = String(row?.tahap || row?.tahap_approval || "").toLowerCase();
+      return context === "ketua_klaster" || stage === "pending_ketua_klaster";
+    });
+  }, [activeTab, submissions]);
+
   const filteredSubmissions = useMemo(() => {
     const keyword = submissionQuery.trim().toLowerCase();
-    if (!keyword) return submissions;
+    if (!keyword) return contextualSubmissions;
 
-    return submissions.filter((row) => {
+    return contextualSubmissions.filter((row) => {
       const topikDetailText = Array.isArray(row.topik_dipilih_detail)
         ? row.topik_dipilih_detail.map((item) => item?.judul).filter(Boolean).join(" ")
         : "";
@@ -1275,7 +1623,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
       return haystack.includes(keyword);
     });
-  }, [submissions, submissionQuery]);
+  }, [contextualSubmissions, submissionQuery]);
 
   const filteredIzinLanjutRows = useMemo(() => {
     const keyword = izinLanjutQuery.trim().toLowerCase();
@@ -1299,6 +1647,68 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return haystack.includes(keyword);
     });
   }, [izinLanjutRows, izinLanjutQuery]);
+
+  const filteredMagangReviewRows = useMemo(() => {
+    const keyword = magangReviewQuery.trim().toLowerCase();
+    if (!keyword) return magangReviewRows;
+
+    return magangReviewRows.filter((row) => {
+      const payload = getMagangPayload(row);
+      const payloadText = Object.entries(payload)
+        .filter(([, value]) => value !== null && value !== undefined && typeof value !== "object")
+        .map(([, value]) => String(value))
+        .join(" ");
+      const haystack = [
+        row.id,
+        row.jalur,
+        row.form_lanjutan_status,
+        row.workflow_status,
+        row.workflow_status_label,
+        row.mahasiswa?.nim,
+        row.mahasiswa?.nama,
+        row.mahasiswa?.email,
+        row.mahasiswa?.angkatan,
+        row.periode?.label_periode,
+        getMagangCompanyName(row),
+        getMagangCompanyTypeLabel(row),
+        pickMagangPayloadText(row, ["proposed_position", "proposed_position_other"]),
+        pickMagangPayloadText(row, ["company_sector", "company_sector_other"]),
+        payloadText,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(keyword);
+    });
+  }, [magangReviewRows, magangReviewQuery]);
+
+  const filteredPengampuReviewRows = useMemo(() => {
+    const keyword = activePengampuReviewQuery.trim().toLowerCase();
+    if (!keyword) return activePengampuReviewRows;
+
+    return activePengampuReviewRows.filter((row) => {
+      const haystack = [
+        row.id,
+        row.jalur,
+        row.form_lanjutan_status,
+        row.workflow_status,
+        row.workflow_status_label,
+        row.mahasiswa?.nim,
+        row.mahasiswa?.nama,
+        row.mahasiswa?.email,
+        row.mahasiswa?.angkatan,
+        row.periode?.label_periode,
+        getPengampuReviewSummary(row),
+        getPengampuReviewNote(row),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return haystack.includes(keyword);
+    });
+  }, [activePengampuReviewRows, activePengampuReviewQuery]);
 
   const filteredTopikRows = useMemo(() => {
     const keyword = topikQuery.trim().toLowerCase();
@@ -1408,6 +1818,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         ? reviewerRows.map((reviewerItem) => {
             const matchedTopik =
               allTopikRows.find((topikItem) => Number(topikItem?.slot) === Number(reviewerItem?.slot)) || null;
+            const matchedTopikApproved =
+              String(matchedTopik?.reviewer_status || "").toLowerCase() === "approved";
             return {
               ...(matchedTopik || {}),
               slot: reviewerItem?.slot,
@@ -1415,6 +1827,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               reviewer_status: reviewerItem?.reviewer_status || matchedTopik?.reviewer_status || null,
               reviewer_note: reviewerItem?.reviewer_note || matchedTopik?.reviewer_note || null,
               reviewer_decided_at: reviewerItem?.reviewer_decided_at || matchedTopik?.reviewer_decided_at || null,
+              pembimbing_approval_note:
+                reviewerItem?.pembimbing_approval_note ||
+                matchedTopik?.pembimbing_approval_note ||
+                (matchedTopikApproved ? matchedTopik?.reviewer_note || null : null),
+              pembimbing_approved_at:
+                reviewerItem?.pembimbing_approved_at ||
+                matchedTopik?.pembimbing_approved_at ||
+                (matchedTopikApproved ? matchedTopik?.reviewer_decided_at || null : null),
+              pembimbing_approved_by:
+                reviewerItem?.pembimbing_approved_by ||
+                matchedTopik?.pembimbing_approved_by ||
+                (matchedTopikApproved ? matchedTopik?.dosen || null : null),
             };
           })
         : allTopikRows;
@@ -1432,6 +1856,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     );
     return selected || submissionReviewTopikOptions[0];
   }, [submissionReviewTopikOptions, submissionTopikFocusSlot]);
+  const submissionReviewPembimbingApproval = useMemo(() => {
+    const approvedBy = submissionReviewTopikFocused?.pembimbing_approved_by;
+    const approvedByName =
+      approvedBy && typeof approvedBy === "object"
+        ? approvedBy.nama || approvedBy.nik || ""
+        : String(approvedBy || "").trim();
+    return {
+      note: String(submissionReviewTopikFocused?.pembimbing_approval_note || "").trim(),
+      decidedAt: submissionReviewTopikFocused?.pembimbing_approved_at || null,
+      approvedByName,
+    };
+  }, [submissionReviewTopikFocused]);
+  const shouldShowPembimbingApprovalNote =
+    (activeTab === "ketua-cluster-review" || submissionDetail?.review_context === "ketua_klaster") &&
+    Boolean(
+      submissionReviewPembimbingApproval.note ||
+        submissionReviewPembimbingApproval.decidedAt ||
+        submissionReviewPembimbingApproval.approvedByName
+    );
   const submissionReviewTopikIsSingleDosen = useMemo(() => {
     if (submissionReviewTopikOptions.length <= 1) return true;
     const dosenSet = new Set(
@@ -1525,6 +1968,36 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [pamitRows, pamitPage]);
   const pamitRangeStart = pamitRows.length === 0 ? 0 : (pamitPage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
   const pamitRangeEnd = Math.min(pamitPage * DOSEN_GRID_PAGE_SIZE, pamitRows.length);
+
+  const totalMagangReviewPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredMagangReviewRows.length / DOSEN_GRID_PAGE_SIZE)),
+    [filteredMagangReviewRows.length]
+  );
+  const pagedMagangReviewRows = useMemo(() => {
+    const start = (magangReviewPage - 1) * DOSEN_GRID_PAGE_SIZE;
+    return filteredMagangReviewRows.slice(start, start + DOSEN_GRID_PAGE_SIZE);
+  }, [filteredMagangReviewRows, magangReviewPage]);
+  const magangReviewRangeStart =
+    filteredMagangReviewRows.length === 0 ? 0 : (magangReviewPage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
+  const magangReviewRangeEnd = Math.min(
+    magangReviewPage * DOSEN_GRID_PAGE_SIZE,
+    filteredMagangReviewRows.length
+  );
+
+  const totalPengampuReviewPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredPengampuReviewRows.length / DOSEN_GRID_PAGE_SIZE)),
+    [filteredPengampuReviewRows.length]
+  );
+  const pagedPengampuReviewRows = useMemo(() => {
+    const start = (activePengampuReviewPage - 1) * DOSEN_GRID_PAGE_SIZE;
+    return filteredPengampuReviewRows.slice(start, start + DOSEN_GRID_PAGE_SIZE);
+  }, [activePengampuReviewPage, filteredPengampuReviewRows]);
+  const pengampuReviewRangeStart =
+    filteredPengampuReviewRows.length === 0 ? 0 : (activePengampuReviewPage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
+  const pengampuReviewRangeEnd = Math.min(
+    activePengampuReviewPage * DOSEN_GRID_PAGE_SIZE,
+    filteredPengampuReviewRows.length
+  );
 
   const totalPendaftaranPages = useMemo(
     () => Math.max(1, Math.ceil(filteredPendaftaranRows.length / DOSEN_GRID_PAGE_SIZE)),
@@ -2037,6 +2510,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [pamitPage, totalPamitPages]);
 
   useEffect(() => {
+    setMagangReviewPage(1);
+  }, [magangReviewQuery]);
+
+  useEffect(() => {
+    if (magangReviewPage > totalMagangReviewPages) {
+      setMagangReviewPage(totalMagangReviewPages);
+    }
+  }, [magangReviewPage, totalMagangReviewPages]);
+
+  useEffect(() => {
+    if (!activePengampuReviewJalur) return;
+    if (activePengampuReviewPage > totalPengampuReviewPages) {
+      setPengampuReviewPageByJalur((prev) => ({
+        ...prev,
+        [activePengampuReviewJalur]: totalPengampuReviewPages,
+      }));
+    }
+  }, [activePengampuReviewJalur, activePengampuReviewPage, totalPengampuReviewPages]);
+
+  useEffect(() => {
     setPendaftaranPage(1);
   }, [pendaftaranSearch]);
 
@@ -2071,7 +2564,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [ketuaKlasterPage, totalKetuaKlasterPages]);
 
   useEffect(() => {
-    if (activeTab !== "submissions") {
+    if (!isSubmissionReviewTabActive) {
       setSubmissionMode("list");
       setSelectedSubmissionId(null);
       setSubmissionDetail(null);
@@ -2080,7 +2573,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setSubmissionTopikFocusSlot("");
       setSubmissionShowFinalSummary(false);
     }
-  }, [activeTab]);
+  }, [isSubmissionReviewTabActive]);
 
   useEffect(() => {
     if (submissionReviewTopikOptions.length === 0) {
@@ -2262,6 +2755,202 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
     } finally {
       setRowActionLoadingId(null);
+    }
+  };
+
+  const handleOpenMagangReviewDetail = async (id) => {
+    setMagangReviewActionId(id);
+    try {
+      const detail = await fetchWithAuth(`/api/dosen/non-penelitian/magang/reviews/${id}`);
+      const fieldsHtml = getMagangDetailFields(detail)
+        .map(
+          ([label, value]) => `
+            <tr>
+              <td style="width:220px;padding:8px 10px;border-bottom:1px solid #edf2fb;color:#52638d;font-weight:700;vertical-align:top;">${escapeHtml(label)}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #edf2fb;color:#203665;vertical-align:top;">${escapeHtml(
+                formatMagangPayloadValue(value)
+              )}</td>
+            </tr>
+          `
+        )
+        .join("");
+
+      await Swal.fire({
+        title: `Detail Review Magang #${detail?.id || id}`,
+        width: 860,
+        confirmButtonText: "Tutup",
+        html: `
+          <div style="text-align:left;font-size:14px;line-height:1.55;color:#24345e;">
+            <p style="margin-bottom:10px;color:#52638d;">
+              Form ini masuk ke antrean dosen pengawas magang. Beri keputusan setelah data perusahaan, posisi, dan dokumen pendukung sesuai.
+            </p>
+            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e9f6;border-radius:10px;overflow:hidden;">
+              <tbody>${fieldsHtml}</tbody>
+            </table>
+            <h4 style="margin:16px 0 8px;color:#1b274b;font-size:15px;">Timeline Workflow</h4>
+            ${getMagangTimelineHtml(detail)}
+          </div>
+        `,
+      });
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || "Gagal memuat detail review magang.");
+      }
+    } finally {
+      setMagangReviewActionId(null);
+    }
+  };
+
+  const handleMagangReviewDecision = async (row, decision) => {
+    const id = row?.id;
+    if (!id) {
+      showErrorToast("Data review magang tidak valid.");
+      return;
+    }
+
+    const isApprove = decision === "approve";
+    const result = await Swal.fire({
+      title: isApprove ? "Setujui pengajuan magang?" : "Tolak pengajuan magang?",
+      text: isApprove
+        ? "Pengajuan akan disetujui oleh dosen pengawas magang."
+        : "Mahasiswa akan melihat alasan penolakan ini.",
+      input: "textarea",
+      inputPlaceholder: isApprove ? "Catatan persetujuan (opsional)" : "Alasan penolakan",
+      showCancelButton: true,
+      confirmButtonText: isApprove ? "Setujui" : "Tolak",
+      cancelButtonText: "Batal",
+      confirmButtonColor: isApprove ? "#137748" : "#b73a3a",
+      inputValidator: (value) => {
+        const note = String(value || "").trim();
+        if (!isApprove && !note) return "Alasan penolakan wajib diisi.";
+        return undefined;
+      },
+    });
+    if (!result.isConfirmed) return;
+
+    setMagangReviewActionId(id);
+    try {
+      await fetchWithAuth(`/api/dosen/non-penelitian/magang/reviews/${id}/${isApprove ? "approve" : "reject"}`, {
+        method: "POST",
+        body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
+      });
+      showSuccessToast(isApprove ? "Pengajuan magang berhasil disetujui." : "Pengajuan magang berhasil ditolak.");
+      await loadAllData();
+    } catch (decisionError) {
+      if (decisionError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(decisionError.message || "Gagal memproses keputusan review magang.");
+      }
+    } finally {
+      setMagangReviewActionId(null);
+    }
+  };
+
+  const handlePengampuReviewQueryChange = (jalur, value) => {
+    if (!jalur) return;
+    setPengampuReviewQueryByJalur((prev) => ({ ...prev, [jalur]: value }));
+    setPengampuReviewPageByJalur((prev) => ({ ...prev, [jalur]: 1 }));
+  };
+
+  const handleSetPengampuReviewPage = (jalur, updater) => {
+    if (!jalur) return;
+    setPengampuReviewPageByJalur((prev) => {
+      const currentPage = prev[jalur] || 1;
+      const nextPage = typeof updater === "function" ? updater(currentPage) : updater;
+      return { ...prev, [jalur]: nextPage };
+    });
+  };
+
+  const handleOpenPengampuReviewDetail = async (id, config) => {
+    if (!id || !config?.endpointSlug) {
+      showErrorToast("Data review tidak valid.");
+      return;
+    }
+
+    const actionKey = `${config.jalur}-${id}`;
+    setPengampuReviewActionId(actionKey);
+    try {
+      const detail = await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}`);
+      const fieldsHtml = getPengampuReviewDetailFields(detail, config)
+        .map(
+          ([label, value]) => `
+            <tr>
+              <td style="width:220px;padding:8px 10px;border-bottom:1px solid #edf2fb;color:#52638d;font-weight:700;vertical-align:top;">${escapeHtml(label)}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #edf2fb;color:#203665;vertical-align:top;">${escapeHtml(
+                formatMagangPayloadValue(value)
+              )}</td>
+            </tr>
+          `
+        )
+        .join("");
+
+      await Swal.fire({
+        title: `Detail ${config.title} #${detail?.id || id}`,
+        width: 820,
+        confirmButtonText: "Tutup",
+        html: `
+          <div style="text-align:left;font-size:14px;line-height:1.55;color:#24345e;">
+            <p style="margin-bottom:10px;color:#52638d;">
+              Form ini masuk ke antrean ${escapeHtml(config.title.toLowerCase())}. Beri keputusan setelah ringkasan dan catatan mahasiswa sudah sesuai.
+            </p>
+            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e9f6;border-radius:10px;overflow:hidden;">
+              <tbody>${fieldsHtml}</tbody>
+            </table>
+            <h4 style="margin:16px 0 8px;color:#1b274b;font-size:15px;">Timeline Workflow</h4>
+            ${getMagangTimelineHtml(detail)}
+          </div>
+        `,
+      });
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || `Gagal memuat detail ${config.title.toLowerCase()}.`);
+      }
+    } finally {
+      setPengampuReviewActionId(null);
+    }
+  };
+
+  const handlePengampuReviewDecision = async (row, config, decision) => {
+    const id = row?.id;
+    if (!id || !config?.endpointSlug) {
+      showErrorToast("Data review tidak valid.");
+      return;
+    }
+
+    const isApprove = decision === "approve";
+    const result = await Swal.fire({
+      title: isApprove ? `Setujui ${config.title.toLowerCase()}?` : `Tolak ${config.title.toLowerCase()}?`,
+      text: isApprove
+        ? "Pengajuan akan disetujui oleh dosen pengampu."
+        : "Mahasiswa akan melihat alasan penolakan ini.",
+      input: "textarea",
+      inputPlaceholder: isApprove ? "Catatan persetujuan (opsional)" : "Alasan penolakan",
+      showCancelButton: true,
+      confirmButtonText: isApprove ? "Setujui" : "Tolak",
+      cancelButtonText: "Batal",
+      confirmButtonColor: isApprove ? "#137748" : "#b73a3a",
+      inputValidator: (value) => {
+        const note = String(value || "").trim();
+        if (!isApprove && !note) return "Alasan penolakan wajib diisi.";
+        return undefined;
+      },
+    });
+    if (!result.isConfirmed) return;
+
+    const actionKey = `${config.jalur}-${id}`;
+    setPengampuReviewActionId(actionKey);
+    try {
+      await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}/${isApprove ? "approve" : "reject"}`, {
+        method: "POST",
+        body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
+      });
+      showSuccessToast(isApprove ? config.approveSuccess : config.rejectSuccess);
+      await loadAllData();
+    } catch (decisionError) {
+      if (decisionError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(decisionError.message || `Gagal memproses keputusan ${config.title.toLowerCase()}.`);
+      }
+    } finally {
+      setPengampuReviewActionId(null);
     }
   };
 
@@ -2807,7 +3496,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     return duplicatesByField;
   }, []);
 
+  const getPeriodeMasterAssignmentConflict = useCallback(
+    (fieldKey, dosenId, formValues = periodeMasterForm) => {
+      const parsedDosenId = Number(dosenId);
+      if (!Number.isInteger(parsedDosenId) || parsedDosenId <= 0) return null;
+      const conflictField = PERIODE_MASTER_ALL_FIELDS.find((item) => {
+        if (item.key === fieldKey) return false;
+        return Number(formValues?.[item.key]) === parsedDosenId;
+      });
+      return conflictField || null;
+    },
+    [periodeMasterForm]
+  );
+
   const handlePeriodeMasterSearchQueryChange = (fieldKey, value) => {
+    if (!isPeriodeMasterFormEditable) return;
     setPeriodeMasterSearchQueryByField((prev) => ({ ...prev, [fieldKey]: value }));
     setPeriodeMasterForm((prev) => {
       const selectedId = Number(prev?.[fieldKey]);
@@ -2828,6 +3531,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   };
 
   const handlePeriodeMasterSearchFocus = (fieldKey) => {
+    if (!isPeriodeMasterFormEditable) return;
     setActivePeriodeMasterSearchField(fieldKey);
   };
 
@@ -2838,8 +3542,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   };
 
   const handleSelectPeriodeMasterDosen = (fieldKey, dosenValue) => {
+    if (!isPeriodeMasterFormEditable) return;
     const parsedId = Number(dosenValue?.id ?? dosenValue);
     if (!Number.isInteger(parsedId) || parsedId <= 0) return;
+    const conflictField = getPeriodeMasterAssignmentConflict(fieldKey, parsedId);
+    if (conflictField) {
+      showErrorToast(`Dosen ini sudah ditugaskan sebagai ${conflictField.label}. Satu dosen hanya boleh memiliki satu tanggung jawab.`);
+      return;
+    }
     const selectedDosen = typeof dosenValue === "object" && dosenValue
       ? dosenValue
       : periodeDosenMap.get(parsedId);
@@ -2864,22 +3574,31 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       if (options.length === 0) return [];
 
       const currentSelectedId = Number(periodeMasterForm?.[fieldKey]);
-      const selectedByOtherFields = new Set(
-        PERIODE_MASTER_ALL_FIELDS.map((item) => item.key)
-          .filter((key) => key !== fieldKey)
-          .map((key) => Number(periodeMasterForm?.[key]))
-          .filter((id) => Number.isInteger(id) && id > 0)
-      );
+      const selectedByOtherFields = new Map();
+      for (const item of PERIODE_MASTER_ALL_FIELDS) {
+        if (item.key === fieldKey) continue;
+        const selectedId = Number(periodeMasterForm?.[item.key]);
+        if (Number.isInteger(selectedId) && selectedId > 0) {
+          selectedByOtherFields.set(selectedId, item);
+        }
+      }
       const searchQuery = String(debouncedPeriodeMasterSearchQueryByField?.[fieldKey] || "")
         .trim()
         .toLowerCase();
 
       return options
+        .map((row) => {
+          const rowId = Number(row?.id);
+          const conflictField = rowId !== currentSelectedId ? selectedByOtherFields.get(rowId) : null;
+          return {
+            ...row,
+            assignment_conflict_field: conflictField?.key || null,
+            assignment_conflict_label: conflictField?.label || null,
+          };
+        })
         .filter((row) => {
           const rowId = Number(row?.id);
-          if (!Number.isInteger(rowId) || rowId <= 0) return false;
-          if (rowId === currentSelectedId) return true;
-          return !selectedByOtherFields.has(rowId);
+          return Number.isInteger(rowId) && rowId > 0;
         })
         .filter((row) => {
           if (!searchQuery) return true;
@@ -2891,7 +3610,40 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     [periodeMasterForm, periodeMasterOptionsByField, debouncedPeriodeMasterSearchQueryByField]
   );
 
+  const resetPeriodeMasterFormToSource = useCallback(() => {
+    const nextMasterForm = buildPeriodeMasterFormFromSource(periodeMasterSource);
+    const nextSearchQuery = buildPeriodeMasterSearchFromSource(periodeMasterSource);
+    setPeriodeMasterForm(nextMasterForm);
+    setPeriodeMasterSearchQueryByField(nextSearchQuery);
+    setDebouncedPeriodeMasterSearchQueryByField(nextSearchQuery);
+    setActivePeriodeMasterSearchField("");
+    setPeriodeMasterErrors({});
+  }, [periodeMasterSource]);
+
+  const handleStartEditPeriodeMaster = () => {
+    if (isPeriodeMasterLocked) {
+      showErrorToast(periodeMasterLockMessage);
+      return;
+    }
+    setPeriodeMasterErrors({});
+    setPeriodeMasterEditMode(true);
+  };
+
+  const handleCancelEditPeriodeMaster = () => {
+    resetPeriodeMasterFormToSource();
+    setPeriodeMasterEditMode(false);
+  };
+
   const handleSavePeriodeMaster = async () => {
+    if (!isPeriodeMasterFormEditable) {
+      showErrorToast(
+        isPeriodeMasterLocked
+          ? periodeMasterLockMessage
+          : "Klik Edit terlebih dahulu untuk mengubah master data penanggung jawab."
+      );
+      return;
+    }
+
     const fieldErrors = {};
     PERIODE_MASTER_ALL_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
@@ -2926,9 +3678,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       });
       showSuccessToast("Master data penanggung jawab berhasil disimpan.");
       await loadAllData();
+      setPeriodeMasterEditMode(false);
     } catch (saveError) {
       if (saveError?.message !== "__SESSION_EXPIRED__") {
         if (saveError?.detail && typeof saveError.detail === "object") {
+          if (saveError.detail.penanggung_jawab_lock) {
+            showErrorToast(saveError.message || periodeMasterLockMessage);
+            try {
+              await loadAllData();
+            } catch (refreshError) {
+              if (refreshError?.message === "__SESSION_EXPIRED__") {
+                throw refreshError;
+              }
+            }
+            return;
+          }
           setPeriodeMasterErrors(saveError.detail);
           return;
         }
@@ -4079,12 +4843,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               />
             ) : null}
 
-            {!loading && activeTab === "submissions" ? (
+            {!loading && isSubmissionReviewTabActive ? (
               <div className={submissionMode === "list" ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
                 {submissionMode === "list" ? (
                   <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                      <h3 className="text-lg font-black text-[#1b274b]">Grid Pengajuan Mahasiswa</h3>
+                      <h3 className="text-lg font-black text-[#1b274b]">
+                        {activeTab === "ketua-cluster-review"
+                          ? "Grid Review Ketua Cluster"
+                          : "Grid Pengajuan Mahasiswa"}
+                      </h3>
                       <div className="flex items-center gap-2">
                         <div className="relative">
                           <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
@@ -4092,7 +4860,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             type="text"
                             value={submissionQuery}
                             onChange={(event) => setSubmissionQuery(event.target.value)}
-                            placeholder="Cari nama, NIM, jumlah topik, status, tahap..."
+                            placeholder={
+                              activeTab === "ketua-cluster-review"
+                                ? "Cari pengajuan ketua cluster..."
+                                : "Cari nama, NIM, jumlah topik, status, tahap..."
+                            }
                             className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                           />
                         </div>
@@ -4420,6 +5192,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       {formatLabel(submissionReviewTopikFocused?.reviewer_status || "pending")}
                                     </p>
                                   </div>
+                                  {shouldShowPembimbingApprovalNote ? (
+                                    <div className="mt-3 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-3 text-sm text-[#2f426f]">
+                                      <p className="font-black text-[#244279]">
+                                        Alasan Approve Dosen Pembimbing
+                                      </p>
+                                      <p className="mt-1">
+                                        <span className="font-semibold">Dosen:</span>{" "}
+                                        {submissionReviewPembimbingApproval.approvedByName || submissionReviewTopikFocused?.dosen || "-"}
+                                      </p>
+                                      <p className="mt-1">
+                                        <span className="font-semibold">Catatan approve:</span>{" "}
+                                        {submissionReviewPembimbingApproval.note || "-"}
+                                      </p>
+                                      {submissionReviewPembimbingApproval.decidedAt ? (
+                                        <p className="mt-1 text-xs font-semibold text-[#5c6d95]">
+                                          Diputuskan: {formatDateTime(submissionReviewPembimbingApproval.decidedAt)}
+                                        </p>
+                                      ) : null}
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
                             ) : (
@@ -4665,6 +5457,386 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     ) : null}
                   </div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {!loading && activeTab === "magang-review" ? (
+              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Grid Review Magang</h3>
+                    <p className="mt-1 text-sm text-[#5d6c91]">
+                      Hanya menampilkan permintaan surat rekomendasi magang yang masuk ke dosen pengawas magang pada periode aktif.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                      <input
+                        type="text"
+                        value={magangReviewQuery}
+                        onChange={(event) => setMagangReviewQuery(event.target.value)}
+                        placeholder="Cari nama, NIM, perusahaan, posisi, status..."
+                        className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                  <table className="w-full min-w-[1360px] table-fixed text-left text-sm">
+                    <colgroup>
+                      <col style={{ width: "56px" }} />
+                      <col style={{ width: "260px" }} />
+                      <col style={{ width: "140px" }} />
+                      <col style={{ width: "180px" }} />
+                      <col style={{ width: "280px" }} />
+                      <col style={{ width: "150px" }} />
+                      <col style={{ width: "190px" }} />
+                      <col style={{ width: "180px" }} />
+                      <col style={{ width: "220px" }} />
+                    </colgroup>
+                    <thead>
+                      <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Mahasiswa</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">NIM</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Periode</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Perusahaan / Institusi</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Tipe</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Posisi</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Status</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredMagangReviewRows.length > 0
+                        ? pagedMagangReviewRows.map((row, index) => {
+                            const nomorUrut = magangReviewRangeStart + index;
+                            const status = getMagangReviewStatus(row);
+                            const canReview = String(status || "").toLowerCase() === "review_dosen_magang";
+                            const isRowBusy = magangReviewActionId === row.id;
+                            const proposedPosition = pickMagangPayloadText(row, [
+                              "proposed_position_other",
+                              "proposed_position",
+                            ]);
+
+                            return (
+                              <tr key={`magang-review-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                                <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">
+                                  {nomorUrut}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
+                                  <p className="text-xs text-[#61709b]">
+                                    Angkatan {row.mahasiswa?.angkatan || "-"} • {row.mahasiswa?.email || "-"}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">
+                                  {row.mahasiswa?.nim || "-"}
+                                </td>
+                                <td className="px-3 py-2 text-[#2f426f] align-top break-words">
+                                  {row.periode?.label_periode || "-"}
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <p className="font-semibold text-[#243968] break-words">{getMagangCompanyName(row)}</p>
+                                  <p className="mt-1 text-xs text-[#61709b] break-words">
+                                    {pickMagangPayloadText(row, ["complete_address_of_institution"])}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <span className="inline-flex rounded-full bg-[#eef3ff] px-2.5 py-1 text-xs font-bold text-[#2f63e3]">
+                                    {getMagangCompanyTypeLabel(row)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 text-[#2f426f] align-top break-words">
+                                  {formatLabel(proposedPosition)}
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getMagangStatusBadgeClass(status)}`}>
+                                    {row.workflow_status_label || formatLabel(status)}
+                                  </span>
+                                  <p className="mt-1 text-[11px] font-semibold text-[#61709b]">
+                                    Dikirim: {formatDateTime(row.submitted_at || row.createdAt)}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={isRowBusy}
+                                      onClick={() => handleOpenMagangReviewDetail(row.id)}
+                                      className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      <Eye className="h-3.5 w-3.5" />
+                                      Detail
+                                    </button>
+                                    {canReview ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={isRowBusy}
+                                          onClick={() => handleMagangReviewDecision(row, "approve")}
+                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          Approve
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isRowBusy}
+                                          onClick={() => handleMagangReviewDecision(row, "reject")}
+                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          Reject
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        : null}
+                    </tbody>
+                  </table>
+                  {filteredMagangReviewRows.length === 0 ? (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                      Belum ada review magang yang menunggu keputusan.
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                  <p className="text-sm text-[#4f5e86]">
+                    Menampilkan {magangReviewRangeStart} - {magangReviewRangeEnd} dari{" "}
+                    {filteredMagangReviewRows.length} data review magang.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMagangReviewPage((prev) => Math.max(1, prev - 1))}
+                      disabled={magangReviewPage === 1}
+                      className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Sebelumnya
+                    </button>
+                    <span className="text-sm font-semibold text-[#314778]">
+                      Halaman {magangReviewPage} / {totalMagangReviewPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setMagangReviewPage((prev) => Math.min(totalMagangReviewPages, prev + 1))
+                      }
+                      disabled={magangReviewPage >= totalMagangReviewPages}
+                      className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Berikutnya
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {!loading && activePengampuReviewConfig ? (
+              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">{activePengampuReviewConfig.gridTitle}</h3>
+                    <p className="mt-1 text-sm text-[#5d6c91]">{activePengampuReviewConfig.subtitle}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                      <input
+                        type="text"
+                        value={activePengampuReviewQuery}
+                        onChange={(event) =>
+                          handlePengampuReviewQueryChange(activePengampuReviewConfig.jalur, event.target.value)
+                        }
+                        placeholder="Cari nama, NIM, periode, ringkasan, status..."
+                        className="w-[360px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                  <table className="w-full min-w-[1300px] table-fixed text-left text-sm">
+                    <colgroup>
+                      <col style={{ width: "56px" }} />
+                      <col style={{ width: "260px" }} />
+                      <col style={{ width: "140px" }} />
+                      <col style={{ width: "180px" }} />
+                      <col style={{ width: "180px" }} />
+                      <col style={{ width: "320px" }} />
+                      <col style={{ width: "240px" }} />
+                      <col style={{ width: "170px" }} />
+                      <col style={{ width: "220px" }} />
+                    </colgroup>
+                    <thead>
+                      <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Mahasiswa</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">NIM</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Periode</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Jalur</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                          {activePengampuReviewConfig.summaryLabel}
+                        </th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                          {activePengampuReviewConfig.noteLabel}
+                        </th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Status</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPengampuReviewRows.length > 0
+                        ? pagedPengampuReviewRows.map((row, index) => {
+                            const nomorUrut = pengampuReviewRangeStart + index;
+                            const status = getPengampuReviewStatus(row);
+                            const canReview = String(status || "").toLowerCase() === "submitted";
+                            const actionKey = `${activePengampuReviewConfig.jalur}-${row.id}`;
+                            const isRowBusy = pengampuReviewActionId === actionKey;
+
+                            return (
+                              <tr key={`pengampu-review-${activePengampuReviewConfig.jalur}-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                                <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">
+                                  {nomorUrut}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
+                                  <p className="text-xs text-[#61709b]">
+                                    Angkatan {row.mahasiswa?.angkatan || "-"} • {row.mahasiswa?.email || "-"}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">
+                                  {row.mahasiswa?.nim || "-"}
+                                </td>
+                                <td className="px-3 py-2 text-[#2f426f] align-top break-words">
+                                  {row.periode?.label_periode || "-"}
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <span className="inline-flex rounded-full bg-[#eef3ff] px-2.5 py-1 text-xs font-bold text-[#2f63e3]">
+                                    {formatLabel(row.jalur || activePengampuReviewConfig.jalur)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <p className="line-clamp-3 text-[#243968] break-words">{getPengampuReviewSummary(row)}</p>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <p className="line-clamp-3 text-[#526184] break-words">{getPengampuReviewNote(row)}</p>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getPengampuReviewStatusBadgeClass(status)}`}>
+                                    {row.workflow_status_label || formatLabel(status)}
+                                  </span>
+                                  <p className="mt-1 text-[11px] font-semibold text-[#61709b]">
+                                    Dikirim: {formatDateTime(row.submitted_at || row.createdAt)}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-2 align-top">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={isRowBusy}
+                                      onClick={() => handleOpenPengampuReviewDetail(row.id, activePengampuReviewConfig)}
+                                      className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      <Eye className="h-3.5 w-3.5" />
+                                      Detail
+                                    </button>
+                                    {canReview ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={isRowBusy}
+                                          onClick={() =>
+                                            handlePengampuReviewDecision(row, activePengampuReviewConfig, "approve")
+                                          }
+                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          Approve
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isRowBusy}
+                                          onClick={() =>
+                                            handlePengampuReviewDecision(row, activePengampuReviewConfig, "reject")
+                                          }
+                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          Reject
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        : null}
+                    </tbody>
+                  </table>
+                  {filteredPengampuReviewRows.length === 0 ? (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                      {activePengampuReviewConfig.emptyMessage}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                  <p className="text-sm text-[#4f5e86]">
+                    Menampilkan {pengampuReviewRangeStart} - {pengampuReviewRangeEnd} dari{" "}
+                    {filteredPengampuReviewRows.length} data review.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSetPengampuReviewPage(activePengampuReviewConfig.jalur, (prev) =>
+                          Math.max(1, prev - 1)
+                        )
+                      }
+                      disabled={activePengampuReviewPage === 1}
+                      className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Sebelumnya
+                    </button>
+                    <span className="text-sm font-semibold text-[#314778]">
+                      Halaman {activePengampuReviewPage} / {totalPengampuReviewPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        handleSetPengampuReviewPage(activePengampuReviewConfig.jalur, (prev) =>
+                          Math.min(totalPengampuReviewPages, prev + 1)
+                        )
+                      }
+                      disabled={activePengampuReviewPage >= totalPengampuReviewPages}
+                      className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Berikutnya
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
 
@@ -4944,8 +6116,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </p>
                       <p className="mt-1 text-sm text-[#5d6c91]">
                         Atur ketua cluster dan pembimbing jalur yang akan dipakai otomatis saat periode penjaluran dibuka.
+                        Satu dosen hanya boleh memiliki satu tanggung jawab.
                       </p>
                     </div>
+
+                    {isPeriodeMasterLocked ? (
+                      <div className="mt-3 rounded-lg border border-[#f0d3a5] bg-[#fff8ec] px-3 py-2 text-sm font-semibold text-[#8a5a14]">
+                        {periodeMasterLockMessage}
+                      </div>
+                    ) : isPeriodeMasterConfigured && !periodeMasterEditMode ? (
+                      <div className="mt-3 rounded-lg border border-[#d9e4fb] bg-[#f8fbff] px-3 py-2 text-sm text-[#526184]">
+                        Master data sudah tersimpan dan dikunci sebagai read-only. Klik Edit jika memang perlu
+                        mengganti penanggung jawab.
+                      </div>
+                    ) : (
+                      <div className="mt-3 rounded-lg border border-[#d9e4fb] bg-[#f8fbff] px-3 py-2 text-sm text-[#526184]">
+                        Pilih dosen berbeda untuk setiap tanggung jawab. Dosen yang sudah dipakai di field lain
+                        akan tampil nonaktif di hasil pencarian.
+                      </div>
+                    )}
 
                     <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                       {PERIODE_MASTER_KETUA_FIELDS.map((item) => {
@@ -4958,6 +6147,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         );
                         const searchResults = getPeriodeMasterCandidateRows(item.key);
                         const shouldShowResults =
+                          isPeriodeMasterFormEditable &&
                           activePeriodeMasterSearchField === item.key &&
                           searchValue.trim().length > 0 &&
                           searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
@@ -4974,6 +6164,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               <input
                                 type="text"
                                 value={searchValue}
+                                disabled={!isPeriodeMasterFormEditable}
                                 onFocus={() => handlePeriodeMasterSearchFocus(item.key)}
                                 onBlur={() => handlePeriodeMasterSearchBlur(item.key)}
                                 onChange={(event) =>
@@ -4981,7 +6172,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 }
                                 placeholder={`Cari nama atau NIK dosen ketua ${item.code}`}
                                 className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                                  periodeMasterErrors[item.key]
+                                  !isPeriodeMasterFormEditable
+                                    ? "cursor-not-allowed border-[#d3dbef] bg-[#f7f9ff] text-[#526184]"
+                                    : periodeMasterErrors[item.key]
                                     ? "border-[#dc4b4b] bg-[#fff7f7]"
                                     : "border-[#d3dbef]"
                                 }`}
@@ -4991,18 +6184,30 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   {isDebouncing ? (
                                     <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
                                   ) : searchResults.length > 0 ? (
-                                    searchResults.map((dosen) => (
-                                      <button
-                                        key={`master-dosen-ketua-${item.code}-${dosen.id}`}
-                                        type="button"
-                                        onMouseDown={(event) => event.preventDefault()}
-                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
-                                        className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
-                                      >
-                                        <span className="font-semibold">{dosen.nama || "-"}</span>
-                                        <span className="text-xs text-[#5d6c91]">NIK: {dosen.nik || "-"}</span>
-                                      </button>
-                                    ))
+                                    searchResults.map((dosen) => {
+                                      const hasConflict = Boolean(dosen.assignment_conflict_field);
+                                      return (
+                                        <button
+                                          key={`master-dosen-ketua-${item.code}-${dosen.id}`}
+                                          type="button"
+                                          disabled={hasConflict}
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
+                                          className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                                            hasConflict
+                                              ? "cursor-not-allowed bg-[#f7f9ff] text-[#93a0bd]"
+                                              : "text-[#213460] hover:bg-[#f4f7ff]"
+                                          }`}
+                                        >
+                                          <span className="font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="text-right text-xs text-[#5d6c91]">
+                                            {hasConflict
+                                              ? `Sudah ditugaskan: ${dosen.assignment_conflict_label}`
+                                              : `NIK: ${dosen.nik || "-"}`}
+                                          </span>
+                                        </button>
+                                      );
+                                    })
                                   ) : (
                                     <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">
                                       Dosen tidak ditemukan.
@@ -5030,6 +6235,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         );
                         const searchResults = getPeriodeMasterCandidateRows(item.key);
                         const shouldShowResults =
+                          isPeriodeMasterFormEditable &&
                           activePeriodeMasterSearchField === item.key &&
                           searchValue.trim().length > 0 &&
                           searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
@@ -5046,6 +6252,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               <input
                                 type="text"
                                 value={searchValue}
+                                disabled={!isPeriodeMasterFormEditable}
                                 onFocus={() => handlePeriodeMasterSearchFocus(item.key)}
                                 onBlur={() => handlePeriodeMasterSearchBlur(item.key)}
                                 onChange={(event) =>
@@ -5053,7 +6260,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 }
                                 placeholder={`Cari nama atau NIK untuk ${item.label.toLowerCase()}`}
                                 className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                                  periodeMasterErrors[item.key]
+                                  !isPeriodeMasterFormEditable
+                                    ? "cursor-not-allowed border-[#d3dbef] bg-[#f7f9ff] text-[#526184]"
+                                    : periodeMasterErrors[item.key]
                                     ? "border-[#dc4b4b] bg-[#fff7f7]"
                                     : "border-[#d3dbef]"
                                 }`}
@@ -5063,18 +6272,30 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   {isDebouncing ? (
                                     <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
                                   ) : searchResults.length > 0 ? (
-                                    searchResults.map((dosen) => (
-                                      <button
-                                        key={`master-dosen-${item.key}-${dosen.id}`}
-                                        type="button"
-                                        onMouseDown={(event) => event.preventDefault()}
-                                        onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
-                                        className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff] last:border-b-0"
-                                      >
-                                        <span className="font-semibold">{dosen.nama || "-"}</span>
-                                        <span className="text-xs text-[#5d6c91]">NIK: {dosen.nik || "-"}</span>
-                                      </button>
-                                    ))
+                                    searchResults.map((dosen) => {
+                                      const hasConflict = Boolean(dosen.assignment_conflict_field);
+                                      return (
+                                        <button
+                                          key={`master-dosen-${item.key}-${dosen.id}`}
+                                          type="button"
+                                          disabled={hasConflict}
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() => handleSelectPeriodeMasterDosen(item.key, dosen)}
+                                          className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                                            hasConflict
+                                              ? "cursor-not-allowed bg-[#f7f9ff] text-[#93a0bd]"
+                                              : "text-[#213460] hover:bg-[#f4f7ff]"
+                                          }`}
+                                        >
+                                          <span className="font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="text-right text-xs text-[#5d6c91]">
+                                            {hasConflict
+                                              ? `Sudah ditugaskan: ${dosen.assignment_conflict_label}`
+                                              : `NIK: ${dosen.nik || "-"}`}
+                                          </span>
+                                        </button>
+                                      );
+                                    })
                                   ) : (
                                     <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">
                                       Dosen tidak ditemukan.
@@ -5090,15 +6311,38 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         );
                       })}
                     </div>
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={handleSavePeriodeMaster}
-                        disabled={savingPeriodeMaster}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {savingPeriodeMaster ? "Menyimpan..." : "Simpan Master Data"}
-                      </button>
+                    <div className="mt-4 flex flex-wrap justify-end gap-2">
+                      {isPeriodeMasterConfigured && !periodeMasterEditMode ? (
+                        <button
+                          type="button"
+                          onClick={handleStartEditPeriodeMaster}
+                          disabled={savingPeriodeMaster || isPeriodeMasterLocked}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Edit
+                        </button>
+                      ) : (
+                        <>
+                          {isPeriodeMasterConfigured ? (
+                            <button
+                              type="button"
+                              onClick={handleCancelEditPeriodeMaster}
+                              disabled={savingPeriodeMaster}
+                              className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Cancel
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={handleSavePeriodeMaster}
+                            disabled={savingPeriodeMaster || !isPeriodeMasterFormEditable}
+                            className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {savingPeriodeMaster ? "Menyimpan..." : "Simpan Master Data"}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
                 ) : null}

@@ -631,6 +631,49 @@ function toNonPenelitianReviewResponse(item) {
   };
 }
 
+const DOSEN_NON_PENELITIAN_REVIEW_CONFIG = {
+  magang: {
+    label: "magang",
+    reviewStatus: "review_dosen_magang",
+    periodeField: "pengawas_magang_dosen_id",
+    actor: "dosen_pengawas_magang",
+    assignedError: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
+    statusError: (status) => `Form magang sudah diproses. Status saat ini: ${status}`,
+    approvedMessage: "Form magang berhasil disetujui dosen pengawas.",
+    rejectedMessage: "Form magang ditolak oleh dosen pengawas.",
+    defaultApproveNote: "Disetujui dosen pengawas magang.",
+    defaultRejectNote: "Ditolak dosen pengawas magang.",
+  },
+  pengabdian: {
+    label: "pengabdian masyarakat",
+    reviewStatus: "submitted",
+    periodeField: "pengawas_pengabdian_dosen_id",
+    actor: "dosen_pengampu_pengabdian",
+    assignedError: "Akses ditolak. Anda bukan dosen pengampu pengabdian masyarakat untuk periode ini.",
+    statusError: (status) => `Form pengabdian masyarakat sudah diproses. Status saat ini: ${status}`,
+    approvedMessage: "Form pengabdian masyarakat berhasil disetujui dosen pengampu.",
+    rejectedMessage: "Form pengabdian masyarakat ditolak oleh dosen pengampu.",
+    defaultApproveNote: "Disetujui dosen pengampu pengabdian masyarakat.",
+    defaultRejectNote: "Ditolak dosen pengampu pengabdian masyarakat.",
+  },
+  perintisan_bisnis: {
+    label: "perintisan bisnis",
+    reviewStatus: "submitted",
+    periodeField: "pengawas_perintisan_bisnis_dosen_id",
+    actor: "dosen_pengampu_perintisan_bisnis",
+    assignedError: "Akses ditolak. Anda bukan dosen pengampu perintisan bisnis untuk periode ini.",
+    statusError: (status) => `Form perintisan bisnis sudah diproses. Status saat ini: ${status}`,
+    approvedMessage: "Form perintisan bisnis berhasil disetujui dosen pengampu.",
+    rejectedMessage: "Form perintisan bisnis ditolak oleh dosen pengampu.",
+    defaultApproveNote: "Disetujui dosen pengampu perintisan bisnis.",
+    defaultRejectNote: "Ditolak dosen pengampu perintisan bisnis.",
+  },
+};
+
+function getDosenNonPenelitianReviewConfig(jalur) {
+  return DOSEN_NON_PENELITIAN_REVIEW_CONFIG[String(jalur || "").trim().toLowerCase()] || null;
+}
+
 async function getNonPenelitianSubmissionForReview(id, transaction, lock = false) {
   return PendaftaranPenjaluran.findByPk(id, {
     transaction,
@@ -1470,19 +1513,19 @@ exports.submitFormNonPenelitian = async (req, res) => {
   }
 };
 
-// GET /api/dosen/non-penelitian/magang/reviews - Antrian review magang (partner) untuk dosen pengawas magang
-exports.getMagangReviewQueueForDosen = async (req, res) => {
+async function getNonPenelitianReviewQueueForDosenByJalur(req, res, targetJalur) {
   try {
+    const config = getDosenNonPenelitianReviewConfig(targetJalur);
     const dosenId = Number(req.user?.id || 0);
-    if (!dosenId) {
+    if (!config || !dosenId) {
       return res.status(401).json({
         success: false,
-        message: "Autentikasi dosen tidak valid.",
+        message: !config ? "Jalur review dosen tidak valid." : "Autentikasi dosen tidak valid.",
       });
     }
 
     const rows = await PendaftaranPenjaluran.findAll({
-      where: { form_lanjutan_status: "review_dosen_magang" },
+      where: { form_lanjutan_status: config.reviewStatus },
       include: [
         {
           model: Mahasiswa,
@@ -1504,7 +1547,7 @@ exports.getMagangReviewQueueForDosen = async (req, res) => {
             "pengawas_pengabdian_dosen_id",
             "pengawas_perintisan_bisnis_dosen_id",
           ],
-          where: { pengawas_magang_dosen_id: dosenId },
+          where: { [config.periodeField]: dosenId },
           required: true,
         },
       ],
@@ -1512,7 +1555,7 @@ exports.getMagangReviewQueueForDosen = async (req, res) => {
     });
 
     const filtered = rows
-      .filter((item) => resolveSelectedJalurFromPendaftaran(item) === "magang")
+      .filter((item) => resolveSelectedJalurFromPendaftaran(item) === targetJalur)
       .map((item) => toNonPenelitianReviewResponse(item));
 
     return res.json({
@@ -1521,25 +1564,25 @@ exports.getMagangReviewQueueForDosen = async (req, res) => {
       total: filtered.length,
     });
   } catch (error) {
-    console.error("Error di getMagangReviewQueueForDosen:", error);
+    console.error("Error di getNonPenelitianReviewQueueForDosenByJalur:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,
     });
   }
-};
+}
 
-// GET /api/dosen/non-penelitian/magang/reviews/:id
-exports.getMagangReviewDetailForDosen = async (req, res) => {
+async function getNonPenelitianReviewDetailForDosenByJalur(req, res, targetJalur) {
   try {
+    const config = getDosenNonPenelitianReviewConfig(targetJalur);
     const dosenId = Number(req.user?.id || 0);
     const id = Number(req.params?.id || 0);
 
-    if (!dosenId || !id) {
+    if (!config || !dosenId || !id) {
       return res.status(400).json({
         success: false,
-        message: "Parameter request tidak valid.",
+        message: !config ? "Jalur review dosen tidak valid." : "Parameter request tidak valid.",
       });
     }
 
@@ -1552,10 +1595,10 @@ exports.getMagangReviewDetailForDosen = async (req, res) => {
     }
 
     const reviewable = ensureReviewableNonPenelitian(row);
-    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+    if (!reviewable.ok || reviewable.selectedJalur !== targetJalur) {
       return res.status(reviewable.statusCode || 409).json({
         success: false,
-        message: reviewable.message || "Data bukan pengajuan magang.",
+        message: reviewable.message || `Data bukan pengajuan ${config.label}.`,
       });
     }
 
@@ -1563,7 +1606,7 @@ exports.getMagangReviewDetailForDosen = async (req, res) => {
     if (!assigned.dosen_id || assigned.dosen_id !== dosenId) {
       return res.status(403).json({
         success: false,
-        message: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
+        message: config.assignedError,
       });
     }
 
@@ -1572,27 +1615,28 @@ exports.getMagangReviewDetailForDosen = async (req, res) => {
       data: toNonPenelitianReviewResponse(row),
     });
   } catch (error) {
-    console.error("Error di getMagangReviewDetailForDosen:", error);
+    console.error("Error di getNonPenelitianReviewDetailForDosenByJalur:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,
     });
   }
-};
+}
 
-async function decideMagangReviewByDosen(req, res, decision) {
+async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur) {
   const t = await sequelize.transaction();
   try {
+    const config = getDosenNonPenelitianReviewConfig(targetJalur);
     const dosenId = Number(req.user?.id || 0);
     const id = Number(req.params?.id || 0);
     const note = String(req.body?.keterangan || req.body?.alasan || "").trim();
 
-    if (!dosenId || !id) {
+    if (!config || !dosenId || !id) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Parameter request tidak valid.",
+        message: !config ? "Jalur review dosen tidak valid." : "Parameter request tidak valid.",
       });
     }
 
@@ -1614,19 +1658,19 @@ async function decideMagangReviewByDosen(req, res, decision) {
     }
 
     const reviewable = ensureReviewableNonPenelitian(row);
-    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+    if (!reviewable.ok || reviewable.selectedJalur !== targetJalur) {
       await t.rollback();
       return res.status(reviewable.statusCode || 409).json({
         success: false,
-        message: reviewable.message || "Data bukan pengajuan magang.",
+        message: reviewable.message || `Data bukan pengajuan ${config.label}.`,
       });
     }
 
-    if (String(row.form_lanjutan_status || "") !== "review_dosen_magang") {
+    if (String(row.form_lanjutan_status || "") !== config.reviewStatus) {
       await t.rollback();
       return res.status(409).json({
         success: false,
-        message: `Form magang sudah diproses. Status saat ini: ${row.form_lanjutan_status}`,
+        message: config.statusError(row.form_lanjutan_status),
       });
     }
 
@@ -1635,16 +1679,16 @@ async function decideMagangReviewByDosen(req, res, decision) {
       await t.rollback();
       return res.status(403).json({
         success: false,
-        message: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
+        message: config.assignedError,
       });
     }
 
     const now = new Date();
     const payloadWithTimeline = appendWorkflowTimeline(row.form_lanjutan_payload, {
       status: decision,
-      actor: "dosen_pengawas_magang",
+      actor: config.actor,
       actor_id: dosenId,
-      note: note || (decision === "approved" ? "Disetujui dosen pengawas magang." : "Ditolak dosen pengawas magang."),
+      note: note || (decision === "approved" ? config.defaultApproveNote : config.defaultRejectNote),
       at: now,
     });
 
@@ -1673,15 +1717,12 @@ async function decideMagangReviewByDosen(req, res, decision) {
     await t.commit();
     return res.json({
       success: true,
-      message:
-        decision === "approved"
-          ? "Form magang berhasil disetujui dosen pengawas."
-          : "Form magang ditolak oleh dosen pengawas.",
+      message: decision === "approved" ? config.approvedMessage : config.rejectedMessage,
       data: toNonPenelitianReviewResponse(row),
     });
   } catch (error) {
     if (!t.finished) await t.rollback();
-    console.error("Error di decideMagangReviewByDosen:", error);
+    console.error("Error di decideNonPenelitianReviewByDosen:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
@@ -1690,13 +1731,53 @@ async function decideMagangReviewByDosen(req, res, decision) {
   }
 }
 
+// GET /api/dosen/non-penelitian/magang/reviews - Antrian review magang (partner) untuk dosen pengawas magang
+exports.getMagangReviewQueueForDosen = async (req, res) =>
+  getNonPenelitianReviewQueueForDosenByJalur(req, res, "magang");
+
+// GET /api/dosen/non-penelitian/magang/reviews/:id
+exports.getMagangReviewDetailForDosen = async (req, res) =>
+  getNonPenelitianReviewDetailForDosenByJalur(req, res, "magang");
+
 // POST /api/dosen/non-penelitian/magang/reviews/:id/approve
 exports.approveMagangReviewByDosen = async (req, res) =>
-  decideMagangReviewByDosen(req, res, "approved");
+  decideNonPenelitianReviewByDosen(req, res, "approved", "magang");
 
 // POST /api/dosen/non-penelitian/magang/reviews/:id/reject
 exports.rejectMagangReviewByDosen = async (req, res) =>
-  decideMagangReviewByDosen(req, res, "rejected");
+  decideNonPenelitianReviewByDosen(req, res, "rejected", "magang");
+
+// GET /api/dosen/non-penelitian/pengabdian/reviews
+exports.getPengabdianReviewQueueForDosen = async (req, res) =>
+  getNonPenelitianReviewQueueForDosenByJalur(req, res, "pengabdian");
+
+// GET /api/dosen/non-penelitian/pengabdian/reviews/:id
+exports.getPengabdianReviewDetailForDosen = async (req, res) =>
+  getNonPenelitianReviewDetailForDosenByJalur(req, res, "pengabdian");
+
+// POST /api/dosen/non-penelitian/pengabdian/reviews/:id/approve
+exports.approvePengabdianReviewByDosen = async (req, res) =>
+  decideNonPenelitianReviewByDosen(req, res, "approved", "pengabdian");
+
+// POST /api/dosen/non-penelitian/pengabdian/reviews/:id/reject
+exports.rejectPengabdianReviewByDosen = async (req, res) =>
+  decideNonPenelitianReviewByDosen(req, res, "rejected", "pengabdian");
+
+// GET /api/dosen/non-penelitian/perintisan-bisnis/reviews
+exports.getPerintisanBisnisReviewQueueForDosen = async (req, res) =>
+  getNonPenelitianReviewQueueForDosenByJalur(req, res, "perintisan_bisnis");
+
+// GET /api/dosen/non-penelitian/perintisan-bisnis/reviews/:id
+exports.getPerintisanBisnisReviewDetailForDosen = async (req, res) =>
+  getNonPenelitianReviewDetailForDosenByJalur(req, res, "perintisan_bisnis");
+
+// POST /api/dosen/non-penelitian/perintisan-bisnis/reviews/:id/approve
+exports.approvePerintisanBisnisReviewByDosen = async (req, res) =>
+  decideNonPenelitianReviewByDosen(req, res, "approved", "perintisan_bisnis");
+
+// POST /api/dosen/non-penelitian/perintisan-bisnis/reviews/:id/reject
+exports.rejectPerintisanBisnisReviewByDosen = async (req, res) =>
+  decideNonPenelitianReviewByDosen(req, res, "rejected", "perintisan_bisnis");
 
 // GET /api/sekretaris/non-penelitian/reviews - Antrian review non-penelitian untuk sekretaris prodi
 exports.getNonPenelitianReviewQueueForSekretaris = async (req, res) => {

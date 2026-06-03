@@ -38,6 +38,54 @@ router.post(
   authorizeRole("dosen"),
   jalurController.rejectMagangReviewByDosen
 );
+router.get(
+  "/non-penelitian/pengabdian/reviews",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.getPengabdianReviewQueueForDosen
+);
+router.get(
+  "/non-penelitian/pengabdian/reviews/:id",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.getPengabdianReviewDetailForDosen
+);
+router.post(
+  "/non-penelitian/pengabdian/reviews/:id/approve",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.approvePengabdianReviewByDosen
+);
+router.post(
+  "/non-penelitian/pengabdian/reviews/:id/reject",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.rejectPengabdianReviewByDosen
+);
+router.get(
+  "/non-penelitian/perintisan-bisnis/reviews",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.getPerintisanBisnisReviewQueueForDosen
+);
+router.get(
+  "/non-penelitian/perintisan-bisnis/reviews/:id",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.getPerintisanBisnisReviewDetailForDosen
+);
+router.post(
+  "/non-penelitian/perintisan-bisnis/reviews/:id/approve",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.approvePerintisanBisnisReviewByDosen
+);
+router.post(
+  "/non-penelitian/perintisan-bisnis/reviews/:id/reject",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.rejectPerintisanBisnisReviewByDosen
+);
 
 // ==========  SEMESTER 3 ==========
 router.get("/permohonan-extend", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getIzinLanjutSubmissions);

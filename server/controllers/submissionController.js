@@ -500,6 +500,10 @@ exports.getSubmissionById = async (req, res) => {
           reviewer_status: slotState?.reviewer_status || null,
           reviewer_note: slotState?.reviewer_note || null,
           reviewer_decided_at: slotState?.reviewer_decided_at || null,
+          pembimbing_approval_note:
+            slotState?.reviewer_status === "approved" ? slotState?.reviewer_note || null : null,
+          pembimbing_approved_at:
+            slotState?.reviewer_status === "approved" ? slotState?.reviewer_decided_at || null : null,
         };
       });
       const approvedTopik = getApprovedTopik(submission, topikList);
@@ -509,7 +513,18 @@ exports.getSubmissionById = async (req, res) => {
       detailPengajuan = {
         diajukan_pada: submission.createdAt,
         topik_dipilih: topikList.map(
-          ({ slot, kode, judul, dosen, dosen_id: dosenId, reviewer_status, reviewer_note, reviewer_decided_at }) => ({
+          ({
+            slot,
+            kode,
+            judul,
+            dosen,
+            dosen_id: dosenId,
+            reviewer_status,
+            reviewer_note,
+            reviewer_decided_at,
+            pembimbing_approval_note,
+            pembimbing_approved_at,
+          }) => ({
             slot,
             kode,
             judul,
@@ -518,6 +533,8 @@ exports.getSubmissionById = async (req, res) => {
             reviewer_status: reviewer_status || null,
             reviewer_note: reviewer_note || null,
             reviewer_decided_at: reviewer_decided_at || null,
+            pembimbing_approval_note: pembimbing_approval_note || null,
+            pembimbing_approved_at: pembimbing_approved_at || null,
           })
         ),
         review_deadline_at: getTopikParallelReviewDeadline(submission),
@@ -606,6 +623,20 @@ exports.getSubmissionById = async (req, res) => {
                 reviewer_status: "pending",
                 reviewer_note: "Menunggu keputusan ketua cluster.",
                 reviewer_decided_at: null,
+                pembimbing_approval_note: approvedTopikForResponse.reviewer_note || null,
+                pembimbing_approved_at: approvedTopikForResponse.reviewer_decided_at || null,
+                pembimbing_approved_by: approvedTopikForResponse.dosen_id
+                  ? (() => {
+                      const dosen = dosenById[Number(approvedTopikForResponse.dosen_id)] || null;
+                      return dosen
+                        ? {
+                            id: dosen.id,
+                            nik: dosen.nik,
+                            nama: dosen.nama,
+                          }
+                        : null;
+                    })()
+                  : null,
               },
             ]
           : submission.tipe_pengajuan === "topik_dosen" && Array.isArray(reviewerSlotDecisions)

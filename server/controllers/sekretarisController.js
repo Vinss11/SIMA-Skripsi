@@ -30,6 +30,13 @@ const RESEARCH_CLUSTER_LABELS = {
   SIBER: "Sistem Siber",
   MVK: "Multimedia & Visi Komputer",
 };
+const ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT = ["pending", "menunggu_set_ketua_cluster"];
+const ACTIVE_PENDAFTARAN_STATUSES_FOR_ASSIGNMENT = ["submitted", "processed"];
+const ACTIVE_FORM_LANJUTAN_STATUSES_FOR_ASSIGNMENT = [
+  "submitted",
+  "review_dosen_magang",
+  "review_sekprodi",
+];
 const PERIODE_ROLE_FIELD_DEFINITIONS = [
   {
     kode: "ITSC",
@@ -130,6 +137,102 @@ function buildDuplicateRoleFieldErrors(rolePayload = {}) {
   }
 
   return duplicateErrors;
+}
+
+function isRolePayloadDifferent(masterRow, rolePayload = {}) {
+  if (!masterRow) return true;
+  return PERIODE_ROLE_FIELD_DEFINITIONS.some(
+    (item) => parsePositiveId(masterRow?.[item.field]) !== parsePositiveId(rolePayload?.[item.field])
+  );
+}
+
+function summarizePenanggungJawabAssignmentLock({
+  activePeriode = null,
+  pendingPengajuanCount = 0,
+  pendingPendaftaranCount = 0,
+} = {}) {
+  const reasons = [];
+  if (activePeriode) {
+    reasons.push(`periode aktif ${activePeriode.label_periode || activePeriode.tahun_akademik || ""}`.trim());
+  }
+  if (pendingPengajuanCount > 0) {
+    reasons.push(`${pendingPengajuanCount} pengajuan topik/judul aktif`);
+  }
+  if (pendingPendaftaranCount > 0) {
+    reasons.push(`${pendingPendaftaranCount} pendaftaran/form penjaluran aktif`);
+  }
+
+  return reasons.length > 0
+    ? `Penanggung jawab penjaluran belum dapat diubah karena masih ada ${reasons.join(", ")}. Selesaikan atau tutup proses aktif terlebih dahulu.`
+    : "Penanggung jawab penjaluran dapat diubah.";
+}
+
+async function getPenanggungJawabAssignmentLock(options = {}) {
+  const transaction = options.transaction;
+  const lock = options.lock;
+
+  const activePeriode = await PeriodePenjaluran.findOne({
+    where: {
+      [Op.or]: [{ status: "active" }, { is_active: true }],
+    },
+    attributes: ["id", "label_periode", "tahun_akademik", "semester", "status", "is_active"],
+    order: [["updatedAt", "DESC"]],
+    transaction,
+    ...(lock ? { lock } : {}),
+  });
+
+  const [pendingPengajuanCount, pendingPendaftaranCount] = await Promise.all([
+    Pengajuan.count({
+      where: {
+        status: {
+          [Op.in]: ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT,
+        },
+      },
+      transaction,
+    }),
+    PendaftaranPenjaluran.count({
+      where: {
+        [Op.or]: [
+          {
+            status: {
+              [Op.in]: ACTIVE_PENDAFTARAN_STATUSES_FOR_ASSIGNMENT,
+            },
+          },
+          {
+            form_lanjutan_status: {
+              [Op.in]: ACTIVE_FORM_LANJUTAN_STATUSES_FOR_ASSIGNMENT,
+            },
+          },
+        ],
+      },
+      transaction,
+    }),
+  ]);
+
+  const activePeriodePayload = activePeriode
+    ? {
+        id: activePeriode.id,
+        label_periode: activePeriode.label_periode || null,
+        tahun_akademik: activePeriode.tahun_akademik || null,
+        semester: activePeriode.semester || null,
+        status: getPeriodeStatusLabel(activePeriode),
+        is_active: isPeriodeActive(activePeriode),
+      }
+    : null;
+  const locked = Boolean(activePeriodePayload) || pendingPengajuanCount > 0 || pendingPendaftaranCount > 0;
+
+  return {
+    locked,
+    can_edit: !locked,
+    active_periode: activePeriodePayload,
+    pending_pengajuan_count: pendingPengajuanCount,
+    pending_pendaftaran_count: pendingPendaftaranCount,
+    message: summarizePenanggungJawabAssignmentLock({
+      activePeriode: activePeriodePayload,
+      pendingPengajuanCount,
+      pendingPendaftaranCount,
+    }),
+  };
 }
 
 function formatDosenMini(dosen) {
@@ -1134,7 +1237,14 @@ exports.rejectPendaftaran = async (req, res) => {
 // GET /api/sekretaris/periode
 exports.getPeriodeOverview = async (req, res) => {
   try {
-    const [periodes, dosenOptions, klasterRows, dosenKlasterRows, masterPenanggungJawab] = await Promise.all([
+    const [
+      periodes,
+      dosenOptions,
+      klasterRows,
+      dosenKlasterRows,
+      masterPenanggungJawab,
+      penanggungJawabLock,
+    ] = await Promise.all([
       PeriodePenjaluran.findAll({
         include: [
           {
@@ -1193,6 +1303,7 @@ exports.getPeriodeOverview = async (req, res) => {
         ],
       }),
       fetchLatestMasterPenanggungJawab(),
+      getPenanggungJawabAssignmentLock(),
     ]);
 
     const klasterByCode = new Map(
@@ -1273,6 +1384,7 @@ exports.getPeriodeOverview = async (req, res) => {
         dosen_options: dosenOptions,
         ketua_klaster_options: ketuaKlasterOptions,
         master_penanggung_jawab: serializeMasterPenanggungJawab(masterPenanggungJawab),
+        penanggung_jawab_lock: penanggungJawabLock,
       },
     });
   } catch (error) {
@@ -1298,6 +1410,27 @@ exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
       }
     }
     Object.assign(fieldErrors, buildDuplicateRoleFieldErrors(rolePayload));
+
+    const latestMaster = await MasterPenanggungJawabPenjaluran.findOne({
+      order: [["updatedAt", "DESC"]],
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    const assignmentLock = await getPenanggungJawabAssignmentLock({
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+
+    if (isRolePayloadDifferent(latestMaster, rolePayload) && assignmentLock.locked) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: assignmentLock.message,
+        detail: {
+          penanggung_jawab_lock: assignmentLock,
+        },
+      });
+    }
 
     const klasterRows = await Klaster.findAll({
       attributes: ["id", "kode", "nama"],
@@ -1382,12 +1515,6 @@ exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
         detail: fieldErrors,
       });
     }
-
-    const latestMaster = await MasterPenanggungJawabPenjaluran.findOne({
-      order: [["updatedAt", "DESC"]],
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
 
     if (latestMaster) {
       for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
@@ -1859,11 +1986,23 @@ exports.assignKetuaKlaster = async (req, res) => {
     }
 
     const statusPeriode = getPeriodeStatusLabel(periode);
-    if (!["draft", "active"].includes(statusPeriode)) {
+    if (statusPeriode !== "draft") {
       await t.rollback();
       return res.status(409).json({
         success: false,
-        message: "Ketua klaster hanya bisa diubah pada periode berstatus draft atau aktif.",
+        message: "Ketua klaster hanya bisa diubah pada periode draft. Periode aktif atau selesai tidak boleh diubah.",
+      });
+    }
+
+    const assignmentLock = await getPenanggungJawabAssignmentLock({ transaction: t });
+    if (assignmentLock.locked) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: assignmentLock.message,
+        detail: {
+          penanggung_jawab_lock: assignmentLock,
+        },
       });
     }
 
@@ -1896,6 +2035,55 @@ exports.assignKetuaKlaster = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: `Dosen ${dosen.nama} tidak terdaftar pada klaster ${klaster.kode}.`,
+      });
+    }
+
+    const duplicateKetua = await KlasterKetuaPeriode.findOne({
+      where: {
+        periode_penjaluran_id: periodePenjaluranId,
+        dosen_id: dosenId,
+        klaster_id: {
+          [Op.ne]: klasterId,
+        },
+      },
+      include: [
+        {
+          model: Klaster,
+          as: "klaster",
+          attributes: ["id", "kode", "nama"],
+          required: false,
+        },
+      ],
+      transaction: t,
+    });
+    if (duplicateKetua) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Dosen ${dosen.nama} sudah ditugaskan sebagai ketua klaster ${duplicateKetua.klaster?.kode || "-"}. Satu dosen hanya boleh memiliki satu tanggung jawab penjaluran.`,
+      });
+    }
+
+    const jalurConflicts = [
+      {
+        field: "pengawas_magang_dosen_id",
+        label: "dosen pengawas magang",
+      },
+      {
+        field: "pengawas_pengabdian_dosen_id",
+        label: "dosen pengampu pengabdian masyarakat",
+      },
+      {
+        field: "pengawas_perintisan_bisnis_dosen_id",
+        label: "dosen pengampu perintisan bisnis",
+      },
+    ];
+    const conflictingJalurRole = jalurConflicts.find((item) => Number(periode?.[item.field]) === dosenId);
+    if (conflictingJalurRole) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Dosen ${dosen.nama} sudah ditugaskan sebagai ${conflictingJalurRole.label}. Satu dosen hanya boleh memiliki satu tanggung jawab penjaluran.`,
       });
     }
 
