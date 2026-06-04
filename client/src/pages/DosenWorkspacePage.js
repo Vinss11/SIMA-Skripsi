@@ -482,6 +482,24 @@ function getSubmissionGridStatus(row) {
   return row.status_dosen || row.reviewer_display_status || row.reviewer_status || row.status || "-";
 }
 
+function getDosenSubmissionTahapLabel(row) {
+  const tahap = String(row?.tahap_approval || row?.tahap || "").toLowerCase();
+  const status = String(row?.status || "").toLowerCase();
+  const tipePengajuan = String(row?.tipe_pengajuan || "").toLowerCase();
+
+  if (status === "approved") return "Selesai (Disetujui)";
+  if (status === "rejected") return "Selesai (Ditolak)";
+  if (status === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
+  if (tahap === "pending_ketua_klaster") return "Menunggu Review Ketua Cluster";
+  if (tahap === "pending_review_parallel") return "Menunggu Review Dosen Pembimbing";
+  if (tahap === "pending_dosen_pembimbing") return "Menunggu Review Dosen Pembimbing";
+  if (tahap === "deadline_terlewati") return "Batas Review Dosen Terlewati";
+  if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
+  if (tipePengajuan === "judul_mandiri" && status === "pending") return "Menunggu Review Dosen";
+  if (status === "pending") return "Sedang Direview";
+  return formatLabel(tahap || status || "-");
+}
+
 function shouldShowTopikReviewCountdown(row) {
   const tahap = String(row?.tahap_approval || "").toLowerCase();
   return (
@@ -4951,7 +4969,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         </span>
                                       </td>
                                       <td className="px-3 py-2 align-top break-words">
-                                        <p className="font-semibold text-[#2a3f74]">{formatLabel(row.tahap_approval)}</p>
+                                        <p className="font-semibold text-[#2a3f74]">{getDosenSubmissionTahapLabel(row)}</p>
                                         {reviewCountdown?.has_deadline ? (
                                           <p
                                             className={`mt-1 text-[11px] font-semibold ${
