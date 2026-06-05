@@ -230,6 +230,17 @@ function hasSameDosenTopikBadge(row) {
   return dosenSet.size === 1;
 }
 
+function isKetuaClusterSubmissionReview(row) {
+  const context = String(row?.review_context || "").toLowerCase();
+  const stage = String(row?.tahap || row?.tahap_approval || "").toLowerCase();
+  return (
+    context === "ketua_klaster" ||
+    context === "ketua_cluster" ||
+    stage === "pending_ketua_klaster" ||
+    stage === "pending_ketua_cluster"
+  );
+}
+
 function getPeriodeStatusKey(periode) {
   const explicitStatus = String(periode?.status || "")
     .trim()
@@ -477,6 +488,25 @@ function getSubmissionStatusBadgeClass(status) {
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
 
+function getSubmissionApprovalRoleKey(item) {
+  const approvalType = String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
+  if (
+    approvalType === "koordinator" ||
+    approvalType === "ketua_klaster" ||
+    approvalType === "ketua_cluster"
+  ) {
+    return "ketua_cluster";
+  }
+  return "dosen_pembimbing";
+}
+
+function getSubmissionDecisionNoteLabel(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "approved") return "Alasan approve";
+  if (normalized === "rejected") return "Alasan reject";
+  return "Catatan keputusan";
+}
+
 function getSubmissionGridStatus(row) {
   if (!row) return "-";
   return row.status_dosen || row.reviewer_display_status || row.reviewer_status || row.status || "-";
@@ -506,6 +536,81 @@ function shouldShowTopikReviewCountdown(row) {
     row?.tipe_pengajuan === "topik_dosen" &&
     row?.status === "pending" &&
     (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")
+  );
+}
+
+function SubmissionDecisionHistoryGroup({
+  title,
+  description,
+  rows,
+  emptyMessage,
+  tone = "dosen",
+}) {
+  const accent =
+    tone === "ketua"
+      ? {
+          panel: "border-[#d7e5ff] bg-[#f6f9ff]",
+          count: "bg-[#eaf1ff] text-[#2854aa]",
+        }
+      : {
+          panel: "border-[#e4e9f6] bg-[#fbfcff]",
+          count: "bg-[#eef3ff] text-[#2f426f]",
+        };
+
+  return (
+    <section className={`rounded-xl border p-3 ${accent.panel}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h5 className="text-sm font-black text-[#1b274b]">{title}</h5>
+          <p className="mt-1 text-xs font-semibold text-[#6a789d]">{description}</p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${accent.count}`}>
+          {rows.length} keputusan
+        </span>
+      </div>
+
+      {rows.length > 0 ? (
+        <div className="mt-3 space-y-3">
+          {rows.map((item, index) => (
+            <article
+              key={`submission-decision-history-${tone}-${item?.tanggal_keputusan || index}`}
+              className="rounded-lg border border-[#dfe6f5] bg-white p-3 shadow-sm"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                        item?.status
+                      )}`}
+                    >
+                      {formatLabel(item?.status)}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm font-bold text-[#253a70]">
+                    {item?.dosen?.nama || "Dosen"}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-[#6a789d]">
+                    {formatDateTime(item?.tanggal_keputusan)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-lg border border-[#d7e0f2] bg-[#fbfcff] px-3 py-2">
+                <p className="text-xs font-black uppercase tracking-wide text-[#52638e]">
+                  {getSubmissionDecisionNoteLabel(item?.status)}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed text-[#243866]">{item?.keterangan || "-"}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg border border-dashed border-[#d5ddf0] bg-white/70 px-3 py-3 text-sm font-semibold text-[#68779f]">
+          {emptyMessage}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1584,10 +1689,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [fetchWithAuth]);
 
   const summary = useMemo(() => {
-    const pendingSubmissions = submissions.filter((item) => item.status === "pending").length;
+    const regularSubmissions = submissions.filter((item) => !isKetuaClusterSubmissionReview(item));
+    const pendingSubmissions = regularSubmissions.filter((item) => item.status === "pending").length;
     const pendingPamit = pamitRows.filter((item) => item.status_dospem === "pending").length;
     return {
-      totalSubmissions: submissions.length,
+      totalSubmissions: regularSubmissions.length,
       pendingSubmissions,
       pendingPamit,
       topikAktif: topikRows.length,
@@ -1598,12 +1704,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [submissions, pamitRows, topikRows, kuotaData]);
 
   const contextualSubmissions = useMemo(() => {
-    if (activeTab !== "ketua-cluster-review") return submissions;
-    return submissions.filter((row) => {
-      const context = String(row?.review_context || "").toLowerCase();
-      const stage = String(row?.tahap || row?.tahap_approval || "").toLowerCase();
-      return context === "ketua_klaster" || stage === "pending_ketua_klaster";
-    });
+    if (activeTab === "ketua-cluster-review") {
+      return submissions.filter((row) => isKetuaClusterSubmissionReview(row));
+    }
+    if (activeTab === "submissions") {
+      return submissions.filter((row) => !isKetuaClusterSubmissionReview(row));
+    }
+    return submissions;
   }, [activeTab, submissions]);
 
   const filteredSubmissions = useMemo(() => {
@@ -1930,10 +2037,31 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     () => getReviewCountdown(submissionDetail?.review_deadline_at, countdownNowDate),
     [countdownNowDate, submissionDetail?.review_deadline_at]
   );
+  const submissionDecisionHistory = useMemo(
+    () =>
+      Array.isArray(submissionDetail?.riwayat_persetujuan)
+        ? submissionDetail.riwayat_persetujuan
+        : [],
+    [submissionDetail?.riwayat_persetujuan]
+  );
+  const submissionDosenDecisionHistory = useMemo(
+    () =>
+      submissionDecisionHistory.filter(
+        (item) => getSubmissionApprovalRoleKey(item) !== "ketua_cluster"
+      ),
+    [submissionDecisionHistory]
+  );
+  const submissionKetuaClusterDecisionHistory = useMemo(
+    () =>
+      submissionDecisionHistory.filter(
+        (item) => getSubmissionApprovalRoleKey(item) === "ketua_cluster"
+      ),
+    [submissionDecisionHistory]
+  );
 
   const submissionNotificationItems = useMemo(() => {
     return submissions
-      .filter((row) => row?.status === "pending")
+      .filter((row) => row?.status === "pending" && !isKetuaClusterSubmissionReview(row))
       .slice()
       .sort(
         (left, right) =>
@@ -4559,7 +4687,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           <main
             className={`min-w-0 pr-1 ${
               useGridViewportLayout
-                ? "flex h-full flex-col gap-4 overflow-hidden"
+                ? "flex h-full flex-col gap-4 overflow-y-auto"
                 : "space-y-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             }`}
             style={{ msOverflowStyle: "none", overflowAnchor: "none" }}
@@ -4663,8 +4791,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                  <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div>
                       <h3 className="text-lg font-black text-[#1b274b]">
                         {activeTab === "mahasiswa-bimbingan"
@@ -4678,7 +4806,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <div className="relative">
                         <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                         <input
@@ -4719,8 +4847,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
                   </div>
 
-                  <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="min-w-[2300px] text-left text-sm">
+                  <div className="relative mt-1 overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
+                  <table className="w-full min-w-[2300px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
@@ -5095,41 +5223,46 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       ) : null}
 
                       {!loadingSubmissionDetail && submissionDetail ? (
-                        <div className="mt-4 space-y-4">
-                          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                            <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
-                              <h4 className="text-sm font-black text-[#1b274b]">Data Mahasiswa</h4>
-                              <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                                <p><span className="font-semibold">NIM:</span> {submissionDetail.mahasiswa?.nim || "-"}</p>
-                                <p><span className="font-semibold">Nama:</span> {submissionDetail.mahasiswa?.nama || "-"}</p>
-                                <p><span className="font-semibold">Email:</span> {submissionDetail.mahasiswa?.email || "-"}</p>
-                                <p><span className="font-semibold">Angkatan:</span> {submissionDetail.mahasiswa?.angkatan || "-"}</p>
-                              </div>
+                        <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                          <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                            <h4 className="text-sm font-black text-[#1b274b]">Data Mahasiswa</h4>
+                            <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
+                              <p><span className="font-semibold">NIM:</span> {submissionDetail.mahasiswa?.nim || "-"}</p>
+                              <p><span className="font-semibold">Nama:</span> {submissionDetail.mahasiswa?.nama || "-"}</p>
+                              <p><span className="font-semibold">Email:</span> {submissionDetail.mahasiswa?.email || "-"}</p>
+                              <p><span className="font-semibold">Angkatan:</span> {submissionDetail.mahasiswa?.angkatan || "-"}</p>
                             </div>
-                            <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                              <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Pengajuan</h4>
-                              <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
-                                <p><span className="font-semibold">Jenis Jalur:</span> {formatLabel(submissionDetail.jenis_jalur)}</p>
-                                <p><span className="font-semibold">Tipe:</span> {formatLabel(submissionDetail.tipe_pengajuan)}</p>
-                                <p><span className="font-semibold">Diajukan:</span> {formatDateTime(submissionDetail.diajukan_pada)}</p>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-[#324c86]">Status:</span>
-                                  <span
-                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                      submissionDetail.status
-                                    )}`}
-                                  >
-                                    {formatLabel(submissionDetail.status)}
-                                  </span>
-                                </div>
+                          </div>
+                          <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                            <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Pengajuan</h4>
+                            <div className="mt-2 grid grid-cols-1 gap-2 text-sm text-[#324c86]">
+                              <p><span className="font-semibold">Jenis Jalur:</span> {formatLabel(submissionDetail.jenis_jalur)}</p>
+                              <p><span className="font-semibold">Tipe:</span> {formatLabel(submissionDetail.tipe_pengajuan)}</p>
+                              <p><span className="font-semibold">Diajukan:</span> {formatDateTime(submissionDetail.diajukan_pada)}</p>
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-[#324c86]">Status:</span>
+                                <span
+                                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                                    submissionDetail.status
+                                  )}`}
+                                >
+                                  {formatLabel(submissionDetail.status)}
+                                </span>
                               </div>
                             </div>
                           </div>
+                        </div>
+                      ) : null}
+                    </div>
 
-                          <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                            <h4 className="text-sm font-black text-[#1b274b]">Detail Topik Diajukan</h4>
-                            {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
-                              <div className="mt-3 space-y-3">
+                    {!loadingSubmissionDetail && submissionDetail ? (
+                      <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <h3 className="text-lg font-black text-[#1b274b]">Detail Topik Diajukan</h3>
+                        <p className="text-sm text-[#5d6c91]">
+                          Tinjau detail topik atau judul yang dipilih mahasiswa pada pengajuan ini.
+                        </p>
+                        {submissionDetail.tipe_pengajuan === "topik_dosen" ? (
+                          <div className="mt-4 space-y-3">
                                 <div className="rounded-lg border border-[#dbe5fb] bg-[#f8fbff] px-3 py-2 text-sm text-[#324c86]">
                                   <p className="font-semibold">
                                     Mahasiswa: {submissionDetail.mahasiswa?.nama || "-"} | NIM: {submissionDetail.mahasiswa?.nim || "-"} |
@@ -5232,19 +5365,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   ) : null}
                                 </div>
                               </div>
-                            ) : (
-                              <div className="mt-3 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
-                                <div className="space-y-2 text-sm text-[#324c86]">
-                                  <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
-                                  <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
-                                  <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
-                                </div>
-                              </div>
-                            )}
+                        ) : (
+                          <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                            <div className="space-y-2 text-sm text-[#324c86]">
+                              <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
+                              <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
+                              <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
+                            </div>
                           </div>
-                        </div>
-                      ) : null}
-                    </div>
+                        )}
+                      </div>
+                    ) : null}
 
                     {!loadingSubmissionDetail && submissionDetail ? (
                       <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
@@ -5421,9 +5552,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           </>
                         ) : (
                           <>
-                            <h4 className="text-sm font-black text-[#1b274b]">
+                            <h3 className="text-lg font-black text-[#1b274b]">
                               {submissionDetail.status === "pending" ? "Status Review" : "Riwayat Keputusan"}
-                            </h4>
+                            </h3>
+                            <p className="mt-1 text-sm text-[#5d6c91]">
+                              {submissionDetail.status === "pending"
+                                ? "Pantau status review dan sisa waktu keputusan untuk pengajuan ini."
+                                : "Lihat jejak keputusan dari dosen pembimbing hingga ketua cluster untuk pengajuan ini."}
+                            </p>
                             {submissionDetail.status === "pending" ? (
                               <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
                                 Anda belum bisa memberi keputusan untuk pengajuan ini.
@@ -5437,32 +5573,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   : ""}
                               </div>
                             ) : null}
-                            {Array.isArray(submissionDetail.riwayat_persetujuan) &&
-                            submissionDetail.riwayat_persetujuan.length > 0 ? (
-                              <div className="mt-3 space-y-3">
-                                {submissionDetail.riwayat_persetujuan.map((item, index) => (
-                                  <div
-                                    key={`riwayat-keputusan-${item.tanggal_keputusan || index}`}
-                                    className="rounded-lg border border-[#e7ecf8] bg-[#f9fbff] p-3"
-                                  >
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <span
-                                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                                          item.status
-                                        )}`}
-                                      >
-                                        {formatLabel(item.status)}
-                                      </span>
-                                      <span className="text-xs font-semibold text-[#5d6c91]">
-                                        {item.dosen?.nama || "Dosen"} | {formatDateTime(item.tanggal_keputusan)}
-                                      </span>
-                                    </div>
-                                    <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[#4f5f88]">
-                                      {item.status === "approved" ? "Alasan Approve" : "Alasan Reject"}
-                                    </p>
-                                    <p className="mt-1 text-sm text-[#2f426f]">{item.keterangan || "-"}</p>
-                                  </div>
-                                ))}
+                            {submissionDecisionHistory.length > 0 ? (
+                              <div className="mt-4 space-y-4">
+                                <SubmissionDecisionHistoryGroup
+                                  title="Keputusan Dosen Pembimbing"
+                                  description="Riwayat approve atau reject dari dosen pemilik topik/calon pembimbing."
+                                  rows={submissionDosenDecisionHistory}
+                                  emptyMessage="Belum ada keputusan dari dosen pembimbing."
+                                  tone="dosen"
+                                />
+                                <SubmissionDecisionHistoryGroup
+                                  title="Keputusan Ketua Cluster"
+                                  description="Riwayat keputusan final dari ketua cluster setelah tahap dosen pembimbing."
+                                  rows={submissionKetuaClusterDecisionHistory}
+                                  emptyMessage="Belum ada keputusan dari ketua cluster."
+                                  tone="ketua"
+                                />
                               </div>
                             ) : (
                               <div className="mt-3 rounded-lg border border-[#e9edf8] bg-[#f7f9ff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
