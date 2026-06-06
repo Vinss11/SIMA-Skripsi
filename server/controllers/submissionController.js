@@ -57,6 +57,41 @@ function buildTopikList(submission) {
   }));
 }
 
+async function loadTopikMetaByKode(kodes) {
+  const normalizedKodes = [
+    ...new Set(
+      (Array.isArray(kodes) ? kodes : [])
+        .map((kode) =>
+          String(kode || "")
+            .trim()
+            .toUpperCase()
+        )
+        .filter(Boolean)
+    ),
+  ];
+  const topikByKode = {};
+  if (normalizedKodes.length === 0) return topikByKode;
+
+  const topikRows = await Topik.findAll({
+    where: { kode: { [Op.in]: normalizedKodes } },
+    attributes: ["kode", "judul", "keyword", "cluster"],
+  });
+  topikRows.forEach((item) => {
+    const normalizedKode = String(item.kode || "")
+      .trim()
+      .toUpperCase();
+    if (normalizedKode) {
+      topikByKode[normalizedKode] = {
+        judul: item.judul || null,
+        keyword: item.keyword || null,
+        cluster: item.cluster || null,
+      };
+    }
+  });
+
+  return topikByKode;
+}
+
 function getApprovedTopik(submission, topikList) {
   if (topikList.length === 0) {
     return null;
@@ -259,21 +294,7 @@ exports.getMySubmissions = async (req, res) => {
       ),
     ];
 
-    const topikByKode = {};
-    if (topikKodes.length > 0) {
-      const topikRows = await Topik.findAll({
-        where: { kode: { [Op.in]: topikKodes } },
-        attributes: ["kode", "judul"],
-      });
-      topikRows.forEach((item) => {
-        const normalizedKode = String(item.kode || "")
-          .trim()
-          .toUpperCase();
-        if (normalizedKode) {
-          topikByKode[normalizedKode] = item.judul;
-        }
-      });
-    }
+    const topikByKode = await loadTopikMetaByKode(topikKodes);
 
     const compactData = submissions.map((submission) => {
       const approvalStage = getTopikDosenApprovalStage(submission);
@@ -295,7 +316,9 @@ exports.getMySubmissions = async (req, res) => {
           return {
             ...item,
             kode: normalizedKode || item.kode,
-            judul: item.judul || topikByKode[normalizedKode] || null,
+            judul: item.judul || topikByKode[normalizedKode]?.judul || null,
+            keyword: topikByKode[normalizedKode]?.keyword || null,
+            cluster: topikByKode[normalizedKode]?.cluster || null,
           };
         });
         const approvedTopik = getApprovedTopik(submission, topikList);
@@ -303,12 +326,14 @@ exports.getMySubmissions = async (req, res) => {
         const slotStateBySlot = new Map(parallelState.slot_decisions.map((item) => [Number(item.slot), item]));
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
-        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul, dosen, dosen_id: dosenId }) => {
+        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul, keyword, cluster, dosen, dosen_id: dosenId }) => {
           const slotState = slotStateBySlot.get(Number(slot));
           return {
             slot,
             kode,
             judul,
+            keyword: keyword || null,
+            cluster: cluster || null,
             dosen: dosen || null,
             dosen_id: dosenId || null,
             reviewer_status: slotState?.reviewer_status || null,
@@ -321,6 +346,8 @@ exports.getMySubmissions = async (req, res) => {
               slot: approvedTopik.slot,
               kode: approvedTopik.kode,
               judul: approvedTopik.judul,
+              keyword: approvedTopik.keyword || null,
+              cluster: approvedTopik.cluster || null,
             }
           : null;
         base.dosen_pembimbing = submission.dosenCurrent ? submission.dosenCurrent.nama : null;
@@ -329,6 +356,8 @@ exports.getMySubmissions = async (req, res) => {
       } else {
         base.judul_mandiri = {
           judul: submission.judul_mandiri,
+          keyword: submission.keyword_mandiri,
+          cluster: submission.cluster_mandiri,
           prospective_supervisor: submission.prospectiveSupervisor
             ? {
                 id: submission.prospectiveSupervisor.id,
@@ -489,14 +518,23 @@ exports.getSubmissionById = async (req, res) => {
 
     if (submission.tipe_pengajuan === "topik_dosen") {
       const slotStateBySlot = new Map((topikParallelState?.slot_decisions || []).map((item) => [Number(item.slot), item]));
+      const topikMetaByKode = await loadTopikMetaByKode([
+        submission.topik_1_kode,
+        submission.topik_2_kode,
+        submission.topik_3_kode,
+      ]);
       const topikList = buildTopikList(submission).map((item) => {
         const normalizedKode = String(item?.kode || "")
           .trim()
           .toUpperCase();
         const slotState = slotStateBySlot.get(Number(item.slot));
+        const topikMeta = topikMetaByKode[normalizedKode] || {};
         return {
           ...item,
           kode: normalizedKode || item.kode,
+          judul: item.judul || topikMeta.judul || null,
+          keyword: topikMeta.keyword || null,
+          cluster: topikMeta.cluster || null,
           reviewer_status: slotState?.reviewer_status || null,
           reviewer_note: slotState?.reviewer_note || null,
           reviewer_decided_at: slotState?.reviewer_decided_at || null,
@@ -517,6 +555,8 @@ exports.getSubmissionById = async (req, res) => {
             slot,
             kode,
             judul,
+            keyword,
+            cluster,
             dosen,
             dosen_id: dosenId,
             reviewer_status,
@@ -528,6 +568,8 @@ exports.getSubmissionById = async (req, res) => {
             slot,
             kode,
             judul,
+            keyword: keyword || null,
+            cluster: cluster || null,
             dosen,
             dosen_id: dosenId || null,
             reviewer_status: reviewer_status || null,
@@ -543,10 +585,12 @@ exports.getSubmissionById = async (req, res) => {
 
       hasilPengajuan.topik_disetujui = approvedTopik
         ? {
-            slot: approvedTopik.slot,
-            kode: approvedTopik.kode,
-            judul: approvedTopik.judul,
-          }
+              slot: approvedTopik.slot,
+              kode: approvedTopik.kode,
+              judul: approvedTopik.judul,
+              keyword: approvedTopik.keyword || null,
+              cluster: approvedTopik.cluster || null,
+            }
         : null;
       hasilPengajuan.dosen_pembimbing = dosenApproved
         ? {
@@ -569,6 +613,7 @@ exports.getSubmissionById = async (req, res) => {
         judul_mandiri: submission.judul_mandiri,
         deskripsi_mandiri: submission.deskripsi_mandiri,
         keyword_mandiri: submission.keyword_mandiri,
+        cluster_mandiri: submission.cluster_mandiri,
         calon_dosen_pembimbing: submission.prospectiveSupervisor
           ? {
               id: submission.prospectiveSupervisor.id,

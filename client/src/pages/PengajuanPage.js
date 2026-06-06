@@ -33,12 +33,45 @@ const MAGANG_APPLICATION_METHOD_OPTIONS = [
   "Independent (no vacancy/via Direct Contact)",
   "other",
 ];
+const PENELITIAN_CLUSTER_LABEL_BY_CODE = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
 
 function formatJalurLabel(value) {
   if (!value) return "-";
   return String(value)
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function normalizePenelitianClusterCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === "SIRKER") return "SIRKEL";
+  if (raw.includes("SISTEM INFORMASI") || raw.includes("REKAYASA PERANGKAT LUNAK") || raw.includes("SIRKEL")) {
+    return "SIRKEL";
+  }
+  if (raw.includes("SIBER")) return "SIBER";
+  if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
+  if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (PENELITIAN_CLUSTER_LABEL_BY_CODE[raw]) return raw;
+  return null;
+}
+
+function normalizePenelitianClusterLabel(value) {
+  const code = normalizePenelitianClusterCode(value);
+  if (!code) return null;
+  return PENELITIAN_CLUSTER_LABEL_BY_CODE[code] || null;
+}
+
+function getDosenPenelitianClusterLabels(dosen) {
+  if (!Array.isArray(dosen?.klasters)) return [];
+  return dosen.klasters
+    .map((item) => normalizePenelitianClusterLabel(item?.kode || item?.nama))
+    .filter(Boolean);
 }
 
 function isHttpUrl(value) {
@@ -321,7 +354,7 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
 
       if (!keyword) return true;
 
-      const haystack = [item.kode, item.judul, item.cluster, item.dosen?.nama, item.dosen?.nik]
+      const haystack = [item.kode, item.judul, item.keyword, item.cluster, item.dosen?.nama, item.dosen?.nik]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -825,7 +858,7 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
             <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
             <input
               type="text"
-              placeholder="Cari kode, judul, bidang, dosen..."
+              placeholder="Cari kode, judul, keyword, bidang, dosen..."
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
@@ -889,6 +922,9 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
                         <td className="px-3 py-2">
                           <p className="font-semibold text-[#1f2d53]">{item.judul || "-"}</p>
                           <p className="text-xs text-[#6c7a9f]">{item.deskripsi || "-"}</p>
+                          <p className="mt-1 text-xs font-semibold text-[#4f64a0]">
+                            Keyword: {item.keyword || "-"}
+                          </p>
                         </td>
                         <td className="px-3 py-2">{formatCluster(item.cluster)}</td>
                         <td className="px-3 py-2">{item.dosen?.nama || "-"}</td>
@@ -1009,6 +1045,7 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
                   <p className="text-xs text-[#62719a]">
                     Bidang: {formatCluster(item.cluster)} | Dosen: {item.dosen?.nama || "-"}
                   </p>
+                  <p className="text-xs text-[#62719a]">Keyword: {item.keyword || "-"}</p>
                 </div>
               ))}
             </div>
@@ -1057,12 +1094,410 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   );
 }
 
-function FormJudulSendiri() {
+function FormJudulSendiri({ session, apiBaseUrl, onSessionExpired, onSubmitted, disabled }) {
+  const [judulMandiri, setJudulMandiri] = useState("");
+  const [deskripsiMandiri, setDeskripsiMandiri] = useState("");
+  const [keywordMandiri, setKeywordMandiri] = useState("");
+  const [selectedCluster, setSelectedCluster] = useState("");
+  const [dosenRows, setDosenRows] = useState([]);
+  const [loadingDosen, setLoadingDosen] = useState(true);
+  const [dosenQuery, setDosenQuery] = useState("");
+  const [selectedDosenId, setSelectedDosenId] = useState("");
+  const [showDosenOptions, setShowDosenOptions] = useState(false);
+  const [submitLoading, setSubmitLoading] = useState(false);
+  const [submitError, setSubmitError] = useState("");
+  const [submitSuccess, setSubmitSuccess] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchDosen = async () => {
+      setLoadingDosen(true);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/pendaftaran/dosen`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.success) {
+          throw new Error(payload?.message || "Gagal memuat daftar dosen.");
+        }
+        if (isMounted) {
+          setDosenRows(Array.isArray(payload.data) ? payload.data : []);
+        }
+      } catch (error) {
+        if (isMounted) {
+          setDosenRows([]);
+          setSubmitError(error.message || "Gagal memuat daftar dosen.");
+        }
+      } finally {
+        if (isMounted) setLoadingDosen(false);
+      }
+    };
+
+    fetchDosen();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [apiBaseUrl]);
+
+  const selectedDosen = useMemo(
+    () => dosenRows.find((item) => String(item.id) === String(selectedDosenId)) || null,
+    [dosenRows, selectedDosenId]
+  );
+
+  const clusterOptions = useMemo(() => {
+    const availableLabels = new Set();
+    dosenRows.forEach((dosen) => {
+      getDosenPenelitianClusterLabels(dosen).forEach((label) => availableLabels.add(label));
+    });
+    return ["Sirkel", "Siber", "ITSC", "MVK"].filter((label) => availableLabels.has(label));
+  }, [dosenRows]);
+
+  const selectedDosenClusterLabels = useMemo(
+    () => getDosenPenelitianClusterLabels(selectedDosen),
+    [selectedDosen]
+  );
+
+  const filteredDosenRows = useMemo(() => {
+    const keyword = dosenQuery.trim().toLowerCase();
+    if (!selectedCluster) return [];
+
+    const rows = dosenRows
+      .filter((item) => getDosenPenelitianClusterLabels(item).includes(selectedCluster))
+      .sort((a, b) => {
+      if (a.is_no_bimbingan !== b.is_no_bimbingan) return a.is_no_bimbingan ? -1 : 1;
+      if (a.is_kuota_penuh !== b.is_kuota_penuh) return a.is_kuota_penuh ? 1 : -1;
+      return String(a.nama || "").localeCompare(String(b.nama || ""), "id");
+    });
+
+    if (!keyword) return rows.slice(0, 10);
+    return rows
+      .filter((item) => {
+        const klasterText = Array.isArray(item.klasters)
+          ? item.klasters.map((klaster) => `${klaster.kode || ""} ${klaster.nama || ""}`).join(" ")
+          : "";
+        const haystack = [
+          item.nama,
+          item.nik,
+          item.kode_dosen,
+          item.email,
+          klasterText,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return haystack.includes(keyword);
+      })
+      .slice(0, 10);
+  }, [dosenQuery, dosenRows, selectedCluster]);
+
+  const selectedDosenLabel = selectedDosen
+    ? `${selectedDosen.nama || "-"}${selectedDosen.nik ? ` - NIK: ${selectedDosen.nik}` : ""}`
+    : "";
+  const dosenInputValue = dosenQuery || selectedDosenLabel;
+  const canSubmit =
+    !disabled &&
+    !submitLoading &&
+    judulMandiri.trim().length >= 8 &&
+    deskripsiMandiri.trim().length >= 20 &&
+    keywordMandiri.trim().length >= 3 &&
+    Boolean(selectedCluster) &&
+    Boolean(selectedDosenId) &&
+    !selectedDosen?.is_kuota_penuh &&
+    selectedDosenClusterLabels.includes(selectedCluster);
+
+  const handleClusterChange = (value) => {
+    setSelectedCluster(value);
+    setSelectedDosenId("");
+    setDosenQuery("");
+    setShowDosenOptions(false);
+    setSubmitError("");
+    setSubmitSuccess("");
+  };
+
+  const handleDosenQueryChange = (value) => {
+    if (!selectedCluster) return;
+    setDosenQuery(value);
+    if (selectedDosenId) {
+      setSelectedDosenId("");
+    }
+  };
+
+  const handleSelectDosen = (dosen) => {
+    if (!dosen || dosen.is_kuota_penuh) return;
+    if (!getDosenPenelitianClusterLabels(dosen).includes(selectedCluster)) return;
+    setSelectedDosenId(String(dosen.id));
+    setDosenQuery(`${dosen.nama || "-"}${dosen.nik ? ` - NIK: ${dosen.nik}` : ""}`);
+    setShowDosenOptions(false);
+  };
+
+  const resetForm = () => {
+    setJudulMandiri("");
+    setDeskripsiMandiri("");
+    setKeywordMandiri("");
+    setSelectedCluster("");
+    setSelectedDosenId("");
+    setDosenQuery("");
+    setSubmitError("");
+    setSubmitSuccess("");
+  };
+
+  const handleSubmit = async () => {
+    if (disabled) return;
+    setSubmitError("");
+    setSubmitSuccess("");
+
+    if (judulMandiri.trim().length < 8) {
+      setSubmitError("Judul mandiri wajib diisi minimal 8 karakter.");
+      return;
+    }
+    if (deskripsiMandiri.trim().length < 20) {
+      setSubmitError("Deskripsi judul wajib diisi minimal 20 karakter.");
+      return;
+    }
+    if (keywordMandiri.trim().length < 3) {
+      setSubmitError("Keyword wajib diisi minimal 3 karakter.");
+      return;
+    }
+    if (!selectedCluster) {
+      setSubmitError("Pilih cluster penelitian terlebih dahulu.");
+      return;
+    }
+    if (!selectedDosenId) {
+      setSubmitError("Pilih calon dosen pembimbing untuk mereview judul mandiri.");
+      return;
+    }
+    if (!selectedDosenClusterLabels.includes(selectedCluster)) {
+      setSubmitError("Calon dosen pembimbing harus sesuai dengan cluster penelitian yang dipilih.");
+      return;
+    }
+    if (selectedDosen?.is_kuota_penuh) {
+      setSubmitError("Dosen yang dipilih sudah penuh kuota bimbingannya. Silakan pilih dosen lain.");
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: "Ajukan Judul Sendiri?",
+      text: "Pengajuan akan dikirim ke calon dosen pembimbing untuk direview terlebih dahulu.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Ya, Ajukan",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#2f63e3",
+    });
+    if (!confirm.isConfirmed) return;
+
+    setSubmitLoading(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/jalur/baru/judul-mandiri`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          judul_mandiri: judulMandiri.trim(),
+          deskripsi_mandiri: deskripsiMandiri.trim(),
+          keyword_mandiri: keywordMandiri.trim(),
+          cluster_mandiri: selectedCluster,
+          prospective_supervisor_id: Number(selectedDosenId),
+        }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      const message = String(payload?.message || "").toLowerCase();
+      const tokenError =
+        message.includes("token tidak valid") ||
+        message.includes("token tidak ditemukan") ||
+        message.includes("kadaluarsa");
+
+      if (response.status === 401 || (response.status === 403 && tokenError)) {
+        onSessionExpired?.();
+        return;
+      }
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Pengajuan judul mandiri gagal dikirim.");
+      }
+
+      resetForm();
+      setSubmitSuccess(payload.message || "Pengajuan judul mandiri berhasil dikirim.");
+      onSubmitted?.();
+    } catch (error) {
+      setSubmitError(error.message || "Pengajuan judul mandiri gagal dikirim.");
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
-      <h2 className="mb-2 text-lg font-black text-[#1b274b]">Pengajuan Judul Mandiri</h2>
-      <div className="rounded-lg border border-[#e0e8fa] bg-[#f7faff] px-4 py-3 text-sm font-semibold text-[#435784]">
-        Form judul mandiri masih di-hold. Untuk sementara gunakan opsi <b>Judul dari Dosen</b> terlebih dahulu.
+      <h2 className="text-lg font-black text-[#1b274b]">Pengajuan Judul Mandiri</h2>
+      <p className="mt-1 text-sm text-[#5d6c91]">
+        Ajukan judul penelitian sendiri. Calon dosen pembimbing akan mereview terlebih dahulu sebelum lanjut ke tahap berikutnya.
+      </p>
+
+      <div className="mt-4 rounded-lg border border-[#dbe5fb] bg-[#f8fbff] px-4 py-3 text-sm text-[#324c86]">
+        <b>Alur:</b> mahasiswa mengirim judul mandiri, calon dosen pembimbing memberi keputusan, lalu pengajuan diteruskan sesuai alur approval penelitian yang aktif.
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-sm font-semibold text-[#324c86]">Judul Penelitian</label>
+          <input
+            type="text"
+            value={judulMandiri}
+            onChange={(event) => setJudulMandiri(event.target.value)}
+            disabled={disabled || submitLoading}
+            placeholder="Contoh: Sistem rekomendasi topik skripsi berbasis machine learning"
+            className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-semibold text-[#324c86]">Keyword</label>
+          <input
+            type="text"
+            value={keywordMandiri}
+            onChange={(event) => setKeywordMandiri(event.target.value)}
+            disabled={disabled || submitLoading}
+            placeholder="Pisahkan keyword dengan koma"
+            className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+          />
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Deskripsi Singkat</label>
+        <textarea
+          rows={4}
+          value={deskripsiMandiri}
+          onChange={(event) => setDeskripsiMandiri(event.target.value)}
+          disabled={disabled || submitLoading}
+          placeholder="Jelaskan latar belakang, ruang lingkup, dan gambaran singkat penelitian yang ingin diajukan..."
+          className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+        />
+      </div>
+
+      <div className="mt-4">
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Cluster Penelitian</label>
+        <select
+          value={selectedCluster}
+          onChange={(event) => handleClusterChange(event.target.value)}
+          disabled={disabled || submitLoading || loadingDosen}
+          className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+        >
+          <option value="">{loadingDosen ? "Memuat cluster..." : "Pilih cluster penelitian"}</option>
+          {clusterOptions.map((cluster) => (
+            <option key={`judul-mandiri-cluster-${cluster}`} value={cluster}>
+              {cluster}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-[#60709a]">
+          Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
+        </p>
+      </div>
+
+      <div className="mt-4">
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Calon Dosen Pembimbing</label>
+        <div className="relative">
+          <input
+            type="text"
+            value={dosenInputValue}
+            onFocus={() => setShowDosenOptions(true)}
+            onBlur={() => window.setTimeout(() => setShowDosenOptions(false), 140)}
+            onChange={(event) => handleDosenQueryChange(event.target.value)}
+            disabled={disabled || submitLoading || loadingDosen || !selectedCluster}
+            placeholder={
+              loadingDosen
+                ? "Memuat daftar dosen..."
+                : selectedCluster
+                ? `Cari dosen pada cluster ${selectedCluster}`
+                : "Pilih cluster penelitian terlebih dahulu"
+            }
+            className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+          />
+
+          {showDosenOptions && !disabled && !loadingDosen && selectedCluster ? (
+            <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-64 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+              {filteredDosenRows.length > 0 ? (
+                filteredDosenRows.map((dosen) => {
+                  const isDisabledRow = Boolean(dosen.is_kuota_penuh);
+                  const klasterLabel = Array.isArray(dosen.klasters)
+                    ? dosen.klasters.map((item) => item.kode).filter(Boolean).join(", ")
+                    : "";
+                  return (
+                    <button
+                      key={`judul-mandiri-dosen-${dosen.id}`}
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => handleSelectDosen(dosen)}
+                      disabled={isDisabledRow}
+                      className={`flex w-full items-start justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                        isDisabledRow
+                          ? "cursor-not-allowed bg-[#f8fafc] text-[#98a3c0]"
+                          : "text-[#213460] hover:bg-[#f4f7ff]"
+                      }`}
+                    >
+                      <span>
+                        <span className="block font-bold">{dosen.nama || "-"}</span>
+                        <span className="mt-0.5 block text-xs text-[#60709a]">
+                          NIK: {dosen.nik || "-"} {klasterLabel ? `| Klaster: ${klasterLabel}` : ""}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs font-semibold">
+                        {isDisabledRow ? "Kuota penuh" : `Sisa: ${dosen.sisa_kuota ?? "-"}`}
+                      </span>
+                    </button>
+                  );
+                })
+              ) : (
+                <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+        {selectedDosen ? (
+          <p className="mt-2 text-xs font-semibold text-[#60709a]">
+            Terpilih: {selectedDosen.nama} {selectedDosen.sisa_kuota !== undefined ? `(sisa kuota: ${selectedDosen.sisa_kuota})` : ""}
+          </p>
+        ) : null}
+      </div>
+
+      {submitError ? (
+        <div className="mt-4 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+          {submitError}
+        </div>
+      ) : null}
+      {submitSuccess ? (
+        <div className="mt-4 rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
+          {submitSuccess}
+        </div>
+      ) : null}
+
+      <div className="mt-5 flex justify-end gap-3">
+        <button
+          type="button"
+          onClick={resetForm}
+          disabled={disabled || submitLoading}
+          className={`inline-flex items-center gap-2 rounded-lg border border-[#d1daf0] px-5 py-2 text-sm font-semibold transition ${
+            disabled || submitLoading ? "cursor-not-allowed bg-[#f5f7fb] text-[#7f8aac]" : "text-[#314778] hover:bg-[#f4f7ff]"
+          }`}
+        >
+          <RotateCcw className="h-4 w-4" />
+          Reset
+        </button>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={!canSubmit}
+          className={`inline-flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-bold transition ${
+            canSubmit ? "bg-[#2f63e3] text-white hover:brightness-110" : "cursor-not-allowed bg-[#d5dbea] text-[#7a86a5]"
+          }`}
+        >
+          <Send className="h-4 w-4" />
+          {submitLoading ? "Mengirim..." : "Ajukan Judul Sendiri"}
+        </button>
       </div>
     </div>
   );
@@ -2126,7 +2561,13 @@ function PengajuanPage({
               disabled={currentFormDisabled}
             />
           ) : (
-            <FormJudulSendiri />
+            <FormJudulSendiri
+              session={session}
+              apiBaseUrl={apiBaseUrl}
+              onSessionExpired={onSessionExpired}
+              onSubmitted={onEligibilityRefresh}
+              disabled={currentFormDisabled}
+            />
           )}
         </>
       ) : null}

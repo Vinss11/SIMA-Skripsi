@@ -176,7 +176,18 @@ function getJudulDisplay(row, detail = null) {
 }
 
 function getClusterDisplay(row) {
-  if (!row || row.tipe_pengajuan !== "topik_dosen") return "-";
+  if (!row) return "-";
+  if (row.tipe_pengajuan === "judul_mandiri") {
+    return row.judul_mandiri?.cluster || row.cluster_mandiri || "-";
+  }
+  if (row.tipe_pengajuan !== "topik_dosen") return "-";
+  if (typeof row.topik_disetujui === "object" && row.topik_disetujui?.cluster) {
+    return row.topik_disetujui.cluster;
+  }
+  if (Array.isArray(row.topik_dipilih_detail) && row.topik_dipilih_detail.some((item) => item?.cluster)) {
+    const clusters = [...new Set(row.topik_dipilih_detail.map((item) => item?.cluster).filter(Boolean))];
+    return clusters.length > 0 ? clusters.join(", ") : "-";
+  }
   const codes = [];
   if (typeof row.topik_disetujui === "object" && row.topik_disetujui?.kode) {
     codes.push(row.topik_disetujui.kode);
@@ -419,6 +430,11 @@ function StatusPage({
         topikText,
         kodeTopik,
         cluster,
+        row.judul_mandiri?.keyword,
+        row.judul_mandiri?.cluster,
+        ...(Array.isArray(row.topik_dipilih_detail)
+          ? row.topik_dipilih_detail.flatMap((item) => [item?.keyword, item?.cluster])
+          : []),
         row.dosen_pembimbing,
       ]
         .filter(Boolean)
@@ -798,6 +814,7 @@ function StatusPage({
                 {selectedDetail.tipe_pengajuan === "judul_mandiri" ? (
                   <div className="mt-3 space-y-2 text-sm text-[#26355f]">
                     <p><span className="font-semibold">Judul:</span> {selectedDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
+                    <p><span className="font-semibold">Cluster:</span> {selectedDetail.detail_pengajuan?.cluster_mandiri || "-"}</p>
                     <p><span className="font-semibold">Deskripsi:</span> {selectedDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
                     <p><span className="font-semibold">Keyword:</span> {selectedDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
                   </div>
@@ -813,6 +830,8 @@ function StatusPage({
                           <p className="mt-1 text-sm font-bold text-[#1a2648]">
                             {item.kode || "-"} - {item.judul || "-"}
                           </p>
+                          <p className="mt-1 text-sm text-[#495a84]">Cluster: {item.cluster || "-"}</p>
+                          <p className="mt-1 text-sm text-[#495a84]">Keyword: {item.keyword || "-"}</p>
                           <p className="mt-1 text-sm text-[#495a84]">Dosen: {item.dosen || "-"}</p>
                         </div>
                       ))

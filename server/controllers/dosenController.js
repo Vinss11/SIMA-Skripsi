@@ -404,6 +404,81 @@ async function resolveKetuaKlasterByTopikKode(topikKode, transaction) {
   };
 }
 
+async function resolveKetuaKlasterByClusterInput(clusterInput, transaction) {
+  const klasterKode = normalizeTopikClusterCode(clusterInput);
+  if (!klasterKode) {
+    return {
+      ok: false,
+      reason: "CLUSTER_NOT_FOUND",
+      message: "Cluster penelitian pada pengajuan judul mandiri belum valid.",
+    };
+  }
+
+  const klaster = await Klaster.findOne({
+    where: { kode: klasterKode },
+    attributes: ["id", "kode", "nama"],
+    transaction,
+  });
+  if (!klaster) {
+    return {
+      ok: false,
+      reason: "CLUSTER_NOT_FOUND",
+      message: `Master klaster ${klasterKode} belum tersedia.`,
+    };
+  }
+
+  const periodeAktif = await PeriodePenjaluran.findOne({
+    where: { is_active: true },
+    attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+    order: [["updatedAt", "DESC"]],
+    transaction,
+  });
+  if (!periodeAktif) {
+    return {
+      ok: false,
+      reason: "NO_ACTIVE_PERIODE",
+      message: "Belum ada periode penjaluran aktif. Sekretaris prodi harus membuka periode terlebih dahulu.",
+    };
+  }
+
+  const ketuaKlaster = await KlasterKetuaPeriode.findOne({
+    where: {
+      klaster_id: klaster.id,
+      periode_penjaluran_id: periodeAktif.id,
+    },
+    attributes: ["id", "dosen_id", "klaster_id", "periode_penjaluran_id"],
+    include: [
+      {
+        model: Dosen,
+        as: "ketuaDosen",
+        attributes: ["id", "nik", "nama", "email"],
+        required: true,
+      },
+    ],
+    transaction,
+  });
+
+  if (!ketuaKlaster) {
+    return {
+      ok: false,
+      reason: "KETUA_NOT_SET",
+      message: `Ketua cluster untuk ${klaster.kode} pada periode ${periodeAktif.label_periode} belum ditetapkan.`,
+      detail: {
+        klaster: klaster.kode,
+        periode: periodeAktif.label_periode,
+      },
+    };
+  }
+
+  return {
+    ok: true,
+    reason: "OK",
+    klaster,
+    periode: periodeAktif,
+    ketuaKlaster,
+  };
+}
+
 async function resolveKetuaKlasterByDosenId(dosenId, transaction) {
   if (!dosenId) {
     return {
@@ -490,6 +565,14 @@ async function resolveKetuaKlasterByDosenId(dosenId, transaction) {
   };
 }
 
+async function resolveKetuaKlasterForJudulMandiri(submission, fallbackDosenId, transaction) {
+  if (String(submission?.cluster_mandiri || "").trim()) {
+    return resolveKetuaKlasterByClusterInput(submission.cluster_mandiri, transaction);
+  }
+
+  return resolveKetuaKlasterByDosenId(fallbackDosenId, transaction);
+}
+
 async function resolveEffectiveApprovalStage({
   submission,
   dosenId,
@@ -529,7 +612,7 @@ async function resolveEffectiveApprovalStage({
       return approvalStage;
     }
 
-    const ketuaResolution = await resolveKetuaKlasterByDosenId(prospectiveId, transaction);
+    const ketuaResolution = await resolveKetuaKlasterForJudulMandiri(submission, prospectiveId, transaction);
     if (ketuaResolution.ok && Number(ketuaResolution.ketuaKlaster.dosen_id) === currentDosenId) {
       return "pending_ketua_klaster";
     }
@@ -626,6 +709,7 @@ function formatSubmissionDecisionResponse(submission) {
       judul_mandiri: submission.judul_mandiri,
       deskripsi_mandiri: submission.deskripsi_mandiri,
       keyword_mandiri: submission.keyword_mandiri,
+      cluster_mandiri: submission.cluster_mandiri,
       calon_dosen_pembimbing: submission.prospectiveSupervisor
         ? {
             id: submission.prospectiveSupervisor.id,
@@ -905,6 +989,8 @@ exports.getDosenSubmissions = async (req, res) => {
         }));
       } else {
         base.judul_mandiri = submission.judul_mandiri;
+        base.keyword_mandiri = submission.keyword_mandiri;
+        base.cluster_mandiri = submission.cluster_mandiri;
         base.can_review = submission.status === "pending";
       }
 
@@ -1158,7 +1244,7 @@ exports.approveSubmission = async (req, res) => {
 
       const ketuaResolution = isTopikDosen
         ? await resolveKetuaKlasterByTopikKode(approvedTopikByDosen.kode, t)
-        : await resolveKetuaKlasterByDosenId(submission.prospective_supervisor_id || dosen_id, t);
+        : await resolveKetuaKlasterForJudulMandiri(submission, submission.prospective_supervisor_id || dosen_id, t);
 
       await RiwayatPersetujuan.create(
         {
@@ -1324,7 +1410,11 @@ exports.approveSubmission = async (req, res) => {
       approvalType = "koordinator";
       dosenPembimbingFinalId = Number(finalTopik.dosen_id);
     } else if (requiresKetuaCluster && effectiveApprovalStage === "pending_ketua_klaster" && isJudulMandiri) {
-      const ketuaResolution = await resolveKetuaKlasterByDosenId(submission.prospective_supervisor_id || dosen_id, t);
+      const ketuaResolution = await resolveKetuaKlasterForJudulMandiri(
+        submission,
+        submission.prospective_supervisor_id || dosen_id,
+        t
+      );
       if (!ketuaResolution.ok) {
         await t.rollback();
         return res.status(409).json({
@@ -1747,7 +1837,11 @@ exports.rejectSubmission = async (req, res) => {
 
       rejectionApprovalType = "koordinator";
     } else if (requiresKetuaCluster && effectiveApprovalStage === "pending_ketua_klaster" && isJudulMandiri) {
-      const ketuaResolution = await resolveKetuaKlasterByDosenId(submission.prospective_supervisor_id || dosen_id, t);
+      const ketuaResolution = await resolveKetuaKlasterForJudulMandiri(
+        submission,
+        submission.prospective_supervisor_id || dosen_id,
+        t
+      );
       if (!ketuaResolution.ok) {
         await t.rollback();
         return res.status(409).json({

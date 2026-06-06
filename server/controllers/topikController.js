@@ -149,7 +149,12 @@ exports.getTopics = async (req, res) => {
 
     const keyword = (q || search || "").trim();
     if (keyword) {
-      where[Op.or] = [{ kode: { [Op.iLike]: `%${keyword}%` } }, { judul: { [Op.iLike]: `%${keyword}%` } }, { "$dosen.nama$": { [Op.iLike]: `%${keyword}%` } }];
+      where[Op.or] = [
+        { kode: { [Op.iLike]: `%${keyword}%` } },
+        { judul: { [Op.iLike]: `%${keyword}%` } },
+        { keyword: { [Op.iLike]: `%${keyword}%` } },
+        { "$dosen.nama$": { [Op.iLike]: `%${keyword}%` } },
+      ];
     }
 
     const topics = await Topik.findAll({
@@ -248,16 +253,17 @@ exports.getTopicById = async (req, res) => {
 // POST /api/topics - Buat topik baru (Admin/Dosen/Sekretaris Prodi)
 exports.createTopic = async (req, res) => {
   try {
-    const { kode, judul, deskripsi, cluster, dosen_id: dosenIdInput } = req.body;
+    const { kode, judul, deskripsi, keyword, cluster, dosen_id: dosenIdInput } = req.body;
     const normalizedKode = String(kode || "").trim().toUpperCase();
     const normalizedCluster = normalizeClusterInput(cluster);
+    const normalizedKeyword = String(keyword || "").trim();
     let dosen_id = null;
 
     // Validasi
-    if (!normalizedKode || !judul || !normalizedCluster) {
+    if (!normalizedKode || !judul || !normalizedKeyword || !normalizedCluster) {
       return res.status(400).json({
         success: false,
-        message: "Kode topik, judul, dan cluster harus diisi",
+        message: "Kode topik, judul, keyword, dan cluster harus diisi",
       });
     }
 
@@ -323,6 +329,7 @@ exports.createTopic = async (req, res) => {
       kode: normalizedKode,
       judul,
       deskripsi,
+      keyword: normalizedKeyword,
       cluster: normalizedCluster,
       dosen_id,
       status: "available",
@@ -364,7 +371,7 @@ exports.createTopic = async (req, res) => {
 exports.updateTopic = async (req, res) => {
   try {
     const { id } = req.params;
-    const { kode, judul, deskripsi, cluster, status } = req.body;
+    const { kode, judul, deskripsi, keyword, cluster, status } = req.body;
     const isAdmin = req.user.role === "admin";
     const dosen_id = isAdmin ? null : await resolveActorDosenId(req);
 
@@ -417,6 +424,7 @@ exports.updateTopic = async (req, res) => {
     }
     if (judul) topic.judul = judul;
     if (deskripsi) topic.deskripsi = deskripsi;
+    if (keyword !== undefined) topic.keyword = String(keyword || "").trim() || null;
     if (cluster) {
       const normalizedCluster = normalizeClusterInput(cluster);
       if (!normalizedCluster) {

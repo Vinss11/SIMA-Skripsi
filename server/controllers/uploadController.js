@@ -13,6 +13,7 @@ const TEMPLATE_HEADERS = {
     { key: "kode topik", label: "Kode Topik" },
     { key: "judul", label: "Judul" },
     { key: "deskripsi", label: "Deskripsi" },
+    { key: "keyword", label: "Keyword" },
     { key: "cluster", label: "Cluster" },
   ],
   dosen: [
@@ -259,6 +260,7 @@ function extractTopikUploadValues(rawRow = {}) {
     kode: rawRow["Kode Topik"] || rawRow.kode || rawRow.KODE || "",
     judul: rawRow.Judul || rawRow.judul || rawRow.JUDUL || "",
     deskripsi: rawRow.Deskripsi || rawRow.deskripsi || rawRow.DESKRIPSI || "",
+    keyword: rawRow.Keyword || rawRow.keyword || rawRow.KEYWORD || rawRow["Kata Kunci"] || rawRow.kata_kunci || "",
     cluster: rawRow.Cluster || rawRow.cluster || rawRow.CLUSTER || "",
     dosenIdentifier:
       rawRow["NIK Dosen"] ||
@@ -449,6 +451,7 @@ exports.uploadTopics = async (req, res) => {
         const kode = row["Kode Topik"] || row["kode"] || row["KODE"];
         const judul = row["Judul"] || row["judul"] || row["JUDUL"];
         const deskripsi = row["Deskripsi"] || row["deskripsi"] || row["DESKRIPSI"];
+        const keyword = row["Keyword"] || row["keyword"] || row["KEYWORD"] || row["Kata Kunci"] || row["kata_kunci"];
         const cluster = row["Cluster"] || row["cluster"] || row["CLUSTER"];
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
@@ -461,17 +464,18 @@ exports.uploadTopics = async (req, res) => {
             row["email_dosen"];
 
         // Validasi field wajib
-        if (!kode || !judul || !cluster || !dosenIdentifier) {
+        if (!kode || !judul || !keyword || !cluster || !dosenIdentifier) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
+            error: "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
         const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
+        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
 
         if (!normalizedCluster) {
@@ -559,6 +563,7 @@ exports.uploadTopics = async (req, res) => {
             kode: normalizedKode,
             judul: normalizedJudul,
             deskripsi: deskripsi ? deskripsi.trim() : null,
+            keyword: normalizedKeyword,
             cluster: normalizedCluster,
             dosen_id: dosen.id,
             status: "available",
@@ -570,6 +575,7 @@ exports.uploadTopics = async (req, res) => {
           row: rowNumber,
           kode: newTopik.kode,
           judul: newTopik.judul,
+          keyword: newTopik.keyword,
           cluster: newTopik.cluster,
           dosen: dosen.nama,
         });
@@ -682,24 +688,26 @@ exports.previewUploadTopics = async (req, res) => {
         const rowValues = extractTopikUploadValues(row);
         const kode = rowValues.kode;
         const judul = rowValues.judul;
+        const keyword = rowValues.keyword;
         const cluster = rowValues.cluster;
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
           : rowValues.dosenIdentifier;
 
-        if (!kode || !judul || !cluster || (!actorDosen && !dosenIdentifier)) {
+        if (!kode || !judul || !keyword || !cluster || (!actorDosen && !dosenIdentifier)) {
           failedRows.push({
             row: rowNumber,
             data: row,
             error: actorDosen
-              ? "Field wajib tidak lengkap (Kode Topik, Judul, dan Cluster harus diisi)"
-              : "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
+              ? "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
         const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
+        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
         const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
 
@@ -789,6 +797,7 @@ exports.previewUploadTopics = async (req, res) => {
           kode: normalizedKode,
           judul: normalizedJudul,
           deskripsi: normalizedDeskripsi,
+          keyword: normalizedKeyword,
           cluster: normalizedCluster,
         });
       } catch (error) {
@@ -863,24 +872,26 @@ exports.commitUploadTopics = async (req, res) => {
         const rowValues = extractTopikUploadValues(payloadRow);
         const kode = rowValues.kode;
         const judul = rowValues.judul;
+        const keyword = rowValues.keyword;
         const cluster = rowValues.cluster;
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
           : rowValues.dosenIdentifier;
 
-        if (!kode || !judul || !cluster || (!actorDosen && !dosenIdentifier)) {
+        if (!kode || !judul || !keyword || !cluster || (!actorDosen && !dosenIdentifier)) {
           results.failed.push({
             row: rowNumber,
             data: payloadRow,
             error: actorDosen
-              ? "Field wajib tidak lengkap (Kode Topik, Judul, dan Cluster harus diisi)"
-              : "Field wajib tidak lengkap (Kode Topik, Judul, Cluster, dan identifier dosen harus diisi)",
+              ? "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
         const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
+        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
         const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
 
@@ -974,6 +985,7 @@ exports.commitUploadTopics = async (req, res) => {
             kode: normalizedKode,
             judul: normalizedJudul,
             deskripsi: normalizedDeskripsi,
+            keyword: normalizedKeyword,
             cluster: normalizedCluster,
             dosen_id: dosen.id,
             status: "available",
@@ -986,6 +998,7 @@ exports.commitUploadTopics = async (req, res) => {
           row: rowNumber,
           kode: topik.kode,
           judul: topik.judul,
+          keyword: topik.keyword,
           cluster: topik.cluster,
           dosen: dosen.nama,
         });
@@ -1036,24 +1049,28 @@ exports.downloadTemplate = (req, res) => {
         "Kode Topik": "SIRKEL03",
         Judul: "Contoh Judul Topik Penelitian",
         Deskripsi: "Deskripsi singkat tentang topik penelitian ini",
+        Keyword: "sistem informasi, rekomendasi, skripsi",
         Cluster: "Sirkel",
       },
       {
         "Kode Topik": "SIBER03",
         Judul: "Implementasi Blockchain untuk Keamanan Data",
         Deskripsi: "Penelitian implementasi blockchain dalam sistem keamanan data",
+        Keyword: "blockchain, keamanan data, kriptografi",
         Cluster: "Siber",
       },
       {
         "Kode Topik": "ITSC05",
         Judul: "Sistem Informasi Manajemen Perpustakaan",
         Deskripsi: "Pengembangan sistem informasi untuk manajemen perpustakaan digital",
+        Keyword: "sistem informasi, perpustakaan digital, manajemen",
         Cluster: "ITSC",
       },
       {
         "Kode Topik": "MVK02",
         Judul: "Analisis Sentimen Media Sosial Menggunakan Deep Learning",
         Deskripsi: "Penelitian analisis sentimen pada data Twitter menggunakan LSTM",
+        Keyword: "analisis sentimen, deep learning, media sosial",
         Cluster: "MVK",
       },
     ];
@@ -1066,6 +1083,7 @@ exports.downloadTemplate = (req, res) => {
       { wch: 15 }, // Kode Topik
       { wch: 50 }, // Judul
       { wch: 60 }, // Deskripsi
+      { wch: 45 }, // Keyword
       { wch: 10 }, // Cluster
     ];
 

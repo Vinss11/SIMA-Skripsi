@@ -3,6 +3,8 @@ const {
   Topik,
   Mahasiswa,
   Dosen,
+  DosenKlaster,
+  Klaster,
   RiwayatPersetujuan,
   PamitUlang,
   IzinLanjutSkripsi,
@@ -59,6 +61,12 @@ const NON_PENELITIAN_WORKFLOW_STATUS = new Set([
   "approved",
   "rejected",
 ]);
+const PENELITIAN_CLUSTER_LABEL_BY_CODE = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
 
 // ========== HELPER FUNCTION - VALIDASI KUOTA DOSEN ==========
 
@@ -92,6 +100,74 @@ async function validateDosenKuota(dosen_id, transaction) {
     isAvailable: true,
     kuotaInfo,
     dosen,
+  };
+}
+
+function normalizePenelitianClusterCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return null;
+  if (raw === "SIRKER") return "SIRKEL";
+  if (raw.includes("SISTEM INFORMASI") || raw.includes("REKAYASA PERANGKAT LUNAK") || raw.includes("SIRKEL")) {
+    return "SIRKEL";
+  }
+  if (raw.includes("SIBER")) return "SIBER";
+  if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
+  if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (PENELITIAN_CLUSTER_LABEL_BY_CODE[raw]) return raw;
+  return null;
+}
+
+function normalizePenelitianClusterLabel(value) {
+  const code = normalizePenelitianClusterCode(value);
+  if (!code) return null;
+  return PENELITIAN_CLUSTER_LABEL_BY_CODE[code] || null;
+}
+
+async function validateDosenPenelitianCluster(dosenId, clusterInput, transaction) {
+  const clusterCode = normalizePenelitianClusterCode(clusterInput);
+  const clusterLabel = normalizePenelitianClusterLabel(clusterInput);
+  if (!clusterCode || !clusterLabel) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: "Cluster penelitian tidak valid. Pilih salah satu: Sirkel, Siber, ITSC, atau MVK.",
+    };
+  }
+
+  const klaster = await Klaster.findOne({
+    where: { kode: clusterCode },
+    attributes: ["id", "kode", "nama"],
+    transaction,
+  });
+  if (!klaster) {
+    return {
+      ok: false,
+      statusCode: 409,
+      message: `Master cluster ${clusterCode} belum tersedia. Hubungi sekretaris prodi.`,
+    };
+  }
+
+  const membership = await DosenKlaster.findOne({
+    where: {
+      dosen_id: Number(dosenId),
+      klaster_id: klaster.id,
+    },
+    attributes: ["id"],
+    transaction,
+  });
+  if (!membership) {
+    return {
+      ok: false,
+      statusCode: 400,
+      message: `Dosen pembimbing yang dipilih tidak terdaftar pada cluster ${clusterLabel}. Silakan pilih dosen sesuai cluster.`,
+    };
+  }
+
+  return {
+    ok: true,
+    cluster_code: clusterCode,
+    cluster_label: clusterLabel,
+    klaster,
   };
 }
 
@@ -2230,7 +2306,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
 
   try {
     const mahasiswa_id = req.user.id;
-    const { pamit_id, judul_mandiri, deskripsi_mandiri, keyword_mandiri, prospective_supervisor_id } = req.body;
+    const { pamit_id, judul_mandiri, deskripsi_mandiri, keyword_mandiri, cluster_mandiri, prospective_supervisor_id } = req.body;
 
     // Validasi
     if (!pamit_id) {
@@ -2241,11 +2317,11 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
-    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !prospective_supervisor_id) {
+    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Semua field wajib diisi: judul, deskripsi, keyword, dan calon dosen pembimbing",
+        message: "Semua field wajib diisi: judul, deskripsi, keyword, cluster, dan calon dosen pembimbing",
       });
     }
 
@@ -2309,6 +2385,15 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
+    const clusterValidation = await validateDosenPenelitianCluster(prospective_supervisor_id, cluster_mandiri, t);
+    if (!clusterValidation.ok) {
+      await t.rollback();
+      return res.status(clusterValidation.statusCode || 400).json({
+        success: false,
+        message: clusterValidation.message,
+      });
+    }
+
     // ⭐ VALIDASI KUOTA DOSEN ⭐
     const kuotaValidation = await validateDosenKuota(prospective_supervisor_id, t);
     if (!kuotaValidation.isAvailable) {
@@ -2341,6 +2426,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         judul_mandiri,
         deskripsi_mandiri,
         keyword_mandiri,
+        cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,
         is_approved_by_supervisor: false,
         dosen_saat_ini: prospective_supervisor_id,
@@ -2468,6 +2554,7 @@ exports.pengajuanEkstensi = async (req, res) => {
         judul_mandiri: previousSubmission.judul_mandiri,
         deskripsi_mandiri: previousSubmission.deskripsi_mandiri,
         keyword_mandiri: previousSubmission.keyword_mandiri,
+        cluster_mandiri: previousSubmission.cluster_mandiri,
 
         dosen_pilihan_1: previousSubmission.dosen_pilihan_1,
         dosen_1_nama: previousSubmission.dosen_1_nama,
@@ -2525,14 +2612,14 @@ exports.submitBaruJudulMandiri = async (req, res) => {
 
   try {
     const mahasiswa_id = req.user.id;
-    const { judul_mandiri, deskripsi_mandiri, keyword_mandiri, prospective_supervisor_id } = req.body;
+    const { judul_mandiri, deskripsi_mandiri, keyword_mandiri, cluster_mandiri, prospective_supervisor_id } = req.body;
 
     // Validasi input
-    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !prospective_supervisor_id) {
+    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Semua field wajib diisi: judul, deskripsi, keyword, dan calon dosen pembimbing",
+        message: "Semua field wajib diisi: judul, deskripsi, keyword, cluster, dan calon dosen pembimbing",
       });
     }
 
@@ -2591,6 +2678,15 @@ exports.submitBaruJudulMandiri = async (req, res) => {
       });
     }
 
+    const clusterValidation = await validateDosenPenelitianCluster(prospective_supervisor_id, cluster_mandiri, t);
+    if (!clusterValidation.ok) {
+      await t.rollback();
+      return res.status(clusterValidation.statusCode || 400).json({
+        success: false,
+        message: clusterValidation.message,
+      });
+    }
+
     // ⭐ VALIDASI KUOTA DOSEN ⭐
     const kuotaValidation = await validateDosenKuota(prospective_supervisor_id, t);
     if (!kuotaValidation.isAvailable) {
@@ -2611,6 +2707,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         judul_mandiri,
         deskripsi_mandiri,
         keyword_mandiri,
+        cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,
         is_approved_by_supervisor: false,
         dosen_saat_ini: prospective_supervisor_id,

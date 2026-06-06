@@ -1036,6 +1036,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     kode: "",
     judul: "",
     deskripsi: "",
+    keyword: "",
     cluster: "Sirkel",
   });
   const allowedTopikClusters = useMemo(() => {
@@ -1069,6 +1070,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       kode: String(item?.kode || "-"),
       cluster: String(item?.cluster || "-"),
       judul: String(item?.judul || "-"),
+      keyword: String(item?.keyword || "-"),
       status: "valid",
       pesan_error: "-",
     }));
@@ -1082,6 +1084,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         kode: pickTopikUploadField(rawRow, ["Kode Topik", "kode", "KODE"]) || "-",
         cluster: pickTopikUploadField(rawRow, ["Cluster", "cluster", "CLUSTER"]) || "-",
         judul: pickTopikUploadField(rawRow, ["Judul", "judul", "JUDUL"]) || "-",
+        keyword: pickTopikUploadField(rawRow, ["Keyword", "keyword", "KEYWORD", "Kata Kunci", "kata_kunci"]) || "-",
         status: "error",
         pesan_error: String(item?.error || "Data tidak valid."),
       };
@@ -1840,7 +1843,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (!keyword) return topikRows;
 
     return topikRows.filter((row) => {
-      const haystack = [row.kode, row.judul, row.cluster, row.status].filter(Boolean).join(" ").toLowerCase();
+      const haystack = [row.kode, row.judul, row.keyword, row.cluster, row.status]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
       return haystack.includes(keyword);
     });
   }, [topikRows, topikQuery]);
@@ -1873,6 +1879,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       const haystack = [
         row.kode,
         row.judul,
+        row.keyword,
         row.cluster,
         row.status,
         row.dosen?.nama,
@@ -3282,11 +3289,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       kode: topikForm.kode.trim().toUpperCase(),
       judul: topikForm.judul.trim(),
       deskripsi: topikForm.deskripsi.trim(),
+      keyword: topikForm.keyword.trim(),
       cluster: normalizedCluster || topikForm.cluster,
     };
 
-    if (!payload.kode || !payload.judul || !payload.cluster) {
-      showErrorToast("Kode topik, judul, dan cluster wajib diisi.");
+    if (!payload.kode || !payload.judul || !payload.keyword || !payload.cluster) {
+      showErrorToast("Kode topik, judul, keyword, dan cluster wajib diisi.");
       return;
     }
 
@@ -3319,6 +3327,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         kode: "",
         judul: "",
         deskripsi: "",
+        keyword: "",
         cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
       });
       showSuccessToast("Topik berhasil ditambahkan.");
@@ -5337,6 +5346,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                     <p><span className="font-semibold">Slot:</span> {submissionReviewTopikFocused?.slot || "-"}</p>
                                     <p><span className="font-semibold">Kode Topik:</span> {submissionReviewTopikFocused?.kode || "-"}</p>
                                     <p><span className="font-semibold">Judul Topik:</span> {submissionReviewTopikFocused?.judul || "-"}</p>
+                                    <p><span className="font-semibold">Cluster:</span> {submissionReviewTopikFocused?.cluster || "-"}</p>
+                                    <p><span className="font-semibold">Keyword:</span> {submissionReviewTopikFocused?.keyword || "-"}</p>
                                     <p><span className="font-semibold">Dosen:</span> {submissionReviewTopikFocused?.dosen || "-"}</p>
                                     <p>
                                       <span className="font-semibold">Status Slot:</span>{" "}
@@ -5369,6 +5380,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
                             <div className="space-y-2 text-sm text-[#324c86]">
                               <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
+                              <p><span className="font-semibold">Cluster:</span> {submissionDetail.detail_pengajuan?.cluster_mandiri || "-"}</p>
                               <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
                               <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
                             </div>
@@ -6701,7 +6713,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         type="text"
                         value={masterTopikQuery}
                         onChange={(event) => setMasterTopikQuery(event.target.value)}
-                        placeholder="Cari kode, judul, cluster, dosen, status..."
+                        placeholder="Cari kode, judul, keyword, cluster, dosen, status..."
                         className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
@@ -6717,12 +6729,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 </div>
 
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="w-full min-w-[1400px] text-left text-sm">
+                  <table className="w-full min-w-[1500px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Keyword</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dosen</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
@@ -6738,6 +6751,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               </td>
                               <td className="px-3 py-2 font-semibold text-[#254080]">{row.kode || "-"}</td>
                               <td className="px-3 py-2">{row.judul || "-"}</td>
+                              <td className="px-3 py-2">{row.keyword || "-"}</td>
                               <td className="px-3 py-2">{row.cluster || "-"}</td>
                               <td className="px-3 py-2">
                                 {row.dosen?.nama || row.dosen_nama || row.nama_dosen || "-"}
@@ -6845,7 +6859,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             type="text"
                             value={topikQuery}
                             onChange={(event) => setTopikQuery(event.target.value)}
-                            placeholder="Cari kode, judul, cluster, status..."
+                            placeholder="Cari kode, judul, keyword, cluster, status..."
                             className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                           />
                         </div>
@@ -6861,12 +6875,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
 
                     <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                      <table className="w-full min-w-[1200px] text-left text-sm">
+                      <table className="w-full min-w-[1300px] text-left text-sm">
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Keyword</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Updated</th>
@@ -6879,6 +6894,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   <td className="px-3 py-2">{(topikPage - 1) * TOPIK_PAGE_SIZE + index + 1}</td>
                                   <td className="px-3 py-2 font-semibold text-[#254080]">{row.kode || "-"}</td>
                                   <td className="px-3 py-2">{row.judul || "-"}</td>
+                                  <td className="px-3 py-2">{row.keyword || "-"}</td>
                                   <td className="px-3 py-2">{row.cluster || "-"}</td>
                                   <td className="px-3 py-2">{formatLabel(row.status)}</td>
                                   <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
@@ -6980,7 +6996,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
                         <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
                           <div className="overflow-x-auto">
-                            <table className="w-full min-w-[1020px] table-auto">
+                            <table className="w-full min-w-[1120px] table-auto">
                               <thead className="bg-[#f4f7ff] text-left text-sm font-bold text-[#2f4473]">
                                 <tr>
                                   <th className="px-3 py-2">No</th>
@@ -6988,6 +7004,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   <th className="px-3 py-2">Kode Topik</th>
                                   <th className="px-3 py-2">Cluster</th>
                                   <th className="px-3 py-2">Judul Topik</th>
+                                  <th className="px-3 py-2">Keyword</th>
                                   <th className="px-3 py-2">Status</th>
                                   <th className="px-3 py-2">Pesan Error</th>
                                 </tr>
@@ -7006,6 +7023,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       <td className="px-3 py-2">{row.kode}</td>
                                       <td className="px-3 py-2">{row.cluster}</td>
                                       <td className="px-3 py-2">{row.judul}</td>
+                                      <td className="px-3 py-2">{row.keyword}</td>
                                       <td className="px-3 py-2">
                                         <span
                                           className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
@@ -7024,7 +7042,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   ))
                                 ) : (
                                   <tr className="border-t border-[#ecf1fb] text-sm text-[#5d6c91]">
-                                    <td className="px-3 py-4 text-center" colSpan={7}>
+                                    <td className="px-3 py-4 text-center" colSpan={8}>
                                       Belum ada data preview.
                                     </td>
                                   </tr>
@@ -7127,6 +7145,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             placeholder="Masukkan judul topik"
                             className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
                           />
+                        </div>
+                        <div className="lg:col-span-2">
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Keyword</label>
+                          <input
+                            type="text"
+                            name="keyword"
+                            value={topikForm.keyword}
+                            onChange={handleTopikFormChange}
+                            placeholder="Contoh: machine learning, rekomendasi, sistem informasi"
+                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                          <p className="mt-1 text-xs text-[#6b789e]">
+                            Pisahkan beberapa keyword dengan koma agar mudah dicari mahasiswa.
+                          </p>
                         </div>
                         <div className="lg:col-span-2">
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Deskripsi (opsional)</label>

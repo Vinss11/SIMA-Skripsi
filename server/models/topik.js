@@ -27,6 +27,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      keyword: {
+        type: DataTypes.STRING(500),
+        allowNull: true,
+      },
       cluster: {
         type: DataTypes.ENUM("Sirkel", "Siber", "ITSC", "MVK"),
         allowNull: false,

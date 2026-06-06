@@ -128,6 +128,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING(500),
         allowNull: true,
       },
+      cluster_mandiri: {
+        type: DataTypes.STRING(20),
+        allowNull: true,
+      },
       prospective_supervisor_id: {
         type: DataTypes.INTEGER,
         allowNull: true,

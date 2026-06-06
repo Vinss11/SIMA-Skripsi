@@ -48,7 +48,7 @@ function parseAuth(raw) {
 }
 
 function loadAuth() {
-  return parseAuth(localStorage.getItem(AUTH_STORAGE_KEY)) || parseAuth(sessionStorage.getItem(AUTH_STORAGE_KEY));
+  return parseAuth(sessionStorage.getItem(AUTH_STORAGE_KEY)) || parseAuth(localStorage.getItem(AUTH_STORAGE_KEY));
 }
 
 function clearAuthStorage() {
@@ -78,13 +78,13 @@ function updateStoredAuthPromptFlag(token, promptFlag) {
 }
 
 function saveAuth(authPayload, rememberMe) {
-  clearAuthStorage();
   const value = JSON.stringify(authPayload);
+  sessionStorage.setItem(AUTH_STORAGE_KEY, value);
   if (rememberMe) {
     localStorage.setItem(AUTH_STORAGE_KEY, value);
     return;
   }
-  sessionStorage.setItem(AUTH_STORAGE_KEY, value);
+  localStorage.removeItem(AUTH_STORAGE_KEY);
 }
 
 function App() {
