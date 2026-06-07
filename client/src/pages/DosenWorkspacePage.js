@@ -242,6 +242,7 @@ function isKetuaClusterSubmissionReview(row) {
 }
 
 function getPeriodeStatusKey(periode) {
+  if (isPeriodeEnded(periode)) return "closed";
   const explicitStatus = String(periode?.status || "")
     .trim()
     .toLowerCase();
@@ -7534,6 +7535,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             {periodeRows.length > 0
                               ? pagedPeriodeRows.map((row) => {
                                   const canEditRow = canEditPeriodeRow(row);
+                                  const isRowActive = getPeriodeStatusKey(row) === "active";
                                   return (
                                   <tr key={`periode-${row.id}`} className="border-b border-[#eff3fb]">
                                     <td className="px-3 py-2">{row.label_periode || "-"}</td>
@@ -7542,7 +7544,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                     <td className="px-3 py-2">{formatDateTime(row.tanggal_mulai)}</td>
                                     <td className="px-3 py-2">{formatDateTime(row.tanggal_selesai)}</td>
                                     <td className="px-3 py-2">
-                                      {row.is_active ? (
+                                      {isRowActive ? (
                                         <span className="rounded-full bg-[#e8f8ef] px-2 py-1 text-xs font-bold text-[#127947]">Aktif</span>
                                       ) : (
                                         <span className="rounded-full bg-[#eef2fb] px-2 py-1 text-xs font-bold text-[#58658d]">Nonaktif</span>

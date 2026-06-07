@@ -16,7 +16,7 @@ const {
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
-const { parseInputDateForJakarta } = require("../services/periodePenjaluranService");
+const { evaluatePeriodeWindow, parseInputDateForJakarta } = require("../services/periodePenjaluranService");
 const {
   buildTopikListFromSubmission,
   evaluateTopikParallelState,
@@ -171,11 +171,22 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
   const transaction = options.transaction;
   const lock = options.lock;
 
+  await closeExpiredActivePeriodePenjaluran({ transaction });
+
   const activePeriode = await PeriodePenjaluran.findOne({
     where: {
       [Op.or]: [{ status: "active" }, { is_active: true }],
     },
-    attributes: ["id", "label_periode", "tahun_akademik", "semester", "status", "is_active"],
+    attributes: [
+      "id",
+      "label_periode",
+      "tahun_akademik",
+      "semester",
+      "tanggal_mulai",
+      "tanggal_selesai",
+      "status",
+      "is_active",
+    ],
     order: [["updatedAt", "DESC"]],
     transaction,
     ...(lock ? { lock } : {}),
@@ -209,14 +220,17 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
     }),
   ]);
 
-  const activePeriodePayload = activePeriode
+  const activePeriodeStatus = activePeriode ? getPeriodeStatusLabel(activePeriode) : null;
+  const activePeriodePayload = activePeriode && activePeriodeStatus === "active"
     ? {
         id: activePeriode.id,
         label_periode: activePeriode.label_periode || null,
         tahun_akademik: activePeriode.tahun_akademik || null,
         semester: activePeriode.semester || null,
-        status: getPeriodeStatusLabel(activePeriode),
-        is_active: isPeriodeActive(activePeriode),
+        tanggal_mulai: activePeriode.tanggal_mulai || null,
+        tanggal_selesai: activePeriode.tanggal_selesai || null,
+        status: activePeriodeStatus,
+        is_active: true,
       }
     : null;
   const locked = Boolean(activePeriodePayload) || pendingPengajuanCount > 0 || pendingPendaftaranCount > 0;
@@ -310,13 +324,38 @@ function getPeriodeRank(tahunAkademik, semester) {
 
 function isPeriodeActive(periode) {
   if (!periode) return false;
-  return periode.status === "active" || periode.is_active === true;
+  return getPeriodeStatusLabel(periode) === "active";
 }
 
 function getPeriodeStatusLabel(periode) {
   if (!periode) return "closed";
-  if (periode.status) return periode.status;
-  return periode.is_active ? "active" : "closed";
+  const rawStatus = String(periode.status || "").trim().toLowerCase();
+  if (rawStatus === "draft") return "draft";
+
+  const isConfiguredActive = rawStatus === "active" || periode.is_active === true;
+  if (!isConfiguredActive) return rawStatus || "closed";
+
+  const windowCheck = evaluatePeriodeWindow(periode);
+  return windowCheck.is_open ? "active" : "closed";
+}
+
+async function closeExpiredActivePeriodePenjaluran(options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  return PeriodePenjaluran.update(
+    {
+      status: "closed",
+      is_active: false,
+    },
+    {
+      where: {
+        tanggal_selesai: {
+          [Op.lt]: now,
+        },
+        [Op.or]: [{ status: "active" }, { is_active: true }],
+      },
+      transaction: options.transaction,
+    }
+  );
 }
 
 function getRiwayatApprovalType(item) {
@@ -1237,6 +1276,8 @@ exports.rejectPendaftaran = async (req, res) => {
 // GET /api/sekretaris/periode
 exports.getPeriodeOverview = async (req, res) => {
   try {
+    await closeExpiredActivePeriodePenjaluran();
+
     const [
       periodes,
       dosenOptions,
@@ -2322,6 +2363,8 @@ exports.openPeriodePendaftaran = async (req, res) => {
       });
     }
 
+    await closeExpiredActivePeriodePenjaluran({ transaction: t });
+
     const activePeriode = await PeriodePenjaluran.findOne({
       where: {
         status: "active",
@@ -2523,6 +2566,8 @@ exports.activatePeriodePendaftaran = async (req, res) => {
         message: "Hanya periode berstatus draft yang bisa diaktifkan.",
       });
     }
+
+    await closeExpiredActivePeriodePenjaluran({ transaction: t });
 
     const activePeriode = await PeriodePenjaluran.findOne({
       where: { status: "active" },
