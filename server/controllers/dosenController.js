@@ -1274,7 +1274,11 @@ exports.approveSubmission = async (req, res) => {
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
       let message = "Approve tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
-      if (finalizationResult?.routed_to_ketua_cluster) {
+      if (finalizationResult?.cluster_validation_skipped) {
+        message = `Approve tersimpan. Validasi ketua cluster ${
+          finalizationResult?.ketua_resolution?.klaster?.kode || ""
+        } dilewati otomatis karena pemilik topik adalah ketua cluster. Pengajuan final disetujui.`.trim();
+      } else if (finalizationResult?.routed_to_ketua_cluster) {
         message = `Approve tersimpan. Pengajuan diteruskan ke ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
         }.`.trim();
@@ -1854,7 +1858,11 @@ exports.rejectSubmission = async (req, res) => {
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
       let message = "Penolakan tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
-      if (finalizationResult?.routed_to_ketua_cluster) {
+      if (finalizationResult?.cluster_validation_skipped) {
+        message = `Penolakan tersimpan. Pengajuan final disetujui berdasarkan topik dosen lain dan validasi ketua cluster ${
+          finalizationResult?.ketua_resolution?.klaster?.kode || ""
+        } dilewati otomatis karena pemilik topik adalah ketua cluster.`.trim();
+      } else if (finalizationResult?.routed_to_ketua_cluster) {
         message = `Penolakan tersimpan. Pengajuan diteruskan ke ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
         } berdasarkan topik yang disetujui dosen lain.`.trim();
