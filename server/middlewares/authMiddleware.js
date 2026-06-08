@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
-const { SekretarisProdi } = require("../models");
+const { Op } = require("sequelize");
+const { Dosen, SekretarisProdi } = require("../models");
 const { isAllowedSekretarisJabatan } = require("../constants/sekretarisAkses");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
@@ -50,7 +51,14 @@ exports.authorizeRole = (...roles) => {
       });
     }
 
-    if (!roles.includes(req.user.role)) {
+    const capabilities = Array.isArray(req.user.capabilities) ? req.user.capabilities : [];
+    const effectiveRoles = new Set([req.user.role, ...capabilities]);
+    if (req.user.role === "dosen" && roles.includes("sekretaris_prodi")) {
+      effectiveRoles.add("sekretaris_prodi");
+    }
+
+    const hasAllowedRole = roles.some((role) => effectiveRoles.has(role));
+    if (!hasAllowedRole) {
       return res.status(403).json({
         success: false,
         message: `Akses ditolak. Hanya ${roles.join(", ")} yang diizinkan`,
@@ -64,11 +72,38 @@ exports.authorizeRole = (...roles) => {
 // Middleware khusus untuk membatasi akses sekretaris prodi ke 2 akun resmi saja
 exports.authorizeSekretarisAccess = async (req, res, next) => {
   try {
-    if (!req.user || req.user.role !== "sekretaris_prodi") {
+    if (!req.user || !["sekretaris_prodi", "dosen"].includes(req.user.role)) {
       return res.status(403).json({
         success: false,
         message: "Akses ditolak. Hanya sekretaris prodi yang diizinkan.",
       });
+    }
+
+    if (req.user.role === "dosen") {
+      const dosen = await Dosen.findByPk(req.user.id, {
+        attributes: ["id", "nik", "email", "jabatan_struktural"],
+      });
+
+      if (!dosen || !isAllowedSekretarisJabatan(dosen.jabatan_struktural)) {
+        return res.status(403).json({
+          success: false,
+          message: "Akses sekretaris prodi ditolak. Dosen ini tidak sedang menjabat sebagai sekretaris prodi.",
+        });
+      }
+
+      const sekretarisWhere = [];
+      if (dosen.nik) sekretarisWhere.push({ nik: dosen.nik });
+      if (dosen.email) sekretarisWhere.push({ email: String(dosen.email).toLowerCase() });
+      const linkedSekretaris = sekretarisWhere.length > 0
+        ? await SekretarisProdi.findOne({
+            where: { [Op.or]: sekretarisWhere },
+            attributes: ["id"],
+          })
+        : null;
+
+      req.user.sekretaris_prodi_id = linkedSekretaris?.id || null;
+      req.user.sekretaris_jabatan = dosen.jabatan_struktural;
+      return next();
     }
 
     const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
@@ -82,6 +117,8 @@ exports.authorizeSekretarisAccess = async (req, res, next) => {
       });
     }
 
+    req.user.sekretaris_prodi_id = sekretaris.id;
+    req.user.sekretaris_jabatan = sekretaris.jabatan;
     next();
   } catch (error) {
     console.error("Error di authorizeSekretarisAccess:", error);

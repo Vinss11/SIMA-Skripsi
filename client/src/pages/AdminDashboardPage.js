@@ -66,6 +66,10 @@ const JABATAN_STRUKTURAL_OPTIONS = [
   "Ketua Program Studi Informatika - Program Sarjana Pendidikan Jarak Jauh",
   "Ketua Program Studi Informatika - Program Magister",
 ];
+const DOSEN_MANAGEMENT_TABS = [
+  { key: "data-dosen", label: "Data Dosen" },
+  { key: "jabatan-struktural", label: "Jabatan Struktural" },
+];
 
 function showSuccessToast(message) {
   Swal.fire({
@@ -77,6 +81,23 @@ function showSuccessToast(message) {
     timer: 2200,
     timerProgressBar: true,
   });
+}
+
+function formatAdminDosenOptionLabel(dosen) {
+  if (!dosen) return "";
+  const nama = String(dosen.nama || "").trim();
+  const nik = String(dosen.nik || "").trim();
+  if (nama && nik) return `${nama} - NIK: ${nik}`;
+  if (nama) return nama;
+  if (nik) return `NIK: ${nik}`;
+  return "";
+}
+
+function getAdminDosenSearchHaystack(dosen) {
+  return [dosen?.nama, dosen?.nik, dosen?.kode_dosen, dosen?.email]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
 }
 
 function parseCount(value) {
@@ -319,6 +340,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const [dosenUploadPreviewPage, setDosenUploadPreviewPage] = useState(1);
   const [dosenQuery, setDosenQuery] = useState("");
   const [dosenMode, setDosenMode] = useState("list");
+  const [dosenManagementTab, setDosenManagementTab] = useState("data-dosen");
   const [dosenPage, setDosenPage] = useState(1);
   const [klasterOptions, setKlasterOptions] = useState([]);
   const [createDosenForm, setCreateDosenForm] = useState({
@@ -342,6 +364,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const [savingDosenEdit, setSavingDosenEdit] = useState(false);
   const [dosenActionMessage, setDosenActionMessage] = useState("");
   const [dosenActionError, setDosenActionError] = useState("");
+  const [isEditingJabatanStruktural, setIsEditingJabatanStruktural] = useState(false);
+  const [jabatanDraft, setJabatanDraft] = useState({});
+  const [jabatanSearchQueryByField, setJabatanSearchQueryByField] = useState({});
+  const [activeJabatanSearchField, setActiveJabatanSearchField] = useState("");
+  const [savingJabatanStruktural, setSavingJabatanStruktural] = useState(false);
+  const [jabatanActionError, setJabatanActionError] = useState("");
   const sessionExpiredRef = useRef(false);
   const contentScrollRef = useRef(null);
   const dosenGridScrollRef = useRef(null);
@@ -439,6 +467,44 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const templateDosenUrl = `${apiBaseUrl}/api/admin/upload/dosen-template`;
   const templateMahasiswaUrl = `${apiBaseUrl}/api/admin/upload/mahasiswa-template`;
+
+  const jabatanAssignments = useMemo(
+    () =>
+      JABATAN_STRUKTURAL_OPTIONS.map((jabatan) => {
+        const dosen = dosenRows.find((row) => row.jabatan_struktural === jabatan) || null;
+        return {
+          jabatan,
+          dosen,
+          dosen_id: dosen?.id || null,
+        };
+      }),
+    [dosenRows]
+  );
+
+  const jabatanDraftFromRows = useMemo(() => {
+    const next = {};
+    for (const item of jabatanAssignments) {
+      next[item.jabatan] = item.dosen_id ? String(item.dosen_id) : "";
+    }
+    return next;
+  }, [jabatanAssignments]);
+
+  const jabatanSearchLabelsFromRows = useMemo(() => {
+    const next = {};
+    for (const item of jabatanAssignments) {
+      next[item.jabatan] = formatAdminDosenOptionLabel(item.dosen);
+    }
+    return next;
+  }, [jabatanAssignments]);
+
+  useEffect(() => {
+    if (!isEditingJabatanStruktural) {
+      setJabatanDraft(jabatanDraftFromRows);
+      setJabatanSearchQueryByField(jabatanSearchLabelsFromRows);
+      setActiveJabatanSearchField("");
+      setJabatanActionError("");
+    }
+  }, [isEditingJabatanStruktural, jabatanDraftFromRows, jabatanSearchLabelsFromRows]);
 
   const filteredDosenRows = useMemo(() => {
     const keyword = dosenQuery.trim().toLowerCase();
@@ -892,6 +958,135 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     }
   };
 
+  const findDosenByDraftValue = (selectedValue) => {
+    const normalizedValue = String(selectedValue || "").trim();
+    if (!normalizedValue) return null;
+    return dosenRows.find((dosen) => String(dosen.id) === normalizedValue) || null;
+  };
+
+  const handleJabatanSearchQueryChange = (jabatan, value) => {
+    setJabatanSearchQueryByField((prev) => ({ ...prev, [jabatan]: value }));
+    setJabatanDraft((prev) => {
+      const selectedDosen = findDosenByDraftValue(prev?.[jabatan]);
+      if (!selectedDosen) return prev;
+
+      const selectedLabel = formatAdminDosenOptionLabel(selectedDosen);
+      if (String(value).trim().toLowerCase() === selectedLabel.trim().toLowerCase()) {
+        return prev;
+      }
+
+      return { ...prev, [jabatan]: "" };
+    });
+  };
+
+  const handleJabatanSearchBlur = (jabatan) => {
+    window.setTimeout(() => {
+      setActiveJabatanSearchField((prev) => (prev === jabatan ? "" : prev));
+    }, 120);
+  };
+
+  const handleSelectJabatanDosen = (jabatan, dosen) => {
+    setJabatanDraft((prev) => ({ ...prev, [jabatan]: String(dosen.id) }));
+    setJabatanSearchQueryByField((prev) => ({
+      ...prev,
+      [jabatan]: formatAdminDosenOptionLabel(dosen),
+    }));
+    setActiveJabatanSearchField("");
+  };
+
+  const handleClearJabatanDosen = (jabatan) => {
+    setJabatanDraft((prev) => ({ ...prev, [jabatan]: "" }));
+    setJabatanSearchQueryByField((prev) => ({ ...prev, [jabatan]: "" }));
+    setActiveJabatanSearchField("");
+  };
+
+  const handleStartEditJabatanStruktural = () => {
+    setJabatanDraft(jabatanDraftFromRows);
+    setJabatanSearchQueryByField(jabatanSearchLabelsFromRows);
+    setActiveJabatanSearchField("");
+    setJabatanActionError("");
+    setIsEditingJabatanStruktural(true);
+  };
+
+  const handleCancelEditJabatanStruktural = () => {
+    setJabatanDraft(jabatanDraftFromRows);
+    setJabatanSearchQueryByField(jabatanSearchLabelsFromRows);
+    setActiveJabatanSearchField("");
+    setJabatanActionError("");
+    setIsEditingJabatanStruktural(false);
+  };
+
+  const handleSaveJabatanStruktural = async () => {
+    setJabatanActionError("");
+
+    const usedDosenIds = new Map();
+    for (const jabatan of JABATAN_STRUKTURAL_OPTIONS) {
+      const dosenId = Number(jabatanDraft[jabatan] || 0);
+      if (!dosenId) continue;
+
+      if (usedDosenIds.has(dosenId)) {
+        const dosen = dosenRows.find((row) => Number(row.id) === dosenId);
+        setJabatanActionError(
+          `${dosen?.nama || "Dosen"} dipilih untuk lebih dari satu jabatan. Satu dosen hanya boleh memiliki satu jabatan struktural.`
+        );
+        return;
+      }
+      usedDosenIds.set(dosenId, jabatan);
+    }
+
+    const confirmation = await Swal.fire({
+      title: "Simpan jabatan struktural?",
+      text: "Perubahan ini akan menentukan akses khusus seperti menu Sekprodi untuk dosen yang menjabat.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonColor: "#2f63e3",
+      cancelButtonColor: "#8b96b2",
+      confirmButtonText: "Simpan",
+      cancelButtonText: "Batal",
+    });
+
+    if (!confirmation.isConfirmed) return;
+
+    setSavingJabatanStruktural(true);
+    try {
+      const assignments = {};
+      for (const jabatan of JABATAN_STRUKTURAL_OPTIONS) {
+        const dosenId = Number(jabatanDraft[jabatan] || 0);
+        assignments[jabatan] = dosenId || null;
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/admin/dosen/jabatan-struktural`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ assignments }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        onSessionExpired?.();
+        throw new Error("Sesi login berakhir. Silakan login ulang.");
+      }
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Gagal menyimpan jabatan struktural.");
+      }
+
+      if (Array.isArray(payload.data?.rows)) {
+        setDosenRows(payload.data.rows);
+      } else {
+        await loadData();
+      }
+      setIsEditingJabatanStruktural(false);
+      showSuccessToast(payload.message || "Jabatan struktural berhasil disimpan.");
+    } catch (saveError) {
+      setJabatanActionError(saveError.message || "Terjadi kesalahan saat menyimpan jabatan struktural.");
+    } finally {
+      setSavingJabatanStruktural(false);
+    }
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-[#f2f3f7]">
       <header className="fixed inset-x-0 top-0 bg-[#2f63e3] text-white shadow-sm">
@@ -1032,6 +1227,39 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
 
         {!loading && activeTab === "upload-dosen" ? (
           <div className="space-y-4">
+            <div className="rounded-xl border border-[#dce4f7] bg-white p-4 shadow-sm">
+              <p className="text-lg font-black text-[#1b274b]">Menu Manajemen Dosen</p>
+              <p className="mt-1 text-sm text-[#5d6c91]">
+                Kelola data dosen dan penugasan jabatan struktural dari satu halaman.
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {DOSEN_MANAGEMENT_TABS.map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => {
+                      setDosenManagementTab(item.key);
+                      setSelectedDosen(null);
+                      setDosenActionError("");
+                      setDosenActionMessage("");
+                      if (item.key !== "data-dosen") {
+                        setDosenMode("list");
+                      }
+                    }}
+                    className={`rounded-full px-4 py-2 text-sm font-bold transition ${
+                      dosenManagementTab === item.key
+                        ? "bg-[#2f63e3] text-white shadow-sm"
+                        : "border border-[#d4def4] bg-white text-[#27407b] hover:bg-[#f4f7ff]"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {dosenManagementTab === "data-dosen" ? (
+              <>
             <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1606,6 +1834,177 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                 )}
               </>
             )}
+              </>
+            ) : null}
+
+            {dosenManagementTab === "jabatan-struktural" ? (
+              <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Master Data Jabatan Struktural</h3>
+                    <p className="mt-1 text-sm text-[#5d6c91]">
+                      Atur dosen pemegang jabatan struktural. Satu jabatan hanya boleh diisi satu dosen, dan satu dosen
+                      hanya boleh memegang satu jabatan struktural.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {isEditingJabatanStruktural ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditJabatanStruktural}
+                          disabled={savingJabatanStruktural}
+                          className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#344b7c] hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveJabatanStruktural}
+                          disabled={savingJabatanStruktural}
+                          className="rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {savingJabatanStruktural ? "Menyimpan..." : "Simpan"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleStartEditJabatanStruktural}
+                        className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b] hover:bg-[#f4f7ff]"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-[#f1d79b] bg-[#fff8e8] px-3 py-2 text-sm font-semibold text-[#8a5a00]">
+                  Dosen dengan jabatan Sekretaris Program Studi Informatika akan mendapat menu khusus Sekprodi saat login.
+                  Jika jabatan tersebut dilepas, menu khusus akan hilang setelah profile/session tersinkron.
+                </div>
+
+                {jabatanActionError ? (
+                  <div className="mt-3 rounded-lg border border-[#f6d7d7] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+                    {jabatanActionError}
+                  </div>
+                ) : null}
+
+                <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  {jabatanAssignments.map((item) => {
+                    const selectedValue = jabatanDraft[item.jabatan] || "";
+                    const selectedDosen = selectedValue
+                      ? dosenRows.find((row) => Number(row.id) === Number(selectedValue))
+                      : item.dosen;
+                    const selectedDosenLabel = formatAdminDosenOptionLabel(selectedDosen);
+                    const selectedLabel = selectedDosenLabel || "Belum ditugaskan";
+                    const searchValue = String(jabatanSearchQueryByField[item.jabatan] ?? "");
+                    const inputValue = searchValue || selectedDosenLabel;
+                    const normalizedSearch = searchValue.trim().toLowerCase();
+                    const shouldShowResults =
+                      activeJabatanSearchField === item.jabatan &&
+                      normalizedSearch.length > 0 &&
+                      normalizedSearch !== selectedDosenLabel.trim().toLowerCase();
+                    const selectedInOtherRole = new Set(
+                      Object.entries(jabatanDraft)
+                        .filter(([jabatan]) => jabatan !== item.jabatan)
+                        .map(([, value]) => Number(value || 0))
+                        .filter((value) => Number.isInteger(value) && value > 0)
+                    );
+                    const candidateRows = dosenRows
+                      .filter((dosen) => {
+                        if (!normalizedSearch) return true;
+                        return getAdminDosenSearchHaystack(dosen).includes(normalizedSearch);
+                      })
+                      .slice(0, 8);
+
+                    return (
+                      <div key={`jabatan-card-${item.jabatan}`} className="rounded-lg border border-[#dfe7f7] bg-[#f8fbff] p-3">
+                        <label className="mb-2 block text-sm font-bold text-[#24427c]">{item.jabatan}</label>
+                        {isEditingJabatanStruktural ? (
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                            <input
+                              type="text"
+                              value={inputValue}
+                              onFocus={() => setActiveJabatanSearchField(item.jabatan)}
+                              onBlur={() => handleJabatanSearchBlur(item.jabatan)}
+                              onChange={(event) => handleJabatanSearchQueryChange(item.jabatan, event.target.value)}
+                              placeholder="Cari nama, NIK, kode, atau email dosen"
+                              className={`w-full rounded-lg border border-[#cdd8f0] bg-white py-2 pl-9 text-sm text-[#25395f] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 ${
+                                selectedValue ? "pr-24" : "pr-3"
+                              }`}
+                            />
+                            {selectedValue ? (
+                              <button
+                                type="button"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => handleClearJabatanDosen(item.jabatan)}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-[#d7e0f4] bg-[#f8fbff] px-2 py-1 text-xs font-bold text-[#53658f] hover:bg-white"
+                              >
+                                Kosongkan
+                              </button>
+                            ) : null}
+
+                            {shouldShowResults ? (
+                              <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-56 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+                                <button
+                                  type="button"
+                                  onMouseDown={(event) => event.preventDefault()}
+                                  onClick={() => handleClearJabatanDosen(item.jabatan)}
+                                  className="flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] hover:bg-[#f4f7ff]"
+                                >
+                                  <span className="font-semibold">Belum ditugaskan</span>
+                                  <span className="text-xs text-[#7282a8]">Kosongkan jabatan</span>
+                                </button>
+                                {candidateRows.length > 0 ? (
+                                  candidateRows.map((dosen) => {
+                                    const isDisabledRow = selectedInOtherRole.has(Number(dosen.id));
+                                    return (
+                                      <button
+                                        key={`jabatan-combobox-${item.jabatan}-${dosen.id}`}
+                                        type="button"
+                                        onMouseDown={(event) => event.preventDefault()}
+                                        onClick={() => {
+                                          if (isDisabledRow) return;
+                                          handleSelectJabatanDosen(item.jabatan, dosen);
+                                        }}
+                                        disabled={isDisabledRow}
+                                        className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                                          isDisabledRow
+                                            ? "cursor-not-allowed bg-[#f8fafc] text-[#98a3c0]"
+                                            : "text-[#213460] hover:bg-[#f4f7ff]"
+                                        }`}
+                                      >
+                                        <span>
+                                          <span className="block font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="block text-xs text-[#7282a8]">
+                                            {dosen.kode_dosen || "-"} · {dosen.email || "-"}
+                                          </span>
+                                        </span>
+                                        <span className="shrink-0 text-xs font-semibold">
+                                          {isDisabledRow ? "Sudah dipakai" : `NIK: ${dosen.nik || "-"}`}
+                                        </span>
+                                      </button>
+                                    );
+                                  })
+                                ) : (
+                                  <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
+                                )}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-[#cdd8f0] bg-white px-3 py-2 text-sm text-[#50618d]">
+                            {selectedLabel}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 

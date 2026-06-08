@@ -77,6 +77,27 @@ function updateStoredAuthPromptFlag(token, promptFlag) {
   return localUpdated || sessionUpdated;
 }
 
+function updateStoredAuthUser(token, user) {
+  const updateStorage = (storage) => {
+    const raw = storage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return false;
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed?.token || parsed.token !== token) return false;
+      const next = { ...parsed, user };
+      storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const localUpdated = updateStorage(localStorage);
+  const sessionUpdated = updateStorage(sessionStorage);
+  return localUpdated || sessionUpdated;
+}
+
 function saveAuth(authPayload, rememberMe) {
   const value = JSON.stringify(authPayload);
   sessionStorage.setItem(AUTH_STORAGE_KEY, value);
@@ -165,6 +186,50 @@ function App() {
     });
   }, [showDefaultPasswordToast]);
 
+  useEffect(() => {
+    if (!auth?.token) return undefined;
+
+    let cancelled = false;
+    const refreshProfile = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/profile`, {
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "Content-Type": "application/json",
+          },
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload?.success || !payload?.data?.user) {
+          if (response.status === 401 || response.status === 403) {
+            handleSessionExpired();
+          }
+          return;
+        }
+
+        if (cancelled) return;
+        setAuth((prev) => {
+          if (!prev?.token || prev.token !== auth.token) return prev;
+          const nextUser = {
+            ...prev.user,
+            ...payload.data.user,
+          };
+          const next = { ...prev, user: nextUser };
+          updateStoredAuthUser(prev.token, nextUser);
+          return next;
+        });
+      } catch (profileError) {
+        // Profile refresh is a sync helper; keep the current session if the network hiccups.
+      }
+    };
+
+    refreshProfile();
+    window.addEventListener("focus", refreshProfile);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refreshProfile);
+    };
+  }, [auth?.token]);
+
   if (!session.user) {
     if (authScreen === "register") {
       return (
@@ -236,12 +301,14 @@ function App() {
     );
   }
   if (session.user.role === "dosen") {
+    const capabilities = Array.isArray(session.user.capabilities) ? session.user.capabilities : [];
     rolePage = (
       <DosenDashboardPage
         session={session}
         apiBaseUrl={API_BASE_URL}
         onLogout={handleLogout}
         onSessionExpired={handleSessionExpired}
+        isSekretaris={capabilities.includes("sekretaris_prodi")}
       />
     );
   }

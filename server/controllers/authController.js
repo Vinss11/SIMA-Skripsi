@@ -26,6 +26,14 @@ function pickExisting(columns, candidates) {
   return candidates.filter((column) => columns.includes(column));
 }
 
+function getDosenCapabilities(user) {
+  const capabilities = [];
+  if (isAllowedSekretarisJabatan(user?.jabatan_struktural)) {
+    capabilities.push("sekretaris_prodi");
+  }
+  return capabilities;
+}
+
 function buildLoginResponse(user, role, token) {
   const dosenIdentifier = user.kode_dosen || user.nik || user.nip || user.email;
   const sekretarisIdentifier = user.nik || user.nip || user.email;
@@ -52,6 +60,15 @@ function buildLoginResponse(user, role, token) {
 
   if (role === "admin") {
     responseData.user.admin_role = user.role;
+  }
+
+  if (role === "dosen") {
+    const capabilities = getDosenCapabilities(user);
+    responseData.user.jabatan_struktural = user.jabatan_struktural || null;
+    responseData.user.capabilities = capabilities;
+    if (capabilities.includes("sekretaris_prodi")) {
+      responseData.user.jabatan = user.jabatan_struktural;
+    }
   }
 
   if (role === "sekretaris_prodi") {
@@ -128,6 +145,7 @@ exports.login = async (req, res) => {
         "email",
         "password",
         "is_default_password",
+        "jabatan_struktural",
       ]);
       const dosenWhere = [
         { kode_dosen: normalizedUsername.toUpperCase() },
@@ -192,6 +210,10 @@ exports.login = async (req, res) => {
       tokenPayload.username = user.nim;
     } else if (role === "dosen") {
       tokenPayload.username = user.kode_dosen || user.nik || user.nip || user.email;
+      const capabilities = getDosenCapabilities(user);
+      if (capabilities.length > 0) {
+        tokenPayload.capabilities = capabilities;
+      }
     } else if (role === "admin") {
       tokenPayload.username = user.nip;
     } else if (role === "sekretaris_prodi") {
@@ -385,13 +407,27 @@ exports.getProfile = async (req, res) => {
       });
     }
 
+    const userJson = user.toJSON();
+    const responseUser = {
+      ...userJson,
+      role: userRole,
+    };
+
+    if (userRole === "dosen") {
+      const capabilities = getDosenCapabilities(user);
+      responseUser.capabilities = capabilities;
+      responseUser.jabatan_struktural = user.jabatan_struktural || null;
+      if (capabilities.includes("sekretaris_prodi")) {
+        responseUser.jabatan = user.jabatan_struktural;
+      } else {
+        delete responseUser.jabatan;
+      }
+    }
+
     res.json({
       success: true,
       data: {
-        user: {
-          ...user.toJSON(),
-          role: userRole,
-        },
+        user: responseUser,
       },
     });
   } catch (error) {

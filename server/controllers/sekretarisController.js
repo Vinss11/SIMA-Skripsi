@@ -1134,7 +1134,7 @@ exports.approvePendaftaran = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const pendaftaranId = Number(req.params.id);
-    const reviewerId = req.user.id;
+    const reviewerId = req.user?.sekretaris_prodi_id || null;
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
     if (!pendaftaranId) {
@@ -1202,7 +1202,7 @@ exports.rejectPendaftaran = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const pendaftaranId = Number(req.params.id);
-    const reviewerId = req.user.id;
+    const reviewerId = req.user?.sekretaris_prodi_id || null;
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : "";
 
     if (!pendaftaranId) {
@@ -1561,14 +1561,14 @@ exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
       for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
         latestMaster[item.field] = parsePositiveId(rolePayload[item.field]);
       }
-      latestMaster.updated_by_sekretaris_id = req.user?.id || null;
+      latestMaster.updated_by_sekretaris_id = req.user?.sekretaris_prodi_id || null;
       await latestMaster.save({ transaction: t });
     } else {
       const createPayload = {};
       for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
         createPayload[item.field] = parsePositiveId(rolePayload[item.field]);
       }
-      createPayload.updated_by_sekretaris_id = req.user?.id || null;
+      createPayload.updated_by_sekretaris_id = req.user?.sekretaris_prodi_id || null;
       await MasterPenanggungJawabPenjaluran.create(createPayload, { transaction: t });
     }
 
@@ -1986,7 +1986,7 @@ exports.assignKetuaKlaster = async (req, res) => {
     const periodePenjaluranId = Number(req.body?.periode_penjaluran_id);
     const klasterId = Number(req.body?.klaster_id);
     const dosenId = Number(req.body?.dosen_id);
-    const sekretarisId = req.user?.id || null;
+    const sekretarisId = req.user?.sekretaris_prodi_id || null;
 
     if (!Number.isInteger(periodePenjaluranId) || periodePenjaluranId <= 0) {
       await t.rollback();
@@ -2513,7 +2513,7 @@ exports.openPeriodePendaftaran = async (req, res) => {
         klaster_id: item.preferredKlasterId || item.klasterIds[0],
         dosen_id: item.dosenId,
         periode_penjaluran_id: periode.id,
-        assigned_by_sekretaris_id: req.user?.id || null,
+        assigned_by_sekretaris_id: req.user?.sekretaris_prodi_id || null,
       })),
       { transaction: t }
     );

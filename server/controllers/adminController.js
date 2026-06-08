@@ -110,6 +110,20 @@ async function validateAndEnsureJabatanStrukturalAvailability({
   return { isValid: true };
 }
 
+function normalizeJabatanAssignmentPayload(rawAssignments) {
+  if (Array.isArray(rawAssignments)) {
+    const assignmentMap = {};
+    for (const item of rawAssignments) {
+      const jabatan = normalizeJabatanStrukturalInput(item?.jabatan_struktural || item?.jabatan);
+      if (!jabatan) continue;
+      assignmentMap[jabatan] = item?.dosen_id ?? item?.dosenId ?? null;
+    }
+    return assignmentMap;
+  }
+
+  return rawAssignments && typeof rawAssignments === "object" ? rawAssignments : {};
+}
+
 async function getMappedDosens(keyword = "") {
   const where = {};
   if (keyword) {
@@ -938,6 +952,108 @@ exports.updateDosenProfil = async (req, res) => {
       });
     }
     res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// PUT /api/admin/dosen/jabatan-struktural - Atur jabatan struktural dosen secara terpusat
+exports.updateJabatanStrukturalAssignments = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const assignmentInput = normalizeJabatanAssignmentPayload(req.body?.assignments);
+    const normalizedAssignments = STRUKTURAL_POSITIONS.map((jabatan) => {
+      const dosenIdRaw = assignmentInput[jabatan];
+      const dosenId = dosenIdRaw === null || dosenIdRaw === undefined || dosenIdRaw === ""
+        ? null
+        : Number(dosenIdRaw);
+
+      return {
+        jabatan,
+        dosenId: Number.isInteger(dosenId) && dosenId > 0 ? dosenId : null,
+      };
+    });
+
+    const unknownAssignments = Object.keys(assignmentInput).filter(
+      (jabatan) => !STRUKTURAL_POSITIONS.includes(jabatan)
+    );
+    if (unknownAssignments.length > 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: `Ada jabatan struktural tidak valid: ${unknownAssignments.join(", ")}.`,
+      });
+    }
+
+    const usedDosenIds = new Map();
+    for (const item of normalizedAssignments) {
+      if (!item.dosenId) continue;
+      if (usedDosenIds.has(item.dosenId)) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message:
+            "Satu dosen tidak boleh memegang lebih dari satu jabatan struktural. Periksa kembali pilihan dosen.",
+        });
+      }
+      usedDosenIds.set(item.dosenId, item.jabatan);
+    }
+
+    const targetDosenIds = [...usedDosenIds.keys()];
+    if (targetDosenIds.length > 0) {
+      const dosens = await Dosen.findAll({
+        where: { id: { [Op.in]: targetDosenIds } },
+        attributes: ["id"],
+        transaction: t,
+      });
+      if (dosens.length !== targetDosenIds.length) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Ada dosen yang tidak valid atau sudah tidak tersedia.",
+        });
+      }
+    }
+
+    await Dosen.update(
+      { jabatan_struktural: null },
+      {
+        where: {
+          jabatan_struktural: { [Op.in]: STRUKTURAL_POSITIONS },
+        },
+        transaction: t,
+      }
+    );
+
+    for (const item of normalizedAssignments) {
+      if (!item.dosenId) continue;
+      await Dosen.update(
+        { jabatan_struktural: item.jabatan },
+        {
+          where: { id: item.dosenId },
+          transaction: t,
+        }
+      );
+    }
+
+    await t.commit();
+
+    const rows = await getMappedDosens();
+    return res.json({
+      success: true,
+      message: "Jabatan struktural dosen berhasil diperbarui.",
+      data: {
+        assignments: normalizedAssignments,
+        rows,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di updateJabatanStrukturalAssignments:", error);
+    return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,

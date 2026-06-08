@@ -743,7 +743,7 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
         tanggal_selesai_pendaftaran: tanggalSelesai,
         status: "draft",
         catatan: String(req.body?.catatan || "").trim() || null,
-        created_by_sekretaris_id: req.user?.id || null,
+        created_by_sekretaris_id: req.user?.sekretaris_prodi_id || null,
       },
       { transaction }
     );

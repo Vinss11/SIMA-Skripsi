@@ -70,6 +70,7 @@ router.get("/klasters", authenticateToken, authorizeRole("admin"), adminControll
 router.get("/dosen", authenticateToken, authorizeRole("admin"), adminController.getAllDosens);
 router.get("/dosen/export", authenticateToken, authorizeRole("admin"), adminController.exportDosensExcel);
 router.post("/dosen", authenticateToken, authorizeRole("admin"), adminController.createDosen);
+router.put("/dosen/jabatan-struktural", authenticateToken, authorizeRole("admin"), adminController.updateJabatanStrukturalAssignments);
 router.put("/dosen/:id/profil", authenticateToken, authorizeRole("admin"), adminController.updateDosenProfil);
 router.get("/dosen/kuota-overview", authenticateToken, authorizeRole("admin"), adminController.getKuotaOverview);
 router.get("/dosen/:id/kuota", authenticateToken, authorizeRole("admin"), adminController.getKuotaDosenDetail);
