@@ -40,6 +40,24 @@ router.put("/mahasiswa/:id/update-status", authenticateToken, authorizeRole("adm
 
 router.get("/upload/mahasiswa-template", uploadController.downloadMahasiswaTemplate);
 
+router.get("/upload/dosen-template", uploadController.downloadDosenTemplate);
+
+router.post(
+  "/upload/dosen",
+  authenticateToken,
+  authorizeRole("admin"),
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
+      }
+      next();
+    });
+  },
+  uploadController.uploadDosen
+);
+
 router.post(
   "/upload/mahasiswa",
   authenticateToken,

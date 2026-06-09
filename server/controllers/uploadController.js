@@ -105,8 +105,10 @@ function normalizeNameKey(name) {
 const KLASTER_INPUT_ALIAS = {
   "sistem informasi": "SIRKEL",
   "rekayasa perangkat lunak": "SIRKEL",
-  "sains data": "SDATA",
-  "informatika medis": "MEDIS",
+  sdata: "ITSC",
+  medis: "ITSC",
+  "sains data": "ITSC",
+  "informatika medis": "ITSC",
   "informatika teori & sistem cerdas": "ITSC",
   "informatika teori dan sistem cerdas": "ITSC",
   "multimedia & visi komputer": "MVK",
@@ -1459,7 +1461,7 @@ exports.downloadMahasiswaTemplate = (req, res) => {
 
 // POST /api/upload/dosen - Upload Excel Dosen
 exports.uploadDosen = async (req, res) => {
-  const t = await sequelize.transaction();
+  let t = null;
 
   try {
     if (!req.file) {
@@ -1499,6 +1501,8 @@ exports.uploadDosen = async (req, res) => {
         message: "File Excel kosong atau format tidak sesuai",
       });
     }
+
+    t = await sequelize.transaction();
 
     const results = {
       success: [],
@@ -1555,7 +1559,14 @@ exports.uploadDosen = async (req, res) => {
           row["Cluster"] ||
           row["cluster"] ||
           row["CLUSTER"];
-        const kuotaBimbingan = row["Kuota Bimbingan"] || row["kuota_bimbingan"] || row["KUOTA_BIMBINGAN"] || 5;
+        const rawKuotaBimbingan =
+          row["Kuota Bimbingan"] ?? row["kuota_bimbingan"] ?? row["KUOTA_BIMBINGAN"];
+        const kuotaBimbingan =
+          rawKuotaBimbingan === undefined ||
+          rawKuotaBimbingan === null ||
+          String(rawKuotaBimbingan).trim() === ""
+            ? 5
+            : rawKuotaBimbingan;
 
         // Validasi field wajib
         if (!nama || !email) {
@@ -1651,13 +1662,13 @@ exports.uploadDosen = async (req, res) => {
           continue;
         }
 
-        // Validasi kuota bimbingan (harus angka positif)
-        const kuota = parseInt(kuotaBimbingan);
-        if (isNaN(kuota) || kuota < 1) {
+        // Validasi kuota bimbingan (kosong akan memakai default 5, selain itu harus bilangan bulat positif).
+        const kuota = Number(kuotaBimbingan);
+        if (!Number.isInteger(kuota) || kuota < 1) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Kuota bimbingan harus berupa angka minimal 1",
+            error: "Kuota bimbingan harus berupa angka bulat minimal 1",
           });
           continue;
         }
@@ -1817,7 +1828,7 @@ exports.uploadDosen = async (req, res) => {
       },
     });
   } catch (error) {
-    if (!t.finished) {
+    if (t && !t.finished) {
       await t.rollback();
     }
 
@@ -1862,7 +1873,7 @@ exports.downloadDosenTemplate = (req, res) => {
         Gelar: "",
         Email: "citra.dewi@university.ac.id",
         "Jabatan Struktural": "",
-        Klaster: "SDATA, MVK",
+        Klaster: "ITSC, MVK",
         "Kuota Bimbingan": 5,
       },
       {
@@ -1871,13 +1882,39 @@ exports.downloadDosenTemplate = (req, res) => {
         Gelar: "",
         Email: "dodi.prasetyo@university.ac.id",
         "Jabatan Struktural": "Sekretaris Program Studi Informatika - Program Sarjana Reguler",
-        Klaster: "MEDIS",
+        Klaster: "ITSC",
         "Kuota Bimbingan": 12,
+      },
+    ];
+    const referenceRows = [
+      ...STRUKTURAL_POSITIONS.map((jabatan) => ({
+        "Tipe Referensi": "Jabatan Struktural",
+        "Nilai yang Diizinkan": jabatan,
+        Keterangan: "Opsional. Kosongkan jika dosen tidak memegang jabatan struktural.",
+      })),
+      { "Tipe Referensi": "", "Nilai yang Diizinkan": "", Keterangan: "" },
+      {
+        "Tipe Referensi": "Klaster",
+        "Nilai yang Diizinkan": "ITSC",
+        Keterangan: "Termasuk input alias: Sains Data, SDATA, Informatika Medis, MEDIS.",
+      },
+      {
+        "Tipe Referensi": "Klaster",
+        "Nilai yang Diizinkan": "SIRKEL",
+        Keterangan: "Termasuk Sistem Informasi dan Rekayasa Perangkat Lunak.",
+      },
+      { "Tipe Referensi": "Klaster", "Nilai yang Diizinkan": "SIBER", Keterangan: "Sistem Siber." },
+      { "Tipe Referensi": "Klaster", "Nilai yang Diizinkan": "MVK", Keterangan: "Multimedia & Visi Komputer." },
+      {
+        "Tipe Referensi": "Kuota Bimbingan",
+        "Nilai yang Diizinkan": "Bilangan bulat minimal 1",
+        Keterangan: "Jika dikosongkan saat upload, sistem memakai default 5.",
       },
     ];
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(templateData);
+    const referenceSheet = XLSX.utils.json_to_sheet(referenceRows);
 
     // Set lebar kolom
     ws["!cols"] = [
@@ -1891,6 +1928,7 @@ exports.downloadDosenTemplate = (req, res) => {
     ];
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
+    XLSX.utils.book_append_sheet(wb, referenceSheet, "Referensi");
 
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
