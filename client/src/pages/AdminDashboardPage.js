@@ -210,9 +210,20 @@ function UploadPanel({
   isUploading,
   setIsUploading,
   onUploadSuccess,
+  uploadButtonLabel = "Upload File",
+  previewMessage = "Preview hasil upload akan tampil di sini setelah file diproses.",
+  previewHelpText = "Upload dapat berisi minimal 1 baris data.",
   extraNote,
+  children,
 }) {
   const [error, setError] = useState("");
+
+  const handleFileChange = (event) => {
+    const selectedFile = event.target.files?.[0] || null;
+    setError("");
+    setUploadResult(null);
+    setFile(selectedFile);
+  };
 
   const handleUpload = async (event) => {
     event.preventDefault();
@@ -265,27 +276,26 @@ function UploadPanel({
   };
 
   return (
-    <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
-      <h3 className="text-xl font-black text-[#1b274b]">{title}</h3>
-      <p className="mt-1 text-sm text-[#5d6c91]">{description}</p>
-      {extraNote ? <p className="mt-2 text-xs font-semibold text-[#50608a]">{extraNote}</p> : null}
-
-      <div className="mt-4 flex flex-wrap gap-3">
+    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-lg font-black text-[#1b274b]">{title}</h3>
         <a
           href={templateUrl}
-          className="inline-flex items-center gap-2 rounded-lg border border-[#b8e0cb] bg-white px-4 py-2 text-sm font-bold text-[#0f7b50] transition hover:bg-[#effaf4]"
+          className="inline-flex items-center gap-2 rounded-lg border border-[#b8e0cb] px-3 py-2 text-sm font-semibold text-[#0f7b50] hover:bg-[#effaf4]"
         >
           <Download className="h-4 w-4" />
           Download Template
         </a>
       </div>
+      <p className="text-sm text-[#5d6c91]">{description}</p>
+      {extraNote ? <p className="mt-2 text-xs font-semibold text-[#50608a]">{extraNote}</p> : null}
 
       <form onSubmit={handleUpload} className="mt-4 space-y-3">
         <input
           type="file"
           accept=".xls,.xlsx,.ods"
-          onChange={(event) => setFile(event.target.files?.[0] || null)}
-          className="w-full rounded-lg border border-[#d7deef] px-3 py-2 text-sm"
+          onChange={handleFileChange}
+          className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm"
         />
         <button
           type="submit"
@@ -293,32 +303,23 @@ function UploadPanel({
           className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <Upload className="h-4 w-4" />
-          {isUploading ? "Mengupload..." : "Upload File"}
+          {isUploading ? "Mengupload..." : uploadButtonLabel}
         </button>
       </form>
 
       {error ? <div className="mt-3 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a33f3f]">{error}</div> : null}
 
-      {uploadResult ? (
-        <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
-          <p className="text-sm font-bold text-[#1e2f57]">{uploadResult.message}</p>
-          <p className="mt-1 text-sm text-[#42527c]">
-            Berhasil: {uploadResult?.data?.berhasil ?? 0} | Gagal: {uploadResult?.data?.gagal ?? 0}
-          </p>
-          {Array.isArray(uploadResult?.data?.detail_gagal) && uploadResult.data.detail_gagal.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-bold uppercase tracking-wide text-[#6f7da3]">Contoh Error</p>
-              <ul className="mt-1 list-disc pl-5 text-sm text-[#38496f]">
-                {uploadResult.data.detail_gagal.slice(0, 5).map((item, index) => (
-                  <li key={`failed-${index}`}>
-                    Baris {item.row}: {item.error}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
+        <p className="text-sm font-bold text-[#1e2f57]">
+          {uploadResult?.message || previewMessage}
+        </p>
+        <p className="mt-1 text-sm text-[#42527c]">
+          Berhasil: {uploadResult?.data?.berhasil ?? 0} | Gagal: {uploadResult?.data?.gagal ?? 0}
+        </p>
+        {previewHelpText ? <p className="mt-1 text-xs text-[#5d6c91]">{previewHelpText}</p> : null}
+
+        {children}
+      </div>
     </div>
   );
 }
@@ -1319,8 +1320,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             {dosenMode === "add" ? (
               <div className="space-y-4">
                 <UploadPanel
-                  title="Upload Data Dosen"
-                  description="Alternatif input massal data dosen terbaru. Download template lalu upload kembali file yang sudah diisi."
+                  title="Upload Dosen via Excel"
+                  description="Gunakan template dosen. Isi sheet Template Dosen minimal 1 baris data."
                   templateUrl={templateDosenUrl}
                   endpoint="/api/admin/upload/dosen"
                   token={session.token}
@@ -1332,19 +1333,16 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                   isUploading={isUploadingDosen}
                   setIsUploading={setIsUploadingDosen}
                   onUploadSuccess={loadData}
-                  extraNote="Format kolom: NIK, Nama, Gelar, Email, Jabatan Struktural, Klaster, Kuota Bimbingan. NIK boleh dikosongkan."
-                />
-
-                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                  <h3 className="text-lg font-black text-[#1b274b]">Grid Preview Upload Dosen</h3>
-                  <p className="mt-1 text-sm text-[#5d6c91]">
-                    Menampilkan maksimal {DOSEN_UPLOAD_PREVIEW_MAX_ROWS} data hasil upload terakhir (5 data per halaman).
-                  </p>
-
-                  <div className="mt-3 overflow-auto rounded-lg border border-[#e6ecf8]">
-                    <table className="min-w-[1200px] text-left text-sm">
-                      <thead>
-                        <tr className="border-y border-[#e6ecf8] bg-[#f8fbff] text-[#4d5e89]">
+                  uploadButtonLabel="Upload Template"
+                  previewMessage="Preview dosen akan tampil di sini setelah upload template."
+                  previewHelpText={`Preview menampilkan maksimal ${DOSEN_UPLOAD_PREVIEW_MAX_ROWS} data (5 data per halaman).`}
+                  extraNote="Isi sheet Template Dosen minimal 1 baris. Sheet Contoh Pengisian hanya referensi dan tidak perlu di-upload sebagai data."
+                >
+                  <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[1200px] table-auto">
+                        <thead className="bg-[#f4f7ff] text-left text-sm font-bold text-[#2f4473]">
+                          <tr>
                           <th className="px-3 py-2 font-semibold">No</th>
                           <th className="px-3 py-2 font-semibold">Baris</th>
                           <th className="px-3 py-2 font-semibold">Nama</th>
@@ -1361,7 +1359,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                           dosenUploadPreviewRowsPaged.map((row) => (
                             <tr
                               key={row.key}
-                              className={`border-b border-[#eff3fb] ${
+                              className={`border-t border-[#ecf1fb] text-sm text-[#23345d] ${
                                 row.status === "error" ? "bg-[#fff8f8]" : "bg-white"
                               }`}
                             >
@@ -1389,18 +1387,19 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                             </tr>
                           ))
                         ) : (
-                          <tr>
-                            <td className="px-3 py-5 text-center text-sm font-semibold text-[#7b88ab]" colSpan={9}>
-                              Belum ada data preview upload dosen.
+                          <tr className="border-t border-[#ecf1fb] text-sm text-[#5d6c91]">
+                            <td className="px-3 py-4 text-center" colSpan={9}>
+                              Belum ada data preview.
                             </td>
                           </tr>
                         )}
                       </tbody>
                     </table>
+                    </div>
                   </div>
 
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
-                    <p className="text-sm text-[#4f5e86]">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-[#5d6c91]">
                       Menampilkan{" "}
                       {dosenUploadPreviewRowsLimited.length === 0
                         ? 0
@@ -1417,11 +1416,11 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                         type="button"
                         onClick={() => setDosenUploadPreviewPage((prev) => Math.max(1, prev - 1))}
                         disabled={dosenUploadPreviewPage <= 1}
-                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-xs font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Sebelumnya
                       </button>
-                      <span className="text-sm font-semibold text-[#314778]">
+                      <span className="text-xs font-semibold text-[#314778]">
                         Halaman {dosenUploadPreviewPage} / {dosenUploadPreviewTotalPages}
                       </span>
                       <button
@@ -1430,13 +1429,13 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                           setDosenUploadPreviewPage((prev) => Math.min(dosenUploadPreviewTotalPages, prev + 1))
                         }
                         disabled={dosenUploadPreviewPage >= dosenUploadPreviewTotalPages}
-                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-xs font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         Berikutnya
                       </button>
                     </div>
                   </div>
-                </div>
+                </UploadPanel>
 
                 <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
                   <h3 className="text-xl font-black text-[#1b274b]">Form Tambah Dosen</h3>

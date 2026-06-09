@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import PendaftaranJalurPage from "./pages/PendaftaranJalurPage";
 import PendaftaranSuccessPage from "./pages/PendaftaranSuccessPage";
@@ -98,6 +98,15 @@ function updateStoredAuthUser(token, user) {
   return localUpdated || sessionUpdated;
 }
 
+function shallowEqualObjects(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  return aKeys.every((key) => Object.is(a[key], b[key]));
+}
+
 function saveAuth(authPayload, rememberMe) {
   const value = JSON.stringify(authPayload);
   sessionStorage.setItem(AUTH_STORAGE_KEY, value);
@@ -114,6 +123,7 @@ function App() {
   const [authScreen, setAuthScreen] = useState("login");
   const [registrasiLoginNimPrefill, setRegistrasiLoginNimPrefill] = useState("");
   const [registrationData, setRegistrationData] = useState(null);
+  const defaultPasswordToastTokenRef = useRef("");
 
   const session = useMemo(
     () => ({
@@ -133,12 +143,14 @@ function App() {
 
   const handleLogout = () => {
     clearAuthStorage();
+    defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
     setAuth(null);
   };
 
   const handleSessionExpired = () => {
     clearAuthStorage();
+    defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
     setAuth(null);
     setAuthScreen("login");
@@ -148,21 +160,24 @@ function App() {
     setAuth((prev) => {
       if (!prev?.token) return prev;
       const next = { ...prev, prompt_change_password: false };
+      defaultPasswordToastTokenRef.current = prev.token;
       updateStoredAuthPromptFlag(prev.token, false);
       return next;
     });
   };
 
   useEffect(() => {
-    if (session.user && session.prompt_change_password) {
+    if (session.user && session.prompt_change_password && defaultPasswordToastTokenRef.current !== session.token) {
+      defaultPasswordToastTokenRef.current = session.token;
       setShowDefaultPasswordToast(true);
       return;
     }
 
     if (!session.user) {
+      defaultPasswordToastTokenRef.current = "";
       setShowDefaultPasswordToast(false);
     }
-  }, [session.user, session.prompt_change_password]);
+  }, [session.user, session.prompt_change_password, session.token]);
 
   useEffect(() => {
     if (!showDefaultPasswordToast) return;
@@ -213,6 +228,7 @@ function App() {
             ...prev.user,
             ...payload.data.user,
           };
+          if (shallowEqualObjects(prev.user, nextUser)) return prev;
           const next = { ...prev, user: nextUser };
           updateStoredAuthUser(prev.token, nextUser);
           return next;

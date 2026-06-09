@@ -314,6 +314,47 @@ function parseKlasterListInput(rawKlasterValue, klasterMap) {
   };
 }
 
+function extractDosenUploadValues(row = {}) {
+  return {
+    nik: row["NIK"] || row["Nik"] || row["nik"] || row["Nip"],
+    nama: row["Nama"] || row["nama"] || row["NAMA"],
+    gelar: row["Gelar"] || row["gelar"] || row["GELAR"],
+    email: row["Email"] || row["email"] || row["EMAIL"],
+    rawJabatanStruktural:
+      row["Jabatan Struktural"] ||
+      row["jabatan_struktural"] ||
+      row["jabatan struktural"] ||
+      row["JABATAN_STRUKTURAL"] ||
+      row["Jabatan"] ||
+      row["jabatan"] ||
+      row["JABATAN"],
+    klasterRaw:
+      row["Klaster"] ||
+      row["klaster"] ||
+      row["KLASTER"] ||
+      row["Cluster"] ||
+      row["cluster"] ||
+      row["CLUSTER"],
+    rawKuotaBimbingan: row["Kuota Bimbingan"] ?? row["kuota_bimbingan"] ?? row["KUOTA_BIMBINGAN"],
+  };
+}
+
+function isBlankUploadValue(value) {
+  return value === undefined || value === null || String(value).trim() === "";
+}
+
+function isEmptyDosenUploadRow(values) {
+  return [
+    values.nik,
+    values.nama,
+    values.gelar,
+    values.email,
+    values.rawJabatanStruktural,
+    values.klasterRaw,
+    values.rawKuotaBimbingan,
+  ].every(isBlankUploadValue);
+}
+
 async function getNextDosenSequence(transaction) {
   const [rows] = await sequelize.query(
     `
@@ -425,7 +466,7 @@ exports.uploadTopics = async (req, res) => {
     }
     const data = XLSX.utils.sheet_to_json(sheet);
 
-    console.log(`📄 Memproses ${data.length} baris data dari Excel...`);
+    console.log(`Memproses ${data.length} baris data dari Excel...`);
 
     // Validasi data kosong
     if (data.length === 0) {
@@ -1490,15 +1531,22 @@ exports.uploadDosen = async (req, res) => {
       });
     }
 
-    const data = XLSX.utils.sheet_to_json(sheet);
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    const uploadRows = data
+      .map((row, index) => ({
+        row,
+        rowNumber: index + 2,
+        values: extractDosenUploadValues(row),
+      }))
+      .filter((item) => !isEmptyDosenUploadRow(item.values));
 
-    console.log(`📄 Memproses ${data.length} baris data dosen dari Excel...`);
+    console.log(`📄 Memproses ${uploadRows.length} baris data dosen dari Excel...`);
 
-    if (data.length === 0) {
+    if (uploadRows.length === 0) {
       fs.unlinkSync(filePath);
       return res.status(400).json({
         success: false,
-        message: "File Excel kosong atau format tidak sesuai",
+        message: "File Excel kosong atau belum memiliki baris data dosen.",
       });
     }
 
@@ -1507,7 +1555,7 @@ exports.uploadDosen = async (req, res) => {
     const results = {
       success: [],
       failed: [],
-      total: data.length,
+      total: uploadRows.length,
     };
 
     const DEFAULT_PASSWORD_DOSEN = process.env.DEFAULT_PASSWORD_DOSEN || "12345678"; // Password default untuk dosen
@@ -1534,33 +1582,12 @@ exports.uploadDosen = async (req, res) => {
       }
     });
 
-    for (let i = 0; i < data.length; i++) {
-      const row = data[i];
-      const rowNumber = i + 2;
+    for (const uploadRow of uploadRows) {
+      const { row, rowNumber, values } = uploadRow;
 
       try {
-        const nik = row["NIK"] || row["Nik"] || row["nik"] || row["Nip"];
-        const nama = row["Nama"] || row["nama"] || row["NAMA"];
-        const gelar = row["Gelar"] || row["gelar"] || row["GELAR"];
-        const email = row["Email"] || row["email"] || row["EMAIL"];
-        const rawJabatanStruktural =
-          row["Jabatan Struktural"] ||
-          row["jabatan_struktural"] ||
-          row["jabatan struktural"] ||
-          row["JABATAN_STRUKTURAL"] ||
-          row["Jabatan"] ||
-          row["jabatan"] ||
-          row["JABATAN"];
+        const { nik, nama, gelar, email, rawJabatanStruktural, klasterRaw, rawKuotaBimbingan } = values;
         const jabatanStruktural = normalizeJabatanStrukturalInput(rawJabatanStruktural);
-        const klasterRaw =
-          row["Klaster"] ||
-          row["klaster"] ||
-          row["KLASTER"] ||
-          row["Cluster"] ||
-          row["cluster"] ||
-          row["CLUSTER"];
-        const rawKuotaBimbingan =
-          row["Kuota Bimbingan"] ?? row["kuota_bimbingan"] ?? row["KUOTA_BIMBINGAN"];
         const kuotaBimbingan =
           rawKuotaBimbingan === undefined ||
           rawKuotaBimbingan === null ||
@@ -1848,7 +1875,8 @@ exports.uploadDosen = async (req, res) => {
 // GET /api/upload/dosen-template - Download template Excel Dosen
 exports.downloadDosenTemplate = (req, res) => {
   try {
-    const templateData = [
+    const templateHeaders = ["NIK", "Nama", "Gelar", "Email", "Jabatan Struktural", "Klaster", "Kuota Bimbingan"];
+    const exampleRows = [
       {
         NIK: "900000001",
         Nama: "Dr. Ahmad Fauzi",
@@ -1913,7 +1941,8 @@ exports.downloadDosenTemplate = (req, res) => {
     ];
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(templateData);
+    const ws = XLSX.utils.aoa_to_sheet([templateHeaders]);
+    const exampleSheet = XLSX.utils.json_to_sheet(exampleRows);
     const referenceSheet = XLSX.utils.json_to_sheet(referenceRows);
 
     // Set lebar kolom
@@ -1926,8 +1955,10 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 28 }, // Klaster
       { wch: 18 }, // Kuota Bimbingan
     ];
+    exampleSheet["!cols"] = ws["!cols"];
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
+    XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
     XLSX.utils.book_append_sheet(wb, referenceSheet, "Referensi");
 
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
