@@ -40,6 +40,14 @@ const MAHASISWA_MASTER_FILTER_INITIAL = {
   penjaluran: "",
   tipe_pendaftaran: "",
 };
+const PENDAFTARAN_FILTER_INITIAL = {
+  angkatan: "",
+  semester_penjaluran: "",
+  periode: "",
+  penjaluran: "",
+  tipe_pendaftaran: "",
+  status: "",
+};
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
@@ -122,6 +130,21 @@ function buildMahasiswaMasterPeriodeFilterValue(row) {
 
   const tahunAkademik = String(row?.tahun_akademik || "").trim();
   const semesterAkademik = String(row?.semester_akademik || "").trim();
+  if (tahunAkademik && semesterAkademik) {
+    return `${tahunAkademik} - ${formatLabel(semesterAkademik)}`;
+  }
+  if (tahunAkademik) return tahunAkademik;
+  if (semesterAkademik) return formatLabel(semesterAkademik);
+  return "";
+}
+
+function buildPendaftaranPeriodeFilterValue(row) {
+  const periode = row?.periode || {};
+  const periodeLabel = String(periode?.label_periode || "").trim();
+  if (periodeLabel) return periodeLabel;
+
+  const tahunAkademik = String(periode?.tahun_akademik || "").trim();
+  const semesterAkademik = String(periode?.semester || "").trim();
   if (tahunAkademik && semesterAkademik) {
     return `${tahunAkademik} - ${formatLabel(semesterAkademik)}`;
   }
@@ -1113,6 +1136,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const [pendaftaranRows, setPendaftaranRows] = useState([]);
   const [pendaftaranSearch, setPendaftaranSearch] = useState("");
+  const [pendaftaranFilters, setPendaftaranFilters] = useState({
+    ...PENDAFTARAN_FILTER_INITIAL,
+  });
+  const [pendaftaranFilterDraft, setPendaftaranFilterDraft] = useState({
+    ...PENDAFTARAN_FILTER_INITIAL,
+  });
+  const [showPendaftaranFilterPanel, setShowPendaftaranFilterPanel] = useState(false);
+  const [pendaftaranFilterPopupLayout, setPendaftaranFilterPopupLayout] = useState({
+    top: 0,
+    left: 0,
+    width: 430,
+    maxHeight: 520,
+  });
   const [pendaftaranPage, setPendaftaranPage] = useState(1);
   const [mahasiswaMasterRows, setMahasiswaMasterRows] = useState([]);
   const [mahasiswaMasterQuery, setMahasiswaMasterQuery] = useState("");
@@ -1192,6 +1228,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   );
 
   const sessionExpiredRef = useRef(false);
+  const pendaftaranFilterTriggerRef = useRef(null);
+  const pendaftaranFilterPopupRef = useRef(null);
   const mahasiswaMasterFilterTriggerRef = useRef(null);
   const mahasiswaMasterFilterPopupRef = useRef(null);
   const submissionNotificationRef = useRef(null);
@@ -1368,6 +1406,88 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       window.removeEventListener("scroll", handleWindowReposition, true);
     };
   }, [showMahasiswaMasterFilterPanel, updateMahasiswaMasterFilterPopupLayout]);
+
+  const updatePendaftaranFilterPopupLayout = useCallback(() => {
+    const triggerElement = pendaftaranFilterTriggerRef.current;
+    if (!triggerElement || typeof window === "undefined") return;
+
+    const triggerRect = triggerElement.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const margin = 12;
+    const gap = 8;
+    const preferredWidth = 430;
+    const maxAllowedWidth = Math.max(250, viewportWidth - margin * 2);
+    const width = Math.min(preferredWidth, maxAllowedWidth);
+
+    let left = triggerRect.right - width;
+    if (left < margin) left = margin;
+    if (left + width > viewportWidth - margin) {
+      left = viewportWidth - margin - width;
+    }
+
+    const availableBelow = viewportHeight - triggerRect.bottom - gap - margin;
+    const availableAbove = triggerRect.top - gap - margin;
+    const openUp = availableBelow < 360 && availableAbove > availableBelow;
+    const maxHeight = Math.max(
+      280,
+      Math.min(620, openUp ? Math.max(280, availableAbove) : Math.max(280, availableBelow))
+    );
+
+    let top = openUp ? triggerRect.top - gap - maxHeight : triggerRect.bottom + gap;
+    if (top < margin) top = margin;
+    if (top + maxHeight > viewportHeight - margin) {
+      top = viewportHeight - margin - maxHeight;
+    }
+
+    setPendaftaranFilterPopupLayout({
+      top,
+      left,
+      width,
+      maxHeight,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!showPendaftaranFilterPanel) return undefined;
+    const handleMouseDown = (event) => {
+      const withinTrigger = pendaftaranFilterTriggerRef.current?.contains(event.target);
+      const withinPopup = pendaftaranFilterPopupRef.current?.contains(event.target);
+      if (withinTrigger || withinPopup) return;
+      setShowPendaftaranFilterPanel(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setShowPendaftaranFilterPanel(false);
+      }
+    };
+    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showPendaftaranFilterPanel]);
+
+  useEffect(() => {
+    if (!(isSekretaris && activeTab === "penjaluran")) {
+      setShowPendaftaranFilterPanel(false);
+    }
+  }, [activeTab, isSekretaris]);
+
+  useEffect(() => {
+    if (!showPendaftaranFilterPanel) return undefined;
+    updatePendaftaranFilterPopupLayout();
+    const handleWindowReposition = () => {
+      updatePendaftaranFilterPopupLayout();
+    };
+    window.addEventListener("resize", handleWindowReposition);
+    window.addEventListener("scroll", handleWindowReposition, true);
+    return () => {
+      window.removeEventListener("resize", handleWindowReposition);
+      window.removeEventListener("scroll", handleWindowReposition, true);
+    };
+  }, [showPendaftaranFilterPanel, updatePendaftaranFilterPopupLayout]);
 
   useEffect(() => {
     if (!(isSekretaris && activeTab === "master-dosen")) {
@@ -1914,25 +2034,184 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   }, [masterTopikPage, totalMasterTopikPages]);
 
+  const pendaftaranFilterOptions = useMemo(() => {
+    const angkatanSet = new Set();
+    const semesterPenjaluranSet = new Set();
+    const periodeSet = new Set();
+    const penjaluranSet = new Set();
+    const tipePendaftaranSet = new Set();
+    const statusSet = new Set();
+
+    for (const row of pendaftaranRows) {
+      if (row?.mahasiswa?.angkatan) {
+        angkatanSet.add(String(row.mahasiswa.angkatan).trim());
+      }
+
+      const semesterPenjaluran = Number(row?.semester_mahasiswa || 0);
+      if (Number.isFinite(semesterPenjaluran) && semesterPenjaluran > 0) {
+        semesterPenjaluranSet.add(String(semesterPenjaluran));
+      }
+
+      const periodeValue = buildPendaftaranPeriodeFilterValue(row);
+      if (periodeValue) {
+        periodeSet.add(periodeValue);
+      }
+
+      const namaPenjaluran = row?.jenis_jalur_diambil || row?.penjaluran_baru || row?.penjaluran_sebelumnya;
+      if (namaPenjaluran) {
+        penjaluranSet.add(String(namaPenjaluran).trim());
+      }
+
+      if (row?.jalur) {
+        tipePendaftaranSet.add(String(row.jalur).trim());
+      }
+
+      if (row?.status) {
+        statusSet.add(String(row.status).trim());
+      }
+    }
+
+    return {
+      angkatan: Array.from(angkatanSet).sort((a, b) => Number(b) - Number(a)),
+      semester_penjaluran: Array.from(semesterPenjaluranSet).sort((a, b) => Number(a) - Number(b)),
+      periode: Array.from(periodeSet).sort((a, b) => a.localeCompare(b, "id")),
+      penjaluran: Array.from(penjaluranSet).sort((a, b) => a.localeCompare(b, "id")),
+      tipe_pendaftaran: Array.from(tipePendaftaranSet).sort((a, b) => a.localeCompare(b, "id")),
+      status: Array.from(statusSet).sort((a, b) => a.localeCompare(b, "id")),
+    };
+  }, [pendaftaranRows]);
+
   const filteredPendaftaranRows = useMemo(() => {
     if (!isSekretaris) return [];
+
+    const selectedAngkatan = String(pendaftaranFilters.angkatan || "").trim();
+    const selectedSemesterPenjaluran = String(pendaftaranFilters.semester_penjaluran || "").trim();
+    const selectedPeriode = String(pendaftaranFilters.periode || "").trim();
+    const selectedPenjaluran = String(pendaftaranFilters.penjaluran || "").trim().toLowerCase();
+    const selectedTipePendaftaran = String(pendaftaranFilters.tipe_pendaftaran || "").trim().toLowerCase();
+    const selectedStatus = String(pendaftaranFilters.status || "").trim().toLowerCase();
     const keyword = pendaftaranSearch.trim().toLowerCase();
-    if (!keyword) return pendaftaranRows;
+
     return pendaftaranRows.filter((row) => {
+      if (selectedAngkatan && String(row?.mahasiswa?.angkatan || "").trim() !== selectedAngkatan) {
+        return false;
+      }
+
+      const semesterPenjaluran = String(Number(row?.semester_mahasiswa || 0) || "");
+      if (selectedSemesterPenjaluran && semesterPenjaluran !== selectedSemesterPenjaluran) {
+        return false;
+      }
+
+      const periodeValue = buildPendaftaranPeriodeFilterValue(row);
+      if (selectedPeriode && periodeValue !== selectedPeriode) {
+        return false;
+      }
+
+      const namaPenjaluran = row?.jenis_jalur_diambil || row?.penjaluran_baru || row?.penjaluran_sebelumnya;
+      if (selectedPenjaluran && String(namaPenjaluran || "").trim().toLowerCase() !== selectedPenjaluran) {
+        return false;
+      }
+
+      if (selectedTipePendaftaran && String(row?.jalur || "").trim().toLowerCase() !== selectedTipePendaftaran) {
+        return false;
+      }
+
+      if (selectedStatus && String(row?.status || "").trim().toLowerCase() !== selectedStatus) {
+        return false;
+      }
+
+      if (!keyword) return true;
+
       const haystack = [
         row.mahasiswa?.nim,
         row.mahasiswa?.nama,
         row.mahasiswa?.email,
+        row.mahasiswa?.angkatan,
+        row.semester_mahasiswa ? `semester ${row.semester_mahasiswa}` : null,
         row.jalur,
+        row.jenis_jalur_diambil,
+        row.penjaluran_baru,
+        row.penjaluran_sebelumnya,
         row.status,
         row.periode?.label_periode,
+        row.periode?.tahun_akademik,
+        row.periode?.semester,
+        row.dosen_pembimbing_akademik?.nama,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [isSekretaris, pendaftaranRows, pendaftaranSearch]);
+  }, [isSekretaris, pendaftaranFilters, pendaftaranRows, pendaftaranSearch]);
+
+  const pendaftaranActiveFilterChips = useMemo(() => {
+    const chips = [];
+    const angkatan = String(pendaftaranFilters.angkatan || "").trim();
+    const semesterPenjaluran = String(pendaftaranFilters.semester_penjaluran || "").trim();
+    const periode = String(pendaftaranFilters.periode || "").trim();
+    const penjaluran = String(pendaftaranFilters.penjaluran || "").trim();
+    const tipePendaftaran = String(pendaftaranFilters.tipe_pendaftaran || "").trim();
+    const status = String(pendaftaranFilters.status || "").trim();
+
+    if (angkatan) {
+      chips.push({ key: "angkatan", label: `Angkatan: ${angkatan}` });
+    }
+    if (semesterPenjaluran) {
+      chips.push({ key: "semester_penjaluran", label: `Semester Penjaluran: ${semesterPenjaluran}` });
+    }
+    if (periode) {
+      chips.push({ key: "periode", label: `Periode: ${periode}` });
+    }
+    if (penjaluran) {
+      chips.push({ key: "penjaluran", label: `Penjaluran: ${formatLabel(penjaluran)}` });
+    }
+    if (tipePendaftaran) {
+      chips.push({ key: "tipe_pendaftaran", label: `Tipe: ${formatLabel(tipePendaftaran)}` });
+    }
+    if (status) {
+      chips.push({ key: "status", label: `Status: ${formatLabel(status)}` });
+    }
+
+    return chips;
+  }, [pendaftaranFilters]);
+  const hasPendaftaranActiveFilters = useMemo(() => {
+    return pendaftaranActiveFilterChips.length > 0;
+  }, [pendaftaranActiveFilterChips]);
+  const hasPendaftaranDraftFilters = useMemo(() => {
+    return Object.values(pendaftaranFilterDraft).some((value) => String(value || "").trim().length > 0);
+  }, [pendaftaranFilterDraft]);
+  const isPendaftaranFilterDraftDirty = useMemo(() => {
+    return Object.keys(PENDAFTARAN_FILTER_INITIAL).some(
+      (key) =>
+        String(pendaftaranFilterDraft[key] || "").trim() !==
+        String(pendaftaranFilters[key] || "").trim()
+    );
+  }, [pendaftaranFilterDraft, pendaftaranFilters]);
+
+  const handleTogglePendaftaranFilterPanel = useCallback(() => {
+    setShowPendaftaranFilterPanel((prev) => {
+      const next = !prev;
+      if (next) {
+        setPendaftaranFilterDraft({ ...pendaftaranFilters });
+        window.requestAnimationFrame(() => {
+          updatePendaftaranFilterPopupLayout();
+        });
+      }
+      return next;
+    });
+  }, [pendaftaranFilters, updatePendaftaranFilterPopupLayout]);
+
+  const handleApplyPendaftaranFilters = useCallback(() => {
+    setPendaftaranFilters({ ...pendaftaranFilterDraft });
+    setShowPendaftaranFilterPanel(false);
+  }, [pendaftaranFilterDraft]);
+
+  const handleResetPendaftaranFilters = useCallback(() => {
+    setPendaftaranFilters({ ...PENDAFTARAN_FILTER_INITIAL });
+    setPendaftaranFilterDraft({ ...PENDAFTARAN_FILTER_INITIAL });
+    setShowPendaftaranFilterPanel(false);
+  }, []);
 
   const totalSubmissionPages = useMemo(
     () => Math.max(1, Math.ceil(filteredSubmissions.length / DOSEN_GRID_PAGE_SIZE)),
@@ -2685,7 +2964,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   useEffect(() => {
     setPendaftaranPage(1);
-  }, [pendaftaranSearch]);
+  }, [pendaftaranFilters, pendaftaranSearch]);
 
   useEffect(() => {
     if (pendaftaranPage > totalPendaftaranPages) {
@@ -3455,9 +3734,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (!isSekretaris) return;
     setExportingPendaftaran(true);
     try {
-      const query = pendaftaranSearch.trim()
-        ? `?search=${encodeURIComponent(pendaftaranSearch.trim())}`
-        : "";
+      const params = new URLSearchParams();
+      const search = pendaftaranSearch.trim();
+      if (search) {
+        params.set("search", search);
+      }
+
+      const selectedAngkatan = String(pendaftaranFilters?.angkatan || "").trim();
+      const selectedSemesterPenjaluran = String(pendaftaranFilters?.semester_penjaluran || "").trim();
+      const selectedPeriode = String(pendaftaranFilters?.periode || "").trim();
+      const selectedPenjaluran = String(pendaftaranFilters?.penjaluran || "").trim();
+      const selectedTipePendaftaran = String(pendaftaranFilters?.tipe_pendaftaran || "").trim();
+      const selectedStatus = String(pendaftaranFilters?.status || "").trim();
+
+      if (selectedAngkatan) params.set("angkatan", selectedAngkatan);
+      if (selectedSemesterPenjaluran) params.set("semester_penjaluran", selectedSemesterPenjaluran);
+      if (selectedPeriode) params.set("periode", selectedPeriode);
+      if (selectedPenjaluran) params.set("penjaluran", selectedPenjaluran);
+      if (selectedTipePendaftaran) params.set("tipe_pendaftaran", selectedTipePendaftaran);
+      if (selectedStatus) params.set("status", selectedStatus);
+
+      const query = params.toString() ? `?${params.toString()}` : "";
 
       const response = await fetch(`${apiBaseUrl}/api/sekretaris/pendaftaran/export${query}`, {
         headers: {
@@ -4543,6 +4840,234 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               type="button"
               onClick={handleApplyMahasiswaMasterFilters}
               disabled={!isMahasiswaMasterFilterDraftDirty}
+              className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Terapkan
+            </button>
+          </div>
+        </div>,
+        document.body
+      )
+    : null;
+
+  const pendaftaranFilterPopup = showPendaftaranFilterPanel && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          ref={pendaftaranFilterPopupRef}
+          className="fixed z-[120] rounded-xl border border-[#dbe5f8] bg-white shadow-xl"
+          style={{
+            top: `${pendaftaranFilterPopupLayout.top}px`,
+            left: `${pendaftaranFilterPopupLayout.left}px`,
+            width: `${pendaftaranFilterPopupLayout.width}px`,
+            maxHeight: `${pendaftaranFilterPopupLayout.maxHeight}px`,
+          }}
+        >
+          <div className="border-b border-[#e5ecf9] px-4 py-3">
+            <p className="text-base font-bold text-[#1e315f]">Filter Manajemen Penjaluran</p>
+            <p className="text-xs text-[#60709a]">Atur filter bertumpuk, lalu klik Terapkan.</p>
+          </div>
+          <div
+            className="space-y-3 overflow-auto p-3"
+            style={{ maxHeight: `${Math.max(160, pendaftaranFilterPopupLayout.maxHeight - 126)}px` }}
+          >
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Angkatan</p>
+                <button
+                  type="button"
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, angkatan: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.angkatan}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    angkatan: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua angkatan</option>
+                {pendaftaranFilterOptions.angkatan.map((item) => (
+                  <option key={`pendaftaran-filter-angkatan-${item}`} value={item}>
+                    Angkatan {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Semester Penjaluran</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendaftaranFilterDraft((prev) => ({
+                      ...prev,
+                      semester_penjaluran: "",
+                    }))
+                  }
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.semester_penjaluran}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    semester_penjaluran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua semester penjaluran</option>
+                {pendaftaranFilterOptions.semester_penjaluran.map((item) => (
+                  <option key={`pendaftaran-filter-semester-${item}`} value={item}>
+                    Semester Penjaluran {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Periode Pendaftaran</p>
+                <button
+                  type="button"
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, periode: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.periode}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    periode: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua periode pendaftaran</option>
+                {pendaftaranFilterOptions.periode.map((item) => (
+                  <option key={`pendaftaran-filter-periode-${item}`} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Penjaluran</p>
+                <button
+                  type="button"
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, penjaluran: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.penjaluran}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    penjaluran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua penjaluran</option>
+                {pendaftaranFilterOptions.penjaluran.map((item) => (
+                  <option key={`pendaftaran-filter-penjaluran-${item}`} value={item}>
+                    {formatLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Tipe Pendaftaran</p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setPendaftaranFilterDraft((prev) => ({
+                      ...prev,
+                      tipe_pendaftaran: "",
+                    }))
+                  }
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.tipe_pendaftaran}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    tipe_pendaftaran: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua tipe daftar</option>
+                {pendaftaranFilterOptions.tipe_pendaftaran.map((item) => (
+                  <option key={`pendaftaran-filter-tipe-${item}`} value={item}>
+                    {formatLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Status</p>
+                <button
+                  type="button"
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, status: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={pendaftaranFilterDraft.status}
+                onChange={(event) =>
+                  setPendaftaranFilterDraft((prev) => ({
+                    ...prev,
+                    status: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua status</option>
+                {pendaftaranFilterOptions.status.map((item) => (
+                  <option key={`pendaftaran-filter-status-${item}`} value={item}>
+                    {formatLabel(item)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-2 border-t border-[#e5ecf9] px-3 py-3">
+            <button
+              type="button"
+              onClick={() => setPendaftaranFilterDraft({ ...PENDAFTARAN_FILTER_INITIAL })}
+              disabled={!hasPendaftaranDraftFilters}
+              className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Reset all
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyPendaftaranFilters}
+              disabled={!isPendaftaranFilterDraftDirty}
               className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Terapkan
@@ -7191,9 +7716,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
             {!loading && isSekretaris && activeTab === "penjaluran" ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <h3 className="text-lg font-black text-[#1b274b]">Grid Manajemen Penjaluran</h3>
-                  <div className="flex items-center gap-2">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Grid Manajemen Penjaluran</h3>
+                    <p className="text-sm text-[#5d6c91]">
+                      Pantau data pendaftaran dan gunakan filter untuk mempersempit hasil.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                       <input
@@ -7204,15 +7734,52 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
+                    <div className="relative" ref={pendaftaranFilterTriggerRef}>
+                      <button
+                        type="button"
+                        onClick={handleTogglePendaftaranFilterPanel}
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                          showPendaftaranFilterPanel || hasPendaftaranActiveFilters
+                            ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
+                            : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                        }`}
+                      >
+                        <SlidersHorizontal className="h-4 w-4" />
+                        Filter
+                        {hasPendaftaranActiveFilters ? (
+                          <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+                            {pendaftaranActiveFilterChips.length}
+                          </span>
+                        ) : null}
+                      </button>
+                    </div>
                     <button
                       type="button"
-                      onClick={handleExportPendaftaran}
-                      disabled={exportingPendaftaran}
-                      className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleResetPendaftaranFilters}
+                      disabled={!hasPendaftaranActiveFilters}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Download className="h-4 w-4" />
-                      {exportingPendaftaran ? "Exporting..." : "Export Excel"}
+                      Reset
                     </button>
+                    <div className="flex items-center gap-2 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-1">
+                      <button
+                        type="button"
+                        onClick={loadAllData}
+                        className="inline-flex items-center gap-2 rounded-md border border-[#d3dbef] bg-white px-3 py-1.5 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleExportPendaftaran}
+                        disabled={exportingPendaftaran}
+                        className="inline-flex items-center gap-2 rounded-md bg-[#0f7b50] px-3 py-1.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Download className="h-4 w-4" />
+                        {exportingPendaftaran ? "Exporting..." : "Download Excel"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -8113,6 +8680,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         </div>
       </div>
       {mahasiswaMasterFilterPopup}
+      {pendaftaranFilterPopup}
     </div>
   );
 }

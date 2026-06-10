@@ -521,12 +521,37 @@ function buildFilters(query) {
   const periodeWhere = {};
   const mahasiswaWhere = {};
 
-  if (query.jalur) {
-    pendaftaranWhere.jalur = query.jalur;
+  if (query.angkatan) {
+    mahasiswaWhere.angkatan = String(query.angkatan).trim();
+  }
+
+  const tipePendaftaran = String(query.tipe_pendaftaran || query.jalur || "").trim();
+  if (tipePendaftaran) {
+    pendaftaranWhere.jalur = tipePendaftaran;
+  }
+
+  const penjaluran = String(query.penjaluran || "").trim();
+  if (penjaluran) {
+    pendaftaranWhere[Op.or] = [
+      { jenis_jalur_diambil: penjaluran },
+      { penjaluran_baru: penjaluran },
+      { penjaluran_sebelumnya: penjaluran },
+    ];
   }
 
   if (query.status) {
     pendaftaranWhere.status = query.status;
+  }
+
+  if (query.semester_penjaluran) {
+    const parsedSemesterPenjaluran = Number(query.semester_penjaluran);
+    if (Number.isInteger(parsedSemesterPenjaluran) && parsedSemesterPenjaluran > 0) {
+      pendaftaranWhere.semester_mahasiswa = parsedSemesterPenjaluran;
+    }
+  }
+
+  if (query.periode) {
+    periodeWhere.label_periode = String(query.periode).trim();
   }
 
   if (query.tahun_akademik) {
