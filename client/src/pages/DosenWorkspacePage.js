@@ -42,11 +42,10 @@ const MAHASISWA_MASTER_FILTER_INITIAL = {
 };
 const PENDAFTARAN_FILTER_INITIAL = {
   angkatan: "",
-  semester_penjaluran: "",
-  periode: "",
+  tahun_akademik: "",
+  semester_akademik: "",
   penjaluran: "",
   tipe_pendaftaran: "",
-  status: "",
 };
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
@@ -138,20 +137,6 @@ function buildMahasiswaMasterPeriodeFilterValue(row) {
   return "";
 }
 
-function buildPendaftaranPeriodeFilterValue(row) {
-  const periode = row?.periode || {};
-  const periodeLabel = String(periode?.label_periode || "").trim();
-  if (periodeLabel) return periodeLabel;
-
-  const tahunAkademik = String(periode?.tahun_akademik || "").trim();
-  const semesterAkademik = String(periode?.semester || "").trim();
-  if (tahunAkademik && semesterAkademik) {
-    return `${tahunAkademik} - ${formatLabel(semesterAkademik)}`;
-  }
-  if (tahunAkademik) return tahunAkademik;
-  if (semesterAkademik) return formatLabel(semesterAkademik);
-  return "";
-}
 const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
   semester: "ganjil",
@@ -2036,25 +2021,24 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const pendaftaranFilterOptions = useMemo(() => {
     const angkatanSet = new Set();
-    const semesterPenjaluranSet = new Set();
-    const periodeSet = new Set();
+    const tahunAkademikSet = new Set();
+    const semesterAkademikSet = new Set();
     const penjaluranSet = new Set();
     const tipePendaftaranSet = new Set();
-    const statusSet = new Set();
 
     for (const row of pendaftaranRows) {
       if (row?.mahasiswa?.angkatan) {
         angkatanSet.add(String(row.mahasiswa.angkatan).trim());
       }
 
-      const semesterPenjaluran = Number(row?.semester_mahasiswa || 0);
-      if (Number.isFinite(semesterPenjaluran) && semesterPenjaluran > 0) {
-        semesterPenjaluranSet.add(String(semesterPenjaluran));
+      const tahunAkademik = String(row?.periode?.tahun_akademik || "").trim();
+      if (tahunAkademik) {
+        tahunAkademikSet.add(tahunAkademik);
       }
 
-      const periodeValue = buildPendaftaranPeriodeFilterValue(row);
-      if (periodeValue) {
-        periodeSet.add(periodeValue);
+      const semesterAkademik = String(row?.periode?.semester || "").trim();
+      if (semesterAkademik) {
+        semesterAkademikSet.add(semesterAkademik);
       }
 
       const namaPenjaluran = row?.jenis_jalur_diambil || row?.penjaluran_baru || row?.penjaluran_sebelumnya;
@@ -2065,19 +2049,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       if (row?.jalur) {
         tipePendaftaranSet.add(String(row.jalur).trim());
       }
-
-      if (row?.status) {
-        statusSet.add(String(row.status).trim());
-      }
     }
 
     return {
       angkatan: Array.from(angkatanSet).sort((a, b) => Number(b) - Number(a)),
-      semester_penjaluran: Array.from(semesterPenjaluranSet).sort((a, b) => Number(a) - Number(b)),
-      periode: Array.from(periodeSet).sort((a, b) => a.localeCompare(b, "id")),
+      tahun_akademik: Array.from(tahunAkademikSet).sort((a, b) => b.localeCompare(a, "id")),
+      semester_akademik: Array.from(semesterAkademikSet).sort((a, b) => a.localeCompare(b, "id")),
       penjaluran: Array.from(penjaluranSet).sort((a, b) => a.localeCompare(b, "id")),
       tipe_pendaftaran: Array.from(tipePendaftaranSet).sort((a, b) => a.localeCompare(b, "id")),
-      status: Array.from(statusSet).sort((a, b) => a.localeCompare(b, "id")),
     };
   }, [pendaftaranRows]);
 
@@ -2085,11 +2064,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (!isSekretaris) return [];
 
     const selectedAngkatan = String(pendaftaranFilters.angkatan || "").trim();
-    const selectedSemesterPenjaluran = String(pendaftaranFilters.semester_penjaluran || "").trim();
-    const selectedPeriode = String(pendaftaranFilters.periode || "").trim();
+    const selectedTahunAkademik = String(pendaftaranFilters.tahun_akademik || "").trim();
+    const selectedSemesterAkademik = String(pendaftaranFilters.semester_akademik || "").trim().toLowerCase();
     const selectedPenjaluran = String(pendaftaranFilters.penjaluran || "").trim().toLowerCase();
     const selectedTipePendaftaran = String(pendaftaranFilters.tipe_pendaftaran || "").trim().toLowerCase();
-    const selectedStatus = String(pendaftaranFilters.status || "").trim().toLowerCase();
     const keyword = pendaftaranSearch.trim().toLowerCase();
 
     return pendaftaranRows.filter((row) => {
@@ -2097,13 +2075,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         return false;
       }
 
-      const semesterPenjaluran = String(Number(row?.semester_mahasiswa || 0) || "");
-      if (selectedSemesterPenjaluran && semesterPenjaluran !== selectedSemesterPenjaluran) {
+      if (selectedTahunAkademik && String(row?.periode?.tahun_akademik || "").trim() !== selectedTahunAkademik) {
         return false;
       }
 
-      const periodeValue = buildPendaftaranPeriodeFilterValue(row);
-      if (selectedPeriode && periodeValue !== selectedPeriode) {
+      if (
+        selectedSemesterAkademik &&
+        String(row?.periode?.semester || "").trim().toLowerCase() !== selectedSemesterAkademik
+      ) {
         return false;
       }
 
@@ -2113,10 +2092,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
 
       if (selectedTipePendaftaran && String(row?.jalur || "").trim().toLowerCase() !== selectedTipePendaftaran) {
-        return false;
-      }
-
-      if (selectedStatus && String(row?.status || "").trim().toLowerCase() !== selectedStatus) {
         return false;
       }
 
@@ -2148,29 +2123,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const pendaftaranActiveFilterChips = useMemo(() => {
     const chips = [];
     const angkatan = String(pendaftaranFilters.angkatan || "").trim();
-    const semesterPenjaluran = String(pendaftaranFilters.semester_penjaluran || "").trim();
-    const periode = String(pendaftaranFilters.periode || "").trim();
+    const tahunAkademik = String(pendaftaranFilters.tahun_akademik || "").trim();
+    const semesterAkademik = String(pendaftaranFilters.semester_akademik || "").trim();
     const penjaluran = String(pendaftaranFilters.penjaluran || "").trim();
     const tipePendaftaran = String(pendaftaranFilters.tipe_pendaftaran || "").trim();
-    const status = String(pendaftaranFilters.status || "").trim();
 
     if (angkatan) {
       chips.push({ key: "angkatan", label: `Angkatan: ${angkatan}` });
     }
-    if (semesterPenjaluran) {
-      chips.push({ key: "semester_penjaluran", label: `Semester Penjaluran: ${semesterPenjaluran}` });
+    if (tahunAkademik) {
+      chips.push({ key: "tahun_akademik", label: `Tahun Akademik: ${tahunAkademik}` });
     }
-    if (periode) {
-      chips.push({ key: "periode", label: `Periode: ${periode}` });
+    if (semesterAkademik) {
+      chips.push({ key: "semester_akademik", label: `Semester: ${formatLabel(semesterAkademik)}` });
     }
     if (penjaluran) {
       chips.push({ key: "penjaluran", label: `Penjaluran: ${formatLabel(penjaluran)}` });
     }
     if (tipePendaftaran) {
       chips.push({ key: "tipe_pendaftaran", label: `Tipe: ${formatLabel(tipePendaftaran)}` });
-    }
-    if (status) {
-      chips.push({ key: "status", label: `Status: ${formatLabel(status)}` });
     }
 
     return chips;
@@ -3741,18 +3712,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
 
       const selectedAngkatan = String(pendaftaranFilters?.angkatan || "").trim();
-      const selectedSemesterPenjaluran = String(pendaftaranFilters?.semester_penjaluran || "").trim();
-      const selectedPeriode = String(pendaftaranFilters?.periode || "").trim();
+      const selectedTahunAkademik = String(pendaftaranFilters?.tahun_akademik || "").trim();
+      const selectedSemesterAkademik = String(pendaftaranFilters?.semester_akademik || "").trim();
       const selectedPenjaluran = String(pendaftaranFilters?.penjaluran || "").trim();
       const selectedTipePendaftaran = String(pendaftaranFilters?.tipe_pendaftaran || "").trim();
-      const selectedStatus = String(pendaftaranFilters?.status || "").trim();
 
       if (selectedAngkatan) params.set("angkatan", selectedAngkatan);
-      if (selectedSemesterPenjaluran) params.set("semester_penjaluran", selectedSemesterPenjaluran);
-      if (selectedPeriode) params.set("periode", selectedPeriode);
+      if (selectedTahunAkademik) params.set("tahun_akademik", selectedTahunAkademik);
+      if (selectedSemesterAkademik) params.set("semester", selectedSemesterAkademik);
       if (selectedPenjaluran) params.set("penjaluran", selectedPenjaluran);
       if (selectedTipePendaftaran) params.set("tipe_pendaftaran", selectedTipePendaftaran);
-      if (selectedStatus) params.set("status", selectedStatus);
 
       const query = params.toString() ? `?${params.toString()}` : "";
 
@@ -4901,63 +4870,58 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             </div>
             <div className="rounded-lg border border-[#e6ecf8] p-3">
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#2a4175]">Semester Penjaluran</p>
+                <p className="text-sm font-semibold text-[#2a4175]">Tahun Akademik</p>
                 <button
                   type="button"
-                  onClick={() =>
-                    setPendaftaranFilterDraft((prev) => ({
-                      ...prev,
-                      semester_penjaluran: "",
-                    }))
-                  }
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, tahun_akademik: "" }))}
                   className="text-xs font-semibold text-[#2f63e3] hover:underline"
                 >
                   Reset
                 </button>
               </div>
               <select
-                value={pendaftaranFilterDraft.semester_penjaluran}
+                value={pendaftaranFilterDraft.tahun_akademik}
                 onChange={(event) =>
                   setPendaftaranFilterDraft((prev) => ({
                     ...prev,
-                    semester_penjaluran: event.target.value,
+                    tahun_akademik: event.target.value,
                   }))
                 }
                 className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
               >
-                <option value="">Semua semester penjaluran</option>
-                {pendaftaranFilterOptions.semester_penjaluran.map((item) => (
-                  <option key={`pendaftaran-filter-semester-${item}`} value={item}>
-                    Semester Penjaluran {item}
+                <option value="">Semua tahun akademik</option>
+                {pendaftaranFilterOptions.tahun_akademik.map((item) => (
+                  <option key={`pendaftaran-filter-tahun-${item}`} value={item}>
+                    {item}
                   </option>
                 ))}
               </select>
             </div>
             <div className="rounded-lg border border-[#e6ecf8] p-3">
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#2a4175]">Periode Pendaftaran</p>
+                <p className="text-sm font-semibold text-[#2a4175]">Semester Akademik</p>
                 <button
                   type="button"
-                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, periode: "" }))}
+                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, semester_akademik: "" }))}
                   className="text-xs font-semibold text-[#2f63e3] hover:underline"
                 >
                   Reset
                 </button>
               </div>
               <select
-                value={pendaftaranFilterDraft.periode}
+                value={pendaftaranFilterDraft.semester_akademik}
                 onChange={(event) =>
                   setPendaftaranFilterDraft((prev) => ({
                     ...prev,
-                    periode: event.target.value,
+                    semester_akademik: event.target.value,
                   }))
                 }
                 className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
               >
-                <option value="">Semua periode pendaftaran</option>
-                {pendaftaranFilterOptions.periode.map((item) => (
-                  <option key={`pendaftaran-filter-periode-${item}`} value={item}>
-                    {item}
+                <option value="">Semua semester akademik</option>
+                {pendaftaranFilterOptions.semester_akademik.map((item) => (
+                  <option key={`pendaftaran-filter-semester-akademik-${item}`} value={item}>
+                    {formatLabel(item)}
                   </option>
                 ))}
               </select>
@@ -5020,35 +4984,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 <option value="">Semua tipe daftar</option>
                 {pendaftaranFilterOptions.tipe_pendaftaran.map((item) => (
                   <option key={`pendaftaran-filter-tipe-${item}`} value={item}>
-                    {formatLabel(item)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="rounded-lg border border-[#e6ecf8] p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold text-[#2a4175]">Status</p>
-                <button
-                  type="button"
-                  onClick={() => setPendaftaranFilterDraft((prev) => ({ ...prev, status: "" }))}
-                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
-                >
-                  Reset
-                </button>
-              </div>
-              <select
-                value={pendaftaranFilterDraft.status}
-                onChange={(event) =>
-                  setPendaftaranFilterDraft((prev) => ({
-                    ...prev,
-                    status: event.target.value,
-                  }))
-                }
-                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
-              >
-                <option value="">Semua status</option>
-                {pendaftaranFilterOptions.status.map((item) => (
-                  <option key={`pendaftaran-filter-status-${item}`} value={item}>
                     {formatLabel(item)}
                   </option>
                 ))}
@@ -7715,125 +7650,142 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             ) : null}
 
             {!loading && isSekretaris && activeTab === "penjaluran" ? (
-              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-[#1b274b]">Grid Manajemen Penjaluran</h3>
-                    <p className="text-sm text-[#5d6c91]">
-                      Pantau data pendaftaran dan gunakan filter untuk mempersempit hasil.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-end gap-2">
-                    <div className="relative">
-                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
-                      <input
-                        type="text"
-                        value={pendaftaranSearch}
-                        onChange={(event) => setPendaftaranSearch(event.target.value)}
-                        placeholder="Cari NIM, nama, email, jalur..."
-                        className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
-                      />
-                    </div>
-                    <div className="relative" ref={pendaftaranFilterTriggerRef}>
-                      <button
-                        type="button"
-                        onClick={handleTogglePendaftaranFilterPanel}
-                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
-                          showPendaftaranFilterPanel || hasPendaftaranActiveFilters
-                            ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
-                            : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
-                        }`}
-                      >
-                        <SlidersHorizontal className="h-4 w-4" />
-                        Filter
-                        {hasPendaftaranActiveFilters ? (
-                          <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
-                            {pendaftaranActiveFilterChips.length}
-                          </span>
-                        ) : null}
-                      </button>
-                    </div>
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={handleResetPendaftaranFilters}
-                      disabled={!hasPendaftaranActiveFilters}
-                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
                     >
-                      Reset
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
                     </button>
-                    <div className="flex items-center gap-2 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-1">
-                      <button
-                        type="button"
-                        onClick={loadAllData}
-                        className="inline-flex items-center gap-2 rounded-md border border-[#d3dbef] bg-white px-3 py-1.5 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
-                      >
-                        <RefreshCcw className="h-4 w-4" />
-                        Refresh
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleExportPendaftaran}
-                        disabled={exportingPendaftaran}
-                        className="inline-flex items-center gap-2 rounded-md bg-[#0f7b50] px-3 py-1.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Download className="h-4 w-4" />
-                        {exportingPendaftaran ? "Exporting..." : "Download Excel"}
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleExportPendaftaran}
+                      disabled={exportingPendaftaran}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Download className="h-4 w-4" />
+                      {exportingPendaftaran ? "Exporting..." : "Download Excel"}
+                    </button>
                   </div>
                 </div>
 
+                <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">Grid Manajemen Penjaluran</h3>
+                      <p className="text-sm text-[#5d6c91]">
+                        Pantau data pendaftaran dan gunakan filter untuk mempersempit hasil.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                        <input
+                          type="text"
+                          value={pendaftaranSearch}
+                          onChange={(event) => setPendaftaranSearch(event.target.value)}
+                          placeholder="Cari NIM, nama, email, jalur..."
+                          className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                      </div>
+                      <div className="relative" ref={pendaftaranFilterTriggerRef}>
+                        <button
+                          type="button"
+                          onClick={handleTogglePendaftaranFilterPanel}
+                          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                            showPendaftaranFilterPanel || hasPendaftaranActiveFilters
+                              ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
+                              : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                          }`}
+                        >
+                          <SlidersHorizontal className="h-4 w-4" />
+                          Filter
+                          {hasPendaftaranActiveFilters ? (
+                            <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+                              {pendaftaranActiveFilterChips.length}
+                            </span>
+                          ) : null}
+                        </button>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetPendaftaranFilters}
+                        disabled={!hasPendaftaranActiveFilters}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Reset
+                      </button>
+                    </div>
+                  </div>
+
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="w-full min-w-[1400px] text-left text-sm">
+                  <table className="w-full min-w-[1650px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Periode</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahun Akademik</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Semester</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Angkatan</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">NIM</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">DPA</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredPendaftaranRows.length > 0
-                        ? pagedPendaftaranRows.map((row) => (
-                            <tr key={`pendaftaran-${row.id}`} className="border-b border-[#eff3fb]">
-                              <td className="px-3 py-2">{formatDateTime(row.createdAt)}</td>
-                              <td className="px-3 py-2">{row.periode?.label_periode || "-"}</td>
-                              <td className="px-3 py-2 font-semibold text-[#254080]">{row.mahasiswa?.nim || "-"}</td>
-                              <td className="px-3 py-2">{row.mahasiswa?.nama || "-"}</td>
-                              <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
-                              <td className="px-3 py-2">{formatLabel(row.status)}</td>
-                              <td className="px-3 py-2">{row.dosen_pembimbing_akademik?.nama || "-"}</td>
-                              <td className="px-3 py-2">
-                                {row.status === "submitted" ? (
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={rowActionLoadingId === row.id}
-                                      onClick={() => handlePendaftaranApprove(row.id)}
-                                      className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={rowActionLoadingId === row.id}
-                                      onClick={() => handlePendaftaranReject(row.id)}
-                                      className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      Tolak
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-[#68779f]">Selesai diproses</span>
-                                )}
-                              </td>
-                            </tr>
-                          ))
+                        ? pagedPendaftaranRows.map((row) => {
+                            const namaPenjaluran =
+                              row.jenis_jalur_diambil || row.penjaluran_baru || row.penjaluran_sebelumnya;
+
+                            return (
+                              <tr key={`pendaftaran-${row.id}`} className="border-b border-[#eff3fb]">
+                                <td className="px-3 py-2">{formatDateTime(row.createdAt)}</td>
+                                <td className="px-3 py-2">{row.periode?.tahun_akademik || "-"}</td>
+                                <td className="px-3 py-2">
+                                  {row.periode?.semester ? formatLabel(row.periode.semester) : "-"}
+                                </td>
+                                <td className="px-3 py-2">{row.mahasiswa?.angkatan || "-"}</td>
+                                <td className="px-3 py-2 font-semibold text-[#254080]">
+                                  {row.mahasiswa?.nim || "-"}
+                                </td>
+                                <td className="px-3 py-2">{row.mahasiswa?.nama || "-"}</td>
+                                <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
+                                <td className="px-3 py-2">{namaPenjaluran ? formatLabel(namaPenjaluran) : "-"}</td>
+                                <td className="px-3 py-2">{row.dosen_pembimbing_akademik?.nama || "-"}</td>
+                                <td className="px-3 py-2">
+                                  {row.status === "submitted" ? (
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={rowActionLoadingId === row.id}
+                                        onClick={() => handlePendaftaranApprove(row.id)}
+                                        className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Approve
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={rowActionLoadingId === row.id}
+                                        onClick={() => handlePendaftaranReject(row.id)}
+                                        className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        Tolak
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="text-xs text-[#68779f]">Selesai diproses</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
                         : null}
                     </tbody>
                   </table>
@@ -7872,6 +7824,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       Berikutnya
                     </button>
                   </div>
+                </div>
                 </div>
               </div>
             ) : null}

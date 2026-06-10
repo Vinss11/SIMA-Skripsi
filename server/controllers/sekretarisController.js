@@ -1025,36 +1025,41 @@ exports.exportPendaftaran = async (req, res) => {
       order: [["createdAt", "DESC"]],
     });
 
-    const rows = list.map((item) => ({
-      "Tanggal Daftar": item.createdAt,
-      "Periode Penjaluran": item.periode?.label_periode || "-",
-      "Tahun Akademik": item.periode?.tahun_akademik || "-",
-      "Semester Akademik": item.periode?.semester || "-",
-      Jalur: item.jalur,
-      "Semester Mahasiswa": item.semester_mahasiswa,
-      NIM: item.mahasiswa?.nim || "-",
-      Nama: item.mahasiswa?.nama || "-",
-      Email: item.mahasiswa?.email || "-",
-      Angkatan: item.mahasiswa?.angkatan || "-",
-      "Nomor WhatsApp": item.nomor_whatsapp || "-",
-      Status: item.status,
-      "Jenis Jalur Diambil": item.jenis_jalur_diambil || "-",
-      "Penjaluran Sebelumnya": item.penjaluran_sebelumnya || "-",
-      "Penjaluran Baru": item.penjaluran_baru || "-",
-      "Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nama || "-",
-      "NIK Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nik || "-",
-      "Dosen Pembimbing TA": item.dosenPembimbingTA?.nama || "-",
-      "NIK Dosen Pembimbing TA": item.dosenPembimbingTA?.nik || "-",
-      "Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nama || "-",
-      "NIK Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nik || "-",
-      "Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nama || "-",
-      "NIK Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nik || "-",
-      "Direview Oleh": item.reviewedBySekretaris?.nama || "-",
-      "NIK Reviewer": item.reviewedBySekretaris?.nik || "-",
-      "Tanggal Review": item.reviewed_at || "-",
-      "Catatan Approval": item.approval_note || "-",
-      Catatan: item.catatan || "-",
-    }));
+    const rows = list.map((item) => {
+      const penjaluran = item.jenis_jalur_diambil || item.penjaluran_baru || item.penjaluran_sebelumnya || "-";
+
+      return {
+        "Tanggal Daftar": item.createdAt,
+        "Periode Penjaluran": item.periode?.label_periode || "-",
+        "Tahun Akademik": item.periode?.tahun_akademik || "-",
+        "Semester Akademik": item.periode?.semester || "-",
+        Jalur: item.jalur,
+        Penjaluran: penjaluran,
+        "Semester Mahasiswa": item.semester_mahasiswa,
+        NIM: item.mahasiswa?.nim || "-",
+        Nama: item.mahasiswa?.nama || "-",
+        Email: item.mahasiswa?.email || "-",
+        Angkatan: item.mahasiswa?.angkatan || "-",
+        "Nomor WhatsApp": item.nomor_whatsapp || "-",
+        Status: item.status,
+        "Jenis Jalur Diambil": item.jenis_jalur_diambil || "-",
+        "Penjaluran Sebelumnya": item.penjaluran_sebelumnya || "-",
+        "Penjaluran Baru": item.penjaluran_baru || "-",
+        "Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nama || "-",
+        "NIK Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nik || "-",
+        "Dosen Pembimbing TA": item.dosenPembimbingTA?.nama || "-",
+        "NIK Dosen Pembimbing TA": item.dosenPembimbingTA?.nik || "-",
+        "Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nama || "-",
+        "NIK Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nik || "-",
+        "Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nama || "-",
+        "NIK Dosen Pembimbing TA Baru": item.dosenPembimbingTABaru?.nik || "-",
+        "Direview Oleh": item.reviewedBySekretaris?.nama || "-",
+        "NIK Reviewer": item.reviewedBySekretaris?.nik || "-",
+        "Tanggal Review": item.reviewed_at || "-",
+        "Catatan Approval": item.approval_note || "-",
+        Catatan: item.catatan || "-",
+      };
+    });
 
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(rows);
