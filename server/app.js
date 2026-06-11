@@ -30,7 +30,13 @@ try {
   app.use(routes);
 } catch (error) {
   console.error("Gagal memuat routes:", error);
-  process.exit(1);
+  app.use((req, res) => {
+    res.status(500).json({
+      success: false,
+      message: "Gagal memuat routes backend",
+      error: process.env.NODE_ENV === "production" ? undefined : error.message,
+    });
+  });
 }
 
 // Error handling middleware
