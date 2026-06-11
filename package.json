@@ -1,0 +1,14 @@
+{
+  "name": "sima-skripsi",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "install:server": "npm --prefix server install",
+    "install:client": "npm --prefix client install",
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "start": "npm --prefix server start",
+    "build:client": "npm --prefix client run build",
+    "db:migrate": "cd server && npx sequelize-cli db:migrate --env production",
+    "db:seed:admin": "cd server && npx sequelize-cli db:seed --seed production-admin-only.js --env production"
+  }
+}
