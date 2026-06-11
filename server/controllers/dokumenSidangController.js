@@ -5,7 +5,9 @@ const { DokumenSidang, Mahasiswa, Dosen, BimbinganSkripsi, sequelize } = require
 
 const TARGET_SESI_MINIMAL = 8;
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
-const SIDANG_UPLOAD_ROOT = path.resolve(SERVER_ROOT_DIR, "uploads", "sidang-dokumen");
+const SIDANG_UPLOAD_ROOT = process.env.VERCEL
+  ? path.join("/tmp", "sima-uploads", "sidang-dokumen")
+  : path.resolve(SERVER_ROOT_DIR, "uploads", "sidang-dokumen");
 
 const STATUS_LABEL_MAP = {
   belum_upload: "Belum Upload",
@@ -751,4 +753,3 @@ exports.downloadDosenDokumenSidang = async (req, res) => {
     });
   }
 };
-

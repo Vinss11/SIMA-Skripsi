@@ -1,9 +1,63 @@
 # Deployment Guide
 
-This project is deployed as two separate apps:
+This project can be deployed as two separate apps:
 
-- Backend API on Replit from `server/`
+- Backend API on Vercel or Replit from `server/`
 - Frontend React app on Vercel from `client/`
+
+## Backend: Vercel
+
+Create a second Vercel project from the same repository and set:
+
+```text
+Root Directory: server
+Framework Preset: Other
+Install Command: npm install
+Build Command: leave empty
+Output Directory: leave empty
+```
+
+The backend Vercel project uses:
+
+```text
+server/vercel.json
+server/api/index.js
+```
+
+Set these Vercel environment variables for the backend project:
+
+```env
+NODE_ENV=production
+DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
+JWT_SECRET=replace-with-a-new-long-secret
+JWT_EXPIRES_IN=24h
+DEFAULT_PASSWORD_DOSEN=12345678
+CORS_ORIGIN=https://your-frontend.vercel.app,http://localhost:3000
+```
+
+Run migrations from your local machine after `DATABASE_URL` points to production:
+
+```bash
+cd server
+npx sequelize-cli db:migrate --env production
+```
+
+Seed only the first admin account:
+
+```bash
+npx sequelize-cli db:seed --seed production-admin-only.js --env production
+```
+
+Initial admin:
+
+```text
+username/nip: 199501012020121001
+password: 12345678
+```
+
+Do not run `db:seed:all` for a clean production database.
+
+Important: Vercel serverless filesystem is not permanent. Excel imports are processed as temporary files, but uploaded sidang documents should use external object storage before this is used as a real production system.
 
 ## Backend: Replit
 
@@ -62,17 +116,17 @@ Output Directory: build
 Set this Vercel environment variable:
 
 ```env
-REACT_APP_API_BASE_URL=https://your-backend-replit-url.replit.app
+REACT_APP_API_BASE_URL=https://your-backend-url
 ```
 
-After Vercel gives the final frontend URL, add it to Replit `CORS_ORIGIN`, then restart or redeploy the backend.
+After Vercel gives the final frontend URL, add it to backend `CORS_ORIGIN`, then redeploy the backend.
 
 ## Validation
 
 Check these after both apps are published:
 
 ```text
-GET https://your-backend-replit-url.replit.app/
-POST https://your-backend-replit-url.replit.app/api/auth/login
+GET https://your-backend-url/
+POST https://your-backend-url/api/auth/login
 Open https://your-frontend.vercel.app and login as admin
 ```

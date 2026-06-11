@@ -2,7 +2,9 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 
-const uploadDir = path.resolve(__dirname, "..", "uploads", "sidang-dokumen");
+const uploadDir = process.env.VERCEL
+  ? path.join("/tmp", "sima-uploads", "sidang-dokumen")
+  : path.resolve(__dirname, "..", "uploads", "sidang-dokumen");
 
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
@@ -49,4 +51,3 @@ const sidangDokumenUpload = multer({
 });
 
 module.exports = sidangDokumenUpload;
-
