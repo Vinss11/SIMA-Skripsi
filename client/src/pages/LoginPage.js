@@ -53,7 +53,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
         rememberMe
       );
     } catch (error) {
-      setErrorMessage("Tidak bisa terhubung ke server. Pastikan backend berjalan di http://localhost:3000.");
+      setErrorMessage(`Tidak bisa terhubung ke server. Backend yang dipakai: ${apiBaseUrl || "same-origin"}.`);
     } finally {
       setIsLoading(false);
     }

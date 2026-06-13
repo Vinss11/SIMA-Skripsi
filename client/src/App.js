@@ -12,9 +12,10 @@ import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 
 const AUTH_STORAGE_KEY = "sima_auth_v1";
+const PRODUCTION_API_BASE_URL = "https://sima-skripsi-rz1j.vercel.app";
 const API_BASE_URL =
   process.env.REACT_APP_API_BASE_URL ||
-  (window.location.hostname === "localhost" ? "http://localhost:3000" : "");
+  (window.location.hostname === "localhost" ? "http://localhost:3000" : PRODUCTION_API_BASE_URL);
 
 function decodeJwtPayload(token) {
   if (!token || typeof token !== "string") return null;
