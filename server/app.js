@@ -11,10 +11,25 @@ const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
+function isAllowedVercelFrontend(origin) {
+  try {
+    const url = new URL(origin);
+    const hostname = url.hostname.toLowerCase();
+    return (
+      url.protocol === "https:" &&
+      (hostname === "sima-skripsi.vercel.app" ||
+        hostname === "sima-skripsi-git-main-vinss11s-projects.vercel.app" ||
+        (hostname.startsWith("sima-skripsi-") && hostname.endsWith("-vinss11s-projects.vercel.app")))
+    );
+  } catch (error) {
+    return false;
+  }
+}
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || isAllowedVercelFrontend(origin)) {
         return callback(null, true);
       }
 
