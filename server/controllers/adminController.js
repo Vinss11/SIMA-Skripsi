@@ -8,6 +8,15 @@ const {
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
 
+const DEFAULT_KLASTER_MASTER = [
+  { kode: "MEDIS", nama: "Informatika Medis" },
+  { kode: "SDATA", nama: "Sains Data" },
+  { kode: "ITSC", nama: "Informatika Teori & Sistem Cerdas" },
+  { kode: "MVK", nama: "Multimedia & Visi Komputer" },
+  { kode: "SIRKEL", nama: "Sistem Informasi & Rekayasa Perangkat Lunak" },
+  { kode: "SIBER", nama: "Sistem Siber" },
+];
+
 function normalizeNameKey(name) {
   return String(name || "")
     .trim()
@@ -60,6 +69,33 @@ async function getNextDosenSequence(transaction) {
 
   const maxSequence = Number(rows?.[0]?.max_seq || 0);
   return maxSequence + 1;
+}
+
+async function ensureDefaultKlasters(transaction) {
+  const existingRows = await Klaster.findAll({
+    attributes: ["id", "kode", "nama"],
+    transaction,
+  });
+  const existingByCode = new Map(
+    existingRows.map((item) => [String(item.kode || "").trim().toUpperCase(), item])
+  );
+  const now = new Date();
+  const missingRows = DEFAULT_KLASTER_MASTER.filter((item) => !existingByCode.has(item.kode)).map((item) => ({
+    kode: item.kode,
+    nama: item.nama,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  if (missingRows.length > 0) {
+    await Klaster.bulkCreate(missingRows, { transaction });
+  }
+
+  return Klaster.findAll({
+    attributes: ["id", "kode", "nama"],
+    order: [["nama", "ASC"]],
+    transaction,
+  });
 }
 
 function formatDateTimeForExport(value) {
@@ -577,10 +613,7 @@ exports.exportDosensExcel = async (req, res) => {
 // GET /api/admin/klasters - daftar klaster untuk form admin
 exports.getAllKlasters = async (req, res) => {
   try {
-    const klasters = await Klaster.findAll({
-      attributes: ["id", "kode", "nama"],
-      order: [["nama", "ASC"]],
-    });
+    const klasters = await ensureDefaultKlasters();
 
     res.json({
       success: true,
@@ -602,6 +635,8 @@ exports.createDosen = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
+    await ensureDefaultKlasters(t);
+
     const {
       nik,
       nama,
@@ -827,6 +862,8 @@ exports.updateDosenProfil = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
+    await ensureDefaultKlasters(t);
+
     const { id } = req.params;
     const dosen = await Dosen.findByPk(id, { transaction: t });
 

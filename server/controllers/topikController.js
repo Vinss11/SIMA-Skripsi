@@ -30,6 +30,7 @@ function normalizeClusterCode(value) {
   if (raw.includes("SIBER")) return "SIBER";
   if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
   if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (raw.includes("MEDIS") || raw.includes("SAINS DATA") || raw.includes("SDATA")) return "ITSC";
   if (CLUSTER_LABEL_BY_CODE[raw]) return raw;
   return null;
 }

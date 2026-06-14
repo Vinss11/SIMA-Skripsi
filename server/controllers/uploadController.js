@@ -105,16 +105,25 @@ function normalizeNameKey(name) {
 const KLASTER_INPUT_ALIAS = {
   "sistem informasi": "SIRKEL",
   "rekayasa perangkat lunak": "SIRKEL",
-  sdata: "ITSC",
-  medis: "ITSC",
-  "sains data": "ITSC",
-  "informatika medis": "ITSC",
+  sdata: "SDATA",
+  medis: "MEDIS",
+  "sains data": "SDATA",
+  "informatika medis": "MEDIS",
   "informatika teori & sistem cerdas": "ITSC",
   "informatika teori dan sistem cerdas": "ITSC",
   "multimedia & visi komputer": "MVK",
   "multimedia dan visi komputer": "MVK",
   "sistem siber": "SIBER",
 };
+
+const DEFAULT_KLASTER_MASTER = [
+  { kode: "MEDIS", nama: "Informatika Medis" },
+  { kode: "SDATA", nama: "Sains Data" },
+  { kode: "ITSC", nama: "Informatika Teori & Sistem Cerdas" },
+  { kode: "MVK", nama: "Multimedia & Visi Komputer" },
+  { kode: "SIRKEL", nama: "Sistem Informasi & Rekayasa Perangkat Lunak" },
+  { kode: "SIBER", nama: "Sistem Siber" },
+];
 
 const TOPIK_CLUSTER_LABEL_BY_CODE = {
   SIRKEL: "Sirkel",
@@ -133,8 +142,36 @@ function normalizeTopikClusterCode(value) {
   if (raw.includes("SIBER")) return "SIBER";
   if (raw.includes("MULTIMEDIA") || raw.includes("VISI KOMPUTER") || raw.includes("MVK")) return "MVK";
   if (raw.includes("INFORMATIKA TEORI") || raw.includes("SISTEM CERDAS") || raw.includes("ITSC")) return "ITSC";
+  if (raw.includes("MEDIS") || raw.includes("SAINS DATA") || raw.includes("SDATA")) return "ITSC";
   if (TOPIK_CLUSTER_LABEL_BY_CODE[raw]) return raw;
   return null;
+}
+
+async function ensureDefaultKlasters(transaction) {
+  const existingRows = await Klaster.findAll({
+    attributes: ["id", "kode", "nama"],
+    transaction,
+  });
+  const existingByCode = new Map(
+    existingRows.map((item) => [String(item.kode || "").trim().toUpperCase(), item])
+  );
+  const now = new Date();
+  const missingRows = DEFAULT_KLASTER_MASTER.filter((item) => !existingByCode.has(item.kode)).map((item) => ({
+    kode: item.kode,
+    nama: item.nama,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  if (missingRows.length > 0) {
+    await Klaster.bulkCreate(missingRows, { transaction });
+  }
+
+  return Klaster.findAll({
+    attributes: ["id", "kode", "nama"],
+    order: [["nama", "ASC"]],
+    transaction,
+  });
 }
 
 function normalizeTopikClusterLabel(value) {
@@ -1564,10 +1601,7 @@ exports.uploadDosen = async (req, res) => {
     const seenNamaInFile = new Set();
     const seenEmailInFile = new Set();
     const seenJabatanInFile = new Set();
-    const allKlasters = await Klaster.findAll({
-      attributes: ["id", "kode", "nama"],
-      transaction: t,
-    });
+    const allKlasters = await ensureDefaultKlasters(t);
     const klasterMap = new Map();
     for (const klaster of allKlasters) {
       const kode = String(klaster.kode || "").toUpperCase().replace(/\s+/g, "");
@@ -1879,38 +1913,38 @@ exports.downloadDosenTemplate = (req, res) => {
     const exampleRows = [
       {
         NIK: "900000001",
-        Nama: "Dr. Ahmad Fauzi",
-        Gelar: "S.T., M.Cs., Ph.D.",
-        Email: "ahmad.fauzi@university.ac.id",
-        "Jabatan Struktural": "Ketua Jurusan Informatika",
-        Klaster: "ITSC, SIRKEL",
+        Nama: "Prof. Dr. Sri Kusumadewi",
+        Gelar: "S.Si., M.T.",
+        Email: "sri.kusumadewi@lecturer.uii.ac.id",
+        "Jabatan Struktural": "",
+        Klaster: "MEDIS, ITSC",
         "Kuota Bimbingan": 10,
       },
       {
         NIK: "900000002",
-        Nama: "Dr. Budi Santoso",
-        Gelar: "",
-        Email: "budi.santoso@university.ac.id",
+        Nama: "Ir. Dhomas Hatta Fudholi",
+        Gelar: "S.T., M.Eng., Ph.D., IPM., ASEAN Eng.",
+        Email: "dhomas.hatta.fudholi@lecturer.uii.ac.id",
         "Jabatan Struktural": "",
-        Klaster: "SIBER",
+        Klaster: "MEDIS, ITSC, SDATA",
         "Kuota Bimbingan": 8,
       },
       {
         NIK: "900000003",
-        Nama: "Dr. Citra Dewi",
-        Gelar: "",
-        Email: "citra.dewi@university.ac.id",
+        Nama: "Ir. Izzati Muhimmah",
+        Gelar: "S.T., M.Sc., Ph.D.",
+        Email: "izzati.muhimmah@lecturer.uii.ac.id",
         "Jabatan Struktural": "",
-        Klaster: "ITSC, MVK",
+        Klaster: "MEDIS, MVK",
         "Kuota Bimbingan": 5,
       },
       {
         NIK: "900000004",
-        Nama: "Prof. Dr. Dodi Prasetyo",
-        Gelar: "",
-        Email: "dodi.prasetyo@university.ac.id",
+        Nama: "Ahmad Fathan Hidayatullah",
+        Gelar: "S.T., M.Cs., Ph.D.",
+        Email: "ahmad.fathan.hidayatullah@lecturer.uii.ac.id",
         "Jabatan Struktural": "Sekretaris Program Studi Informatika - Program Sarjana Reguler",
-        Klaster: "ITSC",
+        Klaster: "ITSC, SDATA, SIRKEL",
         "Kuota Bimbingan": 12,
       },
     ];
@@ -1923,8 +1957,18 @@ exports.downloadDosenTemplate = (req, res) => {
       { "Tipe Referensi": "", "Nilai yang Diizinkan": "", Keterangan: "" },
       {
         "Tipe Referensi": "Klaster",
+        "Nilai yang Diizinkan": "MEDIS",
+        Keterangan: "Informatika Medis. Untuk pemilihan topik, cluster ini dipetakan ke ITSC.",
+      },
+      {
+        "Tipe Referensi": "Klaster",
+        "Nilai yang Diizinkan": "SDATA",
+        Keterangan: "Sains Data. Alias yang diterima: Sains Data, sdata. Untuk pemilihan topik, cluster ini dipetakan ke ITSC.",
+      },
+      {
+        "Tipe Referensi": "Klaster",
         "Nilai yang Diizinkan": "ITSC",
-        Keterangan: "Termasuk input alias: Sains Data, SDATA, Informatika Medis, MEDIS.",
+        Keterangan: "Informatika Teori & Sistem Cerdas.",
       },
       {
         "Tipe Referensi": "Klaster",
@@ -1933,6 +1977,11 @@ exports.downloadDosenTemplate = (req, res) => {
       },
       { "Tipe Referensi": "Klaster", "Nilai yang Diizinkan": "SIBER", Keterangan: "Sistem Siber." },
       { "Tipe Referensi": "Klaster", "Nilai yang Diizinkan": "MVK", Keterangan: "Multimedia & Visi Komputer." },
+      {
+        "Tipe Referensi": "Format Klaster",
+        "Nilai yang Diizinkan": "Pisahkan lebih dari satu klaster dengan koma",
+        Keterangan: "Contoh: MEDIS, ITSC, SDATA. Nilai valid: MEDIS, SDATA, ITSC, SIRKEL, SIBER, MVK.",
+      },
       {
         "Tipe Referensi": "Kuota Bimbingan",
         "Nilai yang Diizinkan": "Bilangan bulat minimal 1",
@@ -1956,6 +2005,13 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 18 }, // Kuota Bimbingan
     ];
     exampleSheet["!cols"] = ws["!cols"];
+    ws["F1"].c = [
+      {
+        a: "SIMPS",
+        t: "Isi satu atau lebih klaster. Pisahkan lebih dari satu klaster dengan koma. Nilai valid: MEDIS, SDATA, ITSC, SIRKEL, SIBER, MVK. Contoh: MEDIS, ITSC, SDATA.",
+      },
+    ];
+    exampleSheet["F1"].c = ws["F1"].c;
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
     XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
