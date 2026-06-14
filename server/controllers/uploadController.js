@@ -1,4 +1,5 @@
 const XLSX = require("xlsx");
+const CFB = require("cfb");
 const fs = require("fs");
 const { Op } = require("sequelize");
 const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
@@ -33,6 +34,40 @@ const TEMPLATE_HEADERS = {
     { key: "nik dpa", label: "NIK DPA" },
   ],
 };
+
+function styleXlsxCommentNotesAsStickyNotes(buffer) {
+  try {
+    const workbookArchive = CFB.read(buffer, { type: "buffer" });
+    let hasChanges = false;
+
+    workbookArchive.FileIndex.forEach((file) => {
+      if (!/vmlDrawing\d+\.vml$/i.test(file.name) || !Buffer.isBuffer(file.content)) {
+        return;
+      }
+
+      const originalXml = file.content.toString("utf8");
+      if (!originalXml.includes('ObjectType="Note"')) {
+        return;
+      }
+
+      const updatedXml = originalXml
+        .replace(/fillcolor="#ECFAD4"/g, 'fillcolor="#FFF200"')
+        .replace(/strokecolor="#edeaa1"/g, 'strokecolor="#D6B800"')
+        .replace(/<v:fill\b[^>]*(?:\/>|>[\s\S]*?<\/v:fill>)/g, '<v:fill color="#FFF200" color2="#FFF200" type="solid"/>');
+
+      if (updatedXml !== originalXml) {
+        file.content = Buffer.from(updatedXml, "utf8");
+        file.size = file.content.length;
+        hasChanges = true;
+      }
+    });
+
+    return hasChanges ? CFB.write(workbookArchive, { type: "buffer", fileType: "zip" }) : buffer;
+  } catch (error) {
+    console.warn("Gagal mengubah warna note template Excel:", error.message);
+    return buffer;
+  }
+}
 
 function normalizeHeader(header) {
   return String(header || "")
@@ -1929,24 +1964,6 @@ exports.downloadDosenTemplate = (req, res) => {
         Klaster: "MEDIS, ITSC, SDATA",
         "Kuota Bimbingan": 8,
       },
-      {
-        NIK: "900000003",
-        Nama: "Ir. Izzati Muhimmah",
-        Gelar: "S.T., M.Sc., Ph.D.",
-        Email: "izzati.muhimmah@lecturer.uii.ac.id",
-        "Jabatan Struktural": "",
-        Klaster: "MEDIS, MVK",
-        "Kuota Bimbingan": 5,
-      },
-      {
-        NIK: "900000004",
-        Nama: "Ahmad Fathan Hidayatullah",
-        Gelar: "S.T., M.Cs., Ph.D.",
-        Email: "ahmad.fathan.hidayatullah@lecturer.uii.ac.id",
-        "Jabatan Struktural": "Sekretaris Program Studi Informatika - Program Sarjana Reguler",
-        Klaster: "ITSC, SDATA, SIRKEL",
-        "Kuota Bimbingan": 12,
-      },
     ];
     const referenceRows = [
       ...STRUKTURAL_POSITIONS.map((jabatan) => ({
@@ -1990,7 +2007,7 @@ exports.downloadDosenTemplate = (req, res) => {
     ];
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([templateHeaders]);
+    const ws = XLSX.utils.json_to_sheet(exampleRows, { header: templateHeaders });
     const exampleSheet = XLSX.utils.json_to_sheet(exampleRows);
     const referenceSheet = XLSX.utils.json_to_sheet(referenceRows);
 
@@ -2028,7 +2045,7 @@ exports.downloadDosenTemplate = (req, res) => {
     XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
     XLSX.utils.book_append_sheet(wb, referenceSheet, "Referensi");
 
-    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const buffer = styleXlsxCommentNotesAsStickyNotes(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 
     res.setHeader("Content-Disposition", "attachment; filename=template_dosen.xlsx");
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
