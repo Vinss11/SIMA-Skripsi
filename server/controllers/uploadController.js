@@ -2005,13 +2005,22 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 18 }, // Kuota Bimbingan
     ];
     exampleSheet["!cols"] = ws["!cols"];
-    ws["F1"].c = [
-      {
-        a: "SIMPS",
-        t: "Isi satu atau lebih klaster. Pisahkan lebih dari satu klaster dengan koma. Nilai valid: MEDIS, SDATA, ITSC, SIRKEL, SIBER, MVK. Contoh: MEDIS, ITSC, SDATA.",
-      },
-    ];
-    exampleSheet["F1"].c = ws["F1"].c;
+    const klasterHeaderNote = [
+      "Isi satu atau lebih klaster.",
+      "Jika lebih dari satu, pisahkan dengan koma.",
+      "",
+      "Cluster yang valid:",
+      "- MEDIS",
+      "- SDATA / Sains Data",
+      "- ITSC",
+      "- SIRKEL",
+      "- SIBER",
+      "- MVK",
+      "",
+      "Contoh: MEDIS, ITSC, SDATA",
+    ].join("\n");
+    ws["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
+    exampleSheet["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
     XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
