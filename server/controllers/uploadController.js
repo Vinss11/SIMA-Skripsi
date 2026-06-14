@@ -2020,7 +2020,9 @@ exports.downloadDosenTemplate = (req, res) => {
       "Contoh: MEDIS, ITSC, SDATA",
     ].join("\n");
     ws["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
+    ws["F1"].c.hidden = true;
     exampleSheet["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
+    exampleSheet["F1"].c.hidden = true;
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
     XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
