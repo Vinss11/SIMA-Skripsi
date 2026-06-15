@@ -53,6 +53,8 @@ function styleXlsxCommentNotesAsStickyNotes(buffer) {
       const updatedXml = originalXml
         .replace(/fillcolor="#ECFAD4"/g, 'fillcolor="#FFF200"')
         .replace(/strokecolor="#edeaa1"/g, 'strokecolor="#D6B800"')
+        .replace(/width:104pt;height:64pt/g, "width:300pt;height:180pt")
+        .replace(/<x:Anchor>[^<]+<\/x:Anchor>/g, "<x:Anchor>6,0,1,0,11,20,13,20</x:Anchor>")
         .replace(/<v:fill\b[^>]*(?:\/>|>[\s\S]*?<\/v:fill>)/g, '<v:fill color="#FFF200" color2="#FFF200" type="solid"/>');
 
       if (updatedXml !== originalXml) {
