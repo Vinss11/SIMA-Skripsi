@@ -48,6 +48,13 @@ router.post(
   uploadController.uploadDosen
 );
 
+router.post(
+  "/dosen/commit",
+  authenticateToken,
+  authorizeRole("admin"),
+  uploadController.commitUploadDosen
+);
+
 // ========== TOPIK ROUTES ==========
 
 router.get("/template", uploadController.downloadTemplate);

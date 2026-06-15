@@ -443,6 +443,288 @@ async function getNextDosenSequence(transaction) {
   return maxSequence + 1;
 }
 
+async function buildDosenKlasterContext(transaction) {
+  const allKlasters = await ensureDefaultKlasters(transaction);
+  const klasterMap = new Map();
+  for (const klaster of allKlasters) {
+    const kode = String(klaster.kode || "").toUpperCase().replace(/\s+/g, "");
+    const nama = String(klaster.nama || "").toLowerCase().replace(/\s+/g, " ").trim();
+    if (kode) klasterMap.set(kode, klaster);
+    if (nama) klasterMap.set(nama, klaster);
+  }
+  Object.entries(KLASTER_INPUT_ALIAS).forEach(([alias, kode]) => {
+    const found = klasterMap.get(kode);
+    if (found) {
+      klasterMap.set(alias, found);
+    }
+  });
+
+  return { allKlasters, klasterMap };
+}
+
+function formatDosenKlasterCodes(allKlasters, klasterIds) {
+  if (!Array.isArray(klasterIds) || klasterIds.length === 0) return null;
+  return allKlasters
+    .filter((item) => klasterIds.includes(item.id))
+    .map((item) => item.kode)
+    .join(", ");
+}
+
+async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = false }) {
+  const results = {
+    success: [],
+    failed: [],
+    total: uploadRows.length,
+  };
+  const DEFAULT_PASSWORD_DOSEN = process.env.DEFAULT_PASSWORD_DOSEN || "12345678";
+  let nextKodeSequence = await getNextDosenSequence(transaction);
+  const seenNikInFile = new Set();
+  const seenNamaInFile = new Set();
+  const seenEmailInFile = new Set();
+  const seenJabatanInFile = new Set();
+  const { allKlasters, klasterMap } = await buildDosenKlasterContext(transaction);
+
+  for (const uploadRow of uploadRows) {
+    const { row, rowNumber, values } = uploadRow;
+
+    try {
+      const { nik, nama, gelar, email, rawJabatanStruktural, klasterRaw, rawKuotaBimbingan } = values;
+      const jabatanStruktural = normalizeJabatanStrukturalInput(rawJabatanStruktural);
+      const kuotaBimbingan =
+        rawKuotaBimbingan === undefined || rawKuotaBimbingan === null || String(rawKuotaBimbingan).trim() === ""
+          ? 5
+          : rawKuotaBimbingan;
+
+      if (!nama || !email) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: "Field wajib tidak lengkap (Nama dan Email harus diisi)",
+        });
+        continue;
+      }
+
+      const nameValidation = validateHumanName(nama, "Nama dosen");
+      if (!nameValidation.isValid) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: nameValidation.message,
+        });
+        continue;
+      }
+
+      const normalizedNik = nik ? nik.toString().trim() : null;
+      const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
+      const normalizedEmail = email.toString().trim().toLowerCase();
+
+      if (normalizedNik && !/^\d{1,9}$/.test(normalizedNik)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: "Format NIK tidak valid. NIK harus angka dengan panjang maksimal 9 digit",
+        });
+        continue;
+      }
+
+      if (normalizedNik && seenNikInFile.has(normalizedNik)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `NIK ${normalizedNik} duplikat di file upload`,
+        });
+        continue;
+      }
+
+      if (seenNamaInFile.has(normalizedNamaKey)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Nama dosen "${nameValidation.normalized}" duplikat di file upload`,
+        });
+        continue;
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(normalizedEmail)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: "Format email tidak valid",
+        });
+        continue;
+      }
+
+      if (seenEmailInFile.has(normalizedEmail)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Email ${normalizedEmail} duplikat di file upload`,
+        });
+        continue;
+      }
+
+      if (jabatanStruktural && !isValidJabatanStruktural(jabatanStruktural)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Jabatan struktural '${jabatanStruktural}' tidak valid. Pilihan resmi: ${STRUKTURAL_POSITIONS.join(" | ")}`,
+        });
+        continue;
+      }
+
+      if (jabatanStruktural && seenJabatanInFile.has(jabatanStruktural)) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Jabatan struktural '${jabatanStruktural}' duplikat di file upload.`,
+        });
+        continue;
+      }
+
+      const kuota = Number(kuotaBimbingan);
+      if (!Number.isInteger(kuota) || kuota < 1) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: "Kuota bimbingan harus berupa angka bulat minimal 1",
+        });
+        continue;
+      }
+
+      if (normalizedNik) {
+        const existingDosenNik = await Dosen.findOne({
+          where: { nik: normalizedNik },
+          transaction,
+        });
+
+        if (existingDosenNik) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `NIK ${normalizedNik} sudah terdaftar di database`,
+          });
+          continue;
+        }
+      }
+
+      const existingDosenNama = await Dosen.findOne({
+        where: sequelize.where(sequelize.fn("LOWER", sequelize.fn("TRIM", sequelize.col("nama"))), normalizedNamaKey),
+        transaction,
+      });
+
+      if (existingDosenNama) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Nama dosen "${nameValidation.normalized}" sudah terdaftar di database`,
+        });
+        continue;
+      }
+
+      const parsedKlaster = parseKlasterListInput(klasterRaw, klasterMap);
+      if (parsedKlaster.invalidTokens.length > 0) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Klaster tidak valid: ${parsedKlaster.invalidTokens.join(", ")}`,
+        });
+        continue;
+      }
+
+      const existingDosenEmail = await Dosen.findOne({
+        where: { email: normalizedEmail },
+        transaction,
+      });
+
+      if (existingDosenEmail) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Email ${normalizedEmail} sudah terdaftar di database`,
+        });
+        continue;
+      }
+
+      if (jabatanStruktural) {
+        const existingDosenJabatan = await Dosen.findOne({
+          where: { jabatan_struktural: jabatanStruktural },
+          transaction,
+        });
+
+        if (existingDosenJabatan) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: `Jabatan struktural '${jabatanStruktural}' sudah diisi oleh dosen ${existingDosenJabatan.nama}.`,
+          });
+          continue;
+        }
+      }
+
+      const generatedKodeDosen = `DSN${String(nextKodeSequence).padStart(4, "0")}`;
+      const generatedNik = String(nextKodeSequence).padStart(9, "0");
+      nextKodeSequence += 1;
+
+      let savedDosen = null;
+      if (shouldCreate) {
+        savedDosen = await Dosen.create(
+          {
+            kode_dosen: generatedKodeDosen,
+            nik: normalizedNik || generatedNik,
+            nama: nameValidation.normalized,
+            gelar: gelar ? String(gelar).trim() || null : null,
+            email: normalizedEmail,
+            password: DEFAULT_PASSWORD_DOSEN,
+            is_default_password: true,
+            jabatan_struktural: jabatanStruktural,
+            kuota_bimbingan: kuota,
+          },
+          { transaction }
+        );
+
+        if (parsedKlaster.klasterIds.length > 0) {
+          const selectedKlasters = allKlasters.filter((item) => parsedKlaster.klasterIds.includes(item.id));
+          await savedDosen.setKlasters(selectedKlasters, { transaction });
+        }
+      }
+
+      const klasterLabel = formatDosenKlasterCodes(allKlasters, parsedKlaster.klasterIds);
+      results.success.push({
+        row: rowNumber,
+        kode_dosen: savedDosen?.kode_dosen || generatedKodeDosen,
+        nik: savedDosen?.nik || normalizedNik || generatedNik,
+        nama: savedDosen?.nama || nameValidation.normalized,
+        gelar: savedDosen?.gelar ?? (gelar ? String(gelar).trim() || null : null),
+        email: savedDosen?.email || normalizedEmail,
+        jabatan_struktural: savedDosen?.jabatan_struktural ?? jabatanStruktural,
+        klaster: klasterLabel,
+        kuota_bimbingan: savedDosen?.kuota_bimbingan ?? kuota,
+      });
+
+      if (normalizedNik) {
+        seenNikInFile.add(normalizedNik);
+      }
+      seenNamaInFile.add(normalizedNamaKey);
+      seenEmailInFile.add(normalizedEmail);
+      if (jabatanStruktural) {
+        seenJabatanInFile.add(jabatanStruktural);
+      }
+    } catch (error) {
+      results.failed.push({
+        row: rowNumber,
+        data: row,
+        error: error.message,
+      });
+    }
+  }
+
+  return {
+    ...results,
+    passwordDefault: DEFAULT_PASSWORD_DOSEN,
+  };
+}
+
 // ========== TOPIK UPLOAD ==========
 
 // POST /api/admin/upload/topics - Upload Excel Topik
@@ -1936,6 +2218,150 @@ exports.uploadDosen = async (req, res) => {
 
     console.error("Error di uploadDosen:", error);
     res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/upload/dosen - Preview Excel Dosen tanpa menyimpan ke DB
+async function previewUploadDosenHandler(req, res) {
+  let t = null;
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: "File Excel harus di-upload",
+      });
+    }
+
+    const filePath = req.file.path;
+    const workbook = XLSX.readFile(filePath);
+    const sheetName = workbook.SheetNames[0];
+    const sheet = workbook.Sheets[sheetName];
+    const headers = getSheetHeaders(sheet);
+    const templateValidation = validateTemplateHeaders(headers, "dosen");
+    if (!templateValidation.isValid) {
+      fs.unlinkSync(filePath);
+      return res.status(400).json({
+        success: false,
+        message: "File yang diupload bukan template dosen yang valid.",
+        detail: {
+          missing_columns: templateValidation.missingLabels,
+          expected_columns: templateValidation.expectedLabels,
+        },
+      });
+    }
+
+    const data = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+    const uploadRows = data
+      .map((row, index) => ({
+        row,
+        rowNumber: index + 2,
+        values: extractDosenUploadValues(row),
+      }))
+      .filter((item) => !isEmptyDosenUploadRow(item.values));
+
+    fs.unlinkSync(filePath);
+
+    if (uploadRows.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "File Excel kosong atau belum memiliki baris data dosen.",
+      });
+    }
+
+    t = await sequelize.transaction();
+    const results = await processDosenUploadRows(uploadRows, { transaction: t, shouldCreate: false });
+    await t.commit();
+
+    return res.status(200).json({
+      success: true,
+      message: `Preview selesai. Valid: ${results.success.length}, Tidak valid: ${results.failed.length}. Klik Simpan untuk memasukkan data valid ke database.`,
+      data: {
+        total: results.total,
+        valid: results.success.length,
+        invalid: results.failed.length,
+        berhasil: results.success.length,
+        gagal: results.failed.length,
+        password_default: results.passwordDefault,
+        detail_valid: results.success,
+        detail_invalid: results.failed,
+        detail_berhasil: results.success,
+        detail_gagal: results.failed,
+      },
+    });
+  } catch (error) {
+    if (t && !t.finished) {
+      await t.rollback();
+    }
+
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    console.error("Error di previewUploadDosen:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+}
+
+exports.previewUploadDosen = previewUploadDosenHandler;
+exports.uploadDosen = previewUploadDosenHandler;
+
+// POST /api/upload/dosen/commit - Simpan data valid dari preview dosen
+exports.commitUploadDosen = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    const uploadRows = rows
+      .map((row, index) => ({
+        row,
+        rowNumber: Number(row?.row) || index + 1,
+        values: extractDosenUploadValues(row),
+      }))
+      .filter((item) => !isEmptyDosenUploadRow(item.values));
+
+    if (uploadRows.length === 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Tidak ada data valid untuk disimpan.",
+      });
+    }
+
+    const results = await processDosenUploadRows(uploadRows, { transaction: t, shouldCreate: true });
+    if (results.success.length > 0) {
+      await t.commit();
+    } else {
+      await t.rollback();
+    }
+
+    return res.status(200).json({
+      success: results.success.length > 0,
+      message: `Simpan dosen selesai. Berhasil: ${results.success.length}, Gagal: ${results.failed.length}`,
+      data: {
+        total: results.total,
+        berhasil: results.success.length,
+        gagal: results.failed.length,
+        password_default: results.passwordDefault,
+        detail_berhasil: results.success,
+        detail_gagal: results.failed,
+      },
+    });
+  } catch (error) {
+    if (!t.finished) {
+      await t.rollback();
+    }
+
+    console.error("Error di commitUploadDosen:", error);
+    return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,

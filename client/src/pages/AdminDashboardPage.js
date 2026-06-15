@@ -8,6 +8,7 @@ import {
   ListChecks,
   LogOut,
   PencilLine,
+  Plus,
   RefreshCcw,
   Search,
   ShieldCheck,
@@ -213,6 +214,10 @@ function UploadPanel({
   uploadButtonLabel = "Upload File",
   previewMessage = "Preview hasil upload akan tampil di sini setelah file diproses.",
   previewHelpText = "Upload dapat berisi minimal 1 baris data.",
+  successLabel = "Berhasil",
+  failedLabel = "Gagal",
+  successCountKey = "berhasil",
+  failedCountKey = "gagal",
   extraNote,
   children,
 }) {
@@ -314,7 +319,8 @@ function UploadPanel({
           {uploadResult?.message || previewMessage}
         </p>
         <p className="mt-1 text-sm text-[#42527c]">
-          Berhasil: {uploadResult?.data?.berhasil ?? 0} | Gagal: {uploadResult?.data?.gagal ?? 0}
+          {successLabel}: {uploadResult?.data?.[successCountKey] ?? 0} | {failedLabel}:{" "}
+          {uploadResult?.data?.[failedCountKey] ?? 0}
         </p>
         {previewHelpText ? <p className="mt-1 text-xs text-[#5d6c91]">{previewHelpText}</p> : null}
 
@@ -338,6 +344,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const [isUploadingDosen, setIsUploadingDosen] = useState(false);
   const [isUploadingMahasiswa, setIsUploadingMahasiswa] = useState(false);
   const [isDownloadingDosen, setIsDownloadingDosen] = useState(false);
+  const [isSavingDosenImport, setIsSavingDosenImport] = useState(false);
   const [dosenUploadPreviewPage, setDosenUploadPreviewPage] = useState(1);
   const [dosenQuery, setDosenQuery] = useState("");
   const [dosenMode, setDosenMode] = useState("list");
@@ -531,10 +538,17 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     });
   }, [dosenRows, dosenQuery]);
 
-  const dosenUploadPreviewRows = useMemo(() => {
-    const successRows = Array.isArray(uploadDosenResult?.data?.detail_berhasil)
+  const dosenUploadValidRows = useMemo(() => {
+    if (Array.isArray(uploadDosenResult?.data?.detail_valid)) {
+      return uploadDosenResult.data.detail_valid;
+    }
+    return Array.isArray(uploadDosenResult?.data?.detail_berhasil)
       ? uploadDosenResult.data.detail_berhasil
       : [];
+  }, [uploadDosenResult]);
+
+  const dosenUploadPreviewRows = useMemo(() => {
+    const successRows = dosenUploadValidRows;
     const failedRows = Array.isArray(uploadDosenResult?.data?.detail_gagal)
       ? uploadDosenResult.data.detail_gagal
       : [];
@@ -580,7 +594,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     });
 
     return [...normalizedSuccess, ...normalizedFailed];
-  }, [uploadDosenResult]);
+  }, [dosenUploadValidRows, uploadDosenResult]);
 
   const dosenUploadPreviewRowsLimited = useMemo(
     () => dosenUploadPreviewRows.slice(0, DOSEN_UPLOAD_PREVIEW_MAX_ROWS),
@@ -767,6 +781,50 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
       setError(downloadError.message || "Terjadi kesalahan saat mengunduh data dosen.");
     } finally {
       setIsDownloadingDosen(false);
+    }
+  };
+
+  const handleSaveDosenImport = async () => {
+    setError("");
+
+    if (dosenUploadValidRows.length === 0) {
+      setError("Tidak ada data valid untuk disimpan.");
+      return;
+    }
+
+    try {
+      setIsSavingDosenImport(true);
+      const response = await fetch(`${apiBaseUrl}/api/admin/upload/dosen/commit`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ rows: dosenUploadValidRows }),
+      });
+
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        onSessionExpired?.();
+        throw new Error("Sesi login berakhir. Silakan login ulang.");
+      }
+
+      if (!response.ok || !payload?.success) {
+        if (payload) {
+          setUploadDosenResult(payload);
+        }
+        throw new Error(payload?.message || "Gagal menyimpan data dosen hasil preview.");
+      }
+
+      setUploadDosenResult(payload);
+      setDosenFile(null);
+      await loadData();
+      setDosenMode("list");
+      showSuccessToast(payload.message || "Data dosen hasil import berhasil disimpan.");
+    } catch (saveError) {
+      setError(saveError.message || "Terjadi kesalahan saat menyimpan import dosen.");
+    } finally {
+      setIsSavingDosenImport(false);
     }
   };
 
@@ -1291,6 +1349,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                       setDosenMode("add");
                       setDosenActionError("");
                       setDosenActionMessage("");
+                      setUploadDosenResult(null);
                     }}
                     className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                       dosenMode === "add"
@@ -1298,8 +1357,26 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                         : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
                     }`}
                   >
-                    <Upload className="h-4 w-4" />
+                    <Plus className="h-4 w-4" />
                     Add
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSelectedDosen(null);
+                      setDosenMode("import");
+                      setDosenActionError("");
+                      setDosenActionMessage("");
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                      dosenMode === "import"
+                        ? "bg-[#2f63e3] text-white"
+                        : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                    }`}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Import
                   </button>
                 </div>
 
@@ -1317,7 +1394,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
               </div>
             </div>
 
-            {dosenMode === "add" ? (
+            {dosenMode === "import" ? (
               <div className="space-y-4">
                 <UploadPanel
                   title="Upload Dosen via Excel"
@@ -1332,10 +1409,14 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                   setUploadResult={setUploadDosenResult}
                   isUploading={isUploadingDosen}
                   setIsUploading={setIsUploadingDosen}
-                  onUploadSuccess={loadData}
-                  uploadButtonLabel="Upload Template"
+                  onUploadSuccess={() => setDosenUploadPreviewPage(1)}
+                  uploadButtonLabel="Preview Data"
                   previewMessage="Preview dosen akan tampil di sini setelah upload template."
                   previewHelpText={`Preview menampilkan maksimal ${DOSEN_UPLOAD_PREVIEW_MAX_ROWS} data (5 data per halaman).`}
+                  successLabel="Valid"
+                  failedLabel="Tidak valid"
+                  successCountKey="valid"
+                  failedCountKey="invalid"
                   extraNote="Isi sheet Template Dosen minimal 1 baris. Sheet Contoh Pengisian hanya referensi dan tidak perlu di-upload sebagai data."
                 >
                   <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
@@ -1437,6 +1518,21 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                   </div>
                 </UploadPanel>
 
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#dce6f7] bg-white p-4 shadow-sm">
+                  <p className="text-sm font-semibold text-[#314778]">
+                    Data valid baru akan masuk database setelah tombol simpan ditekan.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleSaveDosenImport}
+                    disabled={isSavingDosenImport || dosenUploadValidRows.length === 0}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isSavingDosenImport ? "Menyimpan..." : `Simpan ${dosenUploadValidRows.length} Data Valid`}
+                  </button>
+                </div>
+              </div>
+            ) : dosenMode === "add" ? (
                 <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
                   <h3 className="text-xl font-black text-[#1b274b]">Form Tambah Dosen</h3>
                   <p className="mt-1 text-sm text-[#5d6c91]">
@@ -1594,7 +1690,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                     </div>
                   ) : null}
                 </div>
-              </div>
             ) : (
               <>
                 {selectedDosen ? (

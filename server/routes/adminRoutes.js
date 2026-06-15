@@ -59,6 +59,13 @@ router.post(
 );
 
 router.post(
+  "/upload/dosen/commit",
+  authenticateToken,
+  authorizeRole("admin"),
+  uploadController.commitUploadDosen
+);
+
+router.post(
   "/upload/mahasiswa",
   authenticateToken,
   authorizeRole("admin"),
