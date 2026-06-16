@@ -207,7 +207,7 @@ function resolveSelectedJalurFromPendaftaran(pendaftaran) {
     return pendaftaran.jenis_jalur_diambil || null;
   }
   if (pendaftaran.jalur === "ulang") {
-    return pendaftaran.jenis_jalur_ulang || null;
+    return pendaftaran.jenis_jalur_diambil || pendaftaran.jenis_jalur_ulang || null;
   }
   if (pendaftaran.jalur === "alih") {
     return pendaftaran.penjaluran_baru || null;

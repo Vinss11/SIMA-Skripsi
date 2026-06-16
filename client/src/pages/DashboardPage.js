@@ -34,6 +34,13 @@ const NAV_ITEMS = [
   { id: "dokumen", label: "Dokumen", icon: FolderOpen },
 ];
 
+const JALUR_OPTIONS = [
+  { value: "penelitian", label: "Penelitian" },
+  { value: "pengabdian", label: "Pengabdian Masyarakat" },
+  { value: "perintisan_bisnis", label: "Perintisan Bisnis" },
+  { value: "magang", label: "Magang" },
+];
+
 const TAB_HEADERS = {
   dashboard: {
     icon: LayoutDashboard,
@@ -347,8 +354,237 @@ function SummaryCard({ title, main, subtitle, icon, lineTone, cardTone, badge, b
   );
 }
 
-function DashboardHome({ data, onGoToPengajuan, onGoToStatus }) {
-  const { profile, jalurStatus, submissions, sessionUser, bimbinganSummary } = data;
+function UlangAlihJalurCard({
+  profile,
+  jalurStatus,
+  jalurEligibility,
+  dosenOptions,
+  onSubmit,
+  isSubmitting,
+  submitError,
+  submitSuccess,
+  onGoToPengajuan,
+}) {
+  const [form, setForm] = useState({
+    pendaftaran: "ulang",
+    jenis_jalur_ulang: "penelitian",
+    penjaluran_sebelumnya: "penelitian",
+    penjaluran_baru: "magang",
+    dosen_pembimbing_ta_sebelumnya_id: "",
+    dosen_pembimbing_ta_baru_id: "",
+    alasan_pengajuan: "",
+  });
+  const periodeAktif = jalurEligibility?.periode_aktif || null;
+  const pendaftaranAktif = jalurEligibility?.pendaftaran_aktif || null;
+  const hasActivePengajuan = Boolean(jalurEligibility?.flags?.has_active_pengajuan || jalurStatus?.has_active_submission);
+  const latestSubmission = jalurStatus?.last_submission || null;
+  const latestApproved = ["approved", "completed"].includes(String(latestSubmission?.status || "").toLowerCase());
+  const canOpenForm = Boolean(periodeAktif && !pendaftaranAktif && !hasActivePengajuan && latestApproved);
+  const disabledReason = !periodeAktif
+    ? "Periode pendaftaran penjaluran belum dibuka oleh sekretaris prodi."
+    : pendaftaranAktif
+      ? "Anda sudah memiliki pendaftaran pada periode aktif."
+      : hasActivePengajuan
+        ? "Anda masih memiliki pengajuan aktif."
+        : !latestApproved
+          ? "Ulang/alih jalur tersedia setelah ada pengajuan yang disetujui."
+          : "";
+
+  useEffect(() => {
+    if (!profile?.dosenPembimbingSkripsi?.id) return;
+    setForm((prev) => ({
+      ...prev,
+      dosen_pembimbing_ta_sebelumnya_id:
+        prev.dosen_pembimbing_ta_sebelumnya_id || String(profile.dosenPembimbingSkripsi.id),
+    }));
+  }, [profile?.dosenPembimbingSkripsi?.id]);
+
+  const setField = (field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    onSubmit?.(form);
+  };
+
+  return (
+    <section className="rounded-xl border border-[#dbe6fb] bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-2xl font-black text-[#1a2648]">Ulang / Alih Jalur</h3>
+          <p className="mt-1 text-sm text-[#5f6b89]">
+            Ajukan pendaftaran ulang atau pindah jalur hanya saat periode penjaluran sedang dibuka.
+          </p>
+        </div>
+        {periodeAktif ? (
+          <span className="rounded-full bg-[#e9f2ff] px-3 py-1 text-xs font-bold text-[#2551b8]">
+            {periodeAktif.label_periode || "Periode aktif"}
+          </span>
+        ) : null}
+      </div>
+
+      {!canOpenForm ? (
+        <div className="mt-4 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#53658f]">
+          {disabledReason}
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Jenis Pendaftaran</label>
+            <select
+              value={form.pendaftaran}
+              onChange={(event) => setField("pendaftaran", event.target.value)}
+              disabled={isSubmitting}
+              className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+            >
+              <option value="ulang">Ulang Jalur</option>
+              <option value="alih">Alih Jalur</option>
+            </select>
+          </div>
+
+          {form.pendaftaran === "ulang" ? (
+            <div>
+              <label className="mb-1 block text-sm font-semibold text-[#324c86]">Jalur yang Diulang</label>
+              <select
+                value={form.jenis_jalur_ulang}
+                onChange={(event) => setField("jenis_jalur_ulang", event.target.value)}
+                disabled={isSubmitting}
+                className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              >
+                {JALUR_OPTIONS.map((item) => (
+                  <option key={`ulang-${item.value}`} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-[#324c86]">Penjaluran Sebelumnya</label>
+                <select
+                  value={form.penjaluran_sebelumnya}
+                  onChange={(event) => setField("penjaluran_sebelumnya", event.target.value)}
+                  disabled={isSubmitting}
+                  className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                >
+                  {JALUR_OPTIONS.map((item) => (
+                    <option key={`sebelumnya-${item.value}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-semibold text-[#324c86]">Penjaluran Baru</label>
+                <select
+                  value={form.penjaluran_baru}
+                  onChange={(event) => setField("penjaluran_baru", event.target.value)}
+                  disabled={isSubmitting}
+                  className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                >
+                  {JALUR_OPTIONS.map((item) => (
+                    <option key={`baru-${item.value}`} value={item.value}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
+          )}
+
+          <div>
+            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Dosen TA Sebelumnya</label>
+            <select
+              value={form.dosen_pembimbing_ta_sebelumnya_id}
+              onChange={(event) => setField("dosen_pembimbing_ta_sebelumnya_id", event.target.value)}
+              disabled={isSubmitting}
+              className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+            >
+              <option value="">Pilih dosen</option>
+              {dosenOptions.map((dosen) => (
+                <option key={`prev-ta-${dosen.id}`} value={dosen.id}>
+                  {dosen.nama} {dosen.nik ? `- ${dosen.nik}` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Dosen TA Baru</label>
+            <select
+              value={form.dosen_pembimbing_ta_baru_id}
+              onChange={(event) => setField("dosen_pembimbing_ta_baru_id", event.target.value)}
+              disabled={isSubmitting}
+              className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+            >
+              <option value="">Pilih dosen</option>
+              {dosenOptions.map((dosen) => (
+                <option key={`new-ta-${dosen.id}`} value={dosen.id} disabled={dosen.is_kuota_penuh}>
+                  {dosen.nama} {dosen.nik ? `- ${dosen.nik}` : ""}{dosen.is_kuota_penuh ? " (Kuota penuh)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="lg:col-span-2">
+            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Alasan Pengajuan</label>
+            <textarea
+              value={form.alasan_pengajuan}
+              onChange={(event) => setField("alasan_pengajuan", event.target.value)}
+              disabled={isSubmitting}
+              rows={3}
+              placeholder="Tuliskan alasan ulang/alih jalur"
+              className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+            />
+          </div>
+
+          {submitError ? (
+            <div className="lg:col-span-2 rounded-lg border border-[#f6d7d7] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+              {submitError}
+            </div>
+          ) : null}
+          {submitSuccess ? (
+            <div className="lg:col-span-2 rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
+              {submitSuccess}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2 lg:col-span-2">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? "Mengirim..." : "Daftar Ulang/Alih Jalur"}
+            </button>
+            {submitSuccess ? (
+              <button
+                type="button"
+                onClick={onGoToPengajuan}
+                className="rounded-lg border border-[#c8d4f0] px-4 py-2 text-sm font-bold text-[#2f63e3] transition hover:bg-[#f4f7ff]"
+              >
+                Lanjut ke Pengajuan
+              </button>
+            ) : null}
+          </div>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function DashboardHome({
+  data,
+  onGoToPengajuan,
+  onGoToStatus,
+  onSubmitUlangAlih,
+  ulangAlihSubmitting,
+  ulangAlihError,
+  ulangAlihSuccess,
+}) {
+  const { profile, jalurStatus, jalurEligibility, submissions, sessionUser, bimbinganSummary, dosenOptions } = data;
   const studentName = profile?.nama || sessionUser?.nama || "Mahasiswa";
   const studentNim = profile?.nim || sessionUser?.username || "-";
   const todayLabel = formatDateLabel(new Date());
@@ -431,6 +667,18 @@ function DashboardHome({ data, onGoToPengajuan, onGoToStatus }) {
           badgeTone={hasApprovedSubmission && hasDospem ? "bg-[#2fa86f] text-white" : "bg-[#d3ebdf] text-[#266f4e]"}
         />
       </section>
+
+      <UlangAlihJalurCard
+        profile={profile}
+        jalurStatus={jalurStatus}
+        jalurEligibility={jalurEligibility}
+        dosenOptions={Array.isArray(dosenOptions) ? dosenOptions : []}
+        onSubmit={onSubmitUlangAlih}
+        isSubmitting={ulangAlihSubmitting}
+        submitError={ulangAlihError}
+        submitSuccess={ulangAlihSuccess}
+        onGoToPengajuan={onGoToPengajuan}
+      />
 
       <section className="rounded-xl border border-[#e8ecf6] bg-white p-6 shadow-sm">
         <div className="mb-4">
@@ -818,10 +1066,14 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [jalurEligibility, setJalurEligibility] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [bimbinganSummary, setBimbinganSummary] = useState(null);
+  const [dosenOptions, setDosenOptions] = useState([]);
   const [izinLanjutReason, setIzinLanjutReason] = useState("");
   const [izinLanjutSubmitting, setIzinLanjutSubmitting] = useState(false);
   const [izinLanjutError, setIzinLanjutError] = useState("");
   const [izinLanjutSuccess, setIzinLanjutSuccess] = useState("");
+  const [ulangAlihSubmitting, setUlangAlihSubmitting] = useState(false);
+  const [ulangAlihError, setUlangAlihError] = useState("");
+  const [ulangAlihSuccess, setUlangAlihSuccess] = useState("");
   const [passwordForm, setPasswordForm] = useState({
     oldPassword: "",
     newPassword: "",
@@ -897,13 +1149,14 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       setLoading(true);
       setError("");
 
-      const [profileResult, jalurResult, jalurEligibilityResult, submissionsResult, bimbinganResult] =
+      const [profileResult, jalurResult, jalurEligibilityResult, submissionsResult, bimbinganResult, dosenResult] =
         await Promise.allSettled([
         fetchWithAuth("/api/mahasiswa/profile"),
         fetchWithAuth("/api/jalur/status"),
         fetchWithAuth("/api/jalur/eligibility"),
         fetchWithAuth("/api/submissions"),
         fetchWithAuth("/api/mahasiswa/bimbingan?summary_only=1"),
+        fetchWithAuth("/api/pendaftaran/dosen"),
       ]);
 
       if (!isMounted) return;
@@ -946,6 +1199,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         issues.push(bimbinganResult.reason?.message || "Gagal memuat data bimbingan.");
       }
 
+      if (dosenResult.status === "fulfilled") {
+        setDosenOptions(Array.isArray(dosenResult.value) ? dosenResult.value : []);
+      } else {
+        setDosenOptions([]);
+        issues.push(dosenResult.reason?.message || "Gagal memuat daftar dosen.");
+      }
+
       setError(issues.join(" "));
       setLoading(false);
     };
@@ -964,9 +1224,10 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       jalurEligibility,
       submissions,
       bimbinganSummary,
+      dosenOptions,
       sessionUser: session.user,
     }),
-    [profile, jalurStatus, jalurEligibility, submissions, bimbinganSummary, session.user]
+    [profile, jalurStatus, jalurEligibility, submissions, bimbinganSummary, dosenOptions, session.user]
   );
   const visibleNavItems = NAV_ITEMS;
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
@@ -1166,6 +1427,81 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     }
   };
 
+  const handleSubmitUlangAlih = async (form) => {
+    setUlangAlihError("");
+    setUlangAlihSuccess("");
+
+    const pendaftaran = String(form?.pendaftaran || "").trim();
+    const alasan = String(form?.alasan_pengajuan || "").trim();
+    const dosenSebelumnya = String(form?.dosen_pembimbing_ta_sebelumnya_id || "").trim();
+    const dosenBaru = String(form?.dosen_pembimbing_ta_baru_id || "").trim();
+
+    if (!["ulang", "alih"].includes(pendaftaran)) {
+      setUlangAlihError("Pilih jenis pendaftaran ulang atau alih jalur.");
+      return;
+    }
+
+    if (!dosenSebelumnya || !dosenBaru) {
+      setUlangAlihError("Dosen TA sebelumnya dan dosen TA baru wajib dipilih.");
+      return;
+    }
+
+    if (pendaftaran === "alih" && form?.penjaluran_sebelumnya === form?.penjaluran_baru) {
+      setUlangAlihError("Penjaluran baru harus berbeda dari penjaluran sebelumnya.");
+      return;
+    }
+
+    if (alasan.length < 10) {
+      setUlangAlihError("Alasan pengajuan minimal 10 karakter.");
+      return;
+    }
+
+    try {
+      setUlangAlihSubmitting(true);
+      const response = await fetch(`${apiBaseUrl}/api/pendaftaran/ulang-alih`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          pendaftaran,
+          jenis_jalur_ulang: form?.jenis_jalur_ulang,
+          penjaluran_sebelumnya: form?.penjaluran_sebelumnya,
+          penjaluran_baru: form?.penjaluran_baru,
+          dosen_pembimbing_ta_sebelumnya_id: dosenSebelumnya,
+          dosen_pembimbing_ta_baru_id: dosenBaru,
+          alasan_pengajuan: alasan,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+      const lowerMessage = String(data?.message || "").toLowerCase();
+      const isTokenError =
+        lowerMessage.includes("token tidak valid") ||
+        lowerMessage.includes("token tidak ditemukan") ||
+        lowerMessage.includes("kadaluarsa");
+
+      if (response.status === 401 || (response.status === 403 && isTokenError)) {
+        onSessionExpired?.();
+        return;
+      }
+
+      if (!response.ok || !data?.success) {
+        setUlangAlihError(data?.message || "Gagal mengajukan ulang/alih jalur.");
+        return;
+      }
+
+      setUlangAlihSuccess(data?.message || "Pendaftaran ulang/alih jalur berhasil.");
+      setRefreshTick((prev) => prev + 1);
+      setActiveTab("pengajuan");
+    } catch (requestError) {
+      setUlangAlihError("Tidak dapat terhubung ke server.");
+    } finally {
+      setUlangAlihSubmitting(false);
+    }
+  };
+
   return (
     <div className="h-screen overflow-hidden bg-[#f2f3f7]">
       <header className="fixed inset-x-0 top-0 z-40 bg-[#2f63e3] text-white shadow-sm">
@@ -1291,7 +1627,15 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
             {loading && !mustChangePassword ? <LoadingState /> : null}
 
             {!loading && !mustChangePassword && activeTab === "dashboard" ? (
-              <DashboardHome data={pageData} onGoToPengajuan={() => setActiveTab("pengajuan")} onGoToStatus={() => setActiveTab("status")} />
+              <DashboardHome
+                data={pageData}
+                onGoToPengajuan={() => setActiveTab("pengajuan")}
+                onGoToStatus={() => setActiveTab("status")}
+                onSubmitUlangAlih={handleSubmitUlangAlih}
+                ulangAlihSubmitting={ulangAlihSubmitting}
+                ulangAlihError={ulangAlihError}
+                ulangAlihSuccess={ulangAlihSuccess}
+              />
             ) : null}
 
             {!loading && !mustChangePassword && activeTab === "izin-lanjut" ? (
@@ -1314,6 +1658,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 onSessionExpired={onSessionExpired}
                 studentProfile={profile}
                 jalurEligibility={jalurEligibility}
+                jalurStatus={jalurStatus}
                 onEligibilityRefresh={() => setRefreshTick((prev) => prev + 1)}
               />
             ) : null}

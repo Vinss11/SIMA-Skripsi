@@ -1933,49 +1933,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
 
             {dosenManagementTab === "jabatan-struktural" ? (
               <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-[#1b274b]">Master Data Jabatan Struktural</h3>
-                    <p className="mt-1 text-sm text-[#5d6c91]">
-                      Atur dosen pemegang jabatan struktural. Satu jabatan hanya boleh diisi satu dosen, dan satu dosen
-                      hanya boleh memegang satu jabatan struktural.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {isEditingJabatanStruktural ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleCancelEditJabatanStruktural}
-                          disabled={savingJabatanStruktural}
-                          className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#344b7c] hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveJabatanStruktural}
-                          disabled={savingJabatanStruktural}
-                          className="rounded-lg bg-[#0f7b50] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {savingJabatanStruktural ? "Menyimpan..." : "Simpan"}
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleStartEditJabatanStruktural}
-                        className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b] hover:bg-[#f4f7ff]"
-                      >
-                        Edit
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <div className="mt-4 rounded-lg border border-[#f1d79b] bg-[#fff8e8] px-3 py-2 text-sm font-semibold text-[#8a5a00]">
-                  Dosen dengan jabatan Sekretaris Program Studi Informatika akan mendapat menu khusus Sekprodi saat login.
-                  Jika jabatan tersebut dilepas, menu khusus akan hilang setelah profile/session tersinkron.
+                <div>
+                  <h3 className="text-lg font-black text-[#1b274b]">Master Data Jabatan Struktural</h3>
+                  <p className="mt-1 text-sm text-[#5d6c91]">
+                    Atur dosen pemegang jabatan struktural. Satu jabatan hanya boleh diisi satu dosen, dan satu dosen
+                    hanya boleh memegang satu jabatan struktural.
+                  </p>
                 </div>
 
                 {jabatanActionError ? (
@@ -2098,6 +2061,37 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                       </div>
                     );
                   })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap justify-end gap-2 border-t border-[#e8edf8] pt-4">
+                  {isEditingJabatanStruktural ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleCancelEditJabatanStruktural}
+                        disabled={savingJabatanStruktural}
+                        className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#344b7c] hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveJabatanStruktural}
+                        disabled={savingJabatanStruktural}
+                        className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingJabatanStruktural ? "Menyimpan..." : "Simpan"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleStartEditJabatanStruktural}
+                      className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b] hover:bg-[#f4f7ff]"
+                    >
+                      Edit
+                    </button>
+                  )}
                 </div>
               </div>
             ) : null}

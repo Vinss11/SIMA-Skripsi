@@ -200,7 +200,15 @@ function PengajuanTypeSelector({ selectedType, onTypeChange, disabled }) {
   );
 }
 
-function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, disabled }) {
+function FormJudulDosen({
+  session,
+  apiBaseUrl,
+  onSessionExpired,
+  onSubmitted,
+  disabled,
+  submissionMode = "baru",
+  pamitId = null,
+}) {
   const [loadingTopik, setLoadingTopik] = useState(true);
   const [topikError, setTopikError] = useState("");
   const [topikRows, setTopikRows] = useState([]);
@@ -397,6 +405,8 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   const isTopik2Enabled = Boolean(selectedCodes.topik_1_kode) && !disabled;
   const isTopik3Enabled = Boolean(selectedCodes.topik_1_kode && selectedCodes.topik_2_kode) && !disabled;
   const canResetGridControl = Boolean(searchQuery.trim()) || hasAppliedTopikFilter;
+  const endpointPrefix = submissionMode === "ulang" ? "ulang" : "baru";
+  const needsPamitId = endpointPrefix === "ulang";
 
   const updateTopikFilterPopupLayout = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -615,6 +625,10 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
       setSubmitError("Pilihan topik tidak boleh duplikat.");
       return;
     }
+    if (needsPamitId && !pamitId) {
+      setSubmitError("Data pamit ulang belum tersedia. Silakan muat ulang dashboard atau hubungi admin.");
+      return;
+    }
 
     const unavailableChoice = selectedList.find((item) => !item?.is_available);
     if (unavailableChoice) {
@@ -643,9 +657,10 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
     };
     if (selectedCodes.topik_2_kode) payload.topik_2_kode = selectedCodes.topik_2_kode;
     if (selectedCodes.topik_3_kode) payload.topik_3_kode = selectedCodes.topik_3_kode;
+    if (needsPamitId) payload.pamit_id = pamitId;
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/jalur/baru/topik-dosen`, {
+      const response = await fetch(`${apiBaseUrl}/api/jalur/${endpointPrefix}/topik-dosen`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
@@ -1094,7 +1109,15 @@ function FormJudulDosen({ session, apiBaseUrl, onSessionExpired, onSubmitted, di
   );
 }
 
-function FormJudulSendiri({ session, apiBaseUrl, onSessionExpired, onSubmitted, disabled }) {
+function FormJudulSendiri({
+  session,
+  apiBaseUrl,
+  onSessionExpired,
+  onSubmitted,
+  disabled,
+  submissionMode = "baru",
+  pamitId = null,
+}) {
   const [judulMandiri, setJudulMandiri] = useState("");
   const [deskripsiMandiri, setDeskripsiMandiri] = useState("");
   const [keywordMandiri, setKeywordMandiri] = useState("");
@@ -1204,6 +1227,8 @@ function FormJudulSendiri({ session, apiBaseUrl, onSessionExpired, onSubmitted, 
     Boolean(selectedDosenId) &&
     !selectedDosen?.is_kuota_penuh &&
     selectedDosenClusterLabels.includes(selectedCluster);
+  const endpointPrefix = submissionMode === "ulang" ? "ulang" : "baru";
+  const needsPamitId = endpointPrefix === "ulang";
 
   const handleClusterChange = (value) => {
     setSelectedCluster(value);
@@ -1274,6 +1299,10 @@ function FormJudulSendiri({ session, apiBaseUrl, onSessionExpired, onSubmitted, 
       setSubmitError("Dosen yang dipilih sudah penuh kuota bimbingannya. Silakan pilih dosen lain.");
       return;
     }
+    if (needsPamitId && !pamitId) {
+      setSubmitError("Data pamit ulang belum tersedia. Silakan muat ulang dashboard atau hubungi admin.");
+      return;
+    }
 
     const confirm = await Swal.fire({
       title: "Ajukan Judul Sendiri?",
@@ -1288,19 +1317,22 @@ function FormJudulSendiri({ session, apiBaseUrl, onSessionExpired, onSubmitted, 
 
     setSubmitLoading(true);
     try {
-      const response = await fetch(`${apiBaseUrl}/api/jalur/baru/judul-mandiri`, {
+      const requestPayload = {
+        judul_mandiri: judulMandiri.trim(),
+        deskripsi_mandiri: deskripsiMandiri.trim(),
+        keyword_mandiri: keywordMandiri.trim(),
+        cluster_mandiri: selectedCluster,
+        prospective_supervisor_id: Number(selectedDosenId),
+      };
+      if (needsPamitId) requestPayload.pamit_id = pamitId;
+
+      const response = await fetch(`${apiBaseUrl}/api/jalur/${endpointPrefix}/judul-mandiri`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          judul_mandiri: judulMandiri.trim(),
-          deskripsi_mandiri: deskripsiMandiri.trim(),
-          keyword_mandiri: keywordMandiri.trim(),
-          cluster_mandiri: selectedCluster,
-          prospective_supervisor_id: Number(selectedDosenId),
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       const payload = await response.json().catch(() => null);
@@ -2510,6 +2542,7 @@ function PengajuanPage({
   apiBaseUrl,
   onSessionExpired,
   jalurEligibility,
+  jalurStatus,
   studentProfile,
   onEligibilityRefresh,
 }) {
@@ -2526,6 +2559,12 @@ function PengajuanPage({
   const renderJalurEligibility = jalurEligibility?.jalur_eligibility?.[renderJalur] || null;
   const currentFormDisabled = Boolean(renderJalurEligibility && renderJalurEligibility.enabled === false);
   const currentFormDisabledReason = renderJalurEligibility?.reason || "";
+  const activePendaftaranMode =
+    jalurEligibility?.pendaftaran_aktif?.jalur ||
+    jalurStatus?.pendaftaran_aktif?.jalur_daftar ||
+    null;
+  const penelitianSubmissionMode = activePendaftaranMode === "ulang" ? "ulang" : "baru";
+  const penelitianPamitId = penelitianSubmissionMode === "ulang" ? jalurStatus?.active_pamit?.id || null : null;
 
   return (
     <div className="w-full space-y-6 pb-8">
@@ -2559,6 +2598,8 @@ function PengajuanPage({
               onSessionExpired={onSessionExpired}
               onSubmitted={onEligibilityRefresh}
               disabled={currentFormDisabled}
+              submissionMode={penelitianSubmissionMode}
+              pamitId={penelitianPamitId}
             />
           ) : (
             <FormJudulSendiri
@@ -2567,6 +2608,8 @@ function PengajuanPage({
               onSessionExpired={onSessionExpired}
               onSubmitted={onEligibilityRefresh}
               disabled={currentFormDisabled}
+              submissionMode={penelitianSubmissionMode}
+              pamitId={penelitianPamitId}
             />
           )}
         </>
