@@ -1989,7 +1989,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                     const selectedValue = jabatanDraft[item.jabatan] || "";
                     const selectedDosen = selectedValue
                       ? dosenRows.find((row) => Number(row.id) === Number(selectedValue))
-                      : item.dosen;
+                      : isEditingJabatanStruktural
+                        ? null
+                        : item.dosen;
                     const selectedDosenLabel = formatAdminDosenOptionLabel(selectedDosen);
                     const selectedLabel = selectedDosenLabel || "Belum ditugaskan";
                     const searchValue = String(jabatanSearchQueryByField[item.jabatan] ?? "");
