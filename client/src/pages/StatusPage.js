@@ -101,16 +101,45 @@ function getStatusChip(status) {
 
 function getTahapLabel(tahapApproval, tipePengajuan, status) {
   const tahap = String(tahapApproval || "");
-  const tipe = String(tipePengajuan || "").toLowerCase();
   const normalizedStatus = String(status || "").toLowerCase();
 
   if (normalizedStatus === "approved") return "Selesai (Disetujui)";
   if (normalizedStatus === "rejected") return "Selesai (Ditolak)";
-  if (tipe === "judul_mandiri" && normalizedStatus === "pending") return "Menunggu Review Dosen";
   if (tahap === "pending_ketua_klaster") return "Menunggu Review Ketua Cluster";
+  if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
   if (tahap === "pending_dosen_pembimbing") return "Menunggu Review Dosen Pembimbing";
+  if (tahap === "pending_review_parallel") return "Menunggu Review Dosen";
+  if (tahap === "deadline_terlewati") return "Waktu Review Dosen Berakhir";
   if (normalizedStatus === "pending") return "Sedang Direview";
   return formatLabel(tahap || status || "-");
+}
+
+function getApprovalRoleLabel(value) {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "koordinator") return "Ketua Cluster";
+  if (normalized === "ketua_klaster" || normalized === "ketua_cluster") return "Ketua Cluster";
+  if (normalized === "calon_pembimbing") return "Dosen Pembimbing";
+  return formatLabel(value);
+}
+
+function DetailField({ label, value }) {
+  return (
+    <div className="rounded-lg border border-[#e3ebf8] bg-[#fbfdff] p-3">
+      <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">{label}</p>
+      <p className="mt-1 text-sm font-black text-[#1a2648]">{value || "-"}</p>
+    </div>
+  );
+}
+
+function TextBlock({ label, children }) {
+  return (
+    <div>
+      <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">{label}</p>
+      <div className="mt-1 rounded-lg border border-[#e5ecf8] bg-white px-3 py-2 text-sm leading-relaxed text-[#26355f]">
+        {children || "-"}
+      </div>
+    </div>
+  );
 }
 
 function shouldShowTopikReviewCountdown(row) {
@@ -483,6 +512,25 @@ function StatusPage({
     () => getReviewCountdown(selectedDetail?.review_deadline_at, countdownNowDate),
     [countdownNowDate, selectedDetail?.review_deadline_at]
   );
+  const selectedTahapLabel = getTahapLabel(
+    selectedDetail?.tahap_approval || selectedSubmissionRow?.tahap_approval,
+    selectedDetail?.tipe_pengajuan || selectedSubmissionRow?.tipe_pengajuan,
+    selectedDetail?.status || selectedSubmissionRow?.status
+  );
+  const selectedHistory = Array.isArray(selectedDetail?.riwayat_persetujuan)
+    ? selectedDetail.riwayat_persetujuan
+    : [];
+  const pembimbingDecision =
+    selectedHistory.find((item) => String(item?.tipe_approval || "").toLowerCase() === "calon_pembimbing") || null;
+  const ketuaClusterDecision =
+    selectedHistory.find((item) => String(item?.tipe_approval || "").toLowerCase() === "koordinator") || null;
+  const pembimbingDecisionChip = pembimbingDecision ? getStatusChip(pembimbingDecision.status) : null;
+  const ketuaClusterDecisionChip = ketuaClusterDecision ? getStatusChip(ketuaClusterDecision.status) : null;
+  const pembimbingName =
+    pembimbingDecision?.dosen?.nama ||
+    selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama ||
+    selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.nama ||
+    "-";
   const sidangChip = getSidangStatusChip(sidangStatus);
   const sidangSchedule =
     sidangStatus?.pendaftaran_aktif?.jadwal_sidang ||
@@ -769,24 +817,25 @@ function StatusPage({
 
           {!loadingDetail && selectedDetail ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="rounded-lg border border-[#e8ecf6] bg-white p-3">
-                  <p className="text-xs font-semibold text-[#5f6b89]">Jalur</p>
-                  <p className="mt-1 text-sm font-bold text-[#1a2648]">{formatLabel(selectedDetail.jenis_jalur)}</p>
+              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h4 className="text-base font-black text-[#1a2648]">Detail Pengajuan</h4>
+                    <p className="mt-1 text-sm text-[#5f6b89]">
+                      Ringkasan jalur dan waktu pengajuan mahasiswa.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#eef4ff] px-3 py-1 text-xs font-bold text-[#3158b7]">
+                    {selectedTahapLabel}
+                  </span>
                 </div>
-                <div className="rounded-lg border border-[#e8ecf6] bg-white p-3">
-                  <p className="text-xs font-semibold text-[#5f6b89]">Tipe</p>
-                  <p className="mt-1 text-sm font-bold text-[#1a2648]">{formatLabel(selectedDetail.tipe_pengajuan)}</p>
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <DetailField label="Jalur" value={formatLabel(selectedDetail.jenis_jalur)} />
+                  <DetailField label="Tipe" value={formatLabel(selectedDetail.tipe_pengajuan)} />
+                  <DetailField label="Diajukan Pada" value={formatDateTime(selectedDetail.diajukan_pada)} />
+                  <DetailField label="Diperbarui Pada" value={formatDateTime(selectedDetail.diperbarui_pada)} />
                 </div>
-                <div className="rounded-lg border border-[#e8ecf6] bg-white p-3">
-                  <p className="text-xs font-semibold text-[#5f6b89]">Diajukan</p>
-                  <p className="mt-1 text-sm font-bold text-[#1a2648]">{formatDateTime(selectedDetail.diajukan_pada)}</p>
-                </div>
-                <div className="rounded-lg border border-[#e8ecf6] bg-white p-3">
-                  <p className="text-xs font-semibold text-[#5f6b89]">Diperbarui</p>
-                  <p className="mt-1 text-sm font-bold text-[#1a2648]">{formatDateTime(selectedDetail.diperbarui_pada)}</p>
-                </div>
-              </div>
+              </section>
 
               {shouldShowTopikReviewCountdown(selectedDetail) &&
               selectedDetailReviewCountdown.has_deadline ? (
@@ -809,14 +858,39 @@ function StatusPage({
                 </div>
               ) : null}
 
-              <div className="rounded-lg border border-[#e8ecf6] bg-white p-4">
-                <h4 className="text-base font-black text-[#1a2648]">Detail Topik/Judul</h4>
+              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+                <div className="mb-3">
+                  <h4 className="text-base font-black text-[#1a2648]">Detail Topik / Judul</h4>
+                  <p className="mt-1 text-sm text-[#5f6b89]">
+                    Informasi substansi pengajuan yang sedang direview.
+                  </p>
+                </div>
                 {selectedDetail.tipe_pengajuan === "judul_mandiri" ? (
-                  <div className="mt-3 space-y-2 text-sm text-[#26355f]">
-                    <p><span className="font-semibold">Judul:</span> {selectedDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
-                    <p><span className="font-semibold">Cluster:</span> {selectedDetail.detail_pengajuan?.cluster_mandiri || "-"}</p>
-                    <p><span className="font-semibold">Deskripsi:</span> {selectedDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
-                    <p><span className="font-semibold">Keyword:</span> {selectedDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
+                      <DetailField label="Judul" value={selectedDetail.detail_pengajuan?.judul_mandiri || "-"} />
+                      <DetailField label="Cluster" value={selectedDetail.detail_pengajuan?.cluster_mandiri || "-"} />
+                    </div>
+                    <TextBlock label="Deskripsi">
+                      {selectedDetail.detail_pengajuan?.deskripsi_mandiri || "-"}
+                    </TextBlock>
+                    <TextBlock label="Keyword">
+                      <div className="flex flex-wrap gap-2">
+                        {String(selectedDetail.detail_pengajuan?.keyword_mandiri || "")
+                          .split(",")
+                          .map((item) => item.trim())
+                          .filter(Boolean)
+                          .map((item) => (
+                            <span
+                              key={`keyword-${selectedDetail.id}-${item}`}
+                              className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-xs font-bold text-[#3158b7]"
+                            >
+                              {item}
+                            </span>
+                          ))}
+                        {!selectedDetail.detail_pengajuan?.keyword_mandiri ? "-" : null}
+                      </div>
+                    </TextBlock>
                   </div>
                 ) : (
                   <div className="mt-3 space-y-3">
@@ -824,15 +898,31 @@ function StatusPage({
                       selectedTopikRows.map((item) => (
                         <div
                           key={`status-detail-topik-${item.slot || item.kode}`}
-                          className="rounded-lg border border-[#e8ecf6] bg-white p-3"
+                          className="rounded-lg border border-[#e8ecf6] bg-[#fbfdff] p-3"
                         >
-                          <p className="text-xs font-semibold text-[#60719a]">Pilihan {item.slot || "-"}</p>
-                          <p className="mt-1 text-sm font-bold text-[#1a2648]">
-                            {item.kode || "-"} - {item.judul || "-"}
-                          </p>
-                          <p className="mt-1 text-sm text-[#495a84]">Cluster: {item.cluster || "-"}</p>
-                          <p className="mt-1 text-sm text-[#495a84]">Keyword: {item.keyword || "-"}</p>
-                          <p className="mt-1 text-sm text-[#495a84]">Dosen: {item.dosen || "-"}</p>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-bold uppercase tracking-wide text-[#60719a]">
+                                Pilihan {item.slot || "-"} {item.kode ? `- ${item.kode}` : ""}
+                              </p>
+                              <p className="mt-1 text-sm font-black text-[#1a2648]">{item.judul || "-"}</p>
+                            </div>
+                            {item.reviewer_status ? (
+                              <span className={`rounded-full px-2 py-1 text-xs font-bold ${getStatusChip(item.reviewer_status).className}`}>
+                                {getStatusChip(item.reviewer_status).label}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#495a84] md:grid-cols-3">
+                            <p><span className="font-semibold">Cluster:</span> {item.cluster || "-"}</p>
+                            <p><span className="font-semibold">Keyword:</span> {item.keyword || "-"}</p>
+                            <p><span className="font-semibold">Dosen:</span> {item.dosen || "-"}</p>
+                          </div>
+                          {item.reviewer_note ? (
+                            <p className="mt-2 rounded-md bg-white px-3 py-2 text-sm text-[#26355f]">
+                              {item.reviewer_note}
+                            </p>
+                          ) : null}
                         </div>
                       ))
                     ) : (
@@ -840,35 +930,69 @@ function StatusPage({
                     )}
                   </div>
                 )}
-              </div>
+              </section>
 
-              <div className="rounded-lg border border-[#e8ecf6] bg-white p-4">
-                <h4 className="text-base font-black text-[#1a2648]">Ringkasan Hasil Review</h4>
-                <div className="mt-3 space-y-2 text-sm text-[#26355f]">
-                  <p>
-                    <span className="font-semibold">Dosen Pembimbing:</span>{" "}
-                    {selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+                <div className="mb-3">
+                  <h4 className="text-base font-black text-[#1a2648]">Hasil Keputusan Dosen</h4>
+                  <p className="mt-1 text-sm text-[#5f6b89]">
+                    Ringkasan keputusan dari dosen pembimbing sebelum masuk ke ketua cluster.
                   </p>
-                  <p>
-                    <span className="font-semibold">Alasan Persetujuan:</span>{" "}
-                    {selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"}
-                  </p>
-                  <div>
-                    <p className="font-semibold">Alasan Penolakan:</p>
-                    {alasanPenolakanList.length > 0 ? (
-                      <ul className="mt-1 list-disc pl-5">
-                        {alasanPenolakanList.map((item, index) => (
-                          <li key={`status-alasan-penolakan-${index}`}>{item}</li>
-                        ))}
-                      </ul>
+                </div>
+                <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+                  <DetailField label="Dosen Pembimbing" value={pembimbingName} />
+                  <div className="rounded-lg border border-[#e3ebf8] bg-[#fbfdff] p-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Keputusan</p>
+                    <div className="mt-2">
+                      {pembimbingDecisionChip ? (
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${pembimbingDecisionChip.className}`}>
+                          {pembimbingDecisionChip.label}
+                        </span>
+                      ) : (
+                        <span className="text-sm font-black text-[#1a2648]">Belum ada keputusan</span>
+                      )}
+                    </div>
+                  </div>
+                  <DetailField
+                    label="Tanggal Keputusan"
+                    value={formatDateTime(pembimbingDecision?.tanggal_keputusan)}
+                  />
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                  <TextBlock label="Catatan Persetujuan">
+                    {pembimbingDecision?.status === "approved"
+                      ? pembimbingDecision?.keterangan || selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
+                      : selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"}
+                  </TextBlock>
+                  <TextBlock label="Catatan Penolakan">
+                    {alasanPenolakanList.length > 0 ? alasanPenolakanList.join("; ") : "-"}
+                  </TextBlock>
+                </div>
+                <div className="mt-3 rounded-lg border border-[#e8ecf6] bg-[#fbfdff] p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Keputusan Ketua Cluster</p>
+                      <p className="mt-1 text-sm font-semibold text-[#26355f]">
+                        {ketuaClusterDecision?.dosen?.nama || "Belum ada keputusan ketua cluster."}
+                      </p>
+                    </div>
+                    {ketuaClusterDecisionChip ? (
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${ketuaClusterDecisionChip.className}`}>
+                        {ketuaClusterDecisionChip.label}
+                      </span>
                     ) : (
-                      <p className="mt-1">-</p>
+                      <span className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-xs font-bold text-[#3158b7]">
+                        {selectedTahapLabel}
+                      </span>
                     )}
                   </div>
+                  {ketuaClusterDecision?.keterangan ? (
+                    <p className="mt-2 text-sm text-[#26355f]">{ketuaClusterDecision.keterangan}</p>
+                  ) : null}
                 </div>
-              </div>
+              </section>
 
-              <div className="rounded-lg border border-[#e8ecf6] bg-white p-4">
+              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <h4 className="text-base font-black text-[#1a2648]">Riwayat Keputusan Reviewer</h4>
                 <div className="mt-3 space-y-3">
                   {(selectedDetail.riwayat_persetujuan || []).length > 0 ? (
@@ -885,7 +1009,7 @@ function StatusPage({
                                 {chip.label}
                               </span>
                               <span className="text-xs font-semibold text-[#5b688b]">
-                                {formatLabel(item.tipe_approval)}
+                                {getApprovalRoleLabel(item.tipe_approval)}
                               </span>
                             </div>
                             <span className="text-xs font-semibold text-[#5b688b]">
@@ -902,7 +1026,7 @@ function StatusPage({
                     </div>
                   )}
                 </div>
-              </div>
+              </section>
             </div>
           ) : null}
         </section>

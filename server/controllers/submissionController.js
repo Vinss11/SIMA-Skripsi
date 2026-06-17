@@ -143,6 +143,46 @@ function getTopikDosenApprovalStage(submission) {
   return "pending_review_parallel";
 }
 
+function getApprovalType(item) {
+  return String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
+}
+
+function getPengajuanApprovalStage(submission) {
+  if (!submission) return "unknown";
+
+  if (submission.tipe_pengajuan === "topik_dosen") {
+    return getTopikDosenApprovalStage(submission);
+  }
+
+  if (submission.status === "menunggu_set_ketua_cluster") {
+    return "menunggu_set_ketua_cluster";
+  }
+
+  if (submission.status !== "pending") {
+    return "non_pending_or_final";
+  }
+
+  if (submission.tipe_pengajuan === "judul_mandiri") {
+    const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
+    const hasPembimbingApproved = riwayat.some(
+      (item) => item.status === "approved" && getApprovalType(item) === "calon_pembimbing"
+    );
+    const hasKetuaClusterDecided = riwayat.some(
+      (item) =>
+        (item.status === "approved" || item.status === "rejected") &&
+        getApprovalType(item) === "koordinator"
+    );
+
+    if (hasPembimbingApproved && !hasKetuaClusterDecided) {
+      return "pending_ketua_klaster";
+    }
+
+    return "pending_dosen_pembimbing";
+  }
+
+  return "pending_review";
+}
+
 function getSubmissionDetailIncludes() {
   return [
     {
@@ -297,7 +337,7 @@ exports.getMySubmissions = async (req, res) => {
     const topikByKode = await loadTopikMetaByKode(topikKodes);
 
     const compactData = submissions.map((submission) => {
-      const approvalStage = getTopikDosenApprovalStage(submission);
+      const approvalStage = getPengajuanApprovalStage(submission);
       const base = {
         id: submission.id,
         jenis_jalur: submission.jenis_jalur,
@@ -630,8 +670,7 @@ exports.getSubmissionById = async (req, res) => {
       submission.status === "pending" &&
       Array.isArray(reviewerSlotDecisions) &&
       reviewerSlotDecisions.some((item) => item.reviewer_status === "pending");
-    const topikApprovalStage =
-      submission.tipe_pengajuan === "topik_dosen" ? getTopikDosenApprovalStage(submission) : null;
+    const topikApprovalStage = getPengajuanApprovalStage(submission);
     const canReviewKetuaClusterTopik =
       submission.tipe_pengajuan === "topik_dosen" &&
       submission.status === "pending" &&
@@ -648,7 +687,7 @@ exports.getSubmissionById = async (req, res) => {
       jenis_jalur: submission.jenis_jalur,
       tipe_pengajuan: submission.tipe_pengajuan,
       status: submission.status,
-      tahap_approval: topikApprovalStage || getTopikDosenApprovalStage(submission),
+      tahap_approval: topikApprovalStage,
       diajukan_pada: submission.createdAt,
       diperbarui_pada: submission.updatedAt,
       review_deadline_at:
