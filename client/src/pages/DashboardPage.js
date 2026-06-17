@@ -1257,7 +1257,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { id: "izin-lanjut", label: "Permohonan Extend", icon: ShieldAlert },
     ];
-    if (ulangAlihAccess.isAllowed) {
+    if (!ulangAlihAccess.isSamePeriodNewBlocked) {
       baseItems.push({ id: "ulang-alih", label: "Alih / Ulang Jalur", icon: RefreshCcw });
     }
     return [
@@ -1267,7 +1267,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
       { id: "dokumen", label: "Dokumen", icon: FolderOpen },
     ];
-  }, [ulangAlihAccess.isAllowed]);
+  }, [ulangAlihAccess.isSamePeriodNewBlocked]);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const bimbinganLockInfo = useMemo(() => {
     const hasDospem = Boolean(profile?.dosenPembimbingSkripsi?.id);
@@ -1338,10 +1338,10 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   }, [activeTab, bimbinganLockInfo.isLocked, mustChangePassword]);
 
   useEffect(() => {
-    if (!mustChangePassword && activeTab === "ulang-alih" && !ulangAlihAccess.isAllowed) {
+    if (!mustChangePassword && activeTab === "ulang-alih" && ulangAlihAccess.isSamePeriodNewBlocked) {
       setActiveTab("dashboard");
     }
-  }, [activeTab, mustChangePassword, ulangAlihAccess.isAllowed]);
+  }, [activeTab, mustChangePassword, ulangAlihAccess.isSamePeriodNewBlocked]);
 
   useEffect(() => {
     if (!isHardLockedBySemester) {
