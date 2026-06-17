@@ -786,41 +786,42 @@ function StatusPage({
       ) : null}
 
       {viewMode === "detail" && selectedDetail ? (
-        <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h3 className="text-xl font-black text-[#1a2648]">Detail Pengajuan</h3>
-            <span className={`rounded-full px-3 py-1 text-xs font-bold ${selectedStatusChip.className}`}>
-              {selectedStatusChip.label}
-            </span>
-          </div>
-
-          {detailError ? (
-            <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
-              {detailError}
+        <div className="space-y-4">
+          <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-xl font-black text-[#1a2648]">Detail Pengajuan</h3>
+              <span className={`rounded-full px-3 py-1 text-xs font-bold ${selectedStatusChip.className}`}>
+                {selectedStatusChip.label}
+              </span>
             </div>
-          ) : null}
 
-          {loadingDetail ? (
-            <div className="rounded-lg border border-[#e8edf8] bg-white p-4 text-sm font-semibold text-[#5f6b89]">
-              Memuat detail pengajuan...
-            </div>
-          ) : null}
+            {detailError ? (
+              <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+                {detailError}
+              </div>
+            ) : null}
 
-          {!loadingDetail && !selectedDetail ? (
-            <div className="rounded-lg border border-[#e8edf8] bg-white p-6 text-center">
-              <FileSearch className="mx-auto h-10 w-10 text-[#7b88ab]" />
-              <p className="mt-3 text-sm font-semibold text-[#5f6b89]">
-                Pilih salah satu pengajuan untuk melihat detail.
-              </p>
-            </div>
-          ) : null}
+            {loadingDetail ? (
+              <div className="rounded-lg border border-[#e8edf8] bg-white p-4 text-sm font-semibold text-[#5f6b89]">
+                Memuat detail pengajuan...
+              </div>
+            ) : null}
 
-          {!loadingDetail && selectedDetail ? (
-            <div className="space-y-4">
+            {!loadingDetail && !selectedDetail ? (
+              <div className="rounded-lg border border-[#e8edf8] bg-white p-6 text-center">
+                <FileSearch className="mx-auto h-10 w-10 text-[#7b88ab]" />
+                <p className="mt-3 text-sm font-semibold text-[#5f6b89]">
+                  Pilih salah satu pengajuan untuk melihat detail.
+                </p>
+              </div>
+            ) : null}
+
+            {!loadingDetail && selectedDetail ? (
+              <div className="space-y-4">
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h4 className="text-base font-black text-[#1a2648]">Detail Pengajuan</h4>
+                    <h4 className="text-base font-black text-[#1a2648]">Ringkasan Pengajuan</h4>
                     <p className="mt-1 text-sm text-[#5f6b89]">
                       Ringkasan jalur dan waktu pengajuan mahasiswa.
                     </p>
@@ -931,12 +932,17 @@ function StatusPage({
                   </div>
                 )}
               </section>
+              </div>
+            ) : null}
+          </section>
 
-              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+          {!loadingDetail && selectedDetail ? (
+            <>
+              <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
                 <div className="mb-3">
-                  <h4 className="text-base font-black text-[#1a2648]">Hasil Keputusan Dosen</h4>
+                  <h3 className="text-xl font-black text-[#1a2648]">Hasil Keputusan Dosen</h3>
                   <p className="mt-1 text-sm text-[#5f6b89]">
-                    Ringkasan keputusan dari dosen pembimbing sebelum masuk ke ketua cluster.
+                    Keputusan awal dari dosen pembimbing sebelum masuk ke ketua cluster.
                   </p>
                 </div>
                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -992,8 +998,8 @@ function StatusPage({
                 </div>
               </section>
 
-              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
-                <h4 className="text-base font-black text-[#1a2648]">Riwayat Keputusan Reviewer</h4>
+              <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+                <h3 className="text-xl font-black text-[#1a2648]">Detail Keputusan</h3>
                 <div className="mt-3 space-y-3">
                   {(selectedDetail.riwayat_persetujuan || []).length > 0 ? (
                     selectedDetail.riwayat_persetujuan.map((item, index) => {
@@ -1027,9 +1033,9 @@ function StatusPage({
                   )}
                 </div>
               </section>
-            </div>
+            </>
           ) : null}
-        </section>
+        </div>
       ) : null}
     </div>
   );
