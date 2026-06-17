@@ -654,6 +654,26 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
       return res.status(403).json(buildPeriodeWindowErrorPayload(periodeWindow));
     }
 
+    const samePeriodNewPendaftaran = await PendaftaranPenjaluran.findOne({
+      where: {
+        mahasiswa_id: mahasiswa.id,
+        periode_penjaluran_id: periodeAktif.id,
+        jalur: "baru",
+      },
+      order: [["createdAt", "DESC"]],
+      transaction: t,
+    });
+
+    if (samePeriodNewPendaftaran) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        code: "SAME_PERIOD_NEW_REGISTRATION",
+        message:
+          "Alih/ulang jalur tidak dapat dilakukan pada periode yang sama dengan pendaftaran jalur baru.",
+      });
+    }
+
     const existingPendaftaran = await PendaftaranPenjaluran.findOne({
       where: {
         mahasiswa_id: mahasiswa.id,

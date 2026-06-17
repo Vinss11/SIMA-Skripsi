@@ -20,12 +20,16 @@ const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService
 const { evaluatePeriodeWindow } = require("../services/periodePenjaluranService");
 const {
   isTopikParallelSubmission,
+  isJudulMandiriSubmission,
   buildTopikListFromSubmission,
   getTopikParallelReviewDeadline,
   evaluateTopikParallelState,
+  evaluateJudulMandiriReviewState,
   ensureParallelReviewerRows,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
+  finalizeJudulMandiriDeadlineSubmission,
+  finalizeJudulMandiriDeadlineSubmissionsByIds,
 } = require("../services/topikParallelReviewService");
 
 async function resolveAuthenticatedDosenId(req, transaction = null) {
@@ -1213,8 +1217,16 @@ exports.getDosenSubmissions = async (req, res) => {
     const pendingTopikIds = submissions
       .filter((item) => isTopikParallelSubmission(item) && item.status === "pending")
       .map((item) => item.id);
+    const pendingJudulMandiriIds = submissions
+      .filter((item) => isJudulMandiriSubmission(item) && item.status === "pending")
+      .map((item) => item.id);
     if (pendingTopikIds.length > 0) {
       await finalizeTopikParallelSubmissionsByIds(pendingTopikIds);
+    }
+    if (pendingJudulMandiriIds.length > 0) {
+      await finalizeJudulMandiriDeadlineSubmissionsByIds(pendingJudulMandiriIds);
+    }
+    if (pendingTopikIds.length > 0 || pendingJudulMandiriIds.length > 0) {
       submissions = await Pengajuan.findAll(baseQuery);
     }
 
@@ -1330,9 +1342,14 @@ exports.getDosenSubmissions = async (req, res) => {
           reviewer_decided_at: item.reviewer_decided_at,
         }));
       } else {
+        const reviewState = evaluateJudulMandiriReviewState(submission);
         base.judul_mandiri = submission.judul_mandiri;
         base.keyword_mandiri = submission.keyword_mandiri;
         base.cluster_mandiri = submission.cluster_mandiri;
+        base.review_deadline_at = getTopikParallelReviewDeadline(submission);
+        base.deadline_terlewati = Boolean(reviewState.deadline_passed && reviewState.supervisor_status === "expired");
+        base.reviewer_status = reviewState.supervisor_status;
+        base.status_dosen = reviewState.supervisor_status;
         base.can_review = submission.status === "pending";
       }
 
@@ -1519,6 +1536,20 @@ exports.approveSubmission = async (req, res) => {
         message,
         data: responseData,
       });
+    }
+
+    if (isJudulMandiriSubmission(submission)) {
+      const preFinalize = await finalizeJudulMandiriDeadlineSubmission(submission.id, { transaction: t });
+      const submissionAfterPreFinalize = preFinalize.submission || submission;
+      if (submissionAfterPreFinalize.status !== "pending") {
+        await t.commit();
+        const latestData = await loadSubmissionDecisionById(submission.id);
+        return res.status(409).json({
+          success: false,
+          message: "Pengajuan ini sudah melewati batas review 72 jam dan tidak bisa di-approve lagi.",
+          data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
     }
 
     if (Number(submission.dosen_saat_ini) !== Number(dosen_id)) {
@@ -2124,6 +2155,20 @@ exports.rejectSubmission = async (req, res) => {
         message,
         data: responseData,
       });
+    }
+
+    if (isJudulMandiriSubmission(submission)) {
+      const preFinalize = await finalizeJudulMandiriDeadlineSubmission(submission.id, { transaction: t });
+      const submissionAfterPreFinalize = preFinalize.submission || submission;
+      if (submissionAfterPreFinalize.status !== "pending") {
+        await t.commit();
+        const latestData = await loadSubmissionDecisionById(submission.id);
+        return res.status(409).json({
+          success: false,
+          message: "Pengajuan ini sudah melewati batas review 72 jam dan tidak bisa ditolak lagi.",
+          data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
+        });
+      }
     }
 
     if (Number(submission.dosen_saat_ini) !== Number(dosen_id)) {

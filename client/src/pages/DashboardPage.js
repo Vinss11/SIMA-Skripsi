@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   LogOut,
   MessageSquare,
+  RefreshCcw,
   ShieldAlert,
   Send,
   UserCircle2,
@@ -24,15 +25,6 @@ import StatusPage from "./StatusPage";
 import BimbinganPage from "./BimbinganPage";
 import MahasiswaDokumenSidangPage from "./MahasiswaDokumenSidangPage";
 import MenuSectionHeader from "../components/MenuSectionHeader";
-
-const NAV_ITEMS = [
-  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { id: "izin-lanjut", label: "Permohonan Extend", icon: ShieldAlert },
-  { id: "pengajuan", label: "Pengajuan", icon: FileText },
-  { id: "status", label: "Status", icon: Activity },
-  { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
-  { id: "dokumen", label: "Dokumen", icon: FolderOpen },
-];
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
@@ -52,6 +44,11 @@ const TAB_HEADERS = {
     title: "Permohonan Extend",
     subtitle:
       "Ajukan permohonan extend saat masa penjaluran memasuki semester ke-3 atau lebih.",
+  },
+  "ulang-alih": {
+    icon: RefreshCcw,
+    title: "Alih / Ulang Jalur",
+    subtitle: "Ajukan alih atau ulang jalur sesuai periode penjaluran yang sedang dibuka.",
   },
   pengajuan: {
     icon: FileText,
@@ -142,6 +139,55 @@ function formatJalurLabel(jalur) {
   return normalized
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getUlangAlihAccess({ jalurEligibility, jalurStatus }) {
+  const periodeAktif = jalurEligibility?.periode_aktif || null;
+  const pendaftaranAktif = jalurEligibility?.pendaftaran_aktif || null;
+  const pendaftaranAktifJalur = String(pendaftaranAktif?.jalur || "").toLowerCase();
+  const hasActivePengajuan = Boolean(jalurEligibility?.flags?.has_active_pengajuan || jalurStatus?.has_active_submission);
+  const latestSubmission = jalurStatus?.last_submission || null;
+  const latestSubmissionStatus = String(latestSubmission?.status || "").toLowerCase();
+  const latestApproved = ["approved", "completed"].includes(latestSubmissionStatus);
+
+  if (!periodeAktif) {
+    return {
+      isAllowed: false,
+      reason: "Periode pendaftaran penjaluran belum dibuka oleh sekretaris prodi.",
+    };
+  }
+
+  if (pendaftaranAktifJalur === "baru") {
+    return {
+      isAllowed: false,
+      isSamePeriodNewBlocked: true,
+      reason:
+        "Alih/ulang jalur tidak tersedia karena Anda mendaftar jalur baru pada periode penjaluran aktif yang sama.",
+    };
+  }
+
+  if (pendaftaranAktif) {
+    return {
+      isAllowed: false,
+      reason: "Anda sudah memiliki pendaftaran pada periode aktif.",
+    };
+  }
+
+  if (hasActivePengajuan) {
+    return {
+      isAllowed: false,
+      reason: "Anda masih memiliki pengajuan aktif.",
+    };
+  }
+
+  if (!latestApproved) {
+    return {
+      isAllowed: false,
+      reason: "Ulang/alih jalur tersedia setelah ada pengajuan yang disetujui atau selesai.",
+    };
+  }
+
+  return { isAllowed: true, reason: "" };
 }
 
 function statusFromSubmission(status) {
@@ -375,20 +421,9 @@ function UlangAlihJalurCard({
     alasan_pengajuan: "",
   });
   const periodeAktif = jalurEligibility?.periode_aktif || null;
-  const pendaftaranAktif = jalurEligibility?.pendaftaran_aktif || null;
-  const hasActivePengajuan = Boolean(jalurEligibility?.flags?.has_active_pengajuan || jalurStatus?.has_active_submission);
-  const latestSubmission = jalurStatus?.last_submission || null;
-  const latestApproved = ["approved", "completed"].includes(String(latestSubmission?.status || "").toLowerCase());
-  const canOpenForm = Boolean(periodeAktif && !pendaftaranAktif && !hasActivePengajuan && latestApproved);
-  const disabledReason = !periodeAktif
-    ? "Periode pendaftaran penjaluran belum dibuka oleh sekretaris prodi."
-    : pendaftaranAktif
-      ? "Anda sudah memiliki pendaftaran pada periode aktif."
-      : hasActivePengajuan
-        ? "Anda masih memiliki pengajuan aktif."
-        : !latestApproved
-          ? "Ulang/alih jalur tersedia setelah ada pengajuan yang disetujui."
-          : "";
+  const access = getUlangAlihAccess({ jalurEligibility, jalurStatus });
+  const canOpenForm = access.isAllowed;
+  const disabledReason = access.reason;
 
   useEffect(() => {
     if (!profile?.dosenPembimbingSkripsi?.id) return;
@@ -579,12 +614,8 @@ function DashboardHome({
   data,
   onGoToPengajuan,
   onGoToStatus,
-  onSubmitUlangAlih,
-  ulangAlihSubmitting,
-  ulangAlihError,
-  ulangAlihSuccess,
 }) {
-  const { profile, jalurStatus, jalurEligibility, submissions, sessionUser, bimbinganSummary, dosenOptions } = data;
+  const { profile, jalurStatus, submissions, sessionUser, bimbinganSummary } = data;
   const studentName = profile?.nama || sessionUser?.nama || "Mahasiswa";
   const studentNim = profile?.nim || sessionUser?.username || "-";
   const todayLabel = formatDateLabel(new Date());
@@ -667,18 +698,6 @@ function DashboardHome({
           badgeTone={hasApprovedSubmission && hasDospem ? "bg-[#2fa86f] text-white" : "bg-[#d3ebdf] text-[#266f4e]"}
         />
       </section>
-
-      <UlangAlihJalurCard
-        profile={profile}
-        jalurStatus={jalurStatus}
-        jalurEligibility={jalurEligibility}
-        dosenOptions={Array.isArray(dosenOptions) ? dosenOptions : []}
-        onSubmit={onSubmitUlangAlih}
-        isSubmitting={ulangAlihSubmitting}
-        submitError={ulangAlihError}
-        submitSuccess={ulangAlihSuccess}
-        onGoToPengajuan={onGoToPengajuan}
-      />
 
       <section className="rounded-xl border border-[#e8ecf6] bg-white p-6 shadow-sm">
         <div className="mb-4">
@@ -1104,6 +1123,10 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     jalurStatus?.pendaftaran_aktif?.jalur_form_lanjutan ||
     jalurEligibility?.pendaftaran_aktif?.selected_jalur ||
     null;
+  const ulangAlihAccess = useMemo(
+    () => getUlangAlihAccess({ jalurEligibility, jalurStatus }),
+    [jalurEligibility, jalurStatus]
+  );
   const latestSubmissionForBimbingan = jalurStatus?.last_submission || submissions?.[0] || null;
   const latestSubmissionStatusForBimbingan = String(latestSubmissionForBimbingan?.status || "").toLowerCase();
   const isPenelitianApprovedForBimbingan =
@@ -1229,7 +1252,22 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     }),
     [profile, jalurStatus, jalurEligibility, submissions, bimbinganSummary, dosenOptions, session.user]
   );
-  const visibleNavItems = NAV_ITEMS;
+  const visibleNavItems = useMemo(() => {
+    const baseItems = [
+      { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { id: "izin-lanjut", label: "Permohonan Extend", icon: ShieldAlert },
+    ];
+    if (ulangAlihAccess.isAllowed) {
+      baseItems.push({ id: "ulang-alih", label: "Alih / Ulang Jalur", icon: RefreshCcw });
+    }
+    return [
+      ...baseItems,
+      { id: "pengajuan", label: "Pengajuan", icon: FileText },
+      { id: "status", label: "Status", icon: Activity },
+      { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
+      { id: "dokumen", label: "Dokumen", icon: FolderOpen },
+    ];
+  }, [ulangAlihAccess.isAllowed]);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const bimbinganLockInfo = useMemo(() => {
     const hasDospem = Boolean(profile?.dosenPembimbingSkripsi?.id);
@@ -1298,6 +1336,12 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       setActiveTab("dashboard");
     }
   }, [activeTab, bimbinganLockInfo.isLocked, mustChangePassword]);
+
+  useEffect(() => {
+    if (!mustChangePassword && activeTab === "ulang-alih" && !ulangAlihAccess.isAllowed) {
+      setActiveTab("dashboard");
+    }
+  }, [activeTab, mustChangePassword, ulangAlihAccess.isAllowed]);
 
   useEffect(() => {
     if (!isHardLockedBySemester) {
@@ -1430,6 +1474,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const handleSubmitUlangAlih = async (form) => {
     setUlangAlihError("");
     setUlangAlihSuccess("");
+
+    if (!ulangAlihAccess.isAllowed) {
+      setUlangAlihError(ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia.");
+      return;
+    }
 
     const pendaftaran = String(form?.pendaftaran || "").trim();
     const alasan = String(form?.alasan_pengajuan || "").trim();
@@ -1631,10 +1680,20 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 data={pageData}
                 onGoToPengajuan={() => setActiveTab("pengajuan")}
                 onGoToStatus={() => setActiveTab("status")}
-                onSubmitUlangAlih={handleSubmitUlangAlih}
-                ulangAlihSubmitting={ulangAlihSubmitting}
-                ulangAlihError={ulangAlihError}
-                ulangAlihSuccess={ulangAlihSuccess}
+              />
+            ) : null}
+
+            {!loading && !mustChangePassword && activeTab === "ulang-alih" ? (
+              <UlangAlihJalurCard
+                profile={profile}
+                jalurStatus={jalurStatus}
+                jalurEligibility={jalurEligibility}
+                dosenOptions={Array.isArray(dosenOptions) ? dosenOptions : []}
+                onSubmit={handleSubmitUlangAlih}
+                isSubmitting={ulangAlihSubmitting}
+                submitError={ulangAlihError}
+                submitSuccess={ulangAlihSuccess}
+                onGoToPengajuan={() => setActiveTab("pengajuan")}
               />
             ) : null}
 

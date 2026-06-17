@@ -144,10 +144,12 @@ function TextBlock({ label, children }) {
 
 function shouldShowTopikReviewCountdown(row) {
   const tahap = String(row?.tahap_approval || "").toLowerCase();
+  const tipe = String(row?.tipe_pengajuan || "").toLowerCase();
+  const status = String(row?.status || "").toLowerCase();
   return (
-    row?.tipe_pengajuan === "topik_dosen" &&
-    row?.status === "pending" &&
-    (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")
+    status === "pending" &&
+    ((tipe === "topik_dosen" && (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")) ||
+      (tipe === "judul_mandiri" && tahap === "pending_dosen_pembimbing"))
   );
 }
 

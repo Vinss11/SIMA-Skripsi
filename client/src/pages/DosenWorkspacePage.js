@@ -541,10 +541,12 @@ function getDosenSubmissionTahapLabel(row) {
 
 function shouldShowTopikReviewCountdown(row) {
   const tahap = String(row?.tahap_approval || "").toLowerCase();
+  const tipe = String(row?.tipe_pengajuan || "").toLowerCase();
+  const status = String(row?.status || "").toLowerCase();
   return (
-    row?.tipe_pengajuan === "topik_dosen" &&
-    row?.status === "pending" &&
-    (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")
+    status === "pending" &&
+    ((tipe === "topik_dosen" && (tahap === "pending_review_parallel" || tahap === "deadline_terlewati")) ||
+      (tipe === "judul_mandiri" && tahap === "pending_dosen_pembimbing"))
   );
 }
 
@@ -5840,6 +5842,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         ) : (
                           <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
                             <div className="space-y-2 text-sm text-[#324c86]">
+                              {shouldShowTopikReviewCountdown(submissionDetail) &&
+                              submissionReviewCountdown.has_deadline ? (
+                                <p
+                                  className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
+                                    submissionReviewCountdown.is_expired
+                                      ? "border-[#f3c9c9] bg-[#fff5f5] text-[#b73a3a]"
+                                      : "border-[#dbe4fa] bg-white text-[#355da8]"
+                                  }`}
+                                >
+                                  {submissionReviewCountdown.is_expired
+                                    ? "Waktu review 72 jam telah berakhir. Sistem akan memproses otomatis."
+                                    : `Sisa waktu review 72 jam: ${submissionReviewCountdown.label} (batas: ${formatDateTime(
+                                        submissionDetail.review_deadline_at
+                                      )})`}
+                                </p>
+                              ) : null}
                               <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
                               <p><span className="font-semibold">Cluster:</span> {submissionDetail.detail_pengajuan?.cluster_mandiri || "-"}</p>
                               <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>

@@ -177,6 +177,48 @@ function isTopikParallelSubmission(submission) {
   return String(submission?.tipe_pengajuan || "").trim().toLowerCase() === "topik_dosen";
 }
 
+function isJudulMandiriSubmission(submission) {
+  return String(submission?.tipe_pengajuan || "").trim().toLowerCase() === "judul_mandiri";
+}
+
+function isCalonPembimbingDecision(item) {
+  return normalizeApprovalType(item?.tipe_approval) === "calon_pembimbing";
+}
+
+function hasCalonPembimbingFinalDecision(submission) {
+  return getSubmissionRiwayatRows(submission).some(
+    (item) => isCalonPembimbingDecision(item) && ["approved", "rejected"].includes(normalizeRiwayatStatus(item?.status))
+  );
+}
+
+function evaluateJudulMandiriReviewState(submission, options = {}) {
+  const now = options.now instanceof Date ? options.now : new Date();
+  const deadlineAt = getTopikParallelReviewDeadline(submission);
+  const deadlinePassed = now.getTime() >= deadlineAt.getTime();
+  const riwayat = getSubmissionRiwayatRows(submission);
+  const supervisorDecision =
+    riwayat
+      .filter((item) => isCalonPembimbingDecision(item))
+      .slice()
+      .sort(
+        (left, right) =>
+          toDecisionDate(right.tanggal_keputusan || right.updatedAt || right.createdAt, new Date(0)).getTime() -
+          toDecisionDate(left.tanggal_keputusan || left.updatedAt || left.createdAt, new Date(0)).getTime()
+      )[0] || null;
+  const rawStatus = normalizeRiwayatStatus(supervisorDecision?.status || "pending");
+  const effectiveStatus = rawStatus === "pending" && deadlinePassed ? "expired" : rawStatus;
+
+  return {
+    now,
+    deadline_at: deadlineAt,
+    deadline_passed: deadlinePassed,
+    supervisor_status: effectiveStatus,
+    supervisor_status_db: rawStatus,
+    supervisor_decision: supervisorDecision,
+    can_finalize: deadlinePassed && rawStatus === "pending" && !hasCalonPembimbingFinalDecision(submission),
+  };
+}
+
 async function isSubmissionPenelitianTrack(submission, transaction) {
   if (!submission?.mahasiswa_id) {
     return isTopikParallelSubmission(submission);
@@ -941,14 +983,116 @@ async function finalizeTopikParallelSubmissionsByIds(submissionIds = []) {
   }
 }
 
+async function finalizeJudulMandiriDeadlineSubmission(submissionId, options = {}) {
+  const externalTransaction = options.transaction || null;
+  const transaction = externalTransaction || (await sequelize.transaction());
+
+  try {
+    const submission = await loadSubmissionWithRiwayat(submissionId, {
+      transaction,
+      lockSubmission: true,
+    });
+
+    if (!submission || !isJudulMandiriSubmission(submission)) {
+      if (!externalTransaction) await transaction.commit();
+      return {
+        success: true,
+        changed: false,
+        finalized: false,
+        submission,
+        review_state: submission ? evaluateJudulMandiriReviewState(submission) : null,
+      };
+    }
+
+    const reviewState = evaluateJudulMandiriReviewState(submission);
+    if (submission.status !== "pending" || !reviewState.can_finalize) {
+      if (!externalTransaction) await transaction.commit();
+      return {
+        success: true,
+        changed: false,
+        finalized: false,
+        submission,
+        review_state: reviewState,
+      };
+    }
+
+    const now = new Date();
+    await RiwayatPersetujuan.create(
+      {
+        pengajuan_id: submission.id,
+        dosen_id: submission.prospective_supervisor_id || submission.dosen_saat_ini,
+        tipe_approval: "calon_pembimbing",
+        status: "rejected",
+        keterangan: "Pengajuan otomatis ditolak karena calon dosen pembimbing tidak memberi keputusan dalam 72 jam.",
+        tanggal_keputusan: now,
+      },
+      { transaction }
+    );
+
+    await submission.update(
+      {
+        status: "rejected",
+        dosen_saat_ini: null,
+        alasan_persetujuan: null,
+        alasan_penolakan: "Pengajuan otomatis ditolak karena calon dosen pembimbing tidak memberi keputusan dalam 72 jam.",
+      },
+      { transaction }
+    );
+
+    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+
+    if (mahasiswa && Number(mahasiswa.pengajuan_aktif_id) === Number(submission.id)) {
+      await mahasiswa.update(
+        {
+          pengajuan_aktif_id: null,
+          status_jalur_saat_ini: getMahasiswaFallbackStatusForRejectedSubmission(submission),
+        },
+        { transaction }
+      );
+    }
+
+    const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, {
+      transaction,
+    });
+
+    if (!externalTransaction) await transaction.commit();
+
+    return {
+      success: true,
+      changed: true,
+      finalized: true,
+      final_status: "rejected",
+      submission: refreshedSubmission,
+      review_state: evaluateJudulMandiriReviewState(refreshedSubmission),
+    };
+  } catch (error) {
+    if (!externalTransaction) await transaction.rollback();
+    throw error;
+  }
+}
+
+async function finalizeJudulMandiriDeadlineSubmissionsByIds(submissionIds = []) {
+  const uniqueIds = [...new Set((submissionIds || []).map((id) => toNumber(id)).filter(Boolean))];
+  for (const id of uniqueIds) {
+    await finalizeJudulMandiriDeadlineSubmission(id);
+  }
+}
+
 module.exports = {
   TOPIK_PARALLEL_REVIEW_HOURS,
   TOPIK_PARALLEL_REVIEW_MS,
   isTopikParallelSubmission,
+  isJudulMandiriSubmission,
   buildTopikListFromSubmission,
   getTopikParallelReviewDeadline,
   evaluateTopikParallelState,
+  evaluateJudulMandiriReviewState,
   ensureParallelReviewerRows,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
+  finalizeJudulMandiriDeadlineSubmission,
+  finalizeJudulMandiriDeadlineSubmissionsByIds,
 };

@@ -2,11 +2,15 @@ const { Op } = require("sequelize");
 const { Pengajuan, Mahasiswa, Dosen, Topik, RiwayatPersetujuan, PamitUlang, SekretarisProdi } = require("../models");
 const {
   isTopikParallelSubmission,
+  isJudulMandiriSubmission,
   buildTopikListFromSubmission,
   getTopikParallelReviewDeadline,
   evaluateTopikParallelState,
+  evaluateJudulMandiriReviewState,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
+  finalizeJudulMandiriDeadlineSubmission,
+  finalizeJudulMandiriDeadlineSubmissionsByIds,
 } = require("../services/topikParallelReviewService");
 
 async function resolveSekretarisAsDosenId(req, sekretarisId) {
@@ -321,8 +325,16 @@ exports.getMySubmissions = async (req, res) => {
     const pendingTopikIds = submissions
       .filter((item) => isTopikParallelSubmission(item) && item.status === "pending")
       .map((item) => item.id);
+    const pendingJudulMandiriIds = submissions
+      .filter((item) => isJudulMandiriSubmission(item) && item.status === "pending")
+      .map((item) => item.id);
     if (pendingTopikIds.length > 0) {
       await finalizeTopikParallelSubmissionsByIds(pendingTopikIds);
+    }
+    if (pendingJudulMandiriIds.length > 0) {
+      await finalizeJudulMandiriDeadlineSubmissionsByIds(pendingJudulMandiriIds);
+    }
+    if (pendingTopikIds.length > 0 || pendingJudulMandiriIds.length > 0) {
       submissions = await Pengajuan.findAll(baseQuery);
     }
 
@@ -394,6 +406,7 @@ exports.getMySubmissions = async (req, res) => {
         base.review_deadline_at = getTopikParallelReviewDeadline(submission);
         base.deadline_terlewati = Boolean(parallelState.deadline_passed && parallelState.pending_count > 0);
       } else {
+        const reviewState = evaluateJudulMandiriReviewState(submission);
         base.judul_mandiri = {
           judul: submission.judul_mandiri,
           keyword: submission.keyword_mandiri,
@@ -406,6 +419,9 @@ exports.getMySubmissions = async (req, res) => {
               }
             : null,
         };
+        base.review_deadline_at = getTopikParallelReviewDeadline(submission);
+        base.deadline_terlewati = Boolean(reviewState.deadline_passed && reviewState.supervisor_status === "expired");
+        base.reviewer_status = reviewState.supervisor_status;
       }
 
       return base;
@@ -502,6 +518,11 @@ exports.getSubmissionById = async (req, res) => {
       if (finalizationResult?.changed || finalizationResult?.finalized) {
         submission = await loadSubmissionDetailById(Number(id));
       }
+    } else if (isJudulMandiriSubmission(submission) && submission.status === "pending") {
+      const finalizationResult = await finalizeJudulMandiriDeadlineSubmission(submission.id);
+      if (finalizationResult?.changed || finalizationResult?.finalized) {
+        submission = await loadSubmissionDetailById(Number(id));
+      }
     }
 
     const riwayatOrdered = (submission.riwayat || [])
@@ -524,6 +545,9 @@ exports.getSubmissionById = async (req, res) => {
       .map((item) => item.keterangan)
       .filter(Boolean);
     const topikParallelState = isTopikParallelSubmission(submission) ? evaluateTopikParallelState(submission) : null;
+    const judulMandiriReviewState = isJudulMandiriSubmission(submission)
+      ? evaluateJudulMandiriReviewState(submission)
+      : null;
     const reviewerSlotDecisions =
       topikParallelState && accessorDosenId
         ? topikParallelState.slot_decisions
@@ -662,6 +686,10 @@ exports.getSubmissionById = async (req, res) => {
               email: submission.prospectiveSupervisor.email,
             }
           : null,
+        review_deadline_at: getTopikParallelReviewDeadline(submission),
+        deadline_terlewati: Boolean(
+          judulMandiriReviewState?.deadline_passed && judulMandiriReviewState?.supervisor_status === "expired"
+        ),
       };
     }
 
@@ -691,10 +719,18 @@ exports.getSubmissionById = async (req, res) => {
       diajukan_pada: submission.createdAt,
       diperbarui_pada: submission.updatedAt,
       review_deadline_at:
-        submission.tipe_pengajuan === "topik_dosen" ? getTopikParallelReviewDeadline(submission) : null,
-      reviewer_status: canReviewKetuaClusterTopik ? "pending" : currentReviewerDecision?.reviewer_status || null,
+        submission.tipe_pengajuan === "topik_dosen" || submission.tipe_pengajuan === "judul_mandiri"
+          ? getTopikParallelReviewDeadline(submission)
+          : null,
+      reviewer_status: canReviewKetuaClusterTopik
+        ? "pending"
+        : submission.tipe_pengajuan === "judul_mandiri"
+        ? judulMandiriReviewState?.supervisor_status || null
+        : currentReviewerDecision?.reviewer_status || null,
       reviewer_note: canReviewKetuaClusterTopik
         ? "Menunggu keputusan ketua cluster."
+        : submission.tipe_pengajuan === "judul_mandiri"
+        ? judulMandiriReviewState?.supervisor_decision?.keterangan || null
         : currentReviewerDecision?.reviewer_note || null,
       review_context: canReviewKetuaClusterTopik ? "ketua_klaster" : "calon_pembimbing",
       can_review: Boolean(canReviewTopikParallel || canReviewKetuaClusterTopik || canReviewNonTopik),
