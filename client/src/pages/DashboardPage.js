@@ -1253,21 +1253,16 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     [profile, jalurStatus, jalurEligibility, submissions, bimbinganSummary, dosenOptions, session.user]
   );
   const visibleNavItems = useMemo(() => {
-    const baseItems = [
+    return [
       { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
       { id: "izin-lanjut", label: "Permohonan Extend", icon: ShieldAlert },
-    ];
-    if (!ulangAlihAccess.isSamePeriodNewBlocked) {
-      baseItems.push({ id: "ulang-alih", label: "Alih / Ulang Jalur", icon: RefreshCcw });
-    }
-    return [
-      ...baseItems,
+      { id: "ulang-alih", label: "Alih / Ulang Jalur", icon: RefreshCcw },
       { id: "pengajuan", label: "Pengajuan", icon: FileText },
       { id: "status", label: "Status", icon: Activity },
       { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
       { id: "dokumen", label: "Dokumen", icon: FolderOpen },
     ];
-  }, [ulangAlihAccess.isSamePeriodNewBlocked]);
+  }, []);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const bimbinganLockInfo = useMemo(() => {
     const hasDospem = Boolean(profile?.dosenPembimbingSkripsi?.id);
@@ -1338,10 +1333,10 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   }, [activeTab, bimbinganLockInfo.isLocked, mustChangePassword]);
 
   useEffect(() => {
-    if (!mustChangePassword && activeTab === "ulang-alih" && ulangAlihAccess.isSamePeriodNewBlocked) {
+    if (!mustChangePassword && activeTab === "ulang-alih" && !ulangAlihAccess.isAllowed) {
       setActiveTab("dashboard");
     }
-  }, [activeTab, mustChangePassword, ulangAlihAccess.isSamePeriodNewBlocked]);
+  }, [activeTab, mustChangePassword, ulangAlihAccess.isAllowed]);
 
   useEffect(() => {
     if (!isHardLockedBySemester) {
@@ -1598,7 +1593,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 const isLockedBySemester = isHardLockedBySemester && item.id !== "izin-lanjut";
                 const isLockedByOnboardingItem = isLockedByOnboarding && item.id !== "pengajuan";
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
-                const isDisabled = mustChangePassword || isLockedBySemester || isLockedByOnboardingItem || isLockedByBimbinganRule;
+                const isLockedByUlangAlihRule = item.id === "ulang-alih" && !ulangAlihAccess.isAllowed;
+                const isDisabled =
+                  mustChangePassword ||
+                  isLockedBySemester ||
+                  isLockedByOnboardingItem ||
+                  isLockedByBimbinganRule ||
+                  isLockedByUlangAlihRule;
                 const disabledReason = mustChangePassword
                   ? "Ubah password default terlebih dahulu."
                   : isLockedBySemester
@@ -1607,26 +1608,34 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                       ? onboardingLockReason
                       : isLockedByBimbinganRule
                         ? bimbinganLockInfo.reason
+                        : isLockedByUlangAlihRule
+                          ? ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia."
                       : "";
 
                 return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    title={isDisabled ? disabledReason : ""}
-                    disabled={isDisabled}
-                    onClick={() => {
-                      if (!isDisabled) {
-                        setActiveTab(item.id);
-                      }
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
-                      isActive ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#405070] hover:bg-[#f2f6ff]"
-                    } ${isDisabled ? "cursor-not-allowed opacity-55" : ""}`}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {item.label}
-                  </button>
+                  <React.Fragment key={item.id}>
+                    <button
+                      type="button"
+                      title={isDisabled ? disabledReason : ""}
+                      disabled={isDisabled}
+                      onClick={() => {
+                        if (!isDisabled) {
+                          setActiveTab(item.id);
+                        }
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
+                        isActive ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#405070] hover:bg-[#f2f6ff]"
+                      } ${isDisabled ? "cursor-not-allowed opacity-55" : ""}`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </button>
+                    {isLockedByUlangAlihRule ? (
+                      <div className="mx-3 mb-2 rounded-lg border border-[#e7ecf8] bg-[#f8fbff] px-3 py-2 text-xs font-semibold leading-relaxed text-[#66759e]">
+                        {ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia."}
+                      </div>
+                    ) : null}
+                  </React.Fragment>
                 );
               })}
             </div>
