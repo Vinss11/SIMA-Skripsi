@@ -423,6 +423,7 @@ function UlangAlihJalurCard({
   const periodeAktif = jalurEligibility?.periode_aktif || null;
   const access = getUlangAlihAccess({ jalurEligibility, jalurStatus });
   const canOpenForm = access.isAllowed;
+  const isFormDisabled = !canOpenForm || isSubmitting;
   const disabledReason = access.reason;
 
   useEffect(() => {
@@ -440,6 +441,7 @@ function UlangAlihJalurCard({
 
   const handleSubmit = (event) => {
     event.preventDefault();
+    if (!canOpenForm) return;
     onSubmit?.(form);
   };
 
@@ -463,14 +465,18 @@ function UlangAlihJalurCard({
         <div className="mt-4 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#53658f]">
           {disabledReason}
         </div>
-      ) : (
-        <form onSubmit={handleSubmit} className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+      ) : null}
+
+      <form
+        onSubmit={handleSubmit}
+        className={`mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 ${!canOpenForm ? "opacity-55" : ""}`}
+      >
           <div>
             <label className="mb-1 block text-sm font-semibold text-[#324c86]">Jenis Pendaftaran</label>
             <select
               value={form.pendaftaran}
               onChange={(event) => setField("pendaftaran", event.target.value)}
-              disabled={isSubmitting}
+              disabled={isFormDisabled}
               className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
             >
               <option value="ulang">Ulang Jalur</option>
@@ -484,7 +490,7 @@ function UlangAlihJalurCard({
               <select
                 value={form.jenis_jalur_ulang}
                 onChange={(event) => setField("jenis_jalur_ulang", event.target.value)}
-                disabled={isSubmitting}
+                disabled={isFormDisabled}
                 className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               >
                 {JALUR_OPTIONS.map((item) => (
@@ -501,7 +507,7 @@ function UlangAlihJalurCard({
                 <select
                   value={form.penjaluran_sebelumnya}
                   onChange={(event) => setField("penjaluran_sebelumnya", event.target.value)}
-                  disabled={isSubmitting}
+                  disabled={isFormDisabled}
                   className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                 >
                   {JALUR_OPTIONS.map((item) => (
@@ -516,7 +522,7 @@ function UlangAlihJalurCard({
                 <select
                   value={form.penjaluran_baru}
                   onChange={(event) => setField("penjaluran_baru", event.target.value)}
-                  disabled={isSubmitting}
+                  disabled={isFormDisabled}
                   className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                 >
                   {JALUR_OPTIONS.map((item) => (
@@ -534,7 +540,7 @@ function UlangAlihJalurCard({
             <select
               value={form.dosen_pembimbing_ta_sebelumnya_id}
               onChange={(event) => setField("dosen_pembimbing_ta_sebelumnya_id", event.target.value)}
-              disabled={isSubmitting}
+              disabled={isFormDisabled}
               className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
             >
               <option value="">Pilih dosen</option>
@@ -551,7 +557,7 @@ function UlangAlihJalurCard({
             <select
               value={form.dosen_pembimbing_ta_baru_id}
               onChange={(event) => setField("dosen_pembimbing_ta_baru_id", event.target.value)}
-              disabled={isSubmitting}
+              disabled={isFormDisabled}
               className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
             >
               <option value="">Pilih dosen</option>
@@ -568,7 +574,7 @@ function UlangAlihJalurCard({
             <textarea
               value={form.alasan_pengajuan}
               onChange={(event) => setField("alasan_pengajuan", event.target.value)}
-              disabled={isSubmitting}
+              disabled={isFormDisabled}
               rows={3}
               placeholder="Tuliskan alasan ulang/alih jalur"
               className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
@@ -589,7 +595,7 @@ function UlangAlihJalurCard({
           <div className="flex flex-wrap gap-2 lg:col-span-2">
             <button
               type="submit"
-              disabled={isSubmitting}
+              disabled={isFormDisabled}
               className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isSubmitting ? "Mengirim..." : "Daftar Ulang/Alih Jalur"}
@@ -604,8 +610,7 @@ function UlangAlihJalurCard({
               </button>
             ) : null}
           </div>
-        </form>
-      )}
+      </form>
     </section>
   );
 }
@@ -1333,12 +1338,6 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   }, [activeTab, bimbinganLockInfo.isLocked, mustChangePassword]);
 
   useEffect(() => {
-    if (!mustChangePassword && activeTab === "ulang-alih" && !ulangAlihAccess.isAllowed) {
-      setActiveTab("dashboard");
-    }
-  }, [activeTab, mustChangePassword, ulangAlihAccess.isAllowed]);
-
-  useEffect(() => {
     if (!isHardLockedBySemester) {
       setIzinLanjutError("");
       setIzinLanjutSuccess("");
@@ -1590,16 +1589,17 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
               {visibleNavItems.map((item) => {
                 const Icon = item.icon;
                 const isActive = activeTab === item.id;
-                const isLockedBySemester = isHardLockedBySemester && item.id !== "izin-lanjut";
-                const isLockedByOnboardingItem = isLockedByOnboarding && item.id !== "pengajuan";
+                const isUlangAlihItem = item.id === "ulang-alih";
+                const isLockedBySemester =
+                  isHardLockedBySemester && item.id !== "izin-lanjut" && !isUlangAlihItem;
+                const isLockedByOnboardingItem =
+                  isLockedByOnboarding && item.id !== "pengajuan" && !isUlangAlihItem;
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
-                const isLockedByUlangAlihRule = item.id === "ulang-alih" && !ulangAlihAccess.isAllowed;
                 const isDisabled =
                   mustChangePassword ||
                   isLockedBySemester ||
                   isLockedByOnboardingItem ||
-                  isLockedByBimbinganRule ||
-                  isLockedByUlangAlihRule;
+                  isLockedByBimbinganRule;
                 const disabledReason = mustChangePassword
                   ? "Ubah password default terlebih dahulu."
                   : isLockedBySemester
@@ -1608,9 +1608,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                       ? onboardingLockReason
                       : isLockedByBimbinganRule
                         ? bimbinganLockInfo.reason
-                        : isLockedByUlangAlihRule
-                          ? ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia."
-                      : "";
+                        : "";
 
                 return (
                   <React.Fragment key={item.id}>
@@ -1630,11 +1628,6 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                       <Icon className="h-4 w-4" />
                       {item.label}
                     </button>
-                    {isLockedByUlangAlihRule ? (
-                      <div className="mx-3 mb-2 rounded-lg border border-[#e7ecf8] bg-[#f8fbff] px-3 py-2 text-xs font-semibold leading-relaxed text-[#66759e]">
-                        {ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia."}
-                      </div>
-                    ) : null}
                   </React.Fragment>
                 );
               })}
