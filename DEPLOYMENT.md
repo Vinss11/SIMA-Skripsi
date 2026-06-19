@@ -32,7 +32,7 @@ DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 JWT_SECRET=replace-with-a-new-long-secret
 JWT_EXPIRES_IN=24h
 DEFAULT_PASSWORD_DOSEN=12345678
-CORS_ORIGIN=https://your-frontend.vercel.app,http://localhost:3000
+CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 Run migrations from your local machine after `DATABASE_URL` points to production:
@@ -76,7 +76,7 @@ DATABASE_URL=postgresql://user:password@host:5432/dbname?sslmode=require
 JWT_SECRET=replace-with-a-new-long-secret
 JWT_EXPIRES_IN=24h
 DEFAULT_PASSWORD_DOSEN=12345678
-CORS_ORIGIN=https://your-frontend.vercel.app,http://localhost:3000
+CORS_ORIGINS=https://your-frontend.vercel.app
 ```
 
 Run migrations from Replit Shell:
@@ -119,7 +119,9 @@ Set this Vercel environment variable:
 REACT_APP_API_BASE_URL=https://your-backend-url
 ```
 
-After Vercel gives the final frontend URL, add it to backend `CORS_ORIGIN`, then redeploy the backend.
+After Vercel gives the final frontend URL, add it to backend `CORS_ORIGINS`, then redeploy the backend.
+Separate multiple frontend or custom-domain origins with commas. Localhost on any port is
+accepted automatically when `NODE_ENV` is not `production`.
 
 ## Validation
 

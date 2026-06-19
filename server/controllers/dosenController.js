@@ -17,7 +17,6 @@ const {
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
-const { evaluatePeriodeWindow } = require("../services/periodePenjaluranService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -3606,72 +3605,99 @@ exports.rejectPamitDPA = async (req, res) => {
 // ========== KUOTA MANAGEMENT ENDPOINTS ==========
 
 async function getDosenPenjaluranResponsibilities(dosenId) {
-  const activePeriode = await PeriodePenjaluran.findOne({
-    where: {
-      [Op.or]: [{ status: "active" }, { is_active: true }],
-    },
-    attributes: [
-      "id",
-      "label_periode",
-      "tahun_akademik",
-      "semester",
-      "tanggal_mulai",
-      "tanggal_selesai",
-      "status",
-      "is_active",
-      "pengawas_magang_dosen_id",
-      "pengawas_pengabdian_dosen_id",
-      "pengawas_perintisan_bisnis_dosen_id",
-    ],
-    order: [["updatedAt", "DESC"]],
-  });
-
-  if (!activePeriode) {
-    return {
-      active_periode: null,
-      items: [],
-    };
-  }
-
-  const activePeriodeWindow = evaluatePeriodeWindow(activePeriode);
-  if (!activePeriodeWindow.is_open) {
-    return {
-      active_periode: null,
-      items: [],
-    };
-  }
-
-  const items = [];
-  const ketuaRows = await KlasterKetuaPeriode.findAll({
-    where: {
-      periode_penjaluran_id: activePeriode.id,
-      dosen_id: dosenId,
-    },
-    include: [
-      {
-        model: Klaster,
-        as: "klaster",
-        attributes: ["id", "kode", "nama"],
-        required: false,
+  const [activePeriode, latestMaster] = await Promise.all([
+    PeriodePenjaluran.findOne({
+      where: {
+        [Op.or]: [{ status: "active" }, { is_active: true }],
       },
-    ],
-    order: [[{ model: Klaster, as: "klaster" }, "kode", "ASC"]],
-  });
+      attributes: [
+        "id",
+        "label_periode",
+        "tahun_akademik",
+        "semester",
+        "tanggal_mulai",
+        "tanggal_selesai",
+        "status",
+        "is_active",
+        "pengawas_magang_dosen_id",
+        "pengawas_pengabdian_dosen_id",
+        "pengawas_perintisan_bisnis_dosen_id",
+      ],
+      order: [["updatedAt", "DESC"]],
+    }),
+    MasterPenanggungJawabPenjaluran.findOne({
+      attributes: [
+        "id",
+        "ketua_itsc_dosen_id",
+        "ketua_sirkel_dosen_id",
+        "ketua_siber_dosen_id",
+        "ketua_mvk_dosen_id",
+        "pengawas_magang_dosen_id",
+        "pengawas_pengabdian_dosen_id",
+        "pengawas_perintisan_bisnis_dosen_id",
+      ],
+      order: [
+        ["updatedAt", "DESC"],
+        ["id", "DESC"],
+      ],
+    }),
+  ]);
 
-  for (const row of ketuaRows) {
-    const kode = row.klaster?.kode || "-";
-    items.push({
-      type: "ketua_klaster",
-      key: `ketua_klaster_${kode}`,
-      label: `Ketua Cluster ${kode}`,
-      klaster: row.klaster
-        ? {
-            id: row.klaster.id,
-            kode: row.klaster.kode,
-            nama: row.klaster.nama,
-          }
-        : null,
+  const itemsByKey = new Map();
+  const addItem = (item) => {
+    if (!itemsByKey.has(item.key)) {
+      itemsByKey.set(item.key, item);
+    }
+  };
+
+  const ketuaMasterResponsibilities = Object.entries(KETUA_CLUSTER_MASTER_FIELD_BY_CODE);
+  for (const [kode, field] of ketuaMasterResponsibilities) {
+    if (Number(latestMaster?.[field]) === Number(dosenId)) {
+      addItem({
+        type: "ketua_klaster",
+        key: `ketua_klaster_${kode}`,
+        label: `Ketua Cluster ${kode}`,
+        klaster: {
+          id: null,
+          kode,
+          nama: null,
+        },
+      });
+    }
+  }
+
+  if (activePeriode) {
+    const ketuaRows = await KlasterKetuaPeriode.findAll({
+      where: {
+        periode_penjaluran_id: activePeriode.id,
+        dosen_id: dosenId,
+      },
+      include: [
+        {
+          model: Klaster,
+          as: "klaster",
+          attributes: ["id", "kode", "nama"],
+          required: false,
+        },
+      ],
+      order: [[{ model: Klaster, as: "klaster" }, "kode", "ASC"]],
     });
+
+    for (const row of ketuaRows) {
+      const kode = row.klaster?.kode || "-";
+      itemsByKey.set(`ketua_klaster_${kode}`, {
+        type: "ketua_klaster",
+        key: `ketua_klaster_${kode}`,
+        label: `Ketua Cluster ${kode}`,
+        klaster: row.klaster
+          ? {
+              id: row.klaster.id,
+              kode: row.klaster.kode,
+              nama: row.klaster.nama,
+            }
+          : null,
+      });
+    }
   }
 
   const jalurResponsibilities = [
@@ -3696,8 +3722,10 @@ async function getDosenPenjaluranResponsibilities(dosenId) {
   ];
 
   for (const item of jalurResponsibilities) {
-    if (Number(activePeriode?.[item.field]) === Number(dosenId)) {
-      items.push({
+    const assignedInMaster = Number(latestMaster?.[item.field]) === Number(dosenId);
+    const assignedInActivePeriode = Number(activePeriode?.[item.field]) === Number(dosenId);
+    if (assignedInMaster || assignedInActivePeriode) {
+      addItem({
         type: item.type,
         key: item.key,
         label: item.label,
@@ -3706,17 +3734,19 @@ async function getDosenPenjaluranResponsibilities(dosenId) {
   }
 
   return {
-    active_periode: {
-      id: activePeriode.id,
-      label_periode: activePeriode.label_periode || null,
-      tahun_akademik: activePeriode.tahun_akademik || null,
-      semester: activePeriode.semester || null,
-      tanggal_mulai: activePeriode.tanggal_mulai || null,
-      tanggal_selesai: activePeriode.tanggal_selesai || null,
-      status: "active",
-      is_active: true,
-    },
-    items,
+    active_periode: activePeriode
+      ? {
+          id: activePeriode.id,
+          label_periode: activePeriode.label_periode || null,
+          tahun_akademik: activePeriode.tahun_akademik || null,
+          semester: activePeriode.semester || null,
+          tanggal_mulai: activePeriode.tanggal_mulai || null,
+          tanggal_selesai: activePeriode.tanggal_selesai || null,
+          status: activePeriode.status || "active",
+          is_active: activePeriode.is_active === true,
+        }
+      : null,
+    items: [...itemsByKey.values()],
   };
 }
 

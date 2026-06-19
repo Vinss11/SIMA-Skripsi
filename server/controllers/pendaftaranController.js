@@ -565,52 +565,31 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
     const mahasiswaId = Number(req.user?.id) || 0;
     const pendaftaran = normalizeText(body.pendaftaran).toLowerCase();
     const jenisJalurUlang = normalizeJenisJalur(body.jenis_jalur_ulang);
-    const penjaluranSebelumnya = normalizeJenisJalur(body.penjaluran_sebelumnya);
-    const penjaluranBaru = normalizeJenisJalur(body.penjaluran_baru);
-    const dosenTASebelumnyaId = Number(body.dosen_pembimbing_ta_sebelumnya_id) || 0;
-    const dosenTABaruId = Number(body.dosen_pembimbing_ta_baru_id) || 0;
+    const pamitId = Number(body.pamit_id) || 0;
     const alasanPengajuan = normalizeText(body.alasan_pengajuan);
 
-    if (!["ulang", "alih"].includes(pendaftaran)) {
+    if (pendaftaran !== "ulang") {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: "Jenis pendaftaran harus ulang atau alih.",
+        code: "ALIH_JALUR_NOT_AVAILABLE",
+        message: "Alih jalur belum tersedia. Implementasi tahap ini hanya mendukung Ulang Jalur Penelitian.",
       });
     }
 
-    if (pendaftaran === "ulang" && !JENIS_JALUR_OPTIONS.includes(jenisJalurUlang)) {
+    if (jenisJalurUlang !== "penelitian") {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Field wajib jalur ulang: jenis_jalur_ulang.",
+        message: "Implementasi tahap ini hanya mendukung Ulang Jalur Penelitian.",
       });
     }
 
-    if (
-      pendaftaran === "alih" &&
-      (!JENIS_JALUR_OPTIONS.includes(penjaluranSebelumnya) || !JENIS_JALUR_OPTIONS.includes(penjaluranBaru))
-    ) {
+    if (!pamitId) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Field wajib jalur alih: penjaluran_sebelumnya dan penjaluran_baru.",
-      });
-    }
-
-    if (pendaftaran === "alih" && penjaluranSebelumnya === penjaluranBaru) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Penjaluran baru harus berbeda dari penjaluran sebelumnya.",
-      });
-    }
-
-    if (!dosenTASebelumnyaId || !dosenTABaruId) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Dosen pembimbing TA sebelumnya dan dosen pembimbing TA baru wajib diisi.",
+        message: "Pamit kepada dosen pembimbing sebelumnya harus disetujui terlebih dahulu.",
       });
     }
 
@@ -708,13 +687,48 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
       });
     }
 
+    const pamitUlang = await PamitUlang.findByPk(pamitId, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (!pamitUlang || Number(pamitUlang.mahasiswa_id) !== Number(mahasiswa.id)) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Data pamit tidak ditemukan atau bukan milik Anda.",
+      });
+    }
+
+    if (pamitUlang.status_dospem !== "approved") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pamit masih menunggu persetujuan dosen pembimbing sebelumnya.",
+      });
+    }
+
+    if (pamitUlang.pengajuan_baru_id) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pamit ini sudah digunakan untuk pengajuan ulang sebelumnya.",
+      });
+    }
+
+    if (Number(pamitUlang.pengajuan_sebelumnya_id) !== Number(latestApprovedSubmission.id)) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pamit tidak sesuai dengan pengajuan Penelitian terakhir yang disetujui.",
+      });
+    }
+
     const dosenMap = await validateDosenIdsExist(
-      [mahasiswa.dosen_pembimbing_akademik_id, dosenTASebelumnyaId, dosenTABaruId],
+      [mahasiswa.dosen_pembimbing_akademik_id, mahasiswa.dosen_pembimbing_skripsi_id],
       t
     );
     const dosenPembimbingAkademik = dosenMap.get(Number(mahasiswa.dosen_pembimbing_akademik_id));
-    const dosenTASebelumnya = dosenMap.get(dosenTASebelumnyaId);
-    const dosenTABaru = dosenMap.get(dosenTABaruId);
+    const dosenTASebelumnya = dosenMap.get(Number(mahasiswa.dosen_pembimbing_skripsi_id));
 
     if (!dosenPembimbingAkademik) {
       await t.rollback();
@@ -724,17 +738,17 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
       });
     }
 
-    if (!dosenTASebelumnya || !dosenTABaru) {
+    if (!dosenTASebelumnya) {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: "Dosen pembimbing TA sebelumnya/baru tidak ditemukan.",
+        message: "Dosen pembimbing Penelitian sebelumnya tidak ditemukan pada profil mahasiswa.",
       });
     }
 
     const angkatan = mahasiswa.angkatan || deriveAngkatanFromNim(mahasiswa.nim);
     const semesterMahasiswa = deriveSemesterMahasiswa(angkatan, periodeAktif);
-    const selectedJalur = pendaftaran === "ulang" ? jenisJalurUlang : penjaluranBaru;
+    const selectedJalur = "penelitian";
 
     const pendaftaranRecord = await PendaftaranPenjaluran.create(
       {
@@ -745,37 +759,17 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
         status: "approved",
         form_lanjutan_status: "draft",
         dosen_pembimbing_akademik_id: dosenPembimbingAkademik.id,
-        jenis_jalur_diambil: pendaftaran === "ulang" ? jenisJalurUlang : null,
+        jenis_jalur_diambil: "penelitian",
         dosen_pembimbing_ta_id: null,
-        penjaluran_sebelumnya: pendaftaran === "alih" ? penjaluranSebelumnya : null,
-        penjaluran_baru: pendaftaran === "alih" ? penjaluranBaru : null,
+        penjaluran_sebelumnya: null,
+        penjaluran_baru: null,
         dosen_pembimbing_ta_sebelumnya_id: dosenTASebelumnya.id,
-        dosen_pembimbing_ta_baru_id: dosenTABaru.id,
+        dosen_pembimbing_ta_baru_id: null,
         nomor_whatsapp: null,
         catatan: alasanPengajuan,
       },
       { transaction: t }
     );
-
-    let pamitUlang = null;
-    if (pendaftaran === "ulang") {
-      pamitUlang = await PamitUlang.create(
-        {
-          mahasiswa_id: mahasiswa.id,
-          pengajuan_sebelumnya_id: latestApprovedSubmission.id,
-          pesan_ke_dosen_pembimbing: alasanPengajuan,
-          alasan_ulang: alasanPengajuan,
-          catatan_tambahan: "Dibuat otomatis dari pendaftaran ulang pada periode aktif.",
-          status_dospem: "approved",
-          status_dpa: "approved",
-          keterangan_dospem: "Disetujui otomatis melalui pendaftaran ulang periode aktif.",
-          keterangan_dpa: "Disetujui otomatis melalui pendaftaran ulang periode aktif.",
-          tanggal_approval_dospem: new Date(),
-          tanggal_approval_dpa: new Date(),
-        },
-        { transaction: t }
-      );
-    }
 
     await mahasiswa.update(
       {

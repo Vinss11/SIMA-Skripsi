@@ -293,6 +293,18 @@ async function getLatestPendaftaranForPeriode(mahasiswaId, periodeId, transactio
 }
 
 async function hasPenelitianSubmissionForPendaftaran(mahasiswaId, pendaftaran, transaction) {
+  if (pendaftaran?.id) {
+    const linkedSubmission = await Pengajuan.findOne({
+      where: {
+        mahasiswa_id: mahasiswaId,
+        pendaftaran_penjaluran_id: pendaftaran.id,
+      },
+      attributes: ["id"],
+      transaction,
+    });
+    if (linkedSubmission) return true;
+  }
+
   const where = {
     mahasiswa_id: mahasiswaId,
     tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
@@ -310,6 +322,24 @@ async function hasPenelitianSubmissionForPendaftaran(mahasiswaId, pendaftaran, t
   });
 
   return Boolean(existing);
+}
+
+async function getUlangPenelitianPendaftaran(mahasiswaId, transaction) {
+  const periodeAktif = await getActivePeriodePenjaluran(transaction);
+  if (!periodeAktif) return null;
+
+  return PendaftaranPenjaluran.findOne({
+    where: {
+      mahasiswa_id: mahasiswaId,
+      periode_penjaluran_id: periodeAktif.id,
+      jalur: "ulang",
+      jenis_jalur_diambil: "penelitian",
+      status: "approved",
+    },
+    order: [["createdAt", "DESC"]],
+    transaction,
+    lock: transaction?.LOCK?.UPDATE,
+  });
 }
 
 async function validateSubmissionTargetJalur({
@@ -959,7 +989,6 @@ exports.checkStatusJalur = async (req, res) => {
       where: {
         mahasiswa_id,
         pengajuan_baru_id: null,
-        status_dospem: { [Op.in]: ["pending", "approved"] },
       },
       order: [["createdAt", "DESC"]],
     });
@@ -995,6 +1024,9 @@ exports.checkStatusJalur = async (req, res) => {
           ? {
               id: activePamit.id,
               status_dospem: activePamit.status_dospem,
+              keterangan_dospem: activePamit.keterangan_dospem,
+              alasan_ulang: activePamit.alasan_ulang,
+              pesan_ke_dosen_pembimbing: activePamit.pesan_ke_dosen_pembimbing,
               tanggal: activePamit.createdAt,
             }
           : null,
@@ -2385,6 +2417,15 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
+    const pendaftaranUlang = await getUlangPenelitianPendaftaran(mahasiswa_id, t);
+    if (!pendaftaranUlang) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pendaftaran Ulang Jalur Penelitian belum tersedia. Selesaikan pendaftaran ulang terlebih dahulu.",
+      });
+    }
+
     const clusterValidation = await validateDosenPenelitianCluster(prospective_supervisor_id, cluster_mandiri, t);
     if (!clusterValidation.ok) {
       await t.rollback();
@@ -2405,15 +2446,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
-    // Update pengajuan sebelumnya jadi 'dibatalkan'
     const previousSubmission = await Pengajuan.findByPk(pamit.pengajuan_sebelumnya_id, { transaction: t });
-    await previousSubmission.update(
-      {
-        status: "dibatalkan",
-        alasan_penolakan: `Mahasiswa mengundurkan diri. Alasan: ${pamit.alasan_ulang}`,
-      },
-      { transaction: t }
-    );
 
     // Buat pengajuan ulang
     const pengajuan = await Pengajuan.create(
@@ -2421,6 +2454,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "ulang",
         tipe_pengajuan: "judul_mandiri",
+        pendaftaran_penjaluran_id: pendaftaranUlang.id,
         pamit_ulang_id: pamit_id,
         pengajuan_sebelumnya_id: pamit.pengajuan_sebelumnya_id,
         judul_mandiri,
@@ -2437,6 +2471,13 @@ exports.submitUlangJudulMandiri = async (req, res) => {
 
     // Update pamit dengan pengajuan_baru_id
     await pamit.update({ pengajuan_baru_id: pengajuan.id }, { transaction: t });
+    await pendaftaranUlang.update(
+      {
+        form_lanjutan_status: "submitted",
+        form_lanjutan_submitted_at: new Date(),
+      },
+      { transaction: t }
+    );
 
     // Update mahasiswa
     await mahasiswa.update(
@@ -2465,7 +2506,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         pengajuan: pengajuanLengkap,
         pengajuan_sebelumnya: {
           id: previousSubmission.id,
-          status_baru: "dibatalkan",
+          status: previousSubmission.status,
         },
       },
     });
@@ -2797,7 +2838,7 @@ exports.submitPamit = async (req, res) => {
     const previousSubmission = await Pengajuan.findOne({
       where: {
         mahasiswa_id,
-        status: "approved",
+        status: { [Op.in]: ["approved", "completed"] },
       },
       order: [["createdAt", "DESC"]],
       transaction: t,
@@ -3067,6 +3108,15 @@ exports.submitUlangTopikDosen = async (req, res) => {
       });
     }
 
+    const pendaftaranUlang = await getUlangPenelitianPendaftaran(mahasiswa_id, t);
+    if (!pendaftaranUlang) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pendaftaran Ulang Jalur Penelitian belum tersedia. Selesaikan pendaftaran ulang terlebih dahulu.",
+      });
+    }
+
     // Validasi: kode topik tidak boleh duplikat antar pilihan
     const topikKodes = [topik_1_kode, topik_2_kode, topik_3_kode].filter(Boolean);
     if (new Set(topikKodes).size !== topikKodes.length) {
@@ -3180,15 +3230,7 @@ exports.submitUlangTopikDosen = async (req, res) => {
       });
     }
 
-    // Update pengajuan sebelumnya jadi 'dibatalkan'
     const previousSubmission = await Pengajuan.findByPk(pamit.pengajuan_sebelumnya_id, { transaction: t });
-    await previousSubmission.update(
-      {
-        status: "dibatalkan",
-        alasan_penolakan: `Mahasiswa mengundurkan diri. Alasan: ${pamit.alasan_ulang}`,
-      },
-      { transaction: t }
-    );
 
     // Buat pengajuan ulang
     const pengajuan = await Pengajuan.create(
@@ -3196,6 +3238,7 @@ exports.submitUlangTopikDosen = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "ulang",
         tipe_pengajuan: "topik_dosen",
+        pendaftaran_penjaluran_id: pendaftaranUlang.id,
         pamit_ulang_id: pamit_id,
         pengajuan_sebelumnya_id: pamit.pengajuan_sebelumnya_id,
         topik_1_kode,
@@ -3220,6 +3263,13 @@ exports.submitUlangTopikDosen = async (req, res) => {
 
     // Update pamit dengan pengajuan_baru_id
     await pamit.update({ pengajuan_baru_id: pengajuan.id }, { transaction: t });
+    await pendaftaranUlang.update(
+      {
+        form_lanjutan_status: "submitted",
+        form_lanjutan_submitted_at: new Date(),
+      },
+      { transaction: t }
+    );
 
     // Update mahasiswa
     await mahasiswa.update(
@@ -3250,7 +3300,7 @@ exports.submitUlangTopikDosen = async (req, res) => {
         pengajuan: pengajuanLengkap,
         pengajuan_sebelumnya: {
           id: previousSubmission.id,
-          status_baru: "dibatalkan",
+          status: previousSubmission.status,
         },
       },
     });

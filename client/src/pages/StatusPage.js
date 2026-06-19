@@ -93,6 +93,12 @@ function getStatusChip(status) {
       className: "bg-[#fdf1d4] text-[#a06a00]",
     };
   }
+  if (normalized === "menunggu_pengajuan") {
+    return {
+      label: "Belum Mengajukan Judul",
+      className: "bg-[#eef3ff] text-[#2f63e3]",
+    };
+  }
   return {
     label: formatLabel(status),
     className: "bg-[#eef2fb] text-[#5c6d95]",
@@ -105,6 +111,7 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
 
   if (normalizedStatus === "approved") return "Selesai (Disetujui)";
   if (normalizedStatus === "rejected") return "Selesai (Ditolak)";
+  if (tahap === "menunggu_pengajuan_judul") return "Menunggu Pengajuan Judul";
   if (tahap === "pending_ketua_klaster") return "Menunggu Review Ketua Cluster";
   if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
   if (tahap === "pending_dosen_pembimbing") return "Menunggu Review Dosen Pembimbing";
@@ -112,6 +119,14 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
   if (tahap === "deadline_terlewati") return "Waktu Review Dosen Berakhir";
   if (normalizedStatus === "pending") return "Sedang Direview";
   return formatLabel(tahap || status || "-");
+}
+
+function getJenisPendaftaranDisplay(row) {
+  return formatLabel(row?.pendaftaran?.jenis_pendaftaran || row?.jenis_jalur);
+}
+
+function getProgramJalurDisplay(row) {
+  return formatLabel(row?.pendaftaran?.jalur_program || row?.jalur_program || "penelitian");
 }
 
 function getApprovalRoleLabel(value) {
@@ -181,6 +196,7 @@ function getKodeTopikDisplay(row) {
 
 function getJudulDisplay(row, detail = null) {
   if (!row) return "-";
+  if (row.record_type === "pendaftaran") return "Belum diajukan";
   if (row.tipe_pengajuan === "judul_mandiri") {
     return row.judul_mandiri?.judul || detail?.detail_pengajuan?.judul_mandiri || "-";
   }
@@ -365,8 +381,11 @@ function StatusPage({
         setSelectedDetail(null);
         setViewMode("list");
       } else {
+        const firstPengajuan = nextSubmissions.find((row) => row.record_type !== "pendaftaran");
         setSelectedSubmissionId((prev) =>
-          nextSubmissions.some((row) => row.id === prev) ? prev : nextSubmissions[0].id
+          nextSubmissions.some((row) => row.id === prev && row.record_type !== "pendaftaran")
+            ? prev
+            : firstPengajuan?.id || null
         );
       }
 
@@ -455,6 +474,9 @@ function StatusPage({
       const haystack = [
         row.id,
         row.jenis_jalur,
+        row.jalur_program,
+        row.pendaftaran?.jenis_pendaftaran,
+        row.pendaftaran?.jalur_program,
         row.tipe_pengajuan,
         row.status,
         row.tahap_approval,
@@ -672,6 +694,7 @@ function StatusPage({
             <thead>
               <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pendaftaran</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tipe</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
@@ -702,8 +725,11 @@ function StatusPage({
                 return (
                   <tr key={`status-row-${row.id}`} className="border-b border-[#eff3fb]">
                     <td className="px-3 py-2 font-bold text-[#274181]">{rowStart + index}</td>
-                    <td className="px-3 py-2">{formatLabel(row.jenis_jalur)}</td>
-                    <td className="px-3 py-2">{formatLabel(row.tipe_pengajuan)}</td>
+                    <td className="px-3 py-2">{getJenisPendaftaranDisplay(row)}</td>
+                    <td className="px-3 py-2">{getProgramJalurDisplay(row)}</td>
+                    <td className="px-3 py-2">
+                      {row.record_type === "pendaftaran" ? "Belum dipilih" : formatLabel(row.tipe_pengajuan)}
+                    </td>
                     <td className="px-3 py-2 max-w-[280px] truncate" title={judulDisplay}>
                       {judulDisplay}
                     </td>
@@ -734,16 +760,20 @@ function StatusPage({
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDetail(row.id)}
-                        className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-bold text-white transition ${
-                          isSelected ? "bg-[#2354cf]" : "bg-[#2f63e3] hover:brightness-110"
-                        }`}
-                      >
-                        <Eye className="h-3.5 w-3.5" />
-                        Detail
-                      </button>
+                      {row.record_type === "pendaftaran" ? (
+                        <span className="text-xs font-semibold text-[#7180a5]">Menunggu judul</span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDetail(row.id)}
+                          className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-bold text-white transition ${
+                            isSelected ? "bg-[#2354cf]" : "bg-[#2f63e3] hover:brightness-110"
+                          }`}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Detail
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );

@@ -406,11 +406,18 @@ function UlangAlihJalurCard({
   jalurEligibility,
   dosenOptions,
   onSubmit,
+  onSubmitPamit,
+  onRegisterUlang,
   isSubmitting,
   submitError,
   submitSuccess,
   onGoToPengajuan,
 }) {
+  const [activeFlow, setActiveFlow] = useState("ulang");
+  const [pamitForm, setPamitForm] = useState({
+    alasan_ulang: "",
+    pesan_ke_dosen_pembimbing: "",
+  });
   const [form, setForm] = useState({
     pendaftaran: "ulang",
     jenis_jalur_ulang: "penelitian",
@@ -425,6 +432,18 @@ function UlangAlihJalurCard({
   const canOpenForm = access.isAllowed;
   const isFormDisabled = !canOpenForm || isSubmitting;
   const disabledReason = access.reason;
+  const activePamit = jalurStatus?.active_pamit || null;
+  const activePamitStatus = String(activePamit?.status_dospem || "").toLowerCase();
+  const activeRegistration = jalurEligibility?.pendaftaran_aktif || null;
+  const hasUlangPenelitianRegistration =
+    activeRegistration?.jalur === "ulang" && activeRegistration?.selected_jalur === "penelitian";
+  const previousSupervisor = profile?.dosenPembimbingSkripsi || null;
+  const canSubmitPamit =
+    canOpenForm &&
+    Boolean(previousSupervisor?.id) &&
+    (!activePamit || activePamitStatus === "rejected");
+  const canRegisterUlang =
+    canOpenForm && activePamitStatus === "approved" && !hasUlangPenelitianRegistration;
 
   useEffect(() => {
     if (!profile?.dosenPembimbingSkripsi?.id) return;
@@ -444,6 +463,237 @@ function UlangAlihJalurCard({
     if (!canOpenForm) return;
     onSubmit?.(form);
   };
+
+  const flowTabs = (
+    <div className="mt-5 inline-flex rounded-lg border border-[#d5def2] bg-[#f7f9fe] p-1">
+      <button
+        type="button"
+        onClick={() => setActiveFlow("ulang")}
+        className={`rounded-md px-4 py-2 text-sm font-bold transition ${
+          activeFlow === "ulang" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
+        }`}
+      >
+        Ulang Jalur
+      </button>
+      <button
+        type="button"
+        onClick={() => setActiveFlow("alih")}
+        className={`rounded-md px-4 py-2 text-sm font-bold transition ${
+          activeFlow === "alih" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
+        }`}
+      >
+        Alih Jalur
+      </button>
+    </div>
+  );
+
+  if (activeFlow === "alih") {
+    return (
+      <section className="rounded-xl border border-[#dbe6fb] bg-white p-6 shadow-sm">
+        <h3 className="text-2xl font-black text-[#1a2648]">Alih / Ulang Jalur</h3>
+        <p className="mt-1 text-sm text-[#5f6b89]">Pilih proses penjaluran yang ingin dilakukan.</p>
+        {flowTabs}
+        <div className="mt-5 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-5">
+          <h4 className="text-lg font-black text-[#1a2648]">Alih Jalur Belum Tersedia</h4>
+          <p className="mt-2 text-sm leading-relaxed text-[#5f6b89]">
+            Tahap implementasi saat ini difokuskan pada Ulang Jalur Penelitian. Alih Jalur akan dibuka setelah
+            aturan pamit untuk jalur Magang, Pengabdian, dan Perintisan Bisnis ditetapkan.
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  if (activeFlow === "ulang") {
+    const pamitStatusLabel =
+      activePamitStatus === "approved"
+        ? "Pamit Disetujui"
+        : activePamitStatus === "rejected"
+          ? "Pamit Ditolak"
+          : activePamitStatus === "pending"
+            ? "Menunggu Persetujuan Pamit"
+            : "Belum Mengajukan Pamit";
+
+    return (
+      <section className="rounded-xl border border-[#dbe6fb] bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-2xl font-black text-[#1a2648]">Alih / Ulang Jalur</h3>
+            <p className="mt-1 text-sm text-[#5f6b89]">Pilih proses penjaluran yang ingin dilakukan.</p>
+          </div>
+          {periodeAktif ? (
+            <span className="rounded-full bg-[#e9f2ff] px-3 py-1 text-xs font-bold text-[#2551b8]">
+              {periodeAktif.label_periode || "Periode aktif"}
+            </span>
+          ) : null}
+        </div>
+
+        {flowTabs}
+
+        <div className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-3">
+          <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Jalur yang Diulang</p>
+            <p className="mt-1 font-black text-[#1a2648]">Penelitian</p>
+          </div>
+          <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Pembimbing Sebelumnya</p>
+            <p className="mt-1 font-black text-[#1a2648]">{previousSupervisor?.nama || "Belum tersedia"}</p>
+          </div>
+          <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Status Proses</p>
+            <p className="mt-1 font-black text-[#1a2648]">
+              {hasUlangPenelitianRegistration ? "Menunggu Pengajuan Judul" : pamitStatusLabel}
+            </p>
+          </div>
+        </div>
+
+        {!canOpenForm && !hasUlangPenelitianRegistration ? (
+          <div className="mt-4 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#53658f]">
+            {disabledReason}
+          </div>
+        ) : null}
+        {canOpenForm && !previousSupervisor?.id && !hasUlangPenelitianRegistration ? (
+          <div className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-4 text-sm font-semibold text-[#7a5a00]">
+            Dosen pembimbing Penelitian sebelumnya belum tersedia pada profil Anda. Hubungi sekretaris prodi
+            sebelum mengajukan pamit.
+          </div>
+        ) : null}
+
+        {hasUlangPenelitianRegistration ? (
+          <div className="mt-5 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-5">
+            <h4 className="text-lg font-black text-[#1a2648]">Pendaftaran Ulang Penelitian Berhasil</h4>
+            <p className="mt-2 text-sm text-[#5f6b89]">
+              Lanjutkan dengan memilih Topik Dosen atau mengajukan Judul Mandiri. Menu lain dibatasi sampai
+              pengajuan judul berhasil dikirim.
+            </p>
+            <button
+              type="button"
+              onClick={onGoToPengajuan}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+            >
+              <FileText className="h-4 w-4" />
+              Lanjut ke Pengajuan Penelitian
+            </button>
+          </div>
+        ) : null}
+
+        {!hasUlangPenelitianRegistration && (activePamitStatus === "pending" || activePamitStatus === "approved") ? (
+          <div className="mt-5 rounded-lg border border-[#e3eaf8] bg-white p-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-lg font-black text-[#1a2648]">Status Pamit</h4>
+              <span
+                className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  activePamitStatus === "approved"
+                    ? "bg-[#dff3e8] text-[#167347]"
+                    : "bg-[#fff2cf] text-[#8b6200]"
+                }`}
+              >
+                {pamitStatusLabel}
+              </span>
+            </div>
+            <p className="mt-3 text-sm text-[#5f6b89]">
+              {activePamitStatus === "approved"
+                ? "Dosen pembimbing sebelumnya telah menyetujui pamit. Anda dapat melanjutkan pendaftaran ulang."
+                : "Permohonan sedang menunggu keputusan dosen pembimbing sebelumnya."}
+            </p>
+            {activePamit?.keterangan_dospem ? (
+              <p className="mt-3 rounded-lg bg-[#f7f9fe] px-3 py-2 text-sm text-[#405070]">
+                Catatan dosen: {activePamit.keterangan_dospem}
+              </p>
+            ) : null}
+            {activePamitStatus === "approved" ? (
+              <button
+                type="button"
+                disabled={!canRegisterUlang || isSubmitting}
+                onClick={() =>
+                  onRegisterUlang?.({
+                    pendaftaran: "ulang",
+                    jenis_jalur_ulang: "penelitian",
+                    pamit_id: activePamit.id,
+                    alasan_pengajuan: activePamit.alasan_ulang || "Mendaftar ulang Jalur Penelitian.",
+                  })
+                }
+                className="mt-4 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isSubmitting ? "Mendaftarkan..." : "Daftar Ulang Jalur Penelitian"}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!hasUlangPenelitianRegistration && (canSubmitPamit || activePamitStatus === "rejected") ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              onSubmitPamit?.(pamitForm);
+            }}
+            className="mt-5 grid grid-cols-1 gap-4 rounded-lg border border-[#e3eaf8] bg-white p-5"
+          >
+            <div>
+              <h4 className="text-lg font-black text-[#1a2648]">Pamit kepada Dosen Pembimbing Sebelumnya</h4>
+              <p className="mt-1 text-sm text-[#5f6b89]">
+                Persetujuan pamit wajib diperoleh sebelum pendaftaran Ulang Penelitian dapat dilakukan.
+              </p>
+            </div>
+            {activePamitStatus === "rejected" ? (
+              <div className="rounded-lg border border-[#f3d1d1] bg-[#fff4f4] px-3 py-2 text-sm text-[#9b3f3f]">
+                Pamit sebelumnya ditolak
+                {activePamit?.keterangan_dospem ? `: ${activePamit.keterangan_dospem}` : "."}
+              </div>
+            ) : null}
+            <label>
+              <span className="mb-1 block text-sm font-semibold text-[#324c86]">Alasan Mengulang Penelitian</span>
+              <textarea
+                rows={3}
+                value={pamitForm.alasan_ulang}
+                onChange={(event) =>
+                  setPamitForm((prev) => ({ ...prev, alasan_ulang: event.target.value }))
+                }
+                disabled={isSubmitting}
+                placeholder="Jelaskan alasan Anda perlu mengulang jalur Penelitian"
+                className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+              />
+            </label>
+            <label>
+              <span className="mb-1 block text-sm font-semibold text-[#324c86]">Pesan kepada Dosen Pembimbing</span>
+              <textarea
+                rows={3}
+                value={pamitForm.pesan_ke_dosen_pembimbing}
+                onChange={(event) =>
+                  setPamitForm((prev) => ({ ...prev, pesan_ke_dosen_pembimbing: event.target.value }))
+                }
+                disabled={isSubmitting}
+                placeholder="Tuliskan pesan pamit yang akan dibaca dosen pembimbing sebelumnya"
+                className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={
+                isSubmitting ||
+                pamitForm.alasan_ulang.trim().length < 10 ||
+                pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10
+              }
+              className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? "Mengirim..." : "Kirim Permohonan Pamit"}
+            </button>
+          </form>
+        ) : null}
+
+        {submitError ? (
+          <div className="mt-4 rounded-lg border border-[#f6d7d7] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+            {submitError}
+          </div>
+        ) : null}
+        {submitSuccess ? (
+          <div className="mt-4 rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
+            {submitSuccess}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
 
   return (
     <section className="rounded-xl border border-[#dbe6fb] bg-white p-6 shadow-sm">
@@ -1465,56 +1715,33 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     }
   };
 
-  const handleSubmitUlangAlih = async (form) => {
+  const handleSubmitPamitUlang = async (form) => {
     setUlangAlihError("");
     setUlangAlihSuccess("");
 
     if (!ulangAlihAccess.isAllowed) {
-      setUlangAlihError(ulangAlihAccess.reason || "Alih/ulang jalur belum tersedia.");
+      setUlangAlihError(ulangAlihAccess.reason || "Ulang jalur belum tersedia.");
       return;
     }
 
-    const pendaftaran = String(form?.pendaftaran || "").trim();
-    const alasan = String(form?.alasan_pengajuan || "").trim();
-    const dosenSebelumnya = String(form?.dosen_pembimbing_ta_sebelumnya_id || "").trim();
-    const dosenBaru = String(form?.dosen_pembimbing_ta_baru_id || "").trim();
-
-    if (!["ulang", "alih"].includes(pendaftaran)) {
-      setUlangAlihError("Pilih jenis pendaftaran ulang atau alih jalur.");
-      return;
-    }
-
-    if (!dosenSebelumnya || !dosenBaru) {
-      setUlangAlihError("Dosen TA sebelumnya dan dosen TA baru wajib dipilih.");
-      return;
-    }
-
-    if (pendaftaran === "alih" && form?.penjaluran_sebelumnya === form?.penjaluran_baru) {
-      setUlangAlihError("Penjaluran baru harus berbeda dari penjaluran sebelumnya.");
-      return;
-    }
-
-    if (alasan.length < 10) {
-      setUlangAlihError("Alasan pengajuan minimal 10 karakter.");
+    const alasan = String(form?.alasan_ulang || "").trim();
+    const pesan = String(form?.pesan_ke_dosen_pembimbing || "").trim();
+    if (alasan.length < 10 || pesan.length < 10) {
+      setUlangAlihError("Alasan mengulang dan pesan kepada dosen minimal 10 karakter.");
       return;
     }
 
     try {
       setUlangAlihSubmitting(true);
-      const response = await fetch(`${apiBaseUrl}/api/pendaftaran/ulang-alih`, {
+      const response = await fetch(`${apiBaseUrl}/api/jalur/ulang/pamit`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          pendaftaran,
-          jenis_jalur_ulang: form?.jenis_jalur_ulang,
-          penjaluran_sebelumnya: form?.penjaluran_sebelumnya,
-          penjaluran_baru: form?.penjaluran_baru,
-          dosen_pembimbing_ta_sebelumnya_id: dosenSebelumnya,
-          dosen_pembimbing_ta_baru_id: dosenBaru,
-          alasan_pengajuan: alasan,
+          alasan_ulang: alasan,
+          pesan_ke_dosen_pembimbing: pesan,
         }),
       });
 
@@ -1531,11 +1758,50 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       }
 
       if (!response.ok || !data?.success) {
-        setUlangAlihError(data?.message || "Gagal mengajukan ulang/alih jalur.");
+        setUlangAlihError(data?.message || "Gagal mengirim permohonan pamit.");
         return;
       }
 
-      setUlangAlihSuccess(data?.message || "Pendaftaran ulang/alih jalur berhasil.");
+      setUlangAlihSuccess(data?.message || "Permohonan pamit berhasil dikirim.");
+      setRefreshTick((prev) => prev + 1);
+    } catch (requestError) {
+      setUlangAlihError("Tidak dapat terhubung ke server.");
+    } finally {
+      setUlangAlihSubmitting(false);
+    }
+  };
+
+  const handleRegisterUlangPenelitian = async (form) => {
+    setUlangAlihError("");
+    setUlangAlihSuccess("");
+
+    try {
+      setUlangAlihSubmitting(true);
+      const response = await fetch(`${apiBaseUrl}/api/pendaftaran/ulang-alih`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      });
+      const data = await response.json().catch(() => null);
+      const lowerMessage = String(data?.message || "").toLowerCase();
+      const isTokenError =
+        lowerMessage.includes("token tidak valid") ||
+        lowerMessage.includes("token tidak ditemukan") ||
+        lowerMessage.includes("kadaluarsa");
+
+      if (response.status === 401 || (response.status === 403 && isTokenError)) {
+        onSessionExpired?.();
+        return;
+      }
+      if (!response.ok || !data?.success) {
+        setUlangAlihError(data?.message || "Pendaftaran Ulang Penelitian gagal.");
+        return;
+      }
+
+      setUlangAlihSuccess(data?.message || "Pendaftaran Ulang Penelitian berhasil.");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");
     } catch (requestError) {
@@ -1593,7 +1859,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 const isLockedBySemester =
                   isHardLockedBySemester && item.id !== "izin-lanjut" && !isUlangAlihItem;
                 const isLockedByOnboardingItem =
-                  isLockedByOnboarding && item.id !== "pengajuan" && !isUlangAlihItem;
+                  isLockedByOnboarding && !["pengajuan", "status"].includes(item.id);
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
                 const isDisabled =
                   mustChangePassword ||
@@ -1691,7 +1957,8 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 jalurStatus={jalurStatus}
                 jalurEligibility={jalurEligibility}
                 dosenOptions={Array.isArray(dosenOptions) ? dosenOptions : []}
-                onSubmit={handleSubmitUlangAlih}
+                onSubmitPamit={handleSubmitPamitUlang}
+                onRegisterUlang={handleRegisterUlangPenelitian}
                 isSubmitting={ulangAlihSubmitting}
                 submitError={ulangAlihError}
                 submitSuccess={ulangAlihSuccess}

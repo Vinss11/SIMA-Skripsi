@@ -1,5 +1,15 @@
 const { Op } = require("sequelize");
-const { Pengajuan, Mahasiswa, Dosen, Topik, RiwayatPersetujuan, PamitUlang, SekretarisProdi } = require("../models");
+const {
+  Pengajuan,
+  Mahasiswa,
+  Dosen,
+  Topik,
+  RiwayatPersetujuan,
+  PamitUlang,
+  PendaftaranPenjaluran,
+  PeriodePenjaluran,
+  SekretarisProdi,
+} = require("../models");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -317,6 +327,28 @@ exports.getMySubmissions = async (req, res) => {
           ],
           required: false,
         },
+        {
+          model: PendaftaranPenjaluran,
+          as: "pendaftaranPenjaluran",
+          attributes: [
+            "id",
+            "jalur",
+            "jenis_jalur_diambil",
+            "penjaluran_sebelumnya",
+            "penjaluran_baru",
+            "form_lanjutan_status",
+            "createdAt",
+          ],
+          required: false,
+          include: [
+            {
+              model: PeriodePenjaluran,
+              as: "periode",
+              attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+              required: false,
+            },
+          ],
+        },
       ],
       order: [["createdAt", "DESC"]],
     };
@@ -352,12 +384,24 @@ exports.getMySubmissions = async (req, res) => {
       const approvalStage = getPengajuanApprovalStage(submission);
       const base = {
         id: submission.id,
+        record_type: "pengajuan",
         jenis_jalur: submission.jenis_jalur,
         tipe_pengajuan: submission.tipe_pengajuan,
         status: submission.status,
         tahap_approval: approvalStage,
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
+        pendaftaran: submission.pendaftaranPenjaluran
+          ? {
+              id: submission.pendaftaranPenjaluran.id,
+              jenis_pendaftaran: submission.pendaftaranPenjaluran.jalur,
+              jalur_program:
+                submission.pendaftaranPenjaluran.jenis_jalur_diambil ||
+                submission.pendaftaranPenjaluran.penjaluran_baru ||
+                null,
+              periode: submission.pendaftaranPenjaluran.periode || null,
+            }
+          : null,
       };
 
       if (submission.tipe_pengajuan === "topik_dosen") {
@@ -427,10 +471,68 @@ exports.getMySubmissions = async (req, res) => {
       return base;
     });
 
+    const linkedPendaftaranIds = new Set(
+      submissions
+        .map((submission) => Number(submission.pendaftaran_penjaluran_id || 0))
+        .filter(Boolean)
+    );
+    const pendaftaranRows = await PendaftaranPenjaluran.findAll({
+      where: {
+        mahasiswa_id,
+        jalur: { [Op.in]: ["ulang", "alih"] },
+      },
+      include: [
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+          required: false,
+        },
+      ],
+      order: [["createdAt", "DESC"]],
+    });
+
+    const pendingRegistrationRows = pendaftaranRows
+      .filter((row) => {
+        if (linkedPendaftaranIds.has(Number(row.id))) return false;
+
+        const registrationCreatedAt = new Date(row.createdAt || 0).getTime();
+        const hasLegacySubmissionMatch = submissions.some((submission) => {
+          if (submission.pendaftaran_penjaluran_id) return false;
+          if (String(submission.jenis_jalur || "") !== String(row.jalur || "")) return false;
+          return new Date(submission.createdAt || 0).getTime() >= registrationCreatedAt;
+        });
+        return !hasLegacySubmissionMatch;
+      })
+      .map((row) => ({
+        id: `pendaftaran-${row.id}`,
+        record_type: "pendaftaran",
+        pendaftaran_id: row.id,
+        jenis_jalur: row.jalur,
+        jalur_program: row.jenis_jalur_diambil || row.penjaluran_baru || null,
+        tipe_pengajuan: null,
+        status: "menunggu_pengajuan",
+        tahap_approval: "menunggu_pengajuan_judul",
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        pendaftaran: {
+          id: row.id,
+          jenis_pendaftaran: row.jalur,
+          jalur_program: row.jenis_jalur_diambil || row.penjaluran_baru || null,
+          periode: row.periode || null,
+        },
+      }));
+
+    const statusRows = [...compactData, ...pendingRegistrationRows].sort(
+      (left, right) =>
+        new Date(right.updatedAt || right.createdAt || 0).getTime() -
+        new Date(left.updatedAt || left.createdAt || 0).getTime()
+    );
+
     res.json({
       success: true,
-      data: compactData,
-      total: compactData.length,
+      data: statusRows,
+      total: statusRows.length,
     });
   } catch (error) {
     console.error("Error di getMySubmissions:", error);

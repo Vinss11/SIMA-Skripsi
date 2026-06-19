@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import PendaftaranJalurPage from "./pages/PendaftaranJalurPage";
 import PendaftaranSuccessPage from "./pages/PendaftaranSuccessPage";
@@ -13,9 +13,10 @@ import "sweetalert2/dist/sweetalert2.min.css";
 
 const AUTH_STORAGE_KEY = "sima_auth_v1";
 const PRODUCTION_API_BASE_URL = "https://sima-skripsi-rz1j.vercel.app";
+const IS_LOCAL_FRONTEND = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 const API_BASE_URL =
   process.env.REACT_APP_API_BASE_URL ||
-  (window.location.hostname === "localhost" ? "http://localhost:3000" : PRODUCTION_API_BASE_URL);
+  (IS_LOCAL_FRONTEND ? "http://localhost:3000" : PRODUCTION_API_BASE_URL);
 
 function decodeJwtPayload(token) {
   if (!token || typeof token !== "string") return null;
@@ -107,7 +108,13 @@ function shallowEqualObjects(a, b) {
   const aKeys = Object.keys(a);
   const bKeys = Object.keys(b);
   if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => Object.is(a[key], b[key]));
+  return aKeys.every((key) => {
+    if (Object.is(a[key], b[key])) return true;
+    if (Array.isArray(a[key]) && Array.isArray(b[key])) {
+      return a[key].length === b[key].length && a[key].every((item, index) => Object.is(item, b[key][index]));
+    }
+    return false;
+  });
 }
 
 function saveAuth(authPayload, rememberMe) {
@@ -144,22 +151,22 @@ function App() {
     setAuthScreen("login");
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     clearAuthStorage();
     defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
     setAuth(null);
-  };
+  }, []);
 
-  const handleSessionExpired = () => {
+  const handleSessionExpired = useCallback(() => {
     clearAuthStorage();
     defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
     setAuth(null);
     setAuthScreen("login");
-  };
+  }, []);
 
-  const handlePasswordChanged = () => {
+  const handlePasswordChanged = useCallback(() => {
     setAuth((prev) => {
       if (!prev?.token) return prev;
       const next = { ...prev, prompt_change_password: false };
@@ -167,7 +174,7 @@ function App() {
       updateStoredAuthPromptFlag(prev.token, false);
       return next;
     });
-  };
+  }, []);
 
   useEffect(() => {
     if (session.user && session.prompt_change_password && defaultPasswordToastTokenRef.current !== session.token) {
@@ -247,7 +254,7 @@ function App() {
       cancelled = true;
       window.removeEventListener("focus", refreshProfile);
     };
-  }, [auth?.token]);
+  }, [auth?.token, handleSessionExpired]);
 
   if (!session.user) {
     if (authScreen === "register") {

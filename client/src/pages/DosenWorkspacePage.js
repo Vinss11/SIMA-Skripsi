@@ -13,6 +13,7 @@ import {
   ListChecks,
   LogOut,
   MessageSquareText,
+  Plus,
   RefreshCcw,
   Search,
   ShieldAlert,
@@ -3595,8 +3596,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   };
 
-  const handleTopikUploadSubmit = async (event) => {
-    event.preventDefault();
+  const handleTopikUploadFileChange = (event) => {
+    const selectedFile = event.target.files?.[0] || null;
+    setTopikUploadFile(selectedFile);
+    setUploadTopikResult(null);
+    setTopikUploadPreviewPage(1);
+  };
+
+  const handleTopikUploadSubmit = async () => {
     if (!topikUploadFile) {
       showErrorToast("Pilih file Excel terlebih dahulu.");
       return;
@@ -3676,6 +3683,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setUploadTopikResult(null);
       setTopikUploadFile(null);
       await loadAllData();
+      setTopikMode("list");
     } catch (saveError) {
       if (saveError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(saveError.message || "Gagal menyimpan topik hasil preview.");
@@ -7314,15 +7322,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTopikMode("api")}
+                      onClick={() => setTopikMode("add")}
                       className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                        topikMode === "api"
+                        topikMode === "add"
                           ? "bg-[#2f63e3] text-white"
                           : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
                       }`}
                     >
-                      <ClipboardList className="h-4 w-4" />
+                      <Plus className="h-4 w-4" />
                       Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTopikMode("import")}
+                      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                        topikMode === "import"
+                          ? "bg-[#2f63e3] text-white"
+                          : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                      }`}
+                    >
+                      <Upload className="h-4 w-4" />
+                      Import
                     </button>
                   </div>
                 </div>
@@ -7419,8 +7439,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 ) : null}
 
-                {topikMode === "api" ? (
+                {topikMode !== "list" ? (
                   <div className="space-y-4">
+                    {topikMode === "import" ? (
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <h3 className="text-lg font-black text-[#1b274b]">Upload Topik via Excel</h3>
@@ -7436,22 +7457,23 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         Gunakan template topik. Sistem otomatis memasangkan topik ke akun dosen yang sedang login.
                       </p>
 
-                      <form onSubmit={handleTopikUploadSubmit} className="mt-4 space-y-3">
+                      <div className="mt-4 space-y-3">
                         <input
                           type="file"
                           accept=".xls,.xlsx,.ods"
-                          onChange={(event) => setTopikUploadFile(event.target.files?.[0] || null)}
+                          onChange={handleTopikUploadFileChange}
                           className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm"
                         />
                         <button
-                          type="submit"
-                          disabled={uploadingTopik}
+                          type="button"
+                          onClick={handleTopikUploadSubmit}
+                          disabled={uploadingTopik || !topikUploadFile}
                           className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <Upload className="h-4 w-4" />
                           {uploadingTopik ? "Mengupload..." : "Upload Template"}
                         </button>
-                      </form>
+                      </div>
                       <div className="mt-4 rounded-lg border border-[#dce6f7] bg-[#f8fbff] p-4">
                         <p className="text-sm font-bold text-[#1e2f57]">
                           {uploadTopikResult?.message || "Preview topik akan tampil di sini setelah upload template."}
@@ -7581,7 +7603,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </div>
                     </div>
+                    ) : null}
 
+                    {topikMode === "add" ? (
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <h3 className="mb-3 text-lg font-black text-[#1b274b]">Tambah Topik via Form</h3>
                       <form onSubmit={handleTopikApiSubmit} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -7662,6 +7686,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </div>
                       </form>
                     </div>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

@@ -38,6 +38,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "reviewed_by_sekretaris_id",
         as: "reviewedBySekretaris",
       });
+
+      PendaftaranPenjaluran.hasOne(models.Pengajuan, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "pengajuan",
+      });
     }
   }
 

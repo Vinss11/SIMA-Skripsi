@@ -50,6 +50,11 @@ module.exports = (sequelize, DataTypes) => {
         as: "pamitUlang",
       });
 
+      Pengajuan.belongsTo(models.PendaftaranPenjaluran, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "pendaftaranPenjaluran",
+      });
+
       // Relasi dengan Riwayat Persetujuan
       Pengajuan.hasMany(models.RiwayatPersetujuan, {
         foreignKey: "pengajuan_id",
@@ -196,6 +201,14 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         references: {
           model: "Pengajuans",
+          key: "id",
+        },
+      },
+      pendaftaran_penjaluran_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "PendaftaranPenjalurans",
           key: "id",
         },
       },

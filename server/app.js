@@ -5,36 +5,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 const cors = require("cors");
-
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-function isAllowedVercelFrontend(origin) {
-  try {
-    const url = new URL(origin);
-    const hostname = url.hostname.toLowerCase();
-    return (
-      url.protocol === "https:" &&
-      (hostname === "sima-skripsi.vercel.app" ||
-        hostname === "sima-skripsi-git-main-vinss11s-projects.vercel.app" ||
-        (hostname.startsWith("sima-skripsi-") && hostname.endsWith("-vinss11s-projects.vercel.app")))
-    );
-  } catch (error) {
-    return false;
-  }
-}
+const { createCorsOriginValidator } = require("./config/cors");
 
 app.use(
   cors({
-    origin(origin, callback) {
-      if (!origin || allowedOrigins.includes(origin) || isAllowedVercelFrontend(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(new Error("Not allowed by CORS"));
-    },
+    origin: createCorsOriginValidator(),
+    credentials: true,
   })
 );
 app.use(express.json());
@@ -56,8 +32,16 @@ try {
 
 // Error handling middleware
 app.use((err, req, res, next) => {
+  if (err?.code === "CORS_ORIGIN_NOT_ALLOWED") {
+    return res.status(403).json({
+      success: false,
+      message: "Origin frontend tidak diizinkan mengakses API.",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+
   console.error(err.stack);
-  res.status(500).json({
+  return res.status(err.status || 500).json({
     success: false,
     message: "Terjadi kesalahan pada server",
     error: process.env.NODE_ENV === "development" ? err.message : undefined,
