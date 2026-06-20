@@ -43,6 +43,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pendaftaran_penjaluran_id",
         as: "pengajuan",
       });
+
+      PendaftaranPenjaluran.hasOne(models.AnggotaKelompokPerintisan, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "keanggotaanPerintisanBisnis",
+      });
     }
   }
 

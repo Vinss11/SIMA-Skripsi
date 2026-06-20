@@ -437,7 +437,14 @@ function getPengampuReviewDetailFields(row, config) {
   const ketua = payload.ketua || {};
   const anggota = Array.isArray(payload.anggota) ? payload.anggota : [];
   const anggotaText = anggota.length > 0
-    ? anggota.map((item) => `${item.nama || "-"} (${item.nim || "-"})`).join(", ")
+    ? anggota
+        .map(
+          (item) =>
+            `${item.nama || "-"} (${item.nim || "-"})${
+              item.peran_tim ? ` - ${formatLabel(item.peran_tim)}` : ""
+            }`
+        )
+        .join(", ")
     : "-";
   const commonFields = [
     ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
@@ -447,7 +454,12 @@ function getPengampuReviewDetailFields(row, config) {
     ["Jalur", formatLabel(config?.jalur || row?.jalur)],
     ["Status Review", row?.workflow_status_label || formatLabel(getPengampuReviewStatus(row))],
     ["Nama Kelompok", payload.nama_kelompok],
-    ["Ketua Kelompok", `${ketua.nama || row?.mahasiswa?.nama || "-"} (${ketua.nim || row?.mahasiswa?.nim || "-"})`],
+    [
+      "Ketua Kelompok",
+      `${ketua.nama || row?.mahasiswa?.nama || "-"} (${ketua.nim || row?.mahasiswa?.nim || "-"})${
+        ketua.peran_tim ? ` - ${formatLabel(ketua.peran_tim)}` : ""
+      }`,
+    ],
     ["Anggota", anggotaText],
   ];
   const detailFields = config?.jalur === "perintisan_bisnis"
@@ -7993,7 +8005,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
 
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="w-full min-w-[1650px] text-left text-sm">
+                  <table className="w-full min-w-[1900px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal</th>
@@ -8004,6 +8016,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kelompok</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">DPA</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                       </tr>
@@ -8028,6 +8041,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 <td className="px-3 py-2">{row.mahasiswa?.nama || "-"}</td>
                                 <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
                                 <td className="px-3 py-2">{namaPenjaluran ? formatLabel(namaPenjaluran) : "-"}</td>
+                                <td className="px-3 py-2">
+                                  {row.kelompok_perintisan?.anggota?.length ? (
+                                    <div className="space-y-1">
+                                      {row.kelompok_perintisan.anggota.map((item) => (
+                                        <p key={`${row.id}-${item.mahasiswa_id}`} className="text-xs text-[#405070]">
+                                          <b>{formatLabel(item.peran_tim)}:</b> {item.nama || "-"} ({item.nim || "-"})
+                                        </p>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    "-"
+                                  )}
+                                </td>
                                 <td className="px-3 py-2">{row.dosen_pembimbing_akademik?.nama || "-"}</td>
                                 <td className="px-3 py-2">
                                   {row.status === "submitted" ? (

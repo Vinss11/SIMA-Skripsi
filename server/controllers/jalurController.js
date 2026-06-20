@@ -11,6 +11,8 @@ const {
   PendaftaranPenjaluran,
   PeriodePenjaluran,
   MitraMagang,
+  KelompokPerintisanBisnis,
+  AnggotaKelompokPerintisan,
   sequelize,
 } = require("../models");
 const { Op } = require("sequelize");
@@ -396,6 +398,21 @@ async function validateSubmissionTargetJalur({
     };
   }
 
+  if (String(pendaftaranAktif.status || "") !== "approved") {
+    return {
+      allowed: false,
+      statusCode: 409,
+      message:
+        pendaftaranAktif.status === "rejected"
+          ? "Pendaftaran penjaluran ditolak oleh sekretaris prodi."
+          : "Pendaftaran penjaluran masih menunggu verifikasi sekretaris prodi.",
+      code:
+        pendaftaranAktif.status === "rejected"
+          ? "PENDAFTARAN_REJECTED"
+          : "PENDAFTARAN_PENDING_REVIEW",
+    };
+  }
+
   if (selectedJalur !== targetJalur) {
     return {
       allowed: false,
@@ -646,70 +663,168 @@ function normalizeOptionalSubmissionText(value) {
   return text || null;
 }
 
-async function normalizeKelompokNonPenelitianPayload({ rawPayload, jalur, ketua, transaction }) {
-  const groupName = String(rawPayload.nama_kelompok || "").trim();
-  const memberNims = [
-    String(rawPayload.anggota_1_nim || "").trim(),
-    String(rawPayload.anggota_2_nim || "").trim(),
-  ].filter(Boolean);
-
-  if (!groupName) {
-    return { error: "Nama kelompok wajib diisi." };
-  }
-  if (memberNims.length === 0) {
-    return { error: "Minimal Anggota 1 wajib diisi." };
-  }
-  if (memberNims.some((nim) => !/^\d{8}$/.test(nim))) {
-    return { error: "NIM anggota wajib terdiri dari tepat 8 digit angka." };
-  }
-  if (new Set(memberNims).size !== memberNims.length) {
-    return { error: "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama." };
-  }
-  if (memberNims.includes(String(ketua.nim || ""))) {
-    return { error: "Ketua kelompok tidak boleh dimasukkan kembali sebagai anggota." };
-  }
-  if (rawPayload.persetujuan_anggota !== true) {
-    return { error: "Ketua wajib memastikan seluruh anggota telah menyetujui keikutsertaan." };
-  }
-
-  const memberRows = await Mahasiswa.findAll({
-    where: { nim: { [Op.in]: memberNims } },
-    attributes: ["id", "nim", "nama", "email", "angkatan"],
+async function getKelompokPerintisanByPendaftaranId(pendaftaranId, transaction, lock = false) {
+  const membership = await AnggotaKelompokPerintisan.findOne({
+    where: { pendaftaran_penjaluran_id: pendaftaranId },
+    include: [
+      {
+        model: KelompokPerintisanBisnis,
+        as: "kelompok",
+        required: true,
+        include: [
+          {
+            model: AnggotaKelompokPerintisan,
+            as: "anggota",
+            required: true,
+            include: [
+              {
+                model: Mahasiswa,
+                as: "mahasiswa",
+                attributes: ["id", "nim", "nama", "email", "angkatan"],
+                required: true,
+              },
+              {
+                model: PendaftaranPenjaluran,
+                as: "pendaftaran",
+                attributes: ["id", "jalur", "form_lanjutan_status"],
+                required: true,
+              },
+            ],
+          },
+        ],
+      },
+    ],
     transaction,
+    lock: lock ? transaction?.LOCK?.UPDATE : undefined,
   });
-  const memberByNim = new Map(memberRows.map((item) => [String(item.nim), item]));
-  const missingNims = memberNims.filter((nim) => !memberByNim.has(nim));
-  if (missingNims.length > 0) {
-    return { error: `Mahasiswa dengan NIM ${missingNims.join(", ")} tidak ditemukan.` };
-  }
+  return membership || null;
+}
 
-  const members = memberNims.map((nim, index) => {
-    const member = memberByNim.get(nim);
-    return {
-      role: `anggota_${index + 1}`,
-      mahasiswa_id: member.id,
-      nim: member.nim,
-      nama: member.nama,
-      email: member.email,
-      angkatan: member.angkatan,
-    };
-  });
-
-  const basePayload = {
-    nama_kelompok: groupName,
-    ketua: {
-      role: "ketua",
-      mahasiswa_id: ketua.id,
-      nim: ketua.nim,
-      nama: ketua.nama,
-      email: ketua.email,
-      angkatan: ketua.angkatan,
-    },
-    anggota: members,
-    persetujuan_anggota: true,
-    catatan: normalizeOptionalSubmissionText(rawPayload.catatan),
-    dokumen_pendukung: normalizeOptionalSubmissionText(rawPayload.dokumen_pendukung),
+function formatKelompokPerintisan(membership) {
+  const kelompok = membership?.kelompok;
+  if (!kelompok) return null;
+  const anggota = Array.isArray(kelompok.anggota)
+    ? [...kelompok.anggota]
+        .sort((a, b) => {
+          if (a.posisi !== b.posisi) return a.posisi === "ketua" ? -1 : 1;
+          return Number(a.id) - Number(b.id);
+        })
+        .map((item) => ({
+          membership_id: item.id,
+          mahasiswa_id: item.mahasiswa_id,
+          pendaftaran_id: item.pendaftaran_penjaluran_id,
+          posisi: item.posisi,
+          peran_tim: item.peran_tim,
+          jenis_pendaftaran: item.jenis_pendaftaran,
+          nim: item.mahasiswa?.nim || null,
+          nama: item.mahasiswa?.nama || null,
+          email: item.mahasiswa?.email || null,
+          angkatan: item.mahasiswa?.angkatan || null,
+        }))
+    : [];
+  return {
+    id: kelompok.id,
+    status: kelompok.status,
+    is_ketua: membership.posisi === "ketua",
+    current_peran_tim: membership.peran_tim,
+    anggota,
   };
+}
+
+async function normalizeKelompokNonPenelitianPayload({
+  rawPayload,
+  jalur,
+  ketua,
+  pendaftaran,
+  transaction,
+}) {
+  let basePayload;
+
+  if (jalur === "perintisan_bisnis") {
+    const membership = await getKelompokPerintisanByPendaftaranId(pendaftaran?.id, transaction, true);
+    const kelompok = formatKelompokPerintisan(membership);
+    if (!kelompok || kelompok.anggota.length !== 3) {
+      return { error: "Data kelompok Perintisan Bisnis belum lengkap pada pendaftaran awal." };
+    }
+    if (!kelompok.is_ketua) {
+      return { error: "Form Perintisan Bisnis hanya dapat dikirim oleh ketua kelompok." };
+    }
+    const roles = kelompok.anggota.map((item) => item.peran_tim);
+    if (new Set(roles).size !== 3 || !["hustler", "hipster", "hacker"].every((role) => roles.includes(role))) {
+      return { error: "Kelompok wajib memiliki tepat satu Hustler, Hipster, dan Hacker." };
+    }
+    basePayload = {
+      nama_kelompok: `Kelompok Perintisan #${kelompok.id}`,
+      kelompok,
+      ketua: kelompok.anggota.find((item) => item.posisi === "ketua") || null,
+      anggota: kelompok.anggota.filter((item) => item.posisi === "anggota"),
+      persetujuan_anggota: true,
+      catatan: normalizeOptionalSubmissionText(rawPayload.catatan),
+      dokumen_pendukung: normalizeOptionalSubmissionText(rawPayload.dokumen_pendukung),
+    };
+  } else {
+    const groupName = String(rawPayload.nama_kelompok || "").trim();
+    const memberNims = [
+      String(rawPayload.anggota_1_nim || "").trim(),
+      String(rawPayload.anggota_2_nim || "").trim(),
+    ].filter(Boolean);
+
+    if (!groupName) {
+      return { error: "Nama kelompok wajib diisi." };
+    }
+    if (memberNims.length === 0) {
+      return { error: "Minimal Anggota 1 wajib diisi." };
+    }
+    if (memberNims.some((nim) => !/^\d{8}$/.test(nim))) {
+      return { error: "NIM anggota wajib terdiri dari tepat 8 digit angka." };
+    }
+    if (new Set(memberNims).size !== memberNims.length) {
+      return { error: "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama." };
+    }
+    if (memberNims.includes(String(ketua.nim || ""))) {
+      return { error: "Ketua kelompok tidak boleh dimasukkan kembali sebagai anggota." };
+    }
+    if (rawPayload.persetujuan_anggota !== true) {
+      return { error: "Ketua wajib memastikan seluruh anggota telah menyetujui keikutsertaan." };
+    }
+
+    const memberRows = await Mahasiswa.findAll({
+      where: { nim: { [Op.in]: memberNims } },
+      attributes: ["id", "nim", "nama", "email", "angkatan"],
+      transaction,
+    });
+    const memberByNim = new Map(memberRows.map((item) => [String(item.nim), item]));
+    const missingNims = memberNims.filter((nim) => !memberByNim.has(nim));
+    if (missingNims.length > 0) {
+      return { error: `Mahasiswa dengan NIM ${missingNims.join(", ")} tidak ditemukan.` };
+    }
+
+    basePayload = {
+      nama_kelompok: groupName,
+      ketua: {
+        role: "ketua",
+        mahasiswa_id: ketua.id,
+        nim: ketua.nim,
+        nama: ketua.nama,
+        email: ketua.email,
+        angkatan: ketua.angkatan,
+      },
+      anggota: memberNims.map((nim, index) => {
+        const member = memberByNim.get(nim);
+        return {
+          role: `anggota_${index + 1}`,
+          mahasiswa_id: member.id,
+          nim: member.nim,
+          nama: member.nama,
+          email: member.email,
+          angkatan: member.angkatan,
+        };
+      }),
+      persetujuan_anggota: true,
+      catatan: normalizeOptionalSubmissionText(rawPayload.catatan),
+      dokumen_pendukung: normalizeOptionalSubmissionText(rawPayload.dokumen_pendukung),
+    };
+  }
 
   if (jalur === "perintisan_bisnis") {
     const requiredFields = [
@@ -821,6 +936,65 @@ function appendWorkflowTimeline(payload, entry) {
     ...basePayload,
     workflow_timeline: timeline,
   };
+}
+
+function isPrimaryPerintisanSubmission(item) {
+  const payload = toObjectPayload(item?.form_lanjutan_payload);
+  return payload?.jalur !== "perintisan_bisnis" || payload?.kelompok?.is_ketua !== false;
+}
+
+async function updatePerintisanGroupWorkflow({
+  sourceRow,
+  nextStatus,
+  nextPayload,
+  transaction,
+}) {
+  const sourcePayload = toObjectPayload(sourceRow?.form_lanjutan_payload);
+  const kelompok = sourcePayload?.kelompok;
+  const teamMembers = Array.isArray(kelompok?.anggota) ? kelompok.anggota : [];
+  if (sourcePayload?.jalur !== "perintisan_bisnis" || !kelompok?.id || teamMembers.length === 0) {
+    await sourceRow.update(
+      {
+        form_lanjutan_status: nextStatus,
+        form_lanjutan_payload: nextPayload,
+      },
+      { transaction }
+    );
+    return false;
+  }
+
+  const rows = await PendaftaranPenjaluran.findAll({
+    where: {
+      id: { [Op.in]: teamMembers.map((item) => item.pendaftaran_id) },
+    },
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+  for (const row of rows) {
+    const currentPayload = toObjectPayload(row.form_lanjutan_payload);
+    await row.update(
+      {
+        form_lanjutan_status: nextStatus,
+        form_lanjutan_payload: {
+          ...nextPayload,
+          kelompok: {
+            ...nextPayload.kelompok,
+            is_ketua: currentPayload?.kelompok?.is_ketua === true,
+            current_peran_tim:
+              currentPayload?.kelompok?.current_peran_tim ||
+              nextPayload?.kelompok?.current_peran_tim ||
+              null,
+          },
+        },
+      },
+      { transaction }
+    );
+  }
+  await KelompokPerintisanBisnis.update(
+    { status: nextStatus },
+    { where: { id: kelompok.id }, transaction }
+  );
+  return true;
 }
 
 function resolveNonPenelitianPengampuByJalur(periode, jalur) {
@@ -1154,6 +1328,12 @@ exports.checkStatusJalur = async (req, res) => {
       periodeAktif?.id || null
     );
     const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
+    const kelompokPerintisan =
+      selectedJalur === "perintisan_bisnis" && pendaftaranAktif
+        ? formatKelompokPerintisan(
+            await getKelompokPerintisanByPendaftaranId(pendaftaranAktif.id)
+          )
+        : null;
     const nonPenelitianPayload = toObjectPayload(pendaftaranAktif?.form_lanjutan_payload);
     const nonPenelitianWorkflowStatus =
       nonPenelitianPayload.workflow_status || pendaftaranAktif?.form_lanjutan_status || null;
@@ -1191,8 +1371,10 @@ exports.checkStatusJalur = async (req, res) => {
               id: pendaftaranAktif.id,
               jalur_daftar: pendaftaranAktif.jalur,
               jalur_form_lanjutan: selectedJalur,
+              status: pendaftaranAktif.status,
               form_lanjutan_status: pendaftaranAktif.form_lanjutan_status,
               form_lanjutan_submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
+              kelompok_perintisan: kelompokPerintisan,
               periode:
                 periodeAktif
                   ? {
@@ -1270,6 +1452,12 @@ exports.getJalurEligibility = async (req, res) => {
       periodeAktif?.id || null
     );
     const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
+    const kelompokPerintisan =
+      selectedJalur === "perintisan_bisnis" && pendaftaranAktif
+        ? formatKelompokPerintisan(
+            await getKelompokPerintisanByPendaftaranId(pendaftaranAktif.id)
+          )
+        : null;
     const hasActivePengajuan = Boolean(mahasiswa.pengajuan_aktif_id);
     const hasPenelitianSubmission = selectedJalur === "penelitian"
       ? await hasPenelitianSubmissionForPendaftaran(mahasiswa_id, pendaftaranAktif)
@@ -1325,12 +1513,23 @@ exports.getJalurEligibility = async (req, res) => {
       const alreadySubmittedPenelitian = hasPenelitianSubmission || hasActivePengajuan;
       const targetSubmitted =
         selectedJalur === "penelitian" ? alreadySubmittedPenelitian : alreadySubmittedNonPenelitian;
+      const registrationApproved = String(pendaftaranAktif?.status || "") === "approved";
+      const isPerintisanMember =
+        selectedJalur === "perintisan_bisnis" && kelompokPerintisan && !kelompokPerintisan.is_ketua;
 
       jalurList.forEach((jalur) => {
         if (jalur === selectedJalur) {
           jalurEligibility[jalur] = {
-            enabled: !targetSubmitted,
-            reason: targetSubmitted ? "Form jalur ini sudah pernah disubmit pada periode aktif." : "",
+            enabled: registrationApproved && !targetSubmitted && !isPerintisanMember,
+            reason: !registrationApproved
+              ? pendaftaranAktif?.status === "rejected"
+                ? "Pendaftaran kelompok ditolak oleh sekretaris prodi."
+                : "Menunggu verifikasi kelompok oleh sekretaris prodi."
+              : targetSubmitted
+              ? "Form jalur ini sudah pernah disubmit pada periode aktif."
+              : isPerintisanMember
+                ? "Form Perintisan Bisnis diisi dan dikirim oleh ketua kelompok."
+                : "",
           };
           return;
         }
@@ -1341,9 +1540,15 @@ exports.getJalurEligibility = async (req, res) => {
         };
       });
 
-      onboardingLocked = !targetSubmitted;
+      onboardingLocked = !registrationApproved || !targetSubmitted;
       onboardingReason = onboardingLocked
-        ? `Selesaikan form ${formatJalurLabel(selectedJalur)} terlebih dahulu sebelum membuka menu lain.`
+        ? !registrationApproved
+          ? pendaftaranAktif?.status === "rejected"
+            ? "Pendaftaran kelompok ditolak oleh sekretaris prodi."
+            : "Menunggu verifikasi kelompok oleh sekretaris prodi."
+          : isPerintisanMember
+          ? "Menunggu ketua kelompok menyelesaikan form Perintisan Bisnis."
+          : `Selesaikan form ${formatJalurLabel(selectedJalur)} terlebih dahulu sebelum membuka menu lain.`
         : "";
     }
 
@@ -1365,9 +1570,11 @@ exports.getJalurEligibility = async (req, res) => {
               id: pendaftaranAktif.id,
               jalur: pendaftaranAktif.jalur,
               selected_jalur: selectedJalur,
+              status: pendaftaranAktif.status,
               form_lanjutan_status: pendaftaranAktif.form_lanjutan_status || "draft",
               submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
               created_at: pendaftaranAktif.createdAt,
+              kelompok_perintisan: kelompokPerintisan,
             }
           : null,
         onboarding: {
@@ -1684,6 +1891,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
         rawPayload,
         jalur: requestedJalur,
         ketua: mahasiswa,
+        pendaftaran: gate.pendaftaranAktif,
         transaction: t,
       });
       if (normalizedKelompok.error) {
@@ -1703,54 +1911,91 @@ exports.submitFormNonPenelitian = async (req, res) => {
           ? "review_sekprodi"
           : "review_dosen_magang"
         : "submitted";
+    const workflowTimeline =
+      requestedJalur === "magang"
+        ? [
+            {
+              status: "submitted",
+              actor: "mahasiswa",
+              note: "Form magang dikirim oleh mahasiswa.",
+              at: now,
+            },
+            {
+              status: workflowStatus,
+              actor: "system",
+              note:
+                workflowStatus === "review_sekprodi"
+                  ? "Menunggu review sekretaris prodi (non-mitra)."
+                  : "Menunggu review dosen pengawas magang.",
+              at: now,
+            },
+          ]
+        : [
+            {
+              status: "submitted",
+              actor: "mahasiswa",
+              note: "Form non-penelitian dikirim oleh mahasiswa.",
+              at: now,
+            },
+          ];
+    const commonPayload = {
+      submitted_at: now,
+      workflow_status: workflowStatus,
+      workflow_timeline: workflowTimeline,
+      jalur: requestedJalur,
+      ...payloadToSave,
+    };
 
-    await gate.pendaftaranAktif.update(
-      {
-        form_lanjutan_status: workflowStatus,
-        form_lanjutan_submitted_at: now,
-        form_lanjutan_payload: {
-          submitted_at: now,
-          workflow_status: workflowStatus,
-          workflow_timeline:
-            requestedJalur === "magang"
-              ? [
-                  {
-                    status: "submitted",
-                    actor: "mahasiswa",
-                    note: "Form magang dikirim oleh mahasiswa.",
-                    at: now,
-                  },
-                  {
-                    status: workflowStatus,
-                    actor: "system",
-                    note:
-                      workflowStatus === "review_sekprodi"
-                        ? "Menunggu review sekretaris prodi (non-mitra)."
-                        : "Menunggu review dosen pengawas magang.",
-                    at: now,
-                  },
-                ]
-              : [
-                  {
-                    status: "submitted",
-                    actor: "mahasiswa",
-                    note: "Form non-penelitian dikirim oleh mahasiswa.",
-                    at: now,
-                  },
-                ],
-          jalur: requestedJalur,
-          ...payloadToSave,
+    if (requestedJalur === "perintisan_bisnis" && payloadToSave.kelompok?.id) {
+      const teamMembers = payloadToSave.kelompok.anggota || [];
+      for (const member of teamMembers) {
+        await PendaftaranPenjaluran.update(
+          {
+            form_lanjutan_status: workflowStatus,
+            form_lanjutan_submitted_at: now,
+            form_lanjutan_payload: {
+              ...commonPayload,
+              kelompok: {
+                ...payloadToSave.kelompok,
+                is_ketua: member.posisi === "ketua",
+                current_peran_tim: member.peran_tim,
+              },
+            },
+          },
+          {
+            where: { id: member.pendaftaran_id },
+            transaction: t,
+          }
+        );
+      }
+      await Mahasiswa.update(
+        { status_jalur_saat_ini: "sedang_mengajukan" },
+        {
+          where: { id: { [Op.in]: teamMembers.map((item) => item.mahasiswa_id) } },
+          transaction: t,
+        }
+      );
+      await KelompokPerintisanBisnis.update(
+        { status: "submitted" },
+        { where: { id: payloadToSave.kelompok.id }, transaction: t }
+      );
+    } else {
+      await gate.pendaftaranAktif.update(
+        {
+          form_lanjutan_status: workflowStatus,
+          form_lanjutan_submitted_at: now,
+          form_lanjutan_payload: commonPayload,
         },
-      },
-      { transaction: t }
-    );
+        { transaction: t }
+      );
 
-    await mahasiswa.update(
-      {
-        status_jalur_saat_ini: "sedang_mengajukan",
-      },
-      { transaction: t }
-    );
+      await mahasiswa.update(
+        {
+          status_jalur_saat_ini: "sedang_mengajukan",
+        },
+        { transaction: t }
+      );
+    }
 
     await t.commit();
 
@@ -1822,7 +2067,11 @@ async function getNonPenelitianReviewQueueForDosenByJalur(req, res, targetJalur)
     });
 
     const filtered = rows
-      .filter((item) => resolveSelectedJalurFromPendaftaran(item) === targetJalur)
+      .filter(
+        (item) =>
+          resolveSelectedJalurFromPendaftaran(item) === targetJalur &&
+          isPrimaryPerintisanSubmission(item)
+      )
       .map((item) => toNonPenelitianReviewResponse(item));
 
     return res.json({
@@ -1973,13 +2222,13 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
       },
     };
 
-    await row.update(
-      {
-        form_lanjutan_status: decision,
-        form_lanjutan_payload: nextPayload,
-      },
-      { transaction: t }
-    );
+    await updatePerintisanGroupWorkflow({
+      sourceRow: row,
+      nextStatus: decision,
+      nextPayload,
+      transaction: t,
+    });
+    await row.reload({ transaction: t });
 
     await t.commit();
     return res.json({
@@ -2079,7 +2328,11 @@ exports.getNonPenelitianReviewQueueForSekretaris = async (req, res) => {
     });
 
     const filtered = rows
-      .filter((item) => isNonPenelitianJalur(resolveSelectedJalurFromPendaftaran(item)))
+      .filter(
+        (item) =>
+          isNonPenelitianJalur(resolveSelectedJalurFromPendaftaran(item)) &&
+          isPrimaryPerintisanSubmission(item)
+      )
       .map((item) => toNonPenelitianReviewResponse(item));
 
     return res.json({
@@ -2214,13 +2467,13 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       },
     };
 
-    await row.update(
-      {
-        form_lanjutan_status: decision,
-        form_lanjutan_payload: nextPayload,
-      },
-      { transaction: t }
-    );
+    await updatePerintisanGroupWorkflow({
+      sourceRow: row,
+      nextStatus: decision,
+      nextPayload,
+      transaction: t,
+    });
+    await row.reload({ transaction: t });
 
     await t.commit();
     return res.json({

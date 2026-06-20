@@ -13,6 +13,8 @@ const {
   KlasterKetuaPeriode,
   MasterPenanggungJawabPenjaluran,
   SekretarisProdi,
+  KelompokPerintisanBisnis,
+  AnggotaKelompokPerintisan,
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
@@ -582,6 +584,24 @@ function toCompactRow(item) {
     jenis_jalur_diambil: item.jenis_jalur_diambil,
     penjaluran_sebelumnya: item.penjaluran_sebelumnya,
     penjaluran_baru: item.penjaluran_baru,
+    kelompok_perintisan: item.keanggotaanPerintisanBisnis
+      ? {
+          kelompok_id: item.keanggotaanPerintisanBisnis.kelompok_id,
+          posisi: item.keanggotaanPerintisanBisnis.posisi,
+          peran_tim: item.keanggotaanPerintisanBisnis.peran_tim,
+          anggota: Array.isArray(item.keanggotaanPerintisanBisnis.kelompok?.anggota)
+            ? item.keanggotaanPerintisanBisnis.kelompok.anggota.map((anggota) => ({
+                mahasiswa_id: anggota.mahasiswa_id,
+                posisi: anggota.posisi,
+                peran_tim: anggota.peran_tim,
+                jenis_pendaftaran: anggota.jenis_pendaftaran,
+                nim: anggota.mahasiswa?.nim || null,
+                nama: anggota.mahasiswa?.nama || null,
+                dpa: anggota.mahasiswa?.dosenPembimbingAkademik?.nama || null,
+              }))
+            : [],
+        }
+      : null,
     createdAt: item.createdAt,
     dosen_pembimbing_akademik: item.dosenPembimbingAkademik
       ? {
@@ -950,14 +970,58 @@ exports.getPendaftaranList = async (req, res) => {
           attributes: ["id", "nik", "nama"],
           required: false,
         },
+        {
+          model: AnggotaKelompokPerintisan,
+          as: "keanggotaanPerintisanBisnis",
+          attributes: ["id", "kelompok_id", "posisi", "peran_tim"],
+          required: false,
+          include: [
+            {
+              model: KelompokPerintisanBisnis,
+              as: "kelompok",
+              attributes: ["id", "status"],
+              required: false,
+              include: [
+                {
+                  model: AnggotaKelompokPerintisan,
+                  as: "anggota",
+                  attributes: ["id", "mahasiswa_id", "posisi", "peran_tim", "jenis_pendaftaran"],
+                  required: false,
+                  include: [
+                    {
+                      model: Mahasiswa,
+                      as: "mahasiswa",
+                      attributes: ["id", "nim", "nama"],
+                      required: false,
+                      include: [
+                        {
+                          model: Dosen,
+                          as: "dosenPembimbingAkademik",
+                          attributes: ["id", "nik", "nama"],
+                          required: false,
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
       ],
       order: [["createdAt", "DESC"]],
     });
 
+    const visibleList = list.filter(
+      (item) =>
+        !item.keanggotaanPerintisanBisnis ||
+        item.keanggotaanPerintisanBisnis.posisi === "ketua"
+    );
+
     res.json({
       success: true,
-      data: list.map(toCompactRow),
-      total: list.length,
+      data: visibleList.map(toCompactRow),
+      total: visibleList.length,
     });
   } catch (error) {
     console.error("Error di getPendaftaranList:", error);
@@ -1122,8 +1186,108 @@ async function fetchPendaftaranDetail(id) {
         as: "reviewedBySekretaris",
         attributes: ["id", "nik", "nama", "email"],
       },
+      {
+        model: AnggotaKelompokPerintisan,
+        as: "keanggotaanPerintisanBisnis",
+        attributes: ["id", "kelompok_id", "posisi", "peran_tim"],
+        required: false,
+        include: [
+          {
+            model: KelompokPerintisanBisnis,
+            as: "kelompok",
+            attributes: ["id", "status"],
+            required: false,
+            include: [
+              {
+                model: AnggotaKelompokPerintisan,
+                as: "anggota",
+                attributes: ["id", "mahasiswa_id", "posisi", "peran_tim", "jenis_pendaftaran"],
+                required: false,
+                include: [
+                  {
+                    model: Mahasiswa,
+                    as: "mahasiswa",
+                    attributes: ["id", "nim", "nama"],
+                    required: false,
+                    include: [
+                      {
+                        model: Dosen,
+                        as: "dosenPembimbingAkademik",
+                        attributes: ["id", "nik", "nama"],
+                        required: false,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
     ],
   });
+}
+
+async function getPerintisanRegistrationGroup(pendaftaranId, transaction) {
+  return AnggotaKelompokPerintisan.findOne({
+    where: { pendaftaran_penjaluran_id: pendaftaranId },
+    include: [
+      {
+        model: KelompokPerintisanBisnis,
+        as: "kelompok",
+        required: true,
+        include: [
+          {
+            model: AnggotaKelompokPerintisan,
+            as: "anggota",
+            attributes: ["mahasiswa_id", "pendaftaran_penjaluran_id"],
+            required: true,
+          },
+        ],
+      },
+    ],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
+}
+
+async function updateRegistrationDecision({
+  pendaftaran,
+  status,
+  reviewerId,
+  note,
+  transaction,
+}) {
+  const membership = await getPerintisanRegistrationGroup(pendaftaran.id, transaction);
+  const pendaftaranIds = membership?.kelompok?.anggota?.length
+    ? membership.kelompok.anggota.map((item) => item.pendaftaran_penjaluran_id)
+    : [pendaftaran.id];
+  const mahasiswaIds = membership?.kelompok?.anggota?.length
+    ? membership.kelompok.anggota.map((item) => item.mahasiswa_id)
+    : [pendaftaran.mahasiswa_id];
+  const reviewedAt = new Date();
+
+  await PendaftaranPenjaluran.update(
+    {
+      status,
+      reviewed_by_sekretaris_id: reviewerId,
+      reviewed_at: reviewedAt,
+      approval_note: note,
+    },
+    {
+      where: { id: { [Op.in]: pendaftaranIds } },
+      transaction,
+    }
+  );
+  await Mahasiswa.update(
+    {
+      status_jalur_saat_ini: "belum_mengajukan",
+    },
+    {
+      where: { id: { [Op.in]: mahasiswaIds } },
+      transaction,
+    }
+  );
 }
 
 // GET /api/sekretaris/pendaftaran/:id
@@ -1192,28 +1356,20 @@ exports.approvePendaftaran = async (req, res) => {
       });
     }
 
-    pendaftaran.status = "approved";
-    pendaftaran.reviewed_by_sekretaris_id = reviewerId;
-    pendaftaran.reviewed_at = new Date();
-    pendaftaran.approval_note = note || "Disetujui oleh sekretaris prodi";
-    await pendaftaran.save({ transaction: t });
-
-    await Mahasiswa.update(
-      {
-        status_jalur_saat_ini: "sedang_mengajukan",
-      },
-      {
-        where: { id: pendaftaran.mahasiswa_id },
-        transaction: t,
-      }
-    );
+    await updateRegistrationDecision({
+      pendaftaran,
+      status: "approved",
+      reviewerId,
+      note: note || "Disetujui oleh sekretaris prodi",
+      transaction: t,
+    });
 
     await t.commit();
 
     const detail = await fetchPendaftaranDetail(pendaftaranId);
     res.json({
       success: true,
-      message: "Pendaftaran berhasil di-approve. Mahasiswa sekarang bisa login.",
+      message: "Pendaftaran berhasil di-approve. Kelompok dapat melanjutkan form Perintisan Bisnis.",
       data: toCompactRow(detail),
     });
   } catch (error) {
@@ -1268,28 +1424,20 @@ exports.rejectPendaftaran = async (req, res) => {
       });
     }
 
-    pendaftaran.status = "rejected";
-    pendaftaran.reviewed_by_sekretaris_id = reviewerId;
-    pendaftaran.reviewed_at = new Date();
-    pendaftaran.approval_note = note;
-    await pendaftaran.save({ transaction: t });
-
-    await Mahasiswa.update(
-      {
-        status_jalur_saat_ini: "belum_mengajukan",
-      },
-      {
-        where: { id: pendaftaran.mahasiswa_id },
-        transaction: t,
-      }
-    );
+    await updateRegistrationDecision({
+      pendaftaran,
+      status: "rejected",
+      reviewerId,
+      note,
+      transaction: t,
+    });
 
     await t.commit();
 
     const detail = await fetchPendaftaranDetail(pendaftaranId);
     res.json({
       success: true,
-      message: "Pendaftaran ditolak. Mahasiswa belum dapat login.",
+      message: "Pendaftaran ditolak. Kelompok belum dapat melanjutkan form Perintisan Bisnis.",
       data: toCompactRow(detail),
     });
   } catch (error) {

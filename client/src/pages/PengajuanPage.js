@@ -1543,6 +1543,7 @@ function FormNonPenelitianGeneric({
   onSessionExpired,
   onSubmitted,
   studentProfile,
+  initialTeam,
   disabled,
 }) {
   const initialForm = useMemo(
@@ -1592,10 +1593,12 @@ function FormNonPenelitianGeneric({
   };
 
   const validateForm = () => {
-    const commonRequired = [
-      ["nama_kelompok", "Nama kelompok"],
-      ["anggota_1_nim", "NIM Anggota 1"],
-    ];
+    const commonRequired = isBisnis
+      ? []
+      : [
+          ["nama_kelompok", "Nama kelompok"],
+          ["anggota_1_nim", "NIM Anggota 1"],
+        ];
     const specificRequired = isBisnis
       ? [
           ["nama_bisnis", "Nama bisnis"],
@@ -1629,20 +1632,24 @@ function FormNonPenelitianGeneric({
     for (const [field, label] of [...commonRequired, ...specificRequired]) {
       if (!String(formData[field] || "").trim()) return `${label} wajib diisi.`;
     }
-    for (const field of ["anggota_1_nim", "anggota_2_nim"]) {
-      const nim = String(formData[field] || "").trim();
-      if (nim && !/^\d{8}$/.test(nim)) return "NIM anggota wajib terdiri dari tepat 8 digit angka.";
-    }
-    if (
-      formData.anggota_2_nim &&
-      String(formData.anggota_1_nim).trim() === String(formData.anggota_2_nim).trim()
-    ) {
-      return "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama.";
+    if (!isBisnis) {
+      for (const field of ["anggota_1_nim", "anggota_2_nim"]) {
+        const nim = String(formData[field] || "").trim();
+        if (nim && !/^\d{8}$/.test(nim)) return "NIM anggota wajib terdiri dari tepat 8 digit angka.";
+      }
+      if (
+        formData.anggota_2_nim &&
+        String(formData.anggota_1_nim).trim() === String(formData.anggota_2_nim).trim()
+      ) {
+        return "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama.";
+      }
+    } else if (!initialTeam?.is_ketua || initialTeam?.anggota?.length !== 3) {
+      return "Data kelompok Perintisan Bisnis belum lengkap atau akun ini bukan ketua kelompok.";
     }
     if (!isBisnis && new Date(formData.periode_mulai).getTime() > new Date(formData.periode_selesai).getTime()) {
       return "Tanggal selesai kegiatan tidak boleh sebelum tanggal mulai.";
     }
-    if (!formData.persetujuan_anggota) {
+    if (!isBisnis && !formData.persetujuan_anggota) {
       return "Pastikan seluruh anggota telah menyetujui keikutsertaan.";
     }
     return "";
@@ -1753,25 +1760,49 @@ function FormNonPenelitianGeneric({
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h2 className="text-xl font-black text-[#1b274b]">Form Pengajuan {jalurLabel}</h2>
         <p className="mt-1 text-sm text-[#5d6c91]">
-          Form diisi oleh ketua kelompok. Anggota 1 wajib dan Anggota 2 dapat dikosongkan.
+          {isBisnis
+            ? "Form diisi oleh ketua. Susunan tim mengikuti data pada pendaftaran awal."
+            : "Form diisi oleh ketua kelompok. Anggota 1 wajib dan Anggota 2 dapat dikosongkan."}
         </p>
       </section>
 
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">Data Kelompok</h3>
-        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {renderInput("nama_kelompok", "Nama Kelompok", { wide: true })}
-          <div className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3">
-            <p className="text-xs font-bold uppercase text-[#7180a5]">Ketua Kelompok</p>
-            <p className="mt-1 font-bold text-[#1b274b]">{studentProfile?.nama || session?.user?.nama || "-"}</p>
-            <p className="text-sm text-[#5d6c91]">{studentProfile?.nim || session?.user?.nim || "-"}</p>
+        {isBisnis ? (
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {(initialTeam?.anggota || []).map((item) => (
+              <div key={`tim-perintisan-${item.mahasiswa_id}`} className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3">
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs font-bold uppercase text-[#7180a5]">
+                    {item.posisi === "ketua" ? "Ketua" : "Anggota"}
+                  </p>
+                  <span className="rounded-md bg-[#e7eeff] px-2 py-1 text-xs font-bold uppercase text-[#3157b7]">
+                    {item.peran_tim}
+                  </span>
+                </div>
+                <p className="mt-2 font-bold text-[#1b274b]">{item.nama || "-"}</p>
+                <p className="text-sm text-[#5d6c91]">{item.nim || "-"}</p>
+                <p className="mt-1 text-xs text-[#7180a5]">
+                  Pendaftaran {formatJalurLabel(item.jenis_pendaftaran)}
+                </p>
+              </div>
+            ))}
           </div>
-          {renderInput("anggota_1_nim", "NIM Anggota 1", { placeholder: "8 digit NIM mahasiswa" })}
-          {renderInput("anggota_2_nim", "NIM Anggota 2", {
-            placeholder: "Opsional",
-            required: false,
-          })}
-        </div>
+        ) : (
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            {renderInput("nama_kelompok", "Nama Kelompok", { wide: true })}
+            <div className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3">
+              <p className="text-xs font-bold uppercase text-[#7180a5]">Ketua Kelompok</p>
+              <p className="mt-1 font-bold text-[#1b274b]">{studentProfile?.nama || session?.user?.nama || "-"}</p>
+              <p className="text-sm text-[#5d6c91]">{studentProfile?.nim || session?.user?.nim || "-"}</p>
+            </div>
+            {renderInput("anggota_1_nim", "NIM Anggota 1", { placeholder: "8 digit NIM mahasiswa" })}
+            {renderInput("anggota_2_nim", "NIM Anggota 2", {
+              placeholder: "Opsional",
+              required: false,
+            })}
+          </div>
+        )}
       </section>
 
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
@@ -1828,19 +1859,21 @@ function FormNonPenelitianGeneric({
             placeholder: "Nama file atau tautan dokumen (opsional)",
           })}
           {renderTextarea("catatan", "Catatan Tambahan", { required: false })}
-          <label className="md:col-span-2 flex items-start gap-3 rounded-lg border border-[#dce5f7] bg-[#f8fbff] p-4">
-            <input
-              type="checkbox"
-              checked={formData.persetujuan_anggota}
-              onChange={(event) => updateField("persetujuan_anggota", event.target.checked)}
-              disabled={disabled}
-              className="mt-1 h-4 w-4 accent-[#2f63e3]"
-            />
-            <span className="text-sm font-semibold leading-relaxed text-[#405070]">
-              Saya memastikan seluruh anggota telah menyetujui keikutsertaan dan data pengajuan dapat
-              dipertanggungjawabkan.
-            </span>
-          </label>
+          {!isBisnis ? (
+            <label className="md:col-span-2 flex items-start gap-3 rounded-lg border border-[#dce5f7] bg-[#f8fbff] p-4">
+              <input
+                type="checkbox"
+                checked={formData.persetujuan_anggota}
+                onChange={(event) => updateField("persetujuan_anggota", event.target.checked)}
+                disabled={disabled}
+                className="mt-1 h-4 w-4 accent-[#2f63e3]"
+              />
+              <span className="text-sm font-semibold leading-relaxed text-[#405070]">
+                Saya memastikan seluruh anggota telah menyetujui keikutsertaan dan data pengajuan dapat
+                dipertanggungjawabkan.
+              </span>
+            </label>
+          ) : null}
         </div>
 
         {submitError ? (
@@ -2817,6 +2850,7 @@ function PengajuanPage({
           onSessionExpired={onSessionExpired}
           onSubmitted={onEligibilityRefresh}
           studentProfile={studentProfile}
+          initialTeam={jalurEligibility?.pendaftaran_aktif?.kelompok_perintisan || null}
           disabled={currentFormDisabled}
         />
       ) : null}

@@ -3,7 +3,11 @@ import { CheckCircle2, LogIn, ShieldCheck } from "lucide-react";
 
 function PendaftaranSuccessPage({ registrationData, onOpenMahasiswaBaruLogin }) {
   const username = registrationData?.akun_login?.username || "-";
-  const defaultPassword = registrationData?.akun_login?.default_password || username;
+  const defaultPassword = registrationData?.akun_login?.default_password || null;
+  const isNewAccount = Boolean(registrationData?.akun_login?.prompt_change_password);
+  const groupMembers = Array.isArray(registrationData?.anggota_kelompok)
+    ? registrationData.anggota_kelompok
+    : [];
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#d7e7ff]">
@@ -28,20 +32,48 @@ function PendaftaranSuccessPage({ registrationData, onOpenMahasiswaBaruLogin }) 
           </p>
 
           <div className="mt-6 rounded-xl border border-[#cde9d9] bg-[#eefcf4] p-5 text-[#236a46]">
-            <p className="text-sm font-bold sm:text-base">Informasi Login Mahasiswa Baru</p>
+            <p className="text-sm font-bold sm:text-base">
+              {isNewAccount ? "Informasi Login Mahasiswa Baru" : "Informasi Login Mahasiswa"}
+            </p>
             <div className="mt-2 space-y-1 text-sm sm:text-base">
               <p>
                 Username: <span className="font-semibold">{username}</span>
               </p>
-              <p>
-                Password default: <span className="font-semibold">{defaultPassword}</span>
-              </p>
+              {defaultPassword ? (
+                <p>
+                  Password default: <span className="font-semibold">{defaultPassword}</span>
+                </p>
+              ) : (
+                <p>Gunakan password akun mahasiswa yang sudah ada.</p>
+              )}
             </div>
-            <div className="mt-4 flex items-start gap-2 rounded-lg border border-[#bde0cb] bg-white/70 px-3 py-2 text-xs font-semibold text-[#2f6a4c] sm:text-sm">
-              <ShieldCheck className="mt-0.5 h-4 w-4 flex-none" />
-              <p>Setelah berhasil masuk, mahasiswa wajib mengganti password sebelum mengakses menu lain.</p>
-            </div>
+            {isNewAccount ? (
+              <div className="mt-4 flex items-start gap-2 rounded-lg border border-[#bde0cb] bg-white/70 px-3 py-2 text-xs font-semibold text-[#2f6a4c] sm:text-sm">
+                <ShieldCheck className="mt-0.5 h-4 w-4 flex-none" />
+                <p>Setelah berhasil masuk, mahasiswa wajib mengganti password sebelum mengakses menu lain.</p>
+              </div>
+            ) : null}
           </div>
+
+          {groupMembers.length > 0 ? (
+            <div className="mt-5">
+              <h2 className="text-lg font-black text-[#10224f]">Kelompok Perintisan Bisnis</h2>
+              <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                {groupMembers.map((item) => (
+                  <div key={item.mahasiswa_id} className="rounded-lg border border-[#dbe4f7] bg-[#f8faff] p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase text-[#7180a5]">{item.posisi}</span>
+                      <span className="rounded-md bg-[#e7eeff] px-2 py-1 text-xs font-bold uppercase text-[#3157b7]">
+                        {item.peran_tim}
+                      </span>
+                    </div>
+                    <p className="mt-2 font-bold text-[#1a315f]">{item.nama}</p>
+                    <p className="text-sm text-[#60709a]">{item.nim}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           <div className="mt-6">
             <button
@@ -50,7 +82,7 @@ function PendaftaranSuccessPage({ registrationData, onOpenMahasiswaBaruLogin }) 
               className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
             >
               <LogIn className="h-4 w-4" />
-              Login Mahasiswa Baru
+              Login Mahasiswa
             </button>
           </div>
         </div>

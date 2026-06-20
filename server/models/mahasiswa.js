@@ -35,6 +35,16 @@ module.exports = (sequelize, DataTypes) => {
         as: "pendaftaranPenjalurans",
       });
 
+      Mahasiswa.hasMany(models.AnggotaKelompokPerintisan, {
+        foreignKey: "mahasiswa_id",
+        as: "keanggotaanPerintisanBisnis",
+      });
+
+      Mahasiswa.hasMany(models.KelompokPerintisanBisnis, {
+        foreignKey: "ketua_mahasiswa_id",
+        as: "kelompokPerintisanDipimpin",
+      });
+
       // Relasi permohonan extend semester ke-3
       Mahasiswa.hasMany(models.IzinLanjutSkripsi, {
         foreignKey: "mahasiswa_id",
