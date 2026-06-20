@@ -641,6 +641,162 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   return { statusCode: 200, message: "" };
 }
 
+function normalizeOptionalSubmissionText(value) {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+async function normalizeKelompokNonPenelitianPayload({ rawPayload, jalur, ketua, transaction }) {
+  const groupName = String(rawPayload.nama_kelompok || "").trim();
+  const memberNims = [
+    String(rawPayload.anggota_1_nim || "").trim(),
+    String(rawPayload.anggota_2_nim || "").trim(),
+  ].filter(Boolean);
+
+  if (!groupName) {
+    return { error: "Nama kelompok wajib diisi." };
+  }
+  if (memberNims.length === 0) {
+    return { error: "Minimal Anggota 1 wajib diisi." };
+  }
+  if (memberNims.some((nim) => !/^\d{8}$/.test(nim))) {
+    return { error: "NIM anggota wajib terdiri dari tepat 8 digit angka." };
+  }
+  if (new Set(memberNims).size !== memberNims.length) {
+    return { error: "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama." };
+  }
+  if (memberNims.includes(String(ketua.nim || ""))) {
+    return { error: "Ketua kelompok tidak boleh dimasukkan kembali sebagai anggota." };
+  }
+  if (rawPayload.persetujuan_anggota !== true) {
+    return { error: "Ketua wajib memastikan seluruh anggota telah menyetujui keikutsertaan." };
+  }
+
+  const memberRows = await Mahasiswa.findAll({
+    where: { nim: { [Op.in]: memberNims } },
+    attributes: ["id", "nim", "nama", "email", "angkatan"],
+    transaction,
+  });
+  const memberByNim = new Map(memberRows.map((item) => [String(item.nim), item]));
+  const missingNims = memberNims.filter((nim) => !memberByNim.has(nim));
+  if (missingNims.length > 0) {
+    return { error: `Mahasiswa dengan NIM ${missingNims.join(", ")} tidak ditemukan.` };
+  }
+
+  const members = memberNims.map((nim, index) => {
+    const member = memberByNim.get(nim);
+    return {
+      role: `anggota_${index + 1}`,
+      mahasiswa_id: member.id,
+      nim: member.nim,
+      nama: member.nama,
+      email: member.email,
+      angkatan: member.angkatan,
+    };
+  });
+
+  const basePayload = {
+    nama_kelompok: groupName,
+    ketua: {
+      role: "ketua",
+      mahasiswa_id: ketua.id,
+      nim: ketua.nim,
+      nama: ketua.nama,
+      email: ketua.email,
+      angkatan: ketua.angkatan,
+    },
+    anggota: members,
+    persetujuan_anggota: true,
+    catatan: normalizeOptionalSubmissionText(rawPayload.catatan),
+    dokumen_pendukung: normalizeOptionalSubmissionText(rawPayload.dokumen_pendukung),
+  };
+
+  if (jalur === "perintisan_bisnis") {
+    const requiredFields = [
+      ["nama_bisnis", "Nama bisnis"],
+      ["jenis_bisnis", "Jenis bisnis"],
+      ["lokasi_bisnis", "Lokasi bisnis"],
+      ["deskripsi_bisnis", "Deskripsi bisnis"],
+      ["masalah_yang_diselesaikan", "Permasalahan yang ingin diselesaikan"],
+      ["produk_layanan", "Produk atau layanan"],
+      ["target_konsumen", "Target pengguna atau konsumen"],
+      ["model_bisnis", "Model bisnis"],
+      ["tahap_perkembangan", "Tahap perkembangan bisnis"],
+      ["rencana_kegiatan", "Rencana kegiatan"],
+      ["target_luaran", "Target atau luaran"],
+    ];
+    for (const [field, label] of requiredFields) {
+      if (!String(rawPayload[field] || "").trim()) {
+        return { error: `${label} wajib diisi.` };
+      }
+    }
+
+    return {
+      payload: {
+        ...basePayload,
+        nama_bisnis: String(rawPayload.nama_bisnis).trim(),
+        jenis_bisnis: String(rawPayload.jenis_bisnis).trim(),
+        lokasi_bisnis: String(rawPayload.lokasi_bisnis).trim(),
+        deskripsi_bisnis: String(rawPayload.deskripsi_bisnis).trim(),
+        masalah_yang_diselesaikan: String(rawPayload.masalah_yang_diselesaikan).trim(),
+        produk_layanan: String(rawPayload.produk_layanan).trim(),
+        target_konsumen: String(rawPayload.target_konsumen).trim(),
+        model_bisnis: String(rawPayload.model_bisnis).trim(),
+        tahap_perkembangan: String(rawPayload.tahap_perkembangan).trim(),
+        rencana_kegiatan: String(rawPayload.rencana_kegiatan).trim(),
+        target_luaran: String(rawPayload.target_luaran).trim(),
+        tautan_bisnis: normalizeOptionalSubmissionText(rawPayload.tautan_bisnis),
+        ringkasan: `${rawPayload.nama_bisnis} - ${rawPayload.deskripsi_bisnis}`.trim(),
+      },
+    };
+  }
+
+  const requiredFields = [
+    ["nama_program", "Nama program atau kegiatan"],
+    ["nama_mitra", "Nama mitra atau komunitas"],
+    ["jenis_mitra", "Jenis mitra"],
+    ["lokasi_pengabdian", "Lokasi pengabdian"],
+    ["permasalahan_mitra", "Permasalahan mitra"],
+    ["solusi_ditawarkan", "Solusi yang ditawarkan"],
+    ["deskripsi_kegiatan", "Deskripsi kegiatan"],
+    ["penerima_manfaat", "Sasaran atau penerima manfaat"],
+    ["rencana_pelaksanaan", "Rencana pelaksanaan"],
+    ["periode_mulai", "Tanggal mulai kegiatan"],
+    ["periode_selesai", "Tanggal selesai kegiatan"],
+    ["target_luaran", "Target atau luaran"],
+    ["indikator_keberhasilan", "Indikator keberhasilan"],
+  ];
+  for (const [field, label] of requiredFields) {
+    if (!String(rawPayload[field] || "").trim()) {
+      return { error: `${label} wajib diisi.` };
+    }
+  }
+  if (new Date(rawPayload.periode_mulai).getTime() > new Date(rawPayload.periode_selesai).getTime()) {
+    return { error: "Tanggal selesai kegiatan tidak boleh sebelum tanggal mulai." };
+  }
+
+  return {
+    payload: {
+      ...basePayload,
+      nama_program: String(rawPayload.nama_program).trim(),
+      nama_mitra: String(rawPayload.nama_mitra).trim(),
+      jenis_mitra: String(rawPayload.jenis_mitra).trim(),
+      lokasi_pengabdian: String(rawPayload.lokasi_pengabdian).trim(),
+      kontak_mitra: normalizeOptionalSubmissionText(rawPayload.kontak_mitra),
+      permasalahan_mitra: String(rawPayload.permasalahan_mitra).trim(),
+      solusi_ditawarkan: String(rawPayload.solusi_ditawarkan).trim(),
+      deskripsi_kegiatan: String(rawPayload.deskripsi_kegiatan).trim(),
+      penerima_manfaat: String(rawPayload.penerima_manfaat).trim(),
+      rencana_pelaksanaan: String(rawPayload.rencana_pelaksanaan).trim(),
+      periode_mulai: String(rawPayload.periode_mulai).trim(),
+      periode_selesai: String(rawPayload.periode_selesai).trim(),
+      target_luaran: String(rawPayload.target_luaran).trim(),
+      indikator_keberhasilan: String(rawPayload.indikator_keberhasilan).trim(),
+      ringkasan: `${rawPayload.nama_program} - ${rawPayload.deskripsi_kegiatan}`.trim(),
+    },
+  };
+}
+
 function normalizeWorkflowStatusLabel(status) {
   const normalized = String(status || "").trim().toLowerCase();
   if (!normalized) return "-";
@@ -1056,6 +1212,7 @@ exports.checkStatusJalur = async (req, res) => {
                 workflow_status: nonPenelitianWorkflowStatus,
                 workflow_status_label: normalizeWorkflowStatusLabel(nonPenelitianWorkflowStatus),
                 submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
+                payload: nonPenelitianPayload,
                 timeline: Array.isArray(nonPenelitianPayload.workflow_timeline)
                   ? nonPenelitianPayload.workflow_timeline
                   : [],
@@ -1523,18 +1680,20 @@ exports.submitFormNonPenelitian = async (req, res) => {
           message: "Payload form jalur non-penelitian tidak valid.",
         });
       }
-      const ringkasan = String(rawPayload.ringkasan || "").trim();
-      if (!ringkasan) {
+      const normalizedKelompok = await normalizeKelompokNonPenelitianPayload({
+        rawPayload,
+        jalur: requestedJalur,
+        ketua: mahasiswa,
+        transaction: t,
+      });
+      if (normalizedKelompok.error) {
         await t.rollback();
         return res.status(400).json({
           success: false,
-          message: "Ringkasan pengajuan wajib diisi.",
+          message: normalizedKelompok.error,
         });
       }
-      payloadToSave = {
-        ringkasan,
-        catatan: String(rawPayload.catatan || "").trim() || null,
-      };
+      payloadToSave = normalizedKelompok.payload;
     }
 
     const now = new Date();

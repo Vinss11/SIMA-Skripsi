@@ -25,6 +25,7 @@ const {
   evaluateTopikParallelState,
   evaluateJudulMandiriReviewState,
   ensureParallelReviewerRows,
+  syncPendingReviewReminders,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
   finalizeJudulMandiriDeadlineSubmission,
@@ -1201,6 +1202,8 @@ exports.getDosenSubmissions = async (req, res) => {
             "tipe_approval",
             "keterangan",
             "tanggal_keputusan",
+            "reminder_count",
+            "last_reminded_at",
             "createdAt",
             "updatedAt",
           ],
@@ -1225,6 +1228,7 @@ exports.getDosenSubmissions = async (req, res) => {
     if (pendingJudulMandiriIds.length > 0) {
       await finalizeJudulMandiriDeadlineSubmissionsByIds(pendingJudulMandiriIds);
     }
+    await syncPendingReviewReminders([...pendingTopikIds, ...pendingJudulMandiriIds]);
     if (pendingTopikIds.length > 0 || pendingJudulMandiriIds.length > 0) {
       submissions = await Pengajuan.findAll(baseQuery);
     }
@@ -1321,6 +1325,15 @@ exports.getDosenSubmissions = async (req, res) => {
         base.status_dosen = isKetuaClusterReviewer ? "pending" : completedReviewerStatus || reviewerDecision?.reviewer_status || null;
         base.review_context = isKetuaClusterReviewer ? "ketua_klaster" : "calon_pembimbing";
         base.reviewer_note = reviewerDecision?.reviewer_note || null;
+        base.reminder_count = Math.max(
+          0,
+          ...reviewerSlotDecisions.map((item) => Number(item.reminder_count || 0))
+        );
+        base.last_reminded_at =
+          reviewerSlotDecisions
+            .map((item) => item.last_reminded_at)
+            .filter(Boolean)
+            .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0] || null;
         base.can_review =
           isKetuaClusterReviewer ||
           (submission.status === "pending" &&
@@ -1331,6 +1344,8 @@ exports.getDosenSubmissions = async (req, res) => {
           reviewer_status: item.reviewer_status,
           reviewer_note: item.reviewer_note,
           reviewer_decided_at: item.reviewer_decided_at || null,
+          reminder_count: Number(item.reminder_count || 0),
+          last_reminded_at: item.last_reminded_at || null,
         }));
         base.topik_review_status = parallelState.slot_decisions.map((item) => ({
           slot: item.slot,
@@ -1339,6 +1354,8 @@ exports.getDosenSubmissions = async (req, res) => {
           reviewer_status: item.reviewer_status,
           reviewer_note: item.reviewer_note,
           reviewer_decided_at: item.reviewer_decided_at,
+          reminder_count: Number(item.reminder_count || 0),
+          last_reminded_at: item.last_reminded_at || null,
         }));
       } else {
         const reviewState = evaluateJudulMandiriReviewState(submission);
@@ -1349,6 +1366,8 @@ exports.getDosenSubmissions = async (req, res) => {
         base.deadline_terlewati = Boolean(reviewState.deadline_passed && reviewState.supervisor_status === "expired");
         base.reviewer_status = reviewState.supervisor_status;
         base.status_dosen = reviewState.supervisor_status;
+        base.reminder_count = Number(reviewState.reminder_count || 0);
+        base.last_reminded_at = reviewState.last_reminded_at || null;
         base.can_review = submission.status === "pending";
       }
 
@@ -1508,7 +1527,7 @@ exports.approveSubmission = async (req, res) => {
       const finalWinner = finalizationResult?.winner || null;
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
-      let message = "Approve tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
+      let message = "Approve tersimpan. Menunggu seluruh dosen pilihan memberikan keputusan.";
       if (finalizationResult?.cluster_validation_skipped) {
         message = `Approve tersimpan. Validasi ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
@@ -1545,7 +1564,7 @@ exports.approveSubmission = async (req, res) => {
         const latestData = await loadSubmissionDecisionById(submission.id);
         return res.status(409).json({
           success: false,
-          message: "Pengajuan ini sudah melewati batas review 72 jam dan tidak bisa di-approve lagi.",
+          message: "Pengajuan ini sudah diproses dan tidak bisa di-approve lagi.",
           data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
         });
       }
@@ -2132,7 +2151,7 @@ exports.rejectSubmission = async (req, res) => {
       const responseData = updatedSubmission ? formatSubmissionDecisionResponse(updatedSubmission) : null;
       const finalStatus = finalizationResult?.submission?.status || updatedSubmission?.status;
 
-      let message = "Penolakan tersimpan. Menunggu keputusan dosen lain atau tenggat 3x24 jam.";
+      let message = "Penolakan tersimpan. Menunggu seluruh dosen pilihan memberikan keputusan.";
       if (finalizationResult?.cluster_validation_skipped) {
         message = `Penolakan tersimpan. Pengajuan final disetujui berdasarkan topik dosen lain dan validasi ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
@@ -2164,7 +2183,7 @@ exports.rejectSubmission = async (req, res) => {
         const latestData = await loadSubmissionDecisionById(submission.id);
         return res.status(409).json({
           success: false,
-          message: "Pengajuan ini sudah melewati batas review 72 jam dan tidak bisa ditolak lagi.",
+          message: "Pengajuan ini sudah diproses dan tidak bisa ditolak lagi.",
           data: latestData ? formatSubmissionDecisionResponse(latestData) : null,
         });
       }

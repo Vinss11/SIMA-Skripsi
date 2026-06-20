@@ -176,53 +176,6 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function parseDateTime(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function getReviewCountdown(deadlineAt, now = new Date()) {
-  const deadline = parseDateTime(deadlineAt);
-  if (!deadline) {
-    return {
-      has_deadline: false,
-      is_expired: false,
-      remaining_ms: 0,
-      label: "-",
-      short_label: "-",
-      deadline,
-    };
-  }
-
-  const remainingMs = deadline.getTime() - now.getTime();
-  if (remainingMs <= 0) {
-    return {
-      has_deadline: true,
-      is_expired: true,
-      remaining_ms: 0,
-      label: "Waktu review habis",
-      short_label: "Habis",
-      deadline,
-    };
-  }
-
-  const totalSeconds = Math.floor(remainingMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (value) => String(value).padStart(2, "0");
-
-  return {
-    has_deadline: true,
-    is_expired: false,
-    remaining_ms: remainingMs,
-    label: `${pad(hours)}j ${pad(minutes)}m ${pad(seconds)}d`,
-    short_label: `${hours}j ${pad(minutes)}m`,
-    deadline,
-  };
-}
-
 function getSubmissionTopikCount(row) {
   if (!row || row.tipe_pengajuan !== "topik_dosen") return 0;
   const fromDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail.length : 0;
@@ -461,7 +414,10 @@ function getPengampuReviewStatus(row) {
 }
 
 function getPengampuReviewSummary(row) {
-  return formatMagangPayloadValue(getMagangPayload(row).ringkasan);
+  const payload = getMagangPayload(row);
+  return formatMagangPayloadValue(
+    payload.ringkasan || payload.nama_bisnis || payload.nama_program
+  );
 }
 
 function getPengampuReviewNote(row) {
@@ -477,14 +433,58 @@ function getPengampuReviewStatusBadgeClass(status) {
 }
 
 function getPengampuReviewDetailFields(row, config) {
-  return [
+  const payload = getMagangPayload(row);
+  const ketua = payload.ketua || {};
+  const anggota = Array.isArray(payload.anggota) ? payload.anggota : [];
+  const anggotaText = anggota.length > 0
+    ? anggota.map((item) => `${item.nama || "-"} (${item.nim || "-"})`).join(", ")
+    : "-";
+  const commonFields = [
     ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
     ["Email", row?.mahasiswa?.email || "-"],
     ["Angkatan", row?.mahasiswa?.angkatan || "-"],
     ["Periode", row?.periode?.label_periode || "-"],
     ["Jalur", formatLabel(config?.jalur || row?.jalur)],
     ["Status Review", row?.workflow_status_label || formatLabel(getPengampuReviewStatus(row))],
-    [config?.summaryLabel || "Ringkasan", getPengampuReviewSummary(row)],
+    ["Nama Kelompok", payload.nama_kelompok],
+    ["Ketua Kelompok", `${ketua.nama || row?.mahasiswa?.nama || "-"} (${ketua.nim || row?.mahasiswa?.nim || "-"})`],
+    ["Anggota", anggotaText],
+  ];
+  const detailFields = config?.jalur === "perintisan_bisnis"
+    ? [
+        ["Nama Bisnis", payload.nama_bisnis],
+        ["Jenis Bisnis", payload.jenis_bisnis],
+        ["Lokasi Bisnis", payload.lokasi_bisnis],
+        ["Deskripsi Bisnis", payload.deskripsi_bisnis],
+        ["Permasalahan", payload.masalah_yang_diselesaikan],
+        ["Produk / Layanan", payload.produk_layanan],
+        ["Target Konsumen", payload.target_konsumen],
+        ["Model Bisnis", payload.model_bisnis],
+        ["Tahap Perkembangan", payload.tahap_perkembangan],
+        ["Rencana Kegiatan", payload.rencana_kegiatan],
+        ["Target Luaran", payload.target_luaran],
+        ["Tautan Bisnis", payload.tautan_bisnis],
+      ]
+    : [
+        ["Nama Program", payload.nama_program],
+        ["Mitra / Komunitas", payload.nama_mitra],
+        ["Jenis Mitra", payload.jenis_mitra],
+        ["Lokasi Pengabdian", payload.lokasi_pengabdian],
+        ["Kontak Mitra", payload.kontak_mitra],
+        ["Permasalahan Mitra", payload.permasalahan_mitra],
+        ["Solusi", payload.solusi_ditawarkan],
+        ["Deskripsi Kegiatan", payload.deskripsi_kegiatan],
+        ["Penerima Manfaat", payload.penerima_manfaat],
+        ["Rencana Pelaksanaan", payload.rencana_pelaksanaan],
+        ["Periode Kegiatan", `${payload.periode_mulai || "-"} s.d. ${payload.periode_selesai || "-"}`],
+        ["Target Luaran", payload.target_luaran],
+        ["Indikator Keberhasilan", payload.indikator_keberhasilan],
+      ];
+
+  return [
+    ...commonFields,
+    ...detailFields,
+    ["Dokumen Pendukung", payload.dokumen_pendukung],
     [config?.noteLabel || "Catatan", getPengampuReviewNote(row)],
     ["Tanggal Dikirim", formatDateTime(row?.submitted_at || row?.createdAt)],
   ];
@@ -835,6 +835,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
         { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
         { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
+        { id: "review-tertunda", label: "Review Tertunda", icon: Bell },
         { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
         { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
       ],
@@ -895,6 +896,11 @@ function buildTabHeaders(isSekretaris) {
       icon: ClipboardList,
       title: "Pengajuan Mahasiswa",
       subtitle: "Review pengajuan judul mahasiswa, lalu putuskan approve atau tolak.",
+    },
+    "review-tertunda": {
+      icon: Bell,
+      title: "Review Penelitian Tertunda",
+      subtitle: "Pantau reviewer yang belum memberi keputusan, kirim pengingat, atau sesuaikan pilihan topik.",
     },
     "ketua-cluster-review": {
       icon: ShieldAlert,
@@ -992,6 +998,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [submissionKeterangan, setSubmissionKeterangan] = useState("");
   const [submissionTopikFocusSlot, setSubmissionTopikFocusSlot] = useState("");
   const [submissionShowFinalSummary, setSubmissionShowFinalSummary] = useState(false);
+  const [pendingResearchReviews, setPendingResearchReviews] = useState([]);
+  const [researchReplacementTopics, setResearchReplacementTopics] = useState([]);
+  const [pendingResearchLoading, setPendingResearchLoading] = useState(false);
+  const [pendingResearchActionKey, setPendingResearchActionKey] = useState("");
+  const [pendingResearchQuery, setPendingResearchQuery] = useState("");
   const [izinLanjutRows, setIzinLanjutRows] = useState([]);
   const [izinLanjutQuery, setIzinLanjutQuery] = useState("");
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
@@ -1204,7 +1215,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [rowActionLoadingId, setRowActionLoadingId] = useState(null);
   const [exportingPendaftaran, setExportingPendaftaran] = useState(false);
   const [exportingMahasiswaMaster, setExportingMahasiswaMaster] = useState(false);
-  const [countdownNowTs, setCountdownNowTs] = useState(() => Date.now());
   const [showSubmissionNotificationPanel, setShowSubmissionNotificationPanel] = useState(false);
   const [submissionNotificationSeenAt, setSubmissionNotificationSeenAt] = useState(0);
 
@@ -1239,7 +1249,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     () => navSections.flatMap((section) => section.items.map((item) => item.id)),
     [navSections]
   );
-  const countdownNowDate = useMemo(() => new Date(countdownNowTs), [countdownNowTs]);
   const submissionNotificationStorageKey = useMemo(() => {
     const baseId = session?.user?.id || session?.user?.username || "dosen";
     const role = isSekretaris ? "sekretaris_prodi" : "dosen";
@@ -1284,15 +1293,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setActiveTab("dashboard");
     }
   }, [activeTab, availableTabIds]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setCountdownNowTs(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1569,6 +1569,115 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     },
     [apiBaseUrl, onSessionExpired, session.token]
   );
+
+  const loadPendingResearchReviews = useCallback(async () => {
+    if (!isSekretaris) return;
+    setPendingResearchLoading(true);
+    try {
+      const payload = await fetchWithAuth("/api/sekretaris/penelitian/review-tertunda");
+      setPendingResearchReviews(Array.isArray(payload?.items) ? payload.items : []);
+      setResearchReplacementTopics(
+        Array.isArray(payload?.replacement_topics) ? payload.replacement_topics : []
+      );
+    } catch (loadError) {
+      if (loadError.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(loadError.message || "Gagal memuat review penelitian tertunda.");
+      }
+    } finally {
+      setPendingResearchLoading(false);
+    }
+  }, [fetchWithAuth, isSekretaris]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "review-tertunda") return;
+    loadPendingResearchReviews().catch(() => {});
+  }, [activeTab, isSekretaris, loadPendingResearchReviews]);
+
+  const handleRemindResearchReviewer = async (submissionId, slot) => {
+    const actionKey = `remind-${submissionId}-${slot}`;
+    setPendingResearchActionKey(actionKey);
+    try {
+      await fetchWithAuth(
+        `/api/sekretaris/penelitian/review-tertunda/${submissionId}/slots/${slot}/remind`,
+        { method: "POST", body: JSON.stringify({}) }
+      );
+      showSuccessToast("Pengingat review berhasil dikirim.");
+      await loadPendingResearchReviews();
+    } catch (actionError) {
+      if (actionError.message !== "__SESSION_EXPIRED__") showErrorToast(actionError.message);
+    } finally {
+      setPendingResearchActionKey("");
+    }
+  };
+
+  const handleReplaceResearchReviewer = async (submissionId, slot) => {
+    const options = Object.fromEntries(
+      researchReplacementTopics.map((item) => [
+        item.kode,
+        `${item.kode} - ${item.judul || "-"} (${item.dosen?.nama || "-"})`,
+      ])
+    );
+    if (Object.keys(options).length === 0) {
+      showErrorToast("Belum ada topik pengganti yang tersedia.");
+      return;
+    }
+    const result = await Swal.fire({
+      title: "Ganti Topik dan Reviewer",
+      text: "Reviewer mengikuti dosen pemilik topik pengganti.",
+      input: "select",
+      inputOptions: options,
+      inputPlaceholder: "Pilih topik pengganti",
+      showCancelButton: true,
+      confirmButtonText: "Ganti",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#2f63e3",
+      inputValidator: (value) => (!value ? "Topik pengganti wajib dipilih." : undefined),
+    });
+    if (!result.isConfirmed) return;
+
+    const actionKey = `replace-${submissionId}-${slot}`;
+    setPendingResearchActionKey(actionKey);
+    try {
+      await fetchWithAuth(
+        `/api/sekretaris/penelitian/review-tertunda/${submissionId}/slots/${slot}/replace`,
+        { method: "PUT", body: JSON.stringify({ topik_kode: result.value }) }
+      );
+      showSuccessToast("Topik dan reviewer berhasil diganti.");
+      await loadPendingResearchReviews();
+    } catch (actionError) {
+      if (actionError.message !== "__SESSION_EXPIRED__") showErrorToast(actionError.message);
+    } finally {
+      setPendingResearchActionKey("");
+    }
+  };
+
+  const handleCancelResearchTopic = async (submissionId, slot, kode) => {
+    const result = await Swal.fire({
+      title: "Batalkan Pilihan Topik?",
+      text: `Pilihan ${kode || `slot ${slot}`} akan dihapus dari pengajuan mahasiswa.`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Batalkan Topik",
+      cancelButtonText: "Kembali",
+      confirmButtonColor: "#b73a3a",
+    });
+    if (!result.isConfirmed) return;
+
+    const actionKey = `cancel-${submissionId}-${slot}`;
+    setPendingResearchActionKey(actionKey);
+    try {
+      await fetchWithAuth(
+        `/api/sekretaris/penelitian/review-tertunda/${submissionId}/slots/${slot}`,
+        { method: "DELETE" }
+      );
+      showSuccessToast("Pilihan topik berhasil dibatalkan.");
+      await loadPendingResearchReviews();
+    } catch (actionError) {
+      if (actionError.message !== "__SESSION_EXPIRED__") showErrorToast(actionError.message);
+    } finally {
+      setPendingResearchActionKey("");
+    }
+  };
 
   const loadAllData = useCallback(async () => {
     sessionExpiredRef.current = false;
@@ -2294,10 +2403,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (submissionReviewFirstPendingIndex < 0) return submissionReviewTopikOptions.length - 1;
     return submissionReviewFirstPendingIndex;
   }, [submissionDetail?.can_review, submissionReviewFirstPendingIndex, submissionReviewTopikOptions.length]);
-  const submissionReviewCountdown = useMemo(
-    () => getReviewCountdown(submissionDetail?.review_deadline_at, countdownNowDate),
-    [countdownNowDate, submissionDetail?.review_deadline_at]
-  );
   const submissionDecisionHistory = useMemo(
     () =>
       Array.isArray(submissionDetail?.riwayat_persetujuan)
@@ -2338,6 +2443,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return createdAt > Number(submissionNotificationSeenAt || 0);
     }).length;
   }, [submissionNotificationItems, submissionNotificationSeenAt]);
+  const filteredPendingResearchReviews = useMemo(() => {
+    const keyword = pendingResearchQuery.trim().toLowerCase();
+    if (!keyword) return pendingResearchReviews;
+    return pendingResearchReviews.filter((item) => {
+      const searchable = [
+        item.id,
+        item.mahasiswa?.nim,
+        item.mahasiswa?.nama,
+        item.mahasiswa?.email,
+        ...(Array.isArray(item.slots)
+          ? item.slots.flatMap((slot) => [slot.kode, slot.judul, slot.dosen_nama])
+          : []),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return searchable.includes(keyword);
+    });
+  }, [pendingResearchQuery, pendingResearchReviews]);
 
   const pagedSubmissions = useMemo(() => {
     const start = (submissionPage - 1) * DOSEN_GRID_PAGE_SIZE;
@@ -5066,9 +5190,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
                       {submissionNotificationItems.slice(0, 8).map((item) => {
                         const topikCount = getSubmissionTopikCount(item);
-                        const deadline = shouldShowTopikReviewCountdown(item)
-                          ? getReviewCountdown(item?.review_deadline_at, countdownNowDate)
-                          : null;
                         return (
                           <button
                             key={`notif-submission-${item.id}`}
@@ -5086,13 +5207,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               {topikCount > 0 ? `${topikCount} topik` : formatLabel(item?.tipe_pengajuan)} •{" "}
                               {formatDateTime(item?.diajukan_pada || item?.diperbarui_pada)}
                             </p>
-                            {deadline?.has_deadline ? (
-                              <p
-                                className={`mt-1 text-[11px] font-semibold ${
-                                  deadline.is_expired ? "text-[#b73a3a]" : "text-[#31559f]"
-                                }`}
-                              >
-                                {deadline.is_expired ? "Batas review terlewati." : `Sisa review: ${deadline.label}`}
+                            {Number(item?.reminder_count || 0) > 0 ? (
+                              <p className="mt-1 text-[11px] font-semibold text-[#a06a00]">
+                                Pengingat ke-{item.reminder_count}
+                                {item.last_reminded_at
+                                  ? ` dikirim ${formatDateTime(item.last_reminded_at)}`
+                                  : ""}
                               </p>
                             ) : null}
                           </button>
@@ -5469,6 +5589,154 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               />
             ) : null}
 
+            {!loading && isSekretaris && activeTab === "review-tertunda" ? (
+              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-black text-[#1b274b]">Grid Review Penelitian Tertunda</h3>
+                    <p className="mt-1 text-sm text-[#5d6c91]">
+                      Pengingat in-app dibuat otomatis setiap 24 jam selama reviewer belum memberi keputusan.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                      <input
+                        value={pendingResearchQuery}
+                        onChange={(event) => setPendingResearchQuery(event.target.value)}
+                        placeholder="Cari mahasiswa, topik, atau dosen..."
+                        className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => loadPendingResearchReviews().catch(() => {})}
+                      disabled={pendingResearchLoading}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:opacity-50"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                  <table className="w-full min-w-[1500px] table-fixed text-left text-sm">
+                    <colgroup>
+                      <col style={{ width: "60px" }} />
+                      <col style={{ width: "260px" }} />
+                      <col style={{ width: "100px" }} />
+                      <col style={{ width: "150px" }} />
+                      <col style={{ width: "360px" }} />
+                      <col style={{ width: "260px" }} />
+                      <col style={{ width: "130px" }} />
+                      <col style={{ width: "190px" }} />
+                      <col style={{ width: "300px" }} />
+                    </colgroup>
+                    <thead>
+                      <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Prioritas</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Topik</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Reviewer</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Menunggu</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pengingat</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredPendingResearchReviews
+                        .flatMap((item) =>
+                          (item.slots || [])
+                            .filter((slot) => slot.reviewer_status === "pending")
+                            .map((slot) => ({ submission: item, slot }))
+                        )
+                        .map(({ submission, slot }, index) => {
+                          const reminderBusy =
+                            pendingResearchActionKey === `remind-${submission.id}-${slot.slot}`;
+                          const replaceBusy =
+                            pendingResearchActionKey === `replace-${submission.id}-${slot.slot}`;
+                          const cancelBusy =
+                            pendingResearchActionKey === `cancel-${submission.id}-${slot.slot}`;
+                          const rowBusy = reminderBusy || replaceBusy || cancelBusy;
+                          return (
+                            <tr
+                              key={`pending-research-${submission.id}-${slot.slot}`}
+                              className="border-b border-[#eff3fb] align-top"
+                            >
+                              <td className="px-3 py-2 font-bold text-[#274181]">{index + 1}</td>
+                              <td className="px-3 py-2">
+                                <p className="font-semibold text-[#1f2d53]">{submission.mahasiswa?.nama || "-"}</p>
+                                <p className="text-xs text-[#61709b]">
+                                  {submission.mahasiswa?.nim || "-"} | Angkatan {submission.mahasiswa?.angkatan || "-"}
+                                </p>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className="inline-flex rounded-full bg-[#eef3ff] px-2.5 py-1 text-xs font-bold text-[#2f63e3]">
+                                  Pilihan {slot.slot}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-[#27407b]">{slot.kode || "-"}</td>
+                              <td className="px-3 py-2 text-[#2f426f]">{slot.judul || "-"}</td>
+                              <td className="px-3 py-2">
+                                <p className="font-semibold text-[#243968]">{slot.dosen_nama || "-"}</p>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className="font-bold text-[#8a5d00]">{submission.usia_hari} hari</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <p className="font-semibold text-[#31559f]">{slot.reminder_count || 0} kali</p>
+                                <p className="text-xs text-[#61709b]">
+                                  {slot.last_reminded_at ? formatDateTime(slot.last_reminded_at) : "Belum dikirim"}
+                                </p>
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={rowBusy}
+                                    onClick={() => handleRemindResearchReviewer(submission.id, slot.slot)}
+                                    className="rounded-md border border-[#b8c9ef] px-3 py-1.5 text-xs font-bold text-[#31559f] hover:bg-[#f2f6ff] disabled:opacity-50"
+                                  >
+                                    Ingatkan
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={rowBusy}
+                                    onClick={() => handleReplaceResearchReviewer(submission.id, slot.slot)}
+                                    className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
+                                  >
+                                    Ganti
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={rowBusy}
+                                    onClick={() => handleCancelResearchTopic(submission.id, slot.slot, slot.kode)}
+                                    className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
+                                  >
+                                    Batalkan
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                  {!pendingResearchLoading &&
+                  filteredPendingResearchReviews.every(
+                    (item) => !(item.slots || []).some((slot) => slot.reviewer_status === "pending")
+                  ) ? (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center text-sm font-semibold text-[#7b88ab]">
+                      Tidak ada review penelitian yang tertunda.
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
             {!loading && isSubmissionReviewTabActive ? (
               <div className={submissionMode === "list" ? "flex min-h-0 flex-1 flex-col" : "space-y-4"}>
                 {submissionMode === "list" ? (
@@ -5536,11 +5804,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   const topikCount = getSubmissionTopikCount(row);
                                   const hasSameDosenBadge = hasSameDosenTopikBadge(row);
                                   const gridStatus = getSubmissionGridStatus(row);
-                                  const reviewCountdown =
-                                    shouldShowTopikReviewCountdown(row)
-                                      ? getReviewCountdown(row.review_deadline_at, countdownNowDate)
-                                      : null;
-
                                   return (
                                     <tr key={`submission-${row.id}`} className="border-b border-[#eff3fb] align-top">
                                       <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
@@ -5578,17 +5841,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       </td>
                                       <td className="px-3 py-2 align-top break-words">
                                         <p className="font-semibold text-[#2a3f74]">{getDosenSubmissionTahapLabel(row)}</p>
-                                        {reviewCountdown?.has_deadline ? (
-                                          <p
-                                            className={`mt-1 text-[11px] font-semibold ${
-                                              reviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#355da8]"
-                                            }`}
-                                          >
-                                            {reviewCountdown.is_expired
-                                              ? "Waktu review habis (72 jam)."
-                                              : `Sisa review: ${reviewCountdown.label}`}
-                                          </p>
-                                        ) : null}
                                       </td>
                                       <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
                                       <td className="px-3 py-2 whitespace-nowrap align-top">
@@ -5755,18 +6007,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       Semua topik berada pada dosen yang sama.
                                     </p>
                                   ) : null}
-                                  {shouldShowTopikReviewCountdown(submissionDetail) &&
-                                  submissionReviewCountdown.has_deadline ? (
-                                    <p
-                                      className={`mt-1 text-xs font-semibold ${
-                                        submissionReviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#355da8]"
-                                      }`}
-                                    >
-                                      {submissionReviewCountdown.is_expired
-                                        ? "Waktu review 72 jam telah berakhir. Sistem akan memfinalisasi otomatis."
-                                        : `Sisa waktu review 72 jam: ${submissionReviewCountdown.label} (batas: ${formatDateTime(
-                                            submissionDetail.review_deadline_at
-                                          )})`}
+                                  {shouldShowTopikReviewCountdown(submissionDetail) ? (
+                                    <p className="mt-1 text-xs font-semibold text-[#355da8]">
+                                      Menunggu seluruh reviewer memberikan keputusan.
                                     </p>
                                   ) : null}
                                 </div>
@@ -5850,20 +6093,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         ) : (
                           <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
                             <div className="space-y-2 text-sm text-[#324c86]">
-                              {shouldShowTopikReviewCountdown(submissionDetail) &&
-                              submissionReviewCountdown.has_deadline ? (
-                                <p
-                                  className={`rounded-lg border px-3 py-2 text-xs font-semibold ${
-                                    submissionReviewCountdown.is_expired
-                                      ? "border-[#f3c9c9] bg-[#fff5f5] text-[#b73a3a]"
-                                      : "border-[#dbe4fa] bg-white text-[#355da8]"
-                                  }`}
-                                >
-                                  {submissionReviewCountdown.is_expired
-                                    ? "Waktu review 72 jam telah berakhir. Sistem akan memproses otomatis."
-                                    : `Sisa waktu review 72 jam: ${submissionReviewCountdown.label} (batas: ${formatDateTime(
-                                        submissionDetail.review_deadline_at
-                                      )})`}
+                              {shouldShowTopikReviewCountdown(submissionDetail) ? (
+                                <p className="rounded-lg border border-[#dbe4fa] bg-white px-3 py-2 text-xs font-semibold text-[#355da8]">
+                                  Pengajuan tetap menunggu keputusan dosen tanpa batas waktu otomatis.
                                 </p>
                               ) : null}
                               <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
@@ -6056,7 +6288,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             </h3>
                             <p className="mt-1 text-sm text-[#5d6c91]">
                               {submissionDetail.status === "pending"
-                                ? "Pantau status review dan sisa waktu keputusan untuk pengajuan ini."
+                                ? "Pantau status review untuk pengajuan ini."
                                 : "Lihat jejak keputusan dari dosen pembimbing hingga ketua cluster untuk pengajuan ini."}
                             </p>
                             {submissionDetail.status === "pending" ? (
@@ -6064,11 +6296,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 Anda belum bisa memberi keputusan untuk pengajuan ini.
                                 {submissionDetail.reviewer_status
                                   ? ` Status reviewer Anda: ${formatLabel(submissionDetail.reviewer_status)}.`
-                                  : ""}
-                                {submissionReviewCountdown.has_deadline
-                                  ? submissionReviewCountdown.is_expired
-                                    ? " Batas review 72 jam sudah terlewati."
-                                    : ` Sisa waktu review: ${submissionReviewCountdown.label}.`
                                   : ""}
                               </div>
                             ) : null}

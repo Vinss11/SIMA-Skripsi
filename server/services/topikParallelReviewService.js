@@ -14,8 +14,10 @@ const {
   sequelize,
 } = require("../models");
 
-const TOPIK_PARALLEL_REVIEW_HOURS = 72;
-const TOPIK_PARALLEL_REVIEW_MS = TOPIK_PARALLEL_REVIEW_HOURS * 60 * 60 * 1000;
+const TOPIK_PARALLEL_REVIEW_HOURS = null;
+const TOPIK_PARALLEL_REVIEW_MS = null;
+const REVIEW_REMINDER_INTERVAL_HOURS = 24;
+const REVIEW_REMINDER_INTERVAL_MS = REVIEW_REMINDER_INTERVAL_HOURS * 60 * 60 * 1000;
 const RIWAYAT_TOPIK_PARALLEL_ATTRIBUTES = [
   "id",
   "dosen_id",
@@ -25,6 +27,8 @@ const RIWAYAT_TOPIK_PARALLEL_ATTRIBUTES = [
   "status",
   "keterangan",
   "tanggal_keputusan",
+  "reminder_count",
+  "last_reminded_at",
   "createdAt",
   "updatedAt",
 ];
@@ -169,8 +173,7 @@ function buildTopikListFromSubmission(submission) {
 }
 
 function getTopikParallelReviewDeadline(submission) {
-  const createdAt = toDecisionDate(submission?.createdAt, new Date());
-  return new Date(createdAt.getTime() + TOPIK_PARALLEL_REVIEW_MS);
+  return null;
 }
 
 function isTopikParallelSubmission(submission) {
@@ -193,8 +196,6 @@ function hasCalonPembimbingFinalDecision(submission) {
 
 function evaluateJudulMandiriReviewState(submission, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
-  const deadlineAt = getTopikParallelReviewDeadline(submission);
-  const deadlinePassed = now.getTime() >= deadlineAt.getTime();
   const riwayat = getSubmissionRiwayatRows(submission);
   const supervisorDecision =
     riwayat
@@ -206,16 +207,17 @@ function evaluateJudulMandiriReviewState(submission, options = {}) {
           toDecisionDate(left.tanggal_keputusan || left.updatedAt || left.createdAt, new Date(0)).getTime()
       )[0] || null;
   const rawStatus = normalizeRiwayatStatus(supervisorDecision?.status || "pending");
-  const effectiveStatus = rawStatus === "pending" && deadlinePassed ? "expired" : rawStatus;
 
   return {
     now,
-    deadline_at: deadlineAt,
-    deadline_passed: deadlinePassed,
-    supervisor_status: effectiveStatus,
+    deadline_at: null,
+    deadline_passed: false,
+    supervisor_status: rawStatus,
     supervisor_status_db: rawStatus,
     supervisor_decision: supervisorDecision,
-    can_finalize: deadlinePassed && rawStatus === "pending" && !hasCalonPembimbingFinalDecision(submission),
+    reminder_count: Number(supervisorDecision?.reminder_count || 0),
+    last_reminded_at: supervisorDecision?.last_reminded_at || null,
+    can_finalize: false,
   };
 }
 
@@ -422,6 +424,8 @@ function getCalonPembimbingDecisionLookup(riwayat = []) {
       status_db: normalizeRiwayatStatus(item?.status),
       keterangan: item?.keterangan || null,
       decided_at: decidedAt,
+      reminder_count: Number(item?.reminder_count || 0),
+      last_reminded_at: item?.last_reminded_at || null,
     };
 
     if (topikSlot) {
@@ -455,8 +459,6 @@ function hasKoordinatorDecision(submission) {
 function evaluateTopikParallelState(submission, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const topikList = buildTopikListFromSubmission(submission);
-  const deadlineAt = getTopikParallelReviewDeadline(submission);
-  const deadlinePassed = now.getTime() >= deadlineAt.getTime();
   const riwayat = getSubmissionRiwayatRows(submission);
   const decisionLookup = getCalonPembimbingDecisionLookup(riwayat);
 
@@ -466,14 +468,15 @@ function evaluateTopikParallelState(submission, options = {}) {
       (topik.dosen_id ? decisionLookup.by_dosen_fallback.get(Number(topik.dosen_id)) : null) ||
       null;
     const rawStatus = normalizeRiwayatStatus(reviewerDecision?.status_db || "pending");
-    const effectiveStatus = rawStatus === "pending" && deadlinePassed ? "expired" : rawStatus;
     return {
       ...topik,
       reviewer_row_id: reviewerDecision?.id || null,
-      reviewer_status: effectiveStatus,
+      reviewer_status: rawStatus,
       reviewer_status_db: rawStatus,
       reviewer_note: reviewerDecision?.keterangan || null,
       reviewer_decided_at: reviewerDecision?.decided_at || null,
+      reminder_count: Number(reviewerDecision?.reminder_count || 0),
+      last_reminded_at: reviewerDecision?.last_reminded_at || null,
     };
   });
 
@@ -490,8 +493,8 @@ function evaluateTopikParallelState(submission, options = {}) {
 
   return {
     now,
-    deadline_at: deadlineAt,
-    deadline_passed: deadlinePassed,
+    deadline_at: null,
+    deadline_passed: false,
     slot_decisions: slotDecisions,
     approved_slots: approvedSlots,
     pending_slots: pendingSlots,
@@ -499,7 +502,7 @@ function evaluateTopikParallelState(submission, options = {}) {
     expired_slots: expiredSlots,
     approved_topik: approvedSlots[0] || null,
     pending_count: pendingSlots.length,
-    can_finalize: pendingSlots.length === 0 || deadlinePassed,
+    can_finalize: topikList.length > 0 && pendingSlots.length === 0,
     rejection_notes: rejectionNotes,
   };
 }
@@ -553,13 +556,43 @@ async function ensureParallelReviewerRows(submission, transaction) {
   return { created };
 }
 
+async function syncPendingReviewReminders(submissionIds = [], options = {}) {
+  const ids = [...new Set((submissionIds || []).map((id) => toNumber(id)).filter(Boolean))];
+  if (ids.length === 0) return { reminded: 0 };
+
+  const now = options.now instanceof Date ? options.now : new Date();
+  const dueBefore = new Date(now.getTime() - REVIEW_REMINDER_INTERVAL_MS);
+  const rows = await RiwayatPersetujuan.findAll({
+    where: {
+      pengajuan_id: { [Op.in]: ids },
+      tipe_approval: "calon_pembimbing",
+      status: "pending",
+      createdAt: { [Op.lte]: dueBefore },
+      [Op.or]: [
+        { last_reminded_at: null },
+        { last_reminded_at: { [Op.lte]: dueBefore } },
+      ],
+    },
+    transaction: options.transaction,
+  });
+
+  for (const row of rows) {
+    await row.update(
+      {
+        reminder_count: Number(row.reminder_count || 0) + 1,
+        last_reminded_at: now,
+      },
+      { transaction: options.transaction }
+    );
+  }
+
+  return { reminded: rows.length };
+}
+
 function buildFinalRejectReason(parallelState) {
   const notes = Array.isArray(parallelState?.rejection_notes) ? parallelState.rejection_notes : [];
   if (notes.length > 0) {
     return `Pengajuan tidak lolos review dosen. Catatan: ${notes.join(" | ")}`;
-  }
-  if (parallelState?.expired_slots?.length > 0) {
-    return "Pengajuan tidak mendapatkan persetujuan dosen hingga tenggat 3x24 jam berakhir.";
   }
   return "Pengajuan ditolak oleh seluruh dosen pilihan.";
 }
@@ -1004,69 +1037,15 @@ async function finalizeJudulMandiriDeadlineSubmission(submissionId, options = {}
       };
     }
 
-    const reviewState = evaluateJudulMandiriReviewState(submission);
-    if (submission.status !== "pending" || !reviewState.can_finalize) {
-      if (!externalTransaction) await transaction.commit();
-      return {
-        success: true,
-        changed: false,
-        finalized: false,
-        submission,
-        review_state: reviewState,
-      };
-    }
-
-    const now = new Date();
-    await RiwayatPersetujuan.create(
-      {
-        pengajuan_id: submission.id,
-        dosen_id: submission.prospective_supervisor_id || submission.dosen_saat_ini,
-        tipe_approval: "calon_pembimbing",
-        status: "rejected",
-        keterangan: "Pengajuan otomatis ditolak karena calon dosen pembimbing tidak memberi keputusan dalam 72 jam.",
-        tanggal_keputusan: now,
-      },
-      { transaction }
-    );
-
-    await submission.update(
-      {
-        status: "rejected",
-        dosen_saat_ini: null,
-        alasan_persetujuan: null,
-        alasan_penolakan: "Pengajuan otomatis ditolak karena calon dosen pembimbing tidak memberi keputusan dalam 72 jam.",
-      },
-      { transaction }
-    );
-
-    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
-      transaction,
-      lock: transaction.LOCK.UPDATE,
-    });
-
-    if (mahasiswa && Number(mahasiswa.pengajuan_aktif_id) === Number(submission.id)) {
-      await mahasiswa.update(
-        {
-          pengajuan_aktif_id: null,
-          status_jalur_saat_ini: getMahasiswaFallbackStatusForRejectedSubmission(submission),
-        },
-        { transaction }
-      );
-    }
-
-    const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, {
-      transaction,
-    });
-
     if (!externalTransaction) await transaction.commit();
 
     return {
       success: true,
-      changed: true,
-      finalized: true,
-      final_status: "rejected",
-      submission: refreshedSubmission,
-      review_state: evaluateJudulMandiriReviewState(refreshedSubmission),
+      changed: false,
+      finalized: false,
+      final_status: submission.status,
+      submission,
+      review_state: evaluateJudulMandiriReviewState(submission),
     };
   } catch (error) {
     if (!externalTransaction) await transaction.rollback();
@@ -1084,6 +1063,7 @@ async function finalizeJudulMandiriDeadlineSubmissionsByIds(submissionIds = []) 
 module.exports = {
   TOPIK_PARALLEL_REVIEW_HOURS,
   TOPIK_PARALLEL_REVIEW_MS,
+  REVIEW_REMINDER_INTERVAL_HOURS,
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
   buildTopikListFromSubmission,
@@ -1091,6 +1071,7 @@ module.exports = {
   evaluateTopikParallelState,
   evaluateJudulMandiriReviewState,
   ensureParallelReviewerRows,
+  syncPendingReviewReminders,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
   finalizeJudulMandiriDeadlineSubmission,

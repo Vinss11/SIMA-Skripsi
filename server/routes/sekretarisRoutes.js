@@ -4,6 +4,7 @@ const sekretarisController = require("../controllers/sekretarisController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const jalurController = require("../controllers/jalurController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const penelitianReviewController = require("../controllers/penelitianReviewController");
 const { authenticateToken, authorizeRole, authorizeSekretarisAccess } = require("../middlewares/authMiddleware");
 
 router.get("/pendaftaran", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPendaftaranList);
@@ -24,6 +25,34 @@ router.patch("/periode/:id/tanggal", authenticateToken, authorizeRole("sekretari
 router.post("/periode/:id/close", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.closePeriodeById);
 router.get("/ketua-klaster", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getKetuaKlasterOverview);
 router.post("/ketua-klaster/assign", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.assignKetuaKlaster);
+router.get(
+  "/penelitian/review-tertunda",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  penelitianReviewController.getPendingResearchReviews
+);
+router.post(
+  "/penelitian/review-tertunda/:id/slots/:slot/remind",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  penelitianReviewController.remindPendingResearchReviewer
+);
+router.put(
+  "/penelitian/review-tertunda/:id/slots/:slot/replace",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  penelitianReviewController.replacePendingResearchReviewer
+);
+router.delete(
+  "/penelitian/review-tertunda/:id/slots/:slot",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  penelitianReviewController.cancelPendingResearchTopic
+);
 router.get(
   "/non-penelitian/reviews",
   authenticateToken,

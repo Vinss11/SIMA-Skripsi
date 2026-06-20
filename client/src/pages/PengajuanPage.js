@@ -1542,18 +1542,117 @@ function FormNonPenelitianGeneric({
   apiBaseUrl,
   onSessionExpired,
   onSubmitted,
+  studentProfile,
   disabled,
 }) {
-  const [ringkasan, setRingkasan] = useState("");
-  const [catatan, setCatatan] = useState("");
+  const initialForm = useMemo(
+    () => ({
+      nama_kelompok: "",
+      anggota_1_nim: "",
+      anggota_2_nim: "",
+      nama_bisnis: "",
+      jenis_bisnis: "",
+      lokasi_bisnis: "",
+      deskripsi_bisnis: "",
+      masalah_yang_diselesaikan: "",
+      produk_layanan: "",
+      target_konsumen: "",
+      model_bisnis: "",
+      tahap_perkembangan: "",
+      rencana_kegiatan: "",
+      target_luaran: "",
+      tautan_bisnis: "",
+      nama_program: "",
+      nama_mitra: "",
+      jenis_mitra: "",
+      lokasi_pengabdian: "",
+      kontak_mitra: "",
+      permasalahan_mitra: "",
+      solusi_ditawarkan: "",
+      deskripsi_kegiatan: "",
+      penerima_manfaat: "",
+      rencana_pelaksanaan: "",
+      periode_mulai: "",
+      periode_selesai: "",
+      indikator_keberhasilan: "",
+      dokumen_pendukung: "",
+      catatan: "",
+      persetujuan_anggota: false,
+    }),
+    []
+  );
+  const [formData, setFormData] = useState(initialForm);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const isBisnis = jalur === "perintisan_bisnis";
+
+  const updateField = (field, value) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const validateForm = () => {
+    const commonRequired = [
+      ["nama_kelompok", "Nama kelompok"],
+      ["anggota_1_nim", "NIM Anggota 1"],
+    ];
+    const specificRequired = isBisnis
+      ? [
+          ["nama_bisnis", "Nama bisnis"],
+          ["jenis_bisnis", "Jenis bisnis"],
+          ["lokasi_bisnis", "Lokasi bisnis"],
+          ["deskripsi_bisnis", "Deskripsi bisnis"],
+          ["masalah_yang_diselesaikan", "Permasalahan yang ingin diselesaikan"],
+          ["produk_layanan", "Produk atau layanan"],
+          ["target_konsumen", "Target pengguna atau konsumen"],
+          ["model_bisnis", "Model bisnis"],
+          ["tahap_perkembangan", "Tahap perkembangan bisnis"],
+          ["rencana_kegiatan", "Rencana kegiatan"],
+          ["target_luaran", "Target atau luaran"],
+        ]
+      : [
+          ["nama_program", "Nama program atau kegiatan"],
+          ["nama_mitra", "Nama mitra atau komunitas"],
+          ["jenis_mitra", "Jenis mitra"],
+          ["lokasi_pengabdian", "Lokasi pengabdian"],
+          ["permasalahan_mitra", "Permasalahan mitra"],
+          ["solusi_ditawarkan", "Solusi yang ditawarkan"],
+          ["deskripsi_kegiatan", "Deskripsi kegiatan"],
+          ["penerima_manfaat", "Sasaran atau penerima manfaat"],
+          ["rencana_pelaksanaan", "Rencana pelaksanaan"],
+          ["periode_mulai", "Tanggal mulai kegiatan"],
+          ["periode_selesai", "Tanggal selesai kegiatan"],
+          ["target_luaran", "Target atau luaran"],
+          ["indikator_keberhasilan", "Indikator keberhasilan"],
+        ];
+
+    for (const [field, label] of [...commonRequired, ...specificRequired]) {
+      if (!String(formData[field] || "").trim()) return `${label} wajib diisi.`;
+    }
+    for (const field of ["anggota_1_nim", "anggota_2_nim"]) {
+      const nim = String(formData[field] || "").trim();
+      if (nim && !/^\d{8}$/.test(nim)) return "NIM anggota wajib terdiri dari tepat 8 digit angka.";
+    }
+    if (
+      formData.anggota_2_nim &&
+      String(formData.anggota_1_nim).trim() === String(formData.anggota_2_nim).trim()
+    ) {
+      return "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama.";
+    }
+    if (!isBisnis && new Date(formData.periode_mulai).getTime() > new Date(formData.periode_selesai).getTime()) {
+      return "Tanggal selesai kegiatan tidak boleh sebelum tanggal mulai.";
+    }
+    if (!formData.persetujuan_anggota) {
+      return "Pastikan seluruh anggota telah menyetujui keikutsertaan.";
+    }
+    return "";
+  };
 
   const handleSubmit = async () => {
     if (disabled) return;
-    if (!ringkasan.trim()) {
-      setSubmitError("Ringkasan pengajuan wajib diisi.");
+    const validationMessage = validateForm();
+    if (validationMessage) {
+      setSubmitError(validationMessage);
       return;
     }
 
@@ -1581,10 +1680,7 @@ function FormNonPenelitianGeneric({
         },
         body: JSON.stringify({
           jalur,
-          payload: {
-            ringkasan: ringkasan.trim(),
-            catatan: catatan.trim(),
-          },
+          payload: formData,
         }),
       });
 
@@ -1605,8 +1701,7 @@ function FormNonPenelitianGeneric({
       }
 
       setSubmitSuccess(data.message || `Form ${jalurLabel} berhasil dikirim.`);
-      setRingkasan("");
-      setCatatan("");
+      setFormData(initialForm);
       onSubmitted?.();
     } catch (error) {
       setSubmitError(error.message || "Submit form jalur gagal.");
@@ -1615,55 +1710,155 @@ function FormNonPenelitianGeneric({
     }
   };
 
+  const inputClass = `w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+    disabled
+      ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+      : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+  }`;
+  const renderInput = (field, label, options = {}) => (
+    <label className={options.wide ? "md:col-span-2" : ""}>
+      <span className="mb-2 block text-sm font-semibold text-[#324c86]">
+        {label}
+        {options.required === false ? "" : " *"}
+      </span>
+      <input
+        type={options.type || "text"}
+        value={formData[field]}
+        onChange={(event) => updateField(field, event.target.value)}
+        disabled={disabled}
+        placeholder={options.placeholder || ""}
+        className={inputClass}
+      />
+    </label>
+  );
+  const renderTextarea = (field, label, options = {}) => (
+    <label className={options.wide === false ? "" : "md:col-span-2"}>
+      <span className="mb-2 block text-sm font-semibold text-[#324c86]">
+        {label}
+        {options.required === false ? "" : " *"}
+      </span>
+      <textarea
+        rows={options.rows || 3}
+        value={formData[field]}
+        onChange={(event) => updateField(field, event.target.value)}
+        disabled={disabled}
+        placeholder={options.placeholder || ""}
+        className={inputClass}
+      />
+    </label>
+  );
+
   return (
-    <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
-      <h2 className="mb-2 text-xl font-black text-[#1b274b]">Form Pengajuan {jalurLabel}</h2>
-      <p className="mb-4 text-sm text-[#5d6c91]">Isi ringkasan pengajuan sesuai jalur {jalurLabel}.</p>
+    <div className="space-y-4">
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-black text-[#1b274b]">Form Pengajuan {jalurLabel}</h2>
+        <p className="mt-1 text-sm text-[#5d6c91]">
+          Form diisi oleh ketua kelompok. Anggota 1 wajib dan Anggota 2 dapat dikosongkan.
+        </p>
+      </section>
 
-      <div className="space-y-4">
-        <div>
-          <label className="mb-2 block text-sm font-semibold text-[#324c86]">Ringkasan Pengajuan *</label>
-          <textarea
-            rows={4}
-            value={ringkasan}
-            onChange={(event) => setRingkasan(event.target.value)}
-            disabled={disabled}
-            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-              disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-            }`}
-          />
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">Data Kelompok</h3>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {renderInput("nama_kelompok", "Nama Kelompok", { wide: true })}
+          <div className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Ketua Kelompok</p>
+            <p className="mt-1 font-bold text-[#1b274b]">{studentProfile?.nama || session?.user?.nama || "-"}</p>
+            <p className="text-sm text-[#5d6c91]">{studentProfile?.nim || session?.user?.nim || "-"}</p>
+          </div>
+          {renderInput("anggota_1_nim", "NIM Anggota 1", { placeholder: "8 digit NIM mahasiswa" })}
+          {renderInput("anggota_2_nim", "NIM Anggota 2", {
+            placeholder: "Opsional",
+            required: false,
+          })}
         </div>
+      </section>
 
-        <div>
-          <label className="mb-2 block text-sm font-semibold text-[#324c86]">Catatan (opsional)</label>
-          <textarea
-            rows={3}
-            value={catatan}
-            onChange={(event) => setCatatan(event.target.value)}
-            disabled={disabled}
-            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-              disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-            }`}
-          />
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">
+          {isBisnis ? "Detail Perintisan Bisnis" : "Detail Pengabdian Masyarakat"}
+        </h3>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {isBisnis ? (
+            <>
+              {renderInput("nama_bisnis", "Nama Bisnis")}
+              {renderInput("jenis_bisnis", "Jenis Bisnis")}
+              {renderInput("lokasi_bisnis", "Lokasi Bisnis", { wide: true })}
+              {renderTextarea("deskripsi_bisnis", "Deskripsi Bisnis")}
+              {renderTextarea("masalah_yang_diselesaikan", "Permasalahan yang Ingin Diselesaikan")}
+              {renderTextarea("produk_layanan", "Produk atau Layanan")}
+              {renderTextarea("target_konsumen", "Target Pengguna atau Konsumen")}
+              {renderTextarea("model_bisnis", "Model Bisnis")}
+              {renderTextarea("tahap_perkembangan", "Tahap Perkembangan Bisnis")}
+              {renderTextarea("rencana_kegiatan", "Rencana Kegiatan Selama Penjaluran")}
+              {renderTextarea("target_luaran", "Target atau Luaran")}
+              {renderInput("tautan_bisnis", "Tautan Bisnis / Media Sosial", {
+                wide: true,
+                required: false,
+                placeholder: "Opsional",
+              })}
+            </>
+          ) : (
+            <>
+              {renderInput("nama_program", "Nama Program atau Kegiatan", { wide: true })}
+              {renderInput("nama_mitra", "Nama Mitra / Komunitas")}
+              {renderInput("jenis_mitra", "Jenis Mitra")}
+              {renderInput("lokasi_pengabdian", "Lokasi Pengabdian", { wide: true })}
+              {renderInput("kontak_mitra", "Kontak Mitra", { wide: true, required: false })}
+              {renderTextarea("permasalahan_mitra", "Permasalahan Mitra")}
+              {renderTextarea("solusi_ditawarkan", "Solusi yang Ditawarkan")}
+              {renderTextarea("deskripsi_kegiatan", "Deskripsi Kegiatan")}
+              {renderTextarea("penerima_manfaat", "Sasaran atau Penerima Manfaat")}
+              {renderTextarea("rencana_pelaksanaan", "Rencana Pelaksanaan")}
+              {renderInput("periode_mulai", "Tanggal Mulai", { type: "date" })}
+              {renderInput("periode_selesai", "Tanggal Selesai", { type: "date" })}
+              {renderTextarea("target_luaran", "Target atau Luaran")}
+              {renderTextarea("indikator_keberhasilan", "Indikator Keberhasilan")}
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">Dokumen dan Pernyataan</h3>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          {renderInput("dokumen_pendukung", "Dokumen Pendukung", {
+            wide: true,
+            required: false,
+            placeholder: "Nama file atau tautan dokumen (opsional)",
+          })}
+          {renderTextarea("catatan", "Catatan Tambahan", { required: false })}
+          <label className="md:col-span-2 flex items-start gap-3 rounded-lg border border-[#dce5f7] bg-[#f8fbff] p-4">
+            <input
+              type="checkbox"
+              checked={formData.persetujuan_anggota}
+              onChange={(event) => updateField("persetujuan_anggota", event.target.checked)}
+              disabled={disabled}
+              className="mt-1 h-4 w-4 accent-[#2f63e3]"
+            />
+            <span className="text-sm font-semibold leading-relaxed text-[#405070]">
+              Saya memastikan seluruh anggota telah menyetujui keikutsertaan dan data pengajuan dapat
+              dipertanggungjawabkan.
+            </span>
+          </label>
         </div>
 
         {submitError ? (
-          <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+          <div className="mt-4 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
             {submitError}
           </div>
         ) : null}
         {submitSuccess ? (
-          <div className="rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
+          <div className="mt-4 rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
             {submitSuccess}
           </div>
         ) : null}
 
-        <div className="flex justify-end gap-3">
+        <div className="mt-5 flex justify-end gap-3">
           <button
             type="button"
             onClick={() => {
-              setRingkasan("");
-              setCatatan("");
+              setFormData(initialForm);
               setSubmitError("");
               setSubmitSuccess("");
             }}
@@ -1689,7 +1884,7 @@ function FormNonPenelitianGeneric({
             {submitLoading ? "Mengirim..." : "Kirim Form"}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
@@ -2634,6 +2829,7 @@ function PengajuanPage({
           apiBaseUrl={apiBaseUrl}
           onSessionExpired={onSessionExpired}
           onSubmitted={onEligibilityRefresh}
+          studentProfile={studentProfile}
           disabled={currentFormDisabled}
         />
       ) : null}

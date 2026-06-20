@@ -22,50 +22,6 @@ function formatDateTime(value) {
   }).format(date);
 }
 
-function parseDateTime(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function getReviewCountdown(deadlineAt, now = new Date()) {
-  const deadline = parseDateTime(deadlineAt);
-  if (!deadline) {
-    return {
-      has_deadline: false,
-      is_expired: false,
-      remaining_ms: 0,
-      label: "-",
-      deadline,
-    };
-  }
-
-  const remainingMs = deadline.getTime() - now.getTime();
-  if (remainingMs <= 0) {
-    return {
-      has_deadline: true,
-      is_expired: true,
-      remaining_ms: 0,
-      label: "Waktu review habis",
-      deadline,
-    };
-  }
-
-  const totalSeconds = Math.floor(remainingMs / 1000);
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const pad = (value) => String(value).padStart(2, "0");
-
-  return {
-    has_deadline: true,
-    is_expired: false,
-    remaining_ms: remainingMs,
-    label: `${pad(hours)}j ${pad(minutes)}m ${pad(seconds)}d`,
-    deadline,
-  };
-}
-
 function formatLabel(value) {
   if (!value) return "-";
   return String(value)
@@ -116,7 +72,7 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
   if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
   if (tahap === "pending_dosen_pembimbing") return "Menunggu Review Dosen Pembimbing";
   if (tahap === "pending_review_parallel") return "Menunggu Review Dosen";
-  if (tahap === "deadline_terlewati") return "Waktu Review Dosen Berakhir";
+  if (tahap === "deadline_terlewati") return "Menunggu Review Dosen";
   if (normalizedStatus === "pending") return "Sedang Direview";
   return formatLabel(tahap || status || "-");
 }
@@ -301,18 +257,6 @@ function StatusPage({
   const [viewMode, setViewMode] = useState("list");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
-  const [countdownNowTs, setCountdownNowTs] = useState(() => Date.now());
-  const countdownNowDate = useMemo(() => new Date(countdownNowTs), [countdownNowTs]);
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setCountdownNowTs(Date.now());
-    }, 1000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
-
   useEffect(() => {
     let isMounted = true;
 
@@ -532,10 +476,6 @@ function StatusPage({
     return [];
   }, [selectedDetail]);
   const selectedStatusChip = getStatusChip(selectedDetail?.status || selectedSubmissionRow?.status || "-");
-  const selectedDetailReviewCountdown = useMemo(
-    () => getReviewCountdown(selectedDetail?.review_deadline_at, countdownNowDate),
-    [countdownNowDate, selectedDetail?.review_deadline_at]
-  );
   const selectedTahapLabel = getTahapLabel(
     selectedDetail?.tahap_approval || selectedSubmissionRow?.tahap_approval,
     selectedDetail?.tipe_pengajuan || selectedSubmissionRow?.tipe_pengajuan,
@@ -703,7 +643,7 @@ function StatusPage({
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Diperbarui</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Sisa Review 72 Jam</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Review</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
               </tr>
             </thead>
@@ -717,11 +657,6 @@ function StatusPage({
                 );
                 const clusterDisplay = getClusterDisplay(row);
                 const kodeTopikDisplay = getKodeTopikDisplay(row);
-                const reviewCountdown =
-                  shouldShowTopikReviewCountdown(row)
-                    ? getReviewCountdown(row.review_deadline_at, countdownNowDate)
-                    : null;
-
                 return (
                   <tr key={`status-row-${row.id}`} className="border-b border-[#eff3fb]">
                     <td className="px-3 py-2 font-bold text-[#274181]">{rowStart + index}</td>
@@ -747,13 +682,9 @@ function StatusPage({
                     </td>
                     <td className="px-3 py-2">{formatDateTime(row.updatedAt || row.createdAt)}</td>
                     <td className="px-3 py-2">
-                      {reviewCountdown?.has_deadline ? (
-                        <span
-                          className={`text-xs font-bold ${
-                            reviewCountdown.is_expired ? "text-[#b73a3a]" : "text-[#31559f]"
-                          }`}
-                        >
-                          {reviewCountdown.label}
+                      {shouldShowTopikReviewCountdown(row) ? (
+                        <span className="text-xs font-bold text-[#31559f]">
+                          Menunggu keputusan dosen
                         </span>
                       ) : (
                         <span className="text-xs text-[#7b88ab]">-</span>
@@ -870,23 +801,11 @@ function StatusPage({
                 </div>
               </section>
 
-              {shouldShowTopikReviewCountdown(selectedDetail) &&
-              selectedDetailReviewCountdown.has_deadline ? (
-                <div
-                  className={`rounded-lg border px-3 py-2 text-sm ${
-                    selectedDetailReviewCountdown.is_expired
-                      ? "border-[#f3c9c9] bg-[#fff5f5] text-[#a13c3c]"
-                      : "border-[#dbe4fa] bg-[#f8fbff] text-[#2f426f]"
-                  }`}
-                >
-                  <p className="font-bold">
-                    {selectedDetailReviewCountdown.is_expired
-                      ? "Waktu review dosen (72 jam) sudah berakhir."
-                      : `Sisa waktu review dosen: ${selectedDetailReviewCountdown.label}`}
-                  </p>
+              {shouldShowTopikReviewCountdown(selectedDetail) ? (
+                <div className="rounded-lg border border-[#dbe4fa] bg-[#f8fbff] px-3 py-2 text-sm text-[#2f426f]">
+                  <p className="font-bold">Menunggu seluruh dosen pilihan memberikan keputusan.</p>
                   <p className="mt-1 text-xs font-semibold">
-                    Dosen memiliki batas maksimal 72 jam sejak pengajuan dibuat untuk memberi keputusan approve/tolak.
-                    Setelah melewati batas, sistem memfinalisasi status pengajuan secara otomatis.
+                    Pengajuan tidak akan disetujui atau ditolak otomatis berdasarkan waktu.
                   </p>
                 </div>
               ) : null}
