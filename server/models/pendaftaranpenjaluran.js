@@ -71,6 +71,11 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: "baru",
       },
+      program_kuliah: {
+        type: DataTypes.ENUM("reguler", "internasional"),
+        allowNull: false,
+        defaultValue: "reguler",
+      },
       semester_mahasiswa: {
         type: DataTypes.INTEGER,
         allowNull: false,

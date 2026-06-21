@@ -1,7 +1,10 @@
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
 const { Mahasiswa, Dosen, Admin, SekretarisProdi, sequelize } = require("../models");
-const { isAllowedSekretarisJabatan } = require("../constants/sekretarisAkses");
+const {
+  isAllowedSekretarisJabatan,
+  resolveProgramKuliahFromJabatan,
+} = require("../constants/sekretarisAkses");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "24h";
@@ -68,11 +71,13 @@ function buildLoginResponse(user, role, token) {
     responseData.user.capabilities = capabilities;
     if (capabilities.includes("sekretaris_prodi")) {
       responseData.user.jabatan = user.jabatan_struktural;
+      responseData.user.program_kuliah = resolveProgramKuliahFromJabatan(user.jabatan_struktural);
     }
   }
 
   if (role === "sekretaris_prodi") {
     responseData.user.jabatan = user.jabatan || "Sekretaris Prodi";
+    responseData.user.program_kuliah = resolveProgramKuliahFromJabatan(user.jabatan);
   }
 
   return responseData;
@@ -419,9 +424,14 @@ exports.getProfile = async (req, res) => {
       responseUser.jabatan_struktural = user.jabatan_struktural || null;
       if (capabilities.includes("sekretaris_prodi")) {
         responseUser.jabatan = user.jabatan_struktural;
+        responseUser.program_kuliah = resolveProgramKuliahFromJabatan(user.jabatan_struktural);
       } else {
         delete responseUser.jabatan;
       }
+    }
+
+    if (userRole === "sekretaris_prodi") {
+      responseUser.program_kuliah = resolveProgramKuliahFromJabatan(user.jabatan);
     }
 
     res.json({

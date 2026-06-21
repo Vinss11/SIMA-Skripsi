@@ -19,6 +19,7 @@ const {
 
 const JENIS_JALUR_OPTIONS = ["penelitian", "pengabdian", "perintisan_bisnis", "magang"];
 const PERAN_TIM_PERINTISAN = ["hustler", "hipster", "hacker"];
+const PROGRAM_KULIAH_OPTIONS = ["reguler", "internasional"];
 const EMAIL_DOMAIN_MAHASISWA = "students.uii.ac.id";
 
 function normalizeText(value) {
@@ -116,6 +117,7 @@ function buildPendaftaranSummary({ pendaftaran, selectedJalur, targetForm, perio
       : null,
     pendaftaran: {
       jalur: pendaftaran.jalur,
+      program_kuliah: pendaftaran.program_kuliah,
       selected_jalur: selectedJalur,
       status: pendaftaran.status,
       form_lanjutan_status: pendaftaran.form_lanjutan_status,
@@ -469,6 +471,7 @@ async function createKelompokPerintisanRegistration({
   transaction,
 }) {
   const ketuaPeranTim = normalizeText(body.ketua_peran_tim).toLowerCase();
+  const programKuliah = normalizeText(body.program_kuliah).toLowerCase();
   const memberInputs = Array.isArray(body.anggota_perintisan) ? body.anggota_perintisan : [];
   if (memberInputs.length !== 2) {
     return { error: "Perintisan Bisnis wajib memiliki tepat dua anggota." };
@@ -636,8 +639,9 @@ async function createKelompokPerintisanRegistration({
         mahasiswa_id: participant.mahasiswa.id,
         periode_penjaluran_id: periodeAktif.id,
         jalur: participant.jenis_pendaftaran,
+        program_kuliah: programKuliah,
         semester_mahasiswa: semesterMahasiswa,
-        status: "submitted",
+        status: "approved",
         form_lanjutan_status: "draft",
         dosen_pembimbing_akademik_id: participant.dosen_pembimbing_akademik_id,
         jenis_jalur_diambil:
@@ -709,6 +713,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     const nama = normalizeText(req.body.nama);
     const email = normalizeText(req.body.email).toLowerCase();
     const pendaftaran = normalizeText(req.body.pendaftaran).toLowerCase() || "baru";
+    const programKuliah = normalizeText(req.body.program_kuliah).toLowerCase();
     const dosenPembimbingAkademikId = Number(req.body.dosen_pembimbing_akademik_id) || 0;
     const jenisJalurDiambil = normalizeJenisJalur(req.body.jenis_jalur_diambil);
     const jenisJalurUlang = normalizeJenisJalur(req.body.jenis_jalur_ulang);
@@ -724,11 +729,11 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       penjaluranBaru,
     });
 
-    if (!nim || !nama || !email || !dosenPembimbingAkademikId) {
+    if (!nim || !nama || !email || !dosenPembimbingAkademikId || !PROGRAM_KULIAH_OPTIONS.includes(programKuliah)) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Field wajib: email, nim, nama, dan dosen_pembimbing_akademik_id",
+        message: "Field wajib: email, nim, nama, program_kuliah, dan dosen_pembimbing_akademik_id",
       });
     }
 
@@ -977,8 +982,9 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     const pendaftaranRecord = await PendaftaranPenjaluran.create(
       {
         mahasiswa_id: mahasiswa.id,
-        periode_penjaluran_id: periodeAktif.id,
-        jalur: pendaftaran,
+          periode_penjaluran_id: periodeAktif.id,
+          jalur: pendaftaran,
+          program_kuliah: programKuliah,
         semester_mahasiswa: semesterMahasiswa,
         status: "approved",
         form_lanjutan_status: "draft",
@@ -1012,6 +1018,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         },
         ringkasan_form: {
           pendaftaran,
+          program_kuliah: programKuliah,
           jenis_jalur_diambil: pendaftaran === "baru" ? jenisJalurDiambil : pendaftaran === "ulang" ? jenisJalurUlang : null,
           penjaluran_sebelumnya: pendaftaran === "alih" ? penjaluranSebelumnya : null,
           penjaluran_baru: pendaftaran === "alih" ? penjaluranBaru : null,
@@ -1263,12 +1270,20 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
     const angkatan = mahasiswa.angkatan || deriveAngkatanFromNim(mahasiswa.nim);
     const semesterMahasiswa = deriveSemesterMahasiswa(angkatan, periodeAktif);
     const selectedJalur = "penelitian";
+    const latestPendaftaran = await PendaftaranPenjaluran.findOne({
+      where: { mahasiswa_id: mahasiswa.id },
+      attributes: ["program_kuliah"],
+      order: [["createdAt", "DESC"]],
+      transaction: t,
+    });
+    const programKuliah = latestPendaftaran?.program_kuliah || "reguler";
 
     const pendaftaranRecord = await PendaftaranPenjaluran.create(
       {
         mahasiswa_id: mahasiswa.id,
         periode_penjaluran_id: periodeAktif.id,
         jalur: pendaftaran,
+        program_kuliah: programKuliah,
         semester_mahasiswa: semesterMahasiswa,
         status: "approved",
         form_lanjutan_status: "draft",

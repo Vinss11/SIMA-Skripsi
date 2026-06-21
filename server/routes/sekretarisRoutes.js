@@ -4,7 +4,6 @@ const sekretarisController = require("../controllers/sekretarisController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const jalurController = require("../controllers/jalurController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
-const penelitianReviewController = require("../controllers/penelitianReviewController");
 const { authenticateToken, authorizeRole, authorizeSekretarisAccess } = require("../middlewares/authMiddleware");
 
 router.get("/pendaftaran", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPendaftaranList);
@@ -26,32 +25,25 @@ router.post("/periode/:id/close", authenticateToken, authorizeRole("sekretaris_p
 router.get("/ketua-klaster", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getKetuaKlasterOverview);
 router.post("/ketua-klaster/assign", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.assignKetuaKlaster);
 router.get(
-  "/penelitian/review-tertunda",
+  "/penelitian/final",
   authenticateToken,
   authorizeRole("sekretaris_prodi"),
   authorizeSekretarisAccess,
-  penelitianReviewController.getPendingResearchReviews
+  sekretarisController.getPenelitianFinalQueue
 );
 router.post(
-  "/penelitian/review-tertunda/:id/slots/:slot/remind",
+  "/penelitian/final/:id/approve",
   authenticateToken,
   authorizeRole("sekretaris_prodi"),
   authorizeSekretarisAccess,
-  penelitianReviewController.remindPendingResearchReviewer
+  sekretarisController.approvePenelitianFinal
 );
-router.put(
-  "/penelitian/review-tertunda/:id/slots/:slot/replace",
+router.post(
+  "/penelitian/final/:id/reject",
   authenticateToken,
   authorizeRole("sekretaris_prodi"),
   authorizeSekretarisAccess,
-  penelitianReviewController.replacePendingResearchReviewer
-);
-router.delete(
-  "/penelitian/review-tertunda/:id/slots/:slot",
-  authenticateToken,
-  authorizeRole("sekretaris_prodi"),
-  authorizeSekretarisAccess,
-  penelitianReviewController.cancelPendingResearchTopic
+  sekretarisController.rejectPenelitianFinal
 );
 router.get(
   "/non-penelitian/reviews",

@@ -135,6 +135,9 @@ function getTopikDosenApprovalStage(submission) {
   if (submission.status === "menunggu_set_ketua_cluster") {
     return "menunggu_set_ketua_cluster";
   }
+  if (submission.status === "menunggu_approval_sekprodi") {
+    return "menunggu_approval_sekprodi";
+  }
 
   if (submission.status !== "pending") {
     return "non_topik_dosen_or_final";
@@ -170,6 +173,9 @@ function getPengajuanApprovalStage(submission) {
 
   if (submission.status === "menunggu_set_ketua_cluster") {
     return "menunggu_set_ketua_cluster";
+  }
+  if (submission.status === "menunggu_approval_sekprodi") {
+    return "menunggu_approval_sekprodi";
   }
 
   if (submission.status !== "pending") {

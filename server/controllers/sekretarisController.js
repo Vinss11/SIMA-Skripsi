@@ -32,13 +32,22 @@ const RESEARCH_CLUSTER_LABELS = {
   SIBER: "Sistem Siber",
   MVK: "Multimedia & Visi Komputer",
 };
-const ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT = ["pending", "menunggu_set_ketua_cluster"];
+const ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT = [
+  "pending",
+  "menunggu_set_ketua_cluster",
+  "menunggu_approval_sekprodi",
+];
 const ACTIVE_PENDAFTARAN_STATUSES_FOR_ASSIGNMENT = ["submitted", "processed"];
 const ACTIVE_FORM_LANJUTAN_STATUSES_FOR_ASSIGNMENT = [
   "submitted",
   "review_dosen_magang",
   "review_sekprodi",
 ];
+
+function getSekretarisProgramKuliah(req) {
+  const program = String(req.user?.program_kuliah || "").trim().toLowerCase();
+  return ["reguler", "internasional"].includes(program) ? program : null;
+}
 const PERIODE_ROLE_FIELD_DEFINITIONS = [
   {
     kode: "ITSC",
@@ -576,6 +585,7 @@ function toCompactRow(item) {
   return {
     id: item.id,
     jalur: item.jalur,
+    program_kuliah: item.program_kuliah,
     semester_mahasiswa: item.semester_mahasiswa,
     nomor_whatsapp: item.nomor_whatsapp,
     status: item.status,
@@ -821,6 +831,7 @@ exports.getMahasiswaMasterData = async (req, res) => {
     const data = await fetchMahasiswaMasterData({
       status_jalur: req.query.status_jalur,
       angkatan: req.query.angkatan,
+      program_kuliah: getSekretarisProgramKuliah(req),
     });
 
     return res.json({
@@ -846,6 +857,7 @@ exports.exportMahasiswaMasterData = async (req, res) => {
     const mahasiswaRows = await fetchMahasiswaMasterData({
       status_jalur: req.query.status_jalur,
       angkatan: req.query.angkatan,
+      program_kuliah: getSekretarisProgramKuliah(req),
     });
 
     const flattenedRows = flattenMahasiswaMasterRows(mahasiswaRows);
@@ -858,6 +870,7 @@ exports.exportMahasiswaMasterData = async (req, res) => {
       Email: row.email || "-",
       Angkatan: row.angkatan || "-",
       "Status Jalur Saat Ini": row.status_jalur_saat_ini || "-",
+      "Program Kuliah": formatEnumLabel(row.program_kuliah),
       "Semester Penjaluran":
         row.semester_penjaluran_aktif || row.semester_penjaluran_ke
           ? `Semester ${row.semester_penjaluran_aktif || row.semester_penjaluran_ke}`
@@ -922,6 +935,7 @@ exports.exportMahasiswaMasterData = async (req, res) => {
 exports.getPendaftaranList = async (req, res) => {
   try {
     const { pendaftaranWhere, periodeWhere, mahasiswaWhere } = buildFilters(req.query);
+    pendaftaranWhere.program_kuliah = getSekretarisProgramKuliah(req);
 
     const list = await PendaftaranPenjaluran.findAll({
       where: pendaftaranWhere,
@@ -1037,6 +1051,7 @@ exports.getPendaftaranList = async (req, res) => {
 exports.exportPendaftaran = async (req, res) => {
   try {
     const { pendaftaranWhere, periodeWhere, mahasiswaWhere } = buildFilters(req.query);
+    pendaftaranWhere.program_kuliah = getSekretarisProgramKuliah(req);
 
     const list = await PendaftaranPenjaluran.findAll({
       where: pendaftaranWhere,
@@ -1098,6 +1113,7 @@ exports.exportPendaftaran = async (req, res) => {
         "Tahun Akademik": item.periode?.tahun_akademik || "-",
         "Semester Akademik": item.periode?.semester || "-",
         Jalur: item.jalur,
+        "Program Kuliah": formatEnumLabel(item.program_kuliah),
         Penjaluran: penjaluran,
         "Semester Mahasiswa": item.semester_mahasiswa,
         NIM: item.mahasiswa?.nim || "-",
@@ -1148,8 +1164,12 @@ exports.exportPendaftaran = async (req, res) => {
   }
 };
 
-async function fetchPendaftaranDetail(id) {
-  return PendaftaranPenjaluran.findByPk(id, {
+async function fetchPendaftaranDetail(id, programKuliah = null) {
+  return PendaftaranPenjaluran.findOne({
+    where: {
+      id,
+      ...(programKuliah ? { program_kuliah: programKuliah } : {}),
+    },
     include: [
       {
         model: Mahasiswa,
@@ -1301,7 +1321,7 @@ exports.getPendaftaranDetail = async (req, res) => {
       });
     }
 
-    const pendaftaran = await fetchPendaftaranDetail(id);
+    const pendaftaran = await fetchPendaftaranDetail(id, getSekretarisProgramKuliah(req));
     if (!pendaftaran) {
       return res.status(404).json({
         success: false,
@@ -1339,7 +1359,13 @@ exports.approvePendaftaran = async (req, res) => {
       });
     }
 
-    const pendaftaran = await PendaftaranPenjaluran.findByPk(pendaftaranId, { transaction: t });
+    const pendaftaran = await PendaftaranPenjaluran.findOne({
+      where: {
+        id: pendaftaranId,
+        program_kuliah: getSekretarisProgramKuliah(req),
+      },
+      transaction: t,
+    });
     if (!pendaftaran) {
       await t.rollback();
       return res.status(404).json({
@@ -1366,7 +1392,7 @@ exports.approvePendaftaran = async (req, res) => {
 
     await t.commit();
 
-    const detail = await fetchPendaftaranDetail(pendaftaranId);
+    const detail = await fetchPendaftaranDetail(pendaftaranId, getSekretarisProgramKuliah(req));
     res.json({
       success: true,
       message: "Pendaftaran berhasil di-approve. Kelompok dapat melanjutkan form Perintisan Bisnis.",
@@ -1407,7 +1433,13 @@ exports.rejectPendaftaran = async (req, res) => {
       });
     }
 
-    const pendaftaran = await PendaftaranPenjaluran.findByPk(pendaftaranId, { transaction: t });
+    const pendaftaran = await PendaftaranPenjaluran.findOne({
+      where: {
+        id: pendaftaranId,
+        program_kuliah: getSekretarisProgramKuliah(req),
+      },
+      transaction: t,
+    });
     if (!pendaftaran) {
       await t.rollback();
       return res.status(404).json({
@@ -1434,7 +1466,7 @@ exports.rejectPendaftaran = async (req, res) => {
 
     await t.commit();
 
-    const detail = await fetchPendaftaranDetail(pendaftaranId);
+    const detail = await fetchPendaftaranDetail(pendaftaranId, getSekretarisProgramKuliah(req));
     res.json({
       success: true,
       message: "Pendaftaran ditolak. Kelompok belum dapat melanjutkan form Perintisan Bisnis.",
@@ -2957,6 +2989,388 @@ exports.closePeriodeById = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+function getPenelitianFinalIncludes(programKuliah = null) {
+  return [
+    {
+      model: Mahasiswa,
+      as: "mahasiswa",
+      attributes: ["id", "nim", "nama", "email", "angkatan"],
+      required: true,
+    },
+    {
+      model: Dosen,
+      as: "prospectiveSupervisor",
+      attributes: ["id", "nik", "nama", "email"],
+      required: false,
+    },
+    {
+      model: PendaftaranPenjaluran,
+      as: "pendaftaranPenjaluran",
+      attributes: ["id", "program_kuliah", "jalur", "jenis_jalur_diambil", "penjaluran_baru"],
+      where: programKuliah ? { program_kuliah: programKuliah } : undefined,
+      required: Boolean(programKuliah),
+    },
+    {
+      model: RiwayatPersetujuan,
+      as: "riwayat",
+      attributes: [
+        "id",
+        "dosen_id",
+        "tipe_approval",
+        "topik_slot",
+        "topik_kode",
+        "status",
+        "keterangan",
+        "tanggal_keputusan",
+        "createdAt",
+      ],
+      include: [
+        {
+          model: Dosen,
+          as: "dosen",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+      ],
+      required: false,
+    },
+  ];
+}
+
+function getFinalResearchWinner(submission) {
+  if (submission.tipe_pengajuan === "topik_dosen") {
+    return evaluateTopikParallelState(submission).approved_topik || null;
+  }
+
+  if (submission.tipe_pengajuan === "judul_mandiri" && submission.prospective_supervisor_id) {
+    return {
+      slot: null,
+      kode: null,
+      judul: submission.judul_mandiri,
+      dosen_id: Number(submission.prospective_supervisor_id),
+      dosen_nama: submission.prospectiveSupervisor?.nama || null,
+    };
+  }
+
+  return null;
+}
+
+function formatPenelitianFinalRow(submission) {
+  const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
+  const state =
+    submission.tipe_pengajuan === "topik_dosen"
+      ? evaluateTopikParallelState(submission)
+      : null;
+  const ketuaDecision = riwayat
+    .filter(
+      (item) =>
+        String(item.tipe_approval || "").toLowerCase() === "koordinator" &&
+        String(item.status || "").toLowerCase() === "approved"
+    )
+    .sort(
+      (left, right) =>
+        new Date(right.tanggal_keputusan || right.createdAt || 0).getTime() -
+        new Date(left.tanggal_keputusan || left.createdAt || 0).getTime()
+    )[0];
+  const winner = getFinalResearchWinner(submission);
+  const topik =
+    submission.tipe_pengajuan === "topik_dosen"
+      ? (state?.slot_decisions || []).map((item) => ({
+          slot: item.slot,
+          kode: item.kode,
+          judul: item.judul,
+          dosen_id: item.dosen_id,
+          dosen_nama: item.dosen_nama,
+          status: item.reviewer_status,
+          catatan: item.reviewer_note || null,
+          dipilih: Number(item.slot) === Number(winner?.slot),
+        }))
+      : [
+          {
+            slot: null,
+            kode: null,
+            judul: submission.judul_mandiri,
+            dosen_id: Number(submission.prospective_supervisor_id || 0) || null,
+            dosen_nama: submission.prospectiveSupervisor?.nama || null,
+            status: submission.is_approved_by_supervisor ? "approved" : "pending",
+            catatan: null,
+            dipilih: true,
+          },
+        ];
+
+  return {
+    id: submission.id,
+    jenis_jalur: submission.jenis_jalur,
+    tipe_pengajuan: submission.tipe_pengajuan,
+    status: submission.status,
+    program_kuliah: submission.pendaftaranPenjaluran?.program_kuliah || "reguler",
+    diajukan_pada: submission.createdAt,
+    diperbarui_pada: submission.updatedAt,
+    mahasiswa: submission.mahasiswa || null,
+    topik,
+    topik_terpilih: winner,
+    ketua_cluster: ketuaDecision?.dosen || null,
+    keputusan_ketua_cluster: ketuaDecision
+      ? {
+          catatan: ketuaDecision.keterangan || null,
+          tanggal: ketuaDecision.tanggal_keputusan || ketuaDecision.createdAt,
+        }
+      : null,
+  };
+}
+
+async function loadPenelitianFinalSubmission(id, programKuliah, transaction = null, lock = false) {
+  const where = {
+    id,
+    status: "menunggu_approval_sekprodi",
+    tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
+  };
+
+  if (transaction && lock) {
+    const locked = await Pengajuan.findOne({
+      where,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!locked) return null;
+  }
+
+  return Pengajuan.findOne({
+    where,
+    include: getPenelitianFinalIncludes(programKuliah),
+    transaction: transaction || undefined,
+  });
+}
+
+// GET /api/sekretaris/penelitian/final
+exports.getPenelitianFinalQueue = async (req, res) => {
+  try {
+    const programKuliah = getSekretarisProgramKuliah(req);
+    const rows = await Pengajuan.findAll({
+      where: {
+        status: "menunggu_approval_sekprodi",
+        tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
+      },
+      include: getPenelitianFinalIncludes(programKuliah),
+      order: [["updatedAt", "ASC"]],
+      distinct: true,
+    });
+
+    return res.json({
+      success: true,
+      data: rows.map(formatPenelitianFinalRow),
+    });
+  } catch (error) {
+    console.error("Error di getPenelitianFinalQueue:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal memuat pengajuan penelitian yang menunggu persetujuan final.",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/penelitian/final/:id/approve
+exports.approvePenelitianFinal = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const submission = await loadPenelitianFinalSubmission(
+      Number(req.params.id),
+      getSekretarisProgramKuliah(req),
+      t,
+      true
+    );
+    if (!submission) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Pengajuan tidak ditemukan atau sudah diproses.",
+      });
+    }
+
+    const ketuaApproved = (submission.riwayat || []).some(
+      (item) =>
+        String(item.tipe_approval || "").toLowerCase() === "koordinator" &&
+        String(item.status || "").toLowerCase() === "approved"
+    );
+    if (!ketuaApproved) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pengajuan belum disetujui ketua cluster.",
+      });
+    }
+
+    const winner = getFinalResearchWinner(submission);
+    if (!winner?.dosen_id) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Topik atau dosen pembimbing final belum dapat ditentukan.",
+      });
+    }
+
+    const note = String(req.body?.keterangan || "").trim();
+    await submission.update(
+      {
+        status: "approved",
+        alasan_persetujuan: note || "Disetujui final oleh sekretaris prodi.",
+        alasan_penolakan: null,
+        dosen_saat_ini: winner.dosen_id,
+      },
+      { transaction: t }
+    );
+
+    if (submission.tipe_pengajuan === "topik_dosen" && winner.kode) {
+      await Topik.update({ status: "taken" }, { where: { kode: winner.kode }, transaction: t });
+      const releaseCodes = buildTopikListFromSubmission(submission)
+        .map((item) => item.kode)
+        .filter((kode) => kode && kode !== winner.kode);
+      if (releaseCodes.length > 0) {
+        await Topik.update(
+          { status: "available" },
+          {
+            where: { kode: { [Op.in]: releaseCodes }, status: "reserved" },
+            transaction: t,
+          }
+        );
+      }
+    }
+
+    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (mahasiswa) {
+      await mahasiswa.update(
+        {
+          dosen_pembimbing_skripsi_id: winner.dosen_id,
+          status_jalur_saat_ini: submission.jenis_jalur,
+          pengajuan_aktif_id: null,
+        },
+        { transaction: t }
+      );
+    }
+
+    const dosenPembimbing = await Dosen.findByPk(winner.dosen_id, { transaction: t });
+    const kuotaInfo =
+      dosenPembimbing && typeof dosenPembimbing.getKuotaInfo === "function"
+        ? await dosenPembimbing.getKuotaInfo()
+        : null;
+    if (kuotaInfo?.is_penuh) {
+      await Topik.update(
+        { status: "unavailable" },
+        {
+          where: { dosen_id: winner.dosen_id, status: "available" },
+          transaction: t,
+        }
+      );
+    }
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message: "Pengajuan penelitian berhasil disetujui final.",
+      data: { id: submission.id, status: "approved" },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di approvePenelitianFinal:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal menyetujui pengajuan penelitian.",
+      error: error.message,
+    });
+  }
+};
+
+// POST /api/sekretaris/penelitian/final/:id/reject
+exports.rejectPenelitianFinal = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const reason = String(req.body?.keterangan || "").trim();
+    if (!reason) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Alasan penolakan wajib diisi.",
+      });
+    }
+
+    const submission = await loadPenelitianFinalSubmission(
+      Number(req.params.id),
+      getSekretarisProgramKuliah(req),
+      t,
+      true
+    );
+    if (!submission) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Pengajuan tidak ditemukan atau sudah diproses.",
+      });
+    }
+
+    await submission.update(
+      {
+        status: "rejected",
+        alasan_penolakan: reason,
+        alasan_persetujuan: null,
+        dosen_saat_ini: null,
+      },
+      { transaction: t }
+    );
+
+    const topikCodes = buildTopikListFromSubmission(submission)
+      .map((item) => item.kode)
+      .filter(Boolean);
+    if (topikCodes.length > 0) {
+      await Topik.update(
+        { status: "available" },
+        {
+          where: { kode: { [Op.in]: topikCodes }, status: "reserved" },
+          transaction: t,
+        }
+      );
+    }
+
+    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
+      transaction: t,
+      lock: t.LOCK.UPDATE,
+    });
+    if (mahasiswa) {
+      const fallbackStatus =
+        submission.jenis_jalur === "ulang"
+          ? "ulang"
+          : submission.jenis_jalur === "ekstensi"
+          ? "ekstensi"
+          : "belum_mengajukan";
+      await mahasiswa.update(
+        {
+          status_jalur_saat_ini: fallbackStatus,
+          pengajuan_aktif_id: null,
+        },
+        { transaction: t }
+      );
+    }
+
+    await t.commit();
+    return res.json({
+      success: true,
+      message: "Pengajuan penelitian berhasil ditolak.",
+      data: { id: submission.id, status: "rejected" },
+    });
+  } catch (error) {
+    if (!t.finished) await t.rollback();
+    console.error("Error di rejectPenelitianFinal:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal menolak pengajuan penelitian.",
       error: error.message,
     });
   }

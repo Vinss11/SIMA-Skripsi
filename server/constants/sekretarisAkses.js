@@ -48,8 +48,20 @@ function isAllowedSekretarisJabatan(jabatan) {
   return false;
 }
 
+function resolveProgramKuliahFromJabatan(jabatan) {
+  const normalized = normalizeJabatanKey(jabatan);
+  if (normalized.includes("international") || normalized.includes("internasional")) {
+    return "internasional";
+  }
+  if (normalized.includes("reguler")) {
+    return "reguler";
+  }
+  return null;
+}
+
 module.exports = {
   ALLOWED_SEKRETARIS_JABATAN,
   normalizeJabatanKey,
   isAllowedSekretarisJabatan,
+  resolveProgramKuliahFromJabatan,
 };

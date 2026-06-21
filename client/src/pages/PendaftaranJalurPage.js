@@ -25,6 +25,18 @@ const JALUR_OPTIONS = [
   { value: "perintisan_bisnis", label: "Perintisan Bisnis" },
   { value: "magang", label: "Magang" },
 ];
+const PROGRAM_KULIAH_OPTIONS = [
+  {
+    value: "reguler",
+    label: "Program Reguler",
+    description: "Pendaftaran akan dikelola oleh Sekretaris Program Studi Sarjana Reguler.",
+  },
+  {
+    value: "internasional",
+    label: "International Program",
+    description: "Pendaftaran akan dikelola oleh Sekretaris Program Studi International Program.",
+  },
+];
 const PERAN_TIM_OPTIONS = [
   { value: "hustler", label: "Hustler" },
   { value: "hipster", label: "Hipster" },
@@ -58,6 +70,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     nim: "",
     nama: "",
     dosen_pembimbing_akademik_id: "",
+    program_kuliah: "",
     pendaftaran: "baru",
     jenis_jalur_diambil: "",
     dosen_pembimbing_ta_mode: "pilih_dosen",
@@ -76,6 +89,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [anggotaSearchQueries, setAnggotaSearchQueries] = useState(["", ""]);
   const [anggotaSearchResults, setAnggotaSearchResults] = useState([[], []]);
   const [anggotaSearchLoading, setAnggotaSearchLoading] = useState([false, false]);
+  const [anggotaDpaSearchQueries, setAnggotaDpaSearchQueries] = useState(["", ""]);
+  const [activeAnggotaDpaIndex, setActiveAnggotaDpaIndex] = useState(null);
   const pendaftaranDitutup = !loadingPeriode && !periodeAktif;
   const selectedTargetJalur =
     formData.pendaftaran === "baru"
@@ -159,6 +174,56 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     });
   };
 
+  const getPeranTimYangDipakaiSelain = (target) => {
+    const usedRoles = [];
+    if (target !== "ketua" && formData.ketua_peran_tim) {
+      usedRoles.push(formData.ketua_peran_tim);
+    }
+    formData.anggota_perintisan.forEach((item, index) => {
+      if (target !== index && item.peran_tim) usedRoles.push(item.peran_tim);
+    });
+    return new Set(usedRoles);
+  };
+
+  const getAnggotaNimConflict = (index) => {
+    const currentNim = String(formData.anggota_perintisan[index]?.nim || "").trim();
+    if (!currentNim) return "";
+    if (currentNim === String(formData.nim || "").trim()) {
+      return "NIM ini sama dengan NIM ketua kelompok.";
+    }
+    const duplicateIndex = formData.anggota_perintisan.findIndex(
+      (item, itemIndex) =>
+        itemIndex !== index && String(item.nim || "").trim() === currentNim
+    );
+    return duplicateIndex >= 0
+      ? `NIM ini sama dengan Anggota ${duplicateIndex + 1}.`
+      : "";
+  };
+
+  const getPeranTimConflict = (target, value) => {
+    if (!value) return "";
+    return getPeranTimYangDipakaiSelain(target).has(value)
+      ? "Peran ini sudah digunakan anggota kelompok lain."
+      : "";
+  };
+
+  const formatAnggotaDpaLabel = (dosen) => {
+    if (!dosen) return "";
+    return `${dosen.nama || "-"} - NIK: ${dosen.nik || "-"}`;
+  };
+
+  const selectAnggotaDpa = (index, dosen) => {
+    updateAnggotaPerintisan(index, {
+      dosen_pembimbing_akademik_id: String(dosen.id),
+    });
+    setAnggotaDpaSearchQueries((prev) => {
+      const next = [...prev];
+      next[index] = formatAnggotaDpaLabel(dosen);
+      return next;
+    });
+    setActiveAnggotaDpaIndex(null);
+  };
+
   const handleJenisAnggotaChange = (index, value) => {
     updateAnggotaPerintisan(index, {
       ...createAnggotaPerintisan(),
@@ -173,6 +238,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setAnggotaSearchResults((prev) => {
       const next = [...prev];
       next[index] = [];
+      return next;
+    });
+    setAnggotaDpaSearchQueries((prev) => {
+      const next = [...prev];
+      next[index] = "";
       return next;
     });
   };
@@ -259,6 +329,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             onChange={(event) => {
               const { name: inputName, value: inputValue } = event.target;
               setFormData((prev) => ({ ...prev, [inputName]: inputValue }));
+              if (
+                ["jenis_jalur_diambil", "jenis_jalur_ulang", "penjaluran_baru"].includes(inputName) &&
+                inputValue === "perintisan_bisnis"
+              ) {
+                window.setTimeout(() => {
+                  document
+                    .getElementById("kelompok-perintisan-bisnis")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }, 80);
+              }
             }}
             className="h-4 w-4 border-[#9cb0dc] text-[#2f63e3] focus:ring-[#2f63e3]"
           />
@@ -533,6 +613,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       nim: "",
       nama: "",
       dosen_pembimbing_akademik_id: "",
+      program_kuliah: "",
       pendaftaran: "baru",
       jenis_jalur_diambil: "",
       dosen_pembimbing_ta_mode: "pilih_dosen",
@@ -550,6 +631,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setActiveDosenSearchField("");
     setAnggotaSearchQueries(["", ""]);
     setAnggotaSearchResults([[], []]);
+    setAnggotaDpaSearchQueries(["", ""]);
+    setActiveAnggotaDpaIndex(null);
     setStep(1);
   };
 
@@ -601,8 +684,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   };
 
   const validateStepOne = () => {
-    if (!formData.nim || !formData.nama || !formData.dosen_pembimbing_akademik_id) {
-      return "Lengkapi data umum terlebih dahulu (NIM, Nama, dan Dosen Pembimbing Akademik).";
+    if (
+      !formData.nim ||
+      !formData.nama ||
+      !formData.dosen_pembimbing_akademik_id ||
+      !formData.program_kuliah
+    ) {
+      return "Lengkapi data umum terlebih dahulu, termasuk program kuliah.";
     }
 
     const nim = formData.nim.trim();
@@ -724,6 +812,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           email: generatedEmail,
           nim: normalizedNim,
           nama: formData.nama.trim(),
+          program_kuliah: formData.program_kuliah,
           pendaftaran: formData.pendaftaran,
           dosen_pembimbing_akademik_id: Number(formData.dosen_pembimbing_akademik_id),
           jenis_jalur_diambil: formData.jenis_jalur_diambil,
@@ -861,6 +950,33 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     label: "Dosen Pembimbing Akademik",
                     value: formData.dosen_pembimbing_akademik_id,
                   })}
+                </div>
+
+                <div className="mt-4">
+                  <label className="block text-sm font-semibold text-[#324c86]">Program Kuliah</label>
+                  {renderRadioGroup({
+                    name: "program_kuliah",
+                    value: formData.program_kuliah,
+                    options: PROGRAM_KULIAH_OPTIONS,
+                  })}
+                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {PROGRAM_KULIAH_OPTIONS.map((option) => {
+                      const isActive = formData.program_kuliah === option.value;
+                      return (
+                        <div
+                          key={`program-${option.value}`}
+                          className={`rounded-lg border px-3 py-2 ${
+                            isActive
+                              ? "border-[#a9bff5] bg-[#f1f5ff]"
+                              : "border-[#e2e8f6] bg-[#fbfcff]"
+                          }`}
+                        >
+                          <p className="text-sm font-bold text-[#21396f]">{option.label}</p>
+                          <p className="mt-1 text-xs text-[#53689a]">{option.description}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div className="mt-4">
@@ -1034,7 +1150,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             ) : null}
 
             {step === 2 && isPerintisanBisnis ? (
-              <section className="rounded-xl border border-[#e1e7f4] bg-white p-4">
+              <section
+                id="kelompok-perintisan-bisnis"
+                className="scroll-mt-4 rounded-xl border border-[#9eb8f3] bg-white p-4 shadow-sm"
+              >
                 <h2 className="text-lg font-black text-[#1a315f]">Kelompok Perintisan Bisnis</h2>
                 <p className="mt-1 text-sm text-[#5d6c91]">
                   Kelompok wajib terdiri dari satu ketua, dua anggota, serta satu Hustler, Hipster, dan Hacker.
@@ -1049,21 +1168,51 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     <select
                       value={formData.ketua_peran_tim}
                       onChange={(event) => setFormField("ketua_peran_tim", event.target.value)}
-                      className="mt-1 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
+                      className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm ${
+                        getPeranTimConflict("ketua", formData.ketua_peran_tim)
+                          ? "border-[#d95c5c]"
+                          : "border-[#d0dbf4]"
+                      }`}
                     >
                       <option value="">Pilih peran ketua</option>
                       {PERAN_TIM_OPTIONS.map((option) => (
-                        <option key={`ketua-${option.value}`} value={option.value}>
+                        <option
+                          key={`ketua-${option.value}`}
+                          value={option.value}
+                          disabled={getPeranTimYangDipakaiSelain("ketua").has(option.value)}
+                        >
                           {option.label}
                         </option>
                       ))}
                     </select>
+                    {getPeranTimConflict("ketua", formData.ketua_peran_tim) ? (
+                      <span className="mt-1 block text-xs font-semibold text-[#b33f3f]">
+                        {getPeranTimConflict("ketua", formData.ketua_peran_tim)}
+                      </span>
+                    ) : null}
                   </label>
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
                   {formData.anggota_perintisan.map((anggota, index) => {
                     const isBaru = anggota.jenis_pendaftaran === "baru";
+                    const nimConflict = getAnggotaNimConflict(index);
+                    const roleConflict = getPeranTimConflict(index, anggota.peran_tim);
+                    const selectedDpa = dosenOptions.find(
+                      (dosen) =>
+                        String(dosen.id) === String(anggota.dosen_pembimbing_akademik_id)
+                    );
+                    const dpaSearchValue =
+                      anggotaDpaSearchQueries[index] || formatAnggotaDpaLabel(selectedDpa);
+                    const normalizedDpaSearch = dpaSearchValue.trim().toLowerCase();
+                    const filteredDpaOptions = dosenOptions
+                      .filter((dosen) => {
+                        if (!normalizedDpaSearch || selectedDpa) return true;
+                        const haystack =
+                          `${dosen.nama || ""} ${dosen.nik || ""} ${dosen.kode_dosen || ""} ${dosen.email || ""}`.toLowerCase();
+                        return haystack.includes(normalizedDpaSearch);
+                      })
+                      .slice(0, 8);
                     return (
                       <div key={`anggota-perintisan-${index}`} className="rounded-lg border border-[#dbe4f7] p-4">
                         <h3 className="font-bold text-[#1a315f]">Anggota {index + 1}</h3>
@@ -1087,15 +1236,26 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                             <select
                               value={anggota.peran_tim}
                               onChange={(event) => updateAnggotaPerintisan(index, { peran_tim: event.target.value })}
-                              className="mt-1 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
+                              className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 text-sm ${
+                                roleConflict ? "border-[#d95c5c]" : "border-[#d0dbf4]"
+                              }`}
                             >
                               <option value="">Pilih peran anggota</option>
                               {PERAN_TIM_OPTIONS.map((option) => (
-                                <option key={`anggota-role-${index}-${option.value}`} value={option.value}>
+                                <option
+                                  key={`anggota-role-${index}-${option.value}`}
+                                  value={option.value}
+                                  disabled={getPeranTimYangDipakaiSelain(index).has(option.value)}
+                                >
                                   {option.label}
                                 </option>
                               ))}
                             </select>
+                            {roleConflict ? (
+                              <span className="mt-1 block text-xs font-semibold text-[#b33f3f]">
+                                {roleConflict}
+                              </span>
+                            ) : null}
                           </label>
 
                           {isBaru ? (
@@ -1112,8 +1272,15 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                       nim: event.target.value.replace(/\D/g, "").slice(0, 8),
                                     })
                                   }
-                                  className="mt-1 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm"
+                                  className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
+                                    nimConflict ? "border-[#d95c5c]" : "border-[#d0dbf4]"
+                                  }`}
                                 />
+                                {nimConflict ? (
+                                  <span className="mt-1 block text-xs font-semibold text-[#b33f3f]">
+                                    {nimConflict}
+                                  </span>
+                                ) : null}
                               </label>
                               <label className="text-sm font-semibold text-[#324c86]">
                                 Nama
@@ -1127,25 +1294,70 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                   className="mt-1 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm"
                                 />
                               </label>
-                              <label className="text-sm font-semibold text-[#324c86]">
-                                Dosen Pembimbing Akademik
-                                <select
-                                  value={anggota.dosen_pembimbing_akademik_id}
-                                  onChange={(event) =>
-                                    updateAnggotaPerintisan(index, {
-                                      dosen_pembimbing_akademik_id: event.target.value,
-                                    })
-                                  }
-                                  className="mt-1 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
-                                >
-                                  <option value="">Pilih DPA</option>
-                                  {dosenOptions.map((dosen) => (
-                                    <option key={`anggota-dpa-${index}-${dosen.id}`} value={dosen.id}>
-                                      {dosen.nama} - NIK: {dosen.nik || "-"}
-                                    </option>
-                                  ))}
-                                </select>
-                              </label>
+                              <div className="relative">
+                                <label className="block text-sm font-semibold text-[#324c86]">
+                                  Dosen Pembimbing Akademik
+                                  <input
+                                    type="text"
+                                    value={dpaSearchValue}
+                                    onFocus={() => setActiveAnggotaDpaIndex(index)}
+                                    onBlur={() => {
+                                      window.setTimeout(() => {
+                                        setActiveAnggotaDpaIndex((current) =>
+                                          current === index ? null : current
+                                        );
+                                      }, 120);
+                                    }}
+                                    onChange={(event) => {
+                                      const value = event.target.value;
+                                      setAnggotaDpaSearchQueries((prev) => {
+                                        const next = [...prev];
+                                        next[index] = value;
+                                        return next;
+                                      });
+                                      if (
+                                        selectedDpa &&
+                                        value.trim().toLowerCase() !==
+                                          formatAnggotaDpaLabel(selectedDpa).toLowerCase()
+                                      ) {
+                                        updateAnggotaPerintisan(index, {
+                                          dosen_pembimbing_akademik_id: "",
+                                        });
+                                      }
+                                      setActiveAnggotaDpaIndex(index);
+                                    }}
+                                    placeholder="Cari nama atau NIK dosen"
+                                    className="mt-1 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                                  />
+                                </label>
+                                {activeAnggotaDpaIndex === index &&
+                                (!selectedDpa ||
+                                  dpaSearchValue.trim().toLowerCase() !==
+                                    formatAnggotaDpaLabel(selectedDpa).toLowerCase()) ? (
+                                  <div className="absolute left-0 right-0 z-30 mt-1 max-h-52 overflow-auto rounded-lg border border-[#dbe4f7] bg-white shadow-lg">
+                                    {filteredDpaOptions.length > 0 ? (
+                                      filteredDpaOptions.map((dosen) => (
+                                        <button
+                                          key={`anggota-dpa-${index}-${dosen.id}`}
+                                          type="button"
+                                          onMouseDown={(event) => event.preventDefault()}
+                                          onClick={() => selectAnggotaDpa(index, dosen)}
+                                          className="block w-full border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] last:border-0 hover:bg-[#f4f7ff]"
+                                        >
+                                          <span className="block font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="block text-xs text-[#6477a8]">
+                                            NIK: {dosen.nik || "-"}
+                                          </span>
+                                        </button>
+                                      ))
+                                    ) : (
+                                      <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">
+                                        Dosen tidak ditemukan.
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : null}
+                              </div>
                             </>
                           ) : (
                             <div className="relative">
@@ -1219,6 +1431,31 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
               </section>
             ) : null}
 
+            {step === 2 && selectedTargetJalur ? (
+              <section
+                className={`rounded-xl border px-4 py-3 ${
+                  isPerintisanBisnis
+                    ? "border-[#a8c0f5] bg-[#f1f5ff] text-[#244795]"
+                    : "border-[#dce4f7] bg-[#f8faff] text-[#40598f]"
+                }`}
+              >
+                <p className="text-xs font-bold uppercase">Konfirmasi Jalur</p>
+                <p className="mt-1 text-sm font-semibold">
+                  Pendaftaran ini akan dikirim untuk jalur{" "}
+                  <b>
+                    {JALUR_OPTIONS.find((option) => option.value === selectedTargetJalur)?.label ||
+                      selectedTargetJalur}
+                  </b>.
+                </p>
+                {isPerintisanBisnis ? (
+                  <p className="mt-1 text-xs">
+                    Pastikan dua anggota, DPA anggota Baru, jenis pendaftaran anggota, serta peran
+                    Hustler, Hipster, dan Hacker sudah lengkap.
+                  </p>
+                ) : null}
+              </section>
+            ) : null}
+
             {error ? (
               <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a33f3f]">{error}</div>
             ) : null}
@@ -1260,7 +1497,14 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    {isSubmitting ? "Mengirim..." : "Submit"}
+                    {isSubmitting
+                      ? "Mengirim..."
+                      : selectedTargetJalur
+                        ? `Daftarkan ${
+                            JALUR_OPTIONS.find((option) => option.value === selectedTargetJalur)
+                              ?.label || "Jalur"
+                          }`
+                        : "Submit"}
                   </button>
                 </>
               )}

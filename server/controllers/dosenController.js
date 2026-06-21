@@ -752,7 +752,7 @@ async function createAutoKetuaClusterApprovalHistory({ submission, dosenId, ketu
   );
 }
 
-async function finalizeSubmissionWithAutoKetuaClusterApproval({
+async function routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
   submission,
   dosenId,
   ketuaResolution,
@@ -775,8 +775,8 @@ async function finalizeSubmissionWithAutoKetuaClusterApproval({
 
   await submission.update(
     {
-      status: "approved",
-      alasan_persetujuan: approvalNote || autoNote,
+      status: "menunggu_approval_sekprodi",
+      alasan_persetujuan: `${approvalNote || autoNote} Menunggu persetujuan final sekretaris prodi.`,
       alasan_penolakan: null,
       dosen_saat_ini: dosenPembimbingFinalId,
       is_approved_by_supervisor: true,
@@ -785,14 +785,6 @@ async function finalizeSubmissionWithAutoKetuaClusterApproval({
   );
 
   if (finalTopik?.kode) {
-    await Topik.update(
-      { status: "taken" },
-      {
-        where: { kode: finalTopik.kode },
-        transaction,
-      }
-    );
-
     const reservedReleaseKodes = [submission.topik_1_kode, submission.topik_2_kode, submission.topik_3_kode]
       .filter(Boolean)
       .filter((kode) => kode !== finalTopik.kode);
@@ -810,32 +802,6 @@ async function finalizeSubmissionWithAutoKetuaClusterApproval({
     }
   }
 
-  const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, { transaction });
-  if (mahasiswa) {
-    await mahasiswa.update(
-      {
-        dosen_pembimbing_skripsi_id: dosenPembimbingFinalId,
-        status_jalur_saat_ini: submission.jenis_jalur,
-        pengajuan_aktif_id: null,
-      },
-      { transaction }
-    );
-  }
-
-  const dosenPembimbingFinal = await Dosen.findByPk(dosenPembimbingFinalId, { transaction });
-  const kuotaInfo = dosenPembimbingFinal ? await dosenPembimbingFinal.getKuotaInfo() : null;
-  if (kuotaInfo?.is_penuh) {
-    await Topik.update(
-      { status: "unavailable" },
-      {
-        where: {
-          dosen_id: dosenPembimbingFinalId,
-          status: "available",
-        },
-        transaction,
-      }
-    );
-  }
 }
 
 async function autoFinalizeSameReviewerKetuaClusterSubmissions(submissions = []) {
@@ -890,7 +856,7 @@ async function autoFinalizeSameReviewerKetuaClusterSubmissions(submissions = [])
         continue;
       }
 
-      await finalizeSubmissionWithAutoKetuaClusterApproval({
+      await routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
         submission: lockedSubmission,
         dosenId: lockedSupervisorId,
         ketuaResolution: lockedKetuaResolution,
@@ -1531,13 +1497,15 @@ exports.approveSubmission = async (req, res) => {
       if (finalizationResult?.cluster_validation_skipped) {
         message = `Approve tersimpan. Validasi ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
-        } dilewati otomatis karena pemilik topik adalah ketua cluster. Pengajuan final disetujui.`.trim();
+        } dilewati otomatis karena pemilik topik adalah ketua cluster. Pengajuan diteruskan ke sekretaris prodi untuk persetujuan final.`.trim();
       } else if (finalizationResult?.routed_to_ketua_cluster) {
         message = `Approve tersimpan. Pengajuan diteruskan ke ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
         }.`.trim();
       } else if (finalizationResult?.waiting_ketua_cluster || finalStatus === "menunggu_set_ketua_cluster") {
         message = "Approve tersimpan. Pengajuan menunggu penetapan ketua cluster oleh sekretaris prodi.";
+      } else if (finalStatus === "menunggu_approval_sekprodi") {
+        message = "Approve tersimpan. Pengajuan menunggu persetujuan final sekretaris prodi.";
       } else if (finalStatus === "approved") {
         if (Number(finalWinner?.dosen_id) === Number(dosen_id)) {
           message = "Pengajuan final disetujui. Anda terpilih sebagai dosen pembimbing skripsi.";
@@ -1727,7 +1695,7 @@ exports.approveSubmission = async (req, res) => {
       if (isSamePositiveId(ketuaResolution.ketuaKlaster.dosen_id, dosen_id)) {
         const finalTopikForAutoApproval = isTopikDosen ? approvedTopikByDosen : null;
 
-        await finalizeSubmissionWithAutoKetuaClusterApproval({
+        await routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
           submission,
           dosenId: dosen_id,
           ketuaResolution,
@@ -1743,7 +1711,7 @@ exports.approveSubmission = async (req, res) => {
           success: true,
           message: `Disetujui dosen pembimbing. Validasi ketua cluster ${
             ketuaResolution.klaster?.kode || ""
-          } dilewati otomatis karena Anda juga ketua cluster. Pengajuan final disetujui.`.trim(),
+          } dilewati otomatis karena Anda juga ketua cluster. Pengajuan diteruskan ke sekretaris prodi untuk persetujuan final.`.trim(),
           data: updatedSubmission ? formatSubmissionDecisionResponse(updatedSubmission) : null,
         });
       }
@@ -1868,10 +1836,13 @@ exports.approveSubmission = async (req, res) => {
       dosenPembimbingFinalId = Number(submission.prospective_supervisor_id);
     }
 
+    const isKetuaClusterApproval = approvalType === "koordinator";
     await submission.update(
       {
-        status: "approved",
-        alasan_persetujuan: approvalNote || "Pengajuan disetujui",
+        status: isKetuaClusterApproval ? "menunggu_approval_sekprodi" : "approved",
+        alasan_persetujuan: isKetuaClusterApproval
+          ? `${approvalNote || "Disetujui ketua cluster"}. Menunggu persetujuan final sekretaris prodi.`
+          : approvalNote || "Pengajuan disetujui",
         alasan_penolakan: null,
         dosen_saat_ini: dosenPembimbingFinalId,
       },
@@ -1879,14 +1850,6 @@ exports.approveSubmission = async (req, res) => {
     );
 
     if (isTopikDosen && finalTopik?.kode) {
-      await Topik.update(
-        { status: "taken" },
-        {
-          where: { kode: finalTopik.kode },
-          transaction: t,
-        }
-      );
-
       const reservedReleaseKodes = [submission.topik_1_kode, submission.topik_2_kode, submission.topik_3_kode]
         .filter(Boolean)
         .filter((kode) => kode !== finalTopik.kode);
@@ -1902,32 +1865,44 @@ exports.approveSubmission = async (req, res) => {
           }
         );
       }
+
+      if (!isKetuaClusterApproval) {
+        await Topik.update(
+          { status: "taken" },
+          {
+            where: { kode: finalTopik.kode },
+            transaction: t,
+          }
+        );
+      }
     }
 
-    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, { transaction: t });
-    await mahasiswa.update(
-      {
-        dosen_pembimbing_skripsi_id: dosenPembimbingFinalId,
-        status_jalur_saat_ini: submission.jenis_jalur,
-        pengajuan_aktif_id: null,
-      },
-      { transaction: t }
-    );
-
-    const dosenPembimbingFinal = await Dosen.findByPk(dosenPembimbingFinalId, { transaction: t });
-    const kuotaInfo = dosenPembimbingFinal ? await dosenPembimbingFinal.getKuotaInfo() : null;
-
-    if (kuotaInfo?.is_penuh) {
-      await Topik.update(
-        { status: "unavailable" },
+    if (!isKetuaClusterApproval) {
+      const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, { transaction: t });
+      await mahasiswa.update(
         {
-          where: {
-            dosen_id: dosenPembimbingFinalId,
-            status: "available",
-          },
-          transaction: t,
-        }
+          dosen_pembimbing_skripsi_id: dosenPembimbingFinalId,
+          status_jalur_saat_ini: submission.jenis_jalur,
+          pengajuan_aktif_id: null,
+        },
+        { transaction: t }
       );
+
+      const dosenPembimbingFinal = await Dosen.findByPk(dosenPembimbingFinalId, { transaction: t });
+      const kuotaInfo = dosenPembimbingFinal ? await dosenPembimbingFinal.getKuotaInfo() : null;
+
+      if (kuotaInfo?.is_penuh) {
+        await Topik.update(
+          { status: "unavailable" },
+          {
+            where: {
+              dosen_id: dosenPembimbingFinalId,
+              status: "available",
+            },
+            transaction: t,
+          }
+        );
+      }
     }
 
     await RiwayatPersetujuan.create(
@@ -1980,8 +1955,8 @@ exports.approveSubmission = async (req, res) => {
     return res.json({
       success: true,
       message:
-        isTopikDosen && effectiveApprovalStage === "pending_ketua_klaster"
-          ? "Pengajuan berhasil disetujui ketua cluster."
+        isKetuaClusterApproval
+          ? "Pengajuan disetujui ketua cluster dan diteruskan ke sekretaris prodi untuk persetujuan final."
           : "Pengajuan berhasil disetujui",
       data: responseData,
     });
@@ -2153,15 +2128,17 @@ exports.rejectSubmission = async (req, res) => {
 
       let message = "Penolakan tersimpan. Menunggu seluruh dosen pilihan memberikan keputusan.";
       if (finalizationResult?.cluster_validation_skipped) {
-        message = `Penolakan tersimpan. Pengajuan final disetujui berdasarkan topik dosen lain dan validasi ketua cluster ${
+        message = `Penolakan tersimpan. Topik dosen lain dipilih dan validasi ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
-        } dilewati otomatis karena pemilik topik adalah ketua cluster.`.trim();
+        } dilewati otomatis karena pemilik topik adalah ketua cluster. Pengajuan menunggu persetujuan final sekretaris prodi.`.trim();
       } else if (finalizationResult?.routed_to_ketua_cluster) {
         message = `Penolakan tersimpan. Pengajuan diteruskan ke ketua cluster ${
           finalizationResult?.ketua_resolution?.klaster?.kode || ""
         } berdasarkan topik yang disetujui dosen lain.`.trim();
       } else if (finalizationResult?.waiting_ketua_cluster || finalStatus === "menunggu_set_ketua_cluster") {
         message = "Penolakan tersimpan. Pengajuan menunggu penetapan ketua cluster oleh sekretaris prodi.";
+      } else if (finalStatus === "menunggu_approval_sekprodi") {
+        message = "Penolakan tersimpan. Pengajuan menunggu persetujuan final sekretaris prodi.";
       } else if (finalStatus === "approved") {
         message = "Penolakan tersimpan. Pengajuan final tetap disetujui berdasarkan keputusan dosen lain.";
       } else if (finalStatus === "rejected") {

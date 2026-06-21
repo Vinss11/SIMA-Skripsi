@@ -1,7 +1,10 @@
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
 const { Dosen, SekretarisProdi } = require("../models");
-const { isAllowedSekretarisJabatan } = require("../constants/sekretarisAkses");
+const {
+  isAllowedSekretarisJabatan,
+  resolveProgramKuliahFromJabatan,
+} = require("../constants/sekretarisAkses");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 
@@ -101,8 +104,17 @@ exports.authorizeSekretarisAccess = async (req, res, next) => {
           })
         : null;
 
+      const programKuliah = resolveProgramKuliahFromJabatan(dosen.jabatan_struktural);
+      if (!programKuliah) {
+        return res.status(403).json({
+          success: false,
+          message: "Program Sekretaris Prodi tidak dapat ditentukan dari jabatan struktural.",
+        });
+      }
+
       req.user.sekretaris_prodi_id = linkedSekretaris?.id || null;
       req.user.sekretaris_jabatan = dosen.jabatan_struktural;
+      req.user.program_kuliah = programKuliah;
       return next();
     }
 
@@ -117,8 +129,17 @@ exports.authorizeSekretarisAccess = async (req, res, next) => {
       });
     }
 
+    const programKuliah = resolveProgramKuliahFromJabatan(sekretaris.jabatan);
+    if (!programKuliah) {
+      return res.status(403).json({
+        success: false,
+        message: "Program Sekretaris Prodi tidak dapat ditentukan dari jabatan.",
+      });
+    }
+
     req.user.sekretaris_prodi_id = sekretaris.id;
     req.user.sekretaris_jabatan = sekretaris.jabatan;
+    req.user.program_kuliah = programKuliah;
     next();
   } catch (error) {
     console.error("Error di authorizeSekretarisAccess:", error);

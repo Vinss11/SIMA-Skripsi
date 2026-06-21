@@ -2793,6 +2793,10 @@ function PengajuanPage({
     null;
   const penelitianSubmissionMode = activePendaftaranMode === "ulang" ? "ulang" : "baru";
   const penelitianPamitId = penelitianSubmissionMode === "ulang" ? jalurStatus?.active_pamit?.id || null : null;
+  const initialPerintisanTeam =
+    jalurEligibility?.pendaftaran_aktif?.kelompok_perintisan ||
+    jalurStatus?.pendaftaran_aktif?.kelompok_perintisan ||
+    null;
 
   return (
     <div className="w-full space-y-6 pb-8">
@@ -2850,7 +2854,6 @@ function PengajuanPage({
           onSessionExpired={onSessionExpired}
           onSubmitted={onEligibilityRefresh}
           studentProfile={studentProfile}
-          initialTeam={jalurEligibility?.pendaftaran_aktif?.kelompok_perintisan || null}
           disabled={currentFormDisabled}
         />
       ) : null}
@@ -2864,6 +2867,7 @@ function PengajuanPage({
           onSessionExpired={onSessionExpired}
           onSubmitted={onEligibilityRefresh}
           studentProfile={studentProfile}
+          initialTeam={renderJalur === "perintisan_bisnis" ? initialPerintisanTeam : null}
           disabled={currentFormDisabled}
         />
       ) : null}

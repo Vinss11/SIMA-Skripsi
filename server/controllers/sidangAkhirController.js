@@ -1185,7 +1185,7 @@ exports.getSekretarisSidangQueue = async (req, res) => {
           }),
           PendaftaranPenjaluran.findOne({
             where: { mahasiswa_id: mahasiswaId },
-            attributes: ["id", "semester_mahasiswa", "jalur", "jenis_jalur_diambil", "penjaluran_baru", "createdAt"],
+            attributes: ["id", "program_kuliah", "semester_mahasiswa", "jalur", "jenis_jalur_diambil", "penjaluran_baru", "createdAt"],
             include: [
               {
                 model: PeriodePenjaluran,
@@ -1205,6 +1205,7 @@ exports.getSekretarisSidangQueue = async (req, res) => {
           catatan: row.catatan,
           judul_skripsi: resolveJudulSkripsiFromPengajuan(latestPengajuan),
           semester_penjaluran: latestPendaftaranPenjaluran?.semester_mahasiswa || null,
+          program_kuliah: latestPendaftaranPenjaluran?.program_kuliah || "reguler",
           mahasiswa: row.mahasiswa
             ? {
                 id: row.mahasiswa.id,
@@ -1239,7 +1240,9 @@ exports.getSekretarisSidangQueue = async (req, res) => {
           tanggal_selesai_pendaftaran: targetPeriode.tanggal_selesai_pendaftaran,
           status: targetPeriode.status,
         },
-        rows: enrichedRows,
+        rows: enrichedRows.filter(
+          (row) => row.program_kuliah === req.user?.program_kuliah
+        ),
       },
     });
   } catch (error) {
@@ -1327,6 +1330,7 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
         where: { mahasiswa_id: mahasiswaId },
         attributes: [
           "id",
+          "program_kuliah",
           "status",
           "jenis_jalur",
           "tipe_pengajuan",
@@ -1363,6 +1367,16 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
       }),
       getMahasiswaSidangEligibility(mahasiswaId),
     ]);
+
+    if (
+      (latestPendaftaranPenjaluran?.program_kuliah || "reguler") !==
+      req.user?.program_kuliah
+    ) {
+      return res.status(404).json({
+        success: false,
+        message: "Data pendaftaran sidang tidak ditemukan.",
+      });
+    }
 
     return res.json({
       success: true,
@@ -1424,6 +1438,7 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
         penjaluran_terakhir: latestPendaftaranPenjaluran
           ? {
               id: latestPendaftaranPenjaluran.id,
+              program_kuliah: latestPendaftaranPenjaluran.program_kuliah,
               jalur: latestPendaftaranPenjaluran.jalur,
               semester_mahasiswa: latestPendaftaranPenjaluran.semester_mahasiswa,
               jenis_jalur_diambil: latestPendaftaranPenjaluran.jenis_jalur_diambil,

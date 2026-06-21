@@ -604,26 +604,17 @@ function getMahasiswaFallbackStatusForRejectedSubmission(submission) {
   return "belum_mengajukan";
 }
 
-async function approveTopikWinnerAsFinal(submission, winner, transaction, options = {}) {
+async function routeTopikWinnerToSekprodi(submission, winner, transaction, options = {}) {
   await submission.update(
     {
-      status: "approved",
+      status: "menunggu_approval_sekprodi",
       alasan_persetujuan:
-        submission.alasan_persetujuan ||
         options.alasanPersetujuan ||
-        `Disetujui berdasarkan prioritas pilihan mahasiswa (slot ${winner.slot}).`,
+        `Disetujui ketua cluster untuk topik slot ${winner.slot}. Menunggu persetujuan final sekretaris prodi.`,
       alasan_penolakan: null,
       dosen_saat_ini: winner.dosen_id,
     },
     { transaction }
-  );
-
-  await Topik.update(
-    { status: "taken" },
-    {
-      where: { kode: winner.kode },
-      transaction,
-    }
   );
 
   const releaseCodes = buildTopikListFromSubmission(submission)
@@ -642,42 +633,9 @@ async function approveTopikWinnerAsFinal(submission, winner, transaction, option
     );
   }
 
-  const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
-    transaction,
-    lock: transaction.LOCK.UPDATE,
-  });
-
-  if (mahasiswa) {
-    await mahasiswa.update(
-      {
-        dosen_pembimbing_skripsi_id: winner.dosen_id,
-        status_jalur_saat_ini: submission.jenis_jalur,
-        pengajuan_aktif_id: null,
-      },
-      { transaction }
-    );
-  }
-
-  const dosenPembimbing = await Dosen.findByPk(winner.dosen_id, { transaction });
-  if (dosenPembimbing && typeof dosenPembimbing.getKuotaInfo === "function") {
-    const kuotaInfo = await dosenPembimbing.getKuotaInfo();
-    if (kuotaInfo?.is_penuh) {
-      await Topik.update(
-        { status: "unavailable" },
-        {
-          where: {
-            dosen_id: winner.dosen_id,
-            status: "available",
-          },
-          transaction,
-        }
-      );
-    }
-  }
-
   return {
     success: true,
-    final_status: "approved",
+    final_status: "menunggu_approval_sekprodi",
     winner,
   };
 }
@@ -716,8 +674,8 @@ async function finalizeApprovedTopikSubmission(submission, parallelState, transa
 
     if (isKetuaClusterOwnTopicConflict(winner, ketuaResolution)) {
       await createClusterSkipApprovalHistory(submission, winner, ketuaResolution, transaction);
-      const result = await approveTopikWinnerAsFinal(submission, winner, transaction, {
-        alasanPersetujuan: `Disetujui dosen pembimbing dan validasi cluster ${ketuaResolution.klaster.kode} dilewati otomatis karena pemilik topik adalah ketua cluster.`,
+      const result = await routeTopikWinnerToSekprodi(submission, winner, transaction, {
+        alasanPersetujuan: `Disetujui dosen pembimbing dan validasi cluster ${ketuaResolution.klaster.kode} dilewati otomatis karena pemilik topik adalah ketua cluster. Menunggu persetujuan final sekretaris prodi.`,
       });
 
       return {

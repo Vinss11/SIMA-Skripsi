@@ -49,6 +49,12 @@ function getStatusChip(status) {
       className: "bg-[#fdf1d4] text-[#a06a00]",
     };
   }
+  if (normalized === "menunggu_approval_sekprodi") {
+    return {
+      label: "Menunggu Sekprodi",
+      className: "bg-[#e8efff] text-[#2f63e3]",
+    };
+  }
   if (normalized === "menunggu_pengajuan") {
     return {
       label: "Belum Mengajukan Judul",
@@ -70,6 +76,7 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
   if (tahap === "menunggu_pengajuan_judul") return "Menunggu Pengajuan Judul";
   if (tahap === "pending_ketua_klaster") return "Menunggu Review Ketua Cluster";
   if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
+  if (tahap === "menunggu_approval_sekprodi") return "Menunggu Persetujuan Sekprodi";
   if (tahap === "pending_dosen_pembimbing") return "Menunggu Review Dosen Pembimbing";
   if (tahap === "pending_review_parallel") return "Menunggu Review Dosen";
   if (tahap === "deadline_terlewati") return "Menunggu Review Dosen";

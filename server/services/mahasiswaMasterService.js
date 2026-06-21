@@ -148,6 +148,7 @@ function mapMahasiswaMasterRows(mahasiswas, activePeriode) {
       return {
         id: item.id,
         jalur: item.jalur,
+        program_kuliah: item.program_kuliah,
         status: item.status,
         semester_mahasiswa: item.semester_mahasiswa,
         semester_penjaluran_ke: semesterPenjaluranCounter,
@@ -197,15 +198,20 @@ function mapMahasiswaMasterRows(mahasiswas, activePeriode) {
       semester_penjaluran_aktif: semesterPenjaluranAktif,
     }));
 
+    const latestProgramKuliah =
+      riwayatPenjaluranWithActiveSemester[riwayatPenjaluranWithActiveSemester.length - 1]
+        ?.program_kuliah || "reguler";
+
     return {
       ...raw,
+      program_kuliah: latestProgramKuliah,
       semester_penjaluran_aktif: semesterPenjaluranAktif,
       riwayat_penjaluran: riwayatPenjaluranWithActiveSemester,
     };
   });
 }
 
-async function fetchMahasiswaMasterData({ status_jalur, angkatan } = {}) {
+async function fetchMahasiswaMasterData({ status_jalur, angkatan, program_kuliah } = {}) {
   const where = {};
 
   if (status_jalur) {
@@ -240,6 +246,7 @@ async function fetchMahasiswaMasterData({ status_jalur, angkatan } = {}) {
         attributes: [
           "id",
           "jalur",
+          "program_kuliah",
           "status",
           "semester_mahasiswa",
           "jenis_jalur_diambil",
@@ -283,7 +290,10 @@ async function fetchMahasiswaMasterData({ status_jalur, angkatan } = {}) {
 
   const referencePeriode = await getReferencePeriode();
 
-  return mapMahasiswaMasterRows(mahasiswas, referencePeriode);
+  const rows = mapMahasiswaMasterRows(mahasiswas, referencePeriode);
+  return program_kuliah
+    ? rows.filter((item) => item.program_kuliah === program_kuliah)
+    : rows;
 }
 
 module.exports = {

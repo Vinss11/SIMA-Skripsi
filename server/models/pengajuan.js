@@ -222,7 +222,14 @@ module.exports = (sequelize, DataTypes) => {
       },
       // ===== STATUS & TRACKING =====
       status: {
-        type: DataTypes.ENUM("pending", "menunggu_set_ketua_cluster", "approved", "rejected", "completed"),
+        type: DataTypes.ENUM(
+          "pending",
+          "menunggu_set_ketua_cluster",
+          "menunggu_approval_sekprodi",
+          "approved",
+          "rejected",
+          "completed"
+        ),
         defaultValue: "pending",
         allowNull: false,
       },

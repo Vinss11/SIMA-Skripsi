@@ -882,7 +882,10 @@ function DashboardHome({
   const hasDospem = Boolean(profile?.dosenPembimbingSkripsi);
   const latestSubmissionStatus = String(latestSubmission?.status || "").toLowerCase();
   const hasApprovedSubmission = latestSubmissionStatus === "approved" || latestSubmissionStatus === "completed";
-  const hasPendingSubmission = latestSubmissionStatus === "pending" || latestSubmissionStatus === "menunggu_set_ketua_cluster";
+  const hasPendingSubmission =
+    latestSubmissionStatus === "pending" ||
+    latestSubmissionStatus === "menunggu_set_ketua_cluster" ||
+    latestSubmissionStatus === "menunggu_approval_sekprodi";
   const timeline = computeTimeline({
     hasSubmission,
     hasDPA,
