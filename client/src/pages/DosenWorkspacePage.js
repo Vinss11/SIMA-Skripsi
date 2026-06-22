@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   ArrowLeft,
+  Activity,
   BookOpenCheck,
   CalendarRange,
   ClipboardList,
@@ -415,6 +416,11 @@ function getPengampuReviewStatus(row) {
 
 function getPengampuReviewSummary(row) {
   const payload = getMagangPayload(row);
+  if (row?.jalur === "magang") {
+    const companyName = getMagangCompanyName(row);
+    const position = pickMagangPayloadText(row, ["proposed_position_other", "proposed_position"]);
+    return [companyName, position !== "-" ? formatLabel(position) : null].filter(Boolean).join(" - ") || "-";
+  }
   return formatMagangPayloadValue(
     payload.ringkasan || payload.nama_bisnis || payload.nama_program
   );
@@ -803,6 +809,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         label: "Mahasiswa",
         items: [
           { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
+          { id: "monitoring-mahasiswa", label: "Monitoring Mahasiswa", icon: Activity },
           { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
           { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
           { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
@@ -847,9 +854,10 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
       items: [
         { id: "master-mahasiswa", label: "Master Mahasiswa", icon: GraduationCap },
         { id: "mahasiswa-bimbingan", label: "Mahasiswa Bimbingan", icon: GraduationCap },
+        { id: "monitoring-mahasiswa", label: "Monitoring Mahasiswa", icon: Activity },
         { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
-        { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
-        { id: "approval-penelitian", label: "Approval Penelitian", icon: ListChecks },
+        { id: "submissions", label: "Review Dosen Pembimbing", icon: ClipboardList },
+        { id: "approval-penelitian", label: "Keputusan Final Sekprodi", icon: ListChecks },
         { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
         { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
       ],
@@ -891,6 +899,11 @@ function buildTabHeaders(isSekretaris) {
       title: "Mahasiswa Bimbingan",
       subtitle: "Lihat histori penjaluran mahasiswa yang sedang Anda bimbing.",
     },
+    "monitoring-mahasiswa": {
+      icon: Activity,
+      title: "Monitoring Mahasiswa",
+      subtitle: "Pantau progres bimbingan, kelengkapan dokumen, dan tahap sidang mahasiswa.",
+    },
     "bimbingan-review": {
       icon: MessageSquareText,
       title: "Review Bimbingan",
@@ -908,13 +921,13 @@ function buildTabHeaders(isSekretaris) {
     },
     submissions: {
       icon: ClipboardList,
-      title: "Pengajuan Mahasiswa",
-      subtitle: "Review pengajuan judul mahasiswa, lalu putuskan approve atau tolak.",
+      title: "Review Dosen Pembimbing",
+      subtitle: "Berikan keputusan sebagai dosen calon pembimbing pada topik yang diajukan mahasiswa.",
     },
     "approval-penelitian": {
       icon: ListChecks,
-      title: "Approval Final Penelitian",
-      subtitle: "Putuskan pengajuan penelitian yang telah disetujui dosen dan ketua cluster.",
+      title: "Keputusan Final Sekprodi",
+      subtitle: "Putuskan pengajuan penelitian setelah seluruh review dosen dan persetujuan ketua cluster selesai.",
     },
     "ketua-cluster-review": {
       icon: ShieldAlert,
@@ -1164,6 +1177,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   });
   const [pendaftaranPage, setPendaftaranPage] = useState(1);
   const [mahasiswaMasterRows, setMahasiswaMasterRows] = useState([]);
+  const [monitoringMahasiswa, setMonitoringMahasiswa] = useState({
+    summary: { total: 0, perlu_tindakan: 0, siap_sidang: 0 },
+    rows: [],
+  });
+  const [monitoringMahasiswaQuery, setMonitoringMahasiswaQuery] = useState("");
   const [mahasiswaMasterQuery, setMahasiswaMasterQuery] = useState("");
   const [mahasiswaMasterFilters, setMahasiswaMasterFilters] = useState({
     ...MAHASISWA_MASTER_FILTER_INITIAL,
@@ -1279,10 +1297,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const isPeriodeReadonly = editingPeriode ? !canEditPeriodeRow(editingPeriode) : true;
   const useGridViewportLayout =
     !loading &&
-    ((activeTab === "master-mahasiswa" || activeTab === "mahasiswa-bimbingan") ||
+    ((activeTab === "master-mahasiswa" ||
+      activeTab === "mahasiswa-bimbingan" ||
+      activeTab === "monitoring-mahasiswa") ||
       (activeTab === "bimbingan-review" && isBimbinganReviewListMode) ||
       activeTab === "dokumen-sidang-review" ||
       activeTab === "ketersediaan-sidang" ||
+      (isSekretaris && activeTab === "approval-penelitian") ||
       (isSubmissionReviewTabActive && submissionMode === "list") ||
       activeTab === "magang-review" ||
       Boolean(activePengampuReviewConfig) ||
@@ -1647,6 +1668,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       fetchWithAuth("/api/dosen/pamit-mahasiswa"),
       dosenId ? fetchWithAuth(`/api/topics?dosen_id=${dosenId}`) : Promise.resolve([]),
       fetchWithAuth(mahasiswaMasterPath),
+      fetchWithAuth("/api/dosen/monitoring-mahasiswa"),
       !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/magang/reviews") : Promise.resolve([]),
       !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/pengabdian/reviews") : Promise.resolve([]),
       !isSekretaris ? fetchWithAuth("/api/dosen/non-penelitian/perintisan-bisnis/reviews") : Promise.resolve([]),
@@ -1670,6 +1692,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       pamitResult,
       topikResult,
       mahasiswaMasterResult,
+      monitoringMahasiswaResult,
       magangReviewResult,
       pengabdianReviewResult,
       perintisanReviewResult,
@@ -1714,6 +1737,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     } else {
       setMahasiswaMasterRows([]);
       issues.push(mahasiswaMasterResult?.reason?.message || "Gagal memuat master data mahasiswa.");
+    }
+
+    if (monitoringMahasiswaResult?.status === "fulfilled") {
+      const payload = monitoringMahasiswaResult.value || {};
+      setMonitoringMahasiswa({
+        summary: payload.summary || { total: 0, perlu_tindakan: 0, siap_sidang: 0 },
+        rows: Array.isArray(payload.rows) ? payload.rows : [],
+      });
+    } else {
+      setMonitoringMahasiswa({
+        summary: { total: 0, perlu_tindakan: 0, siap_sidang: 0 },
+        rows: [],
+      });
+      issues.push(
+        monitoringMahasiswaResult?.reason?.message || "Gagal memuat monitoring mahasiswa."
+      );
     }
 
     if (magangReviewResult?.status === "fulfilled") {
@@ -1763,7 +1802,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         setSekprodiNonPenelitianRows([]);
         issues.push(
           sekprodiNonPenelitianResult?.reason?.message ||
-            "Gagal memuat proposal yang menunggu review sekretaris prodi."
+            "Gagal memuat proposal yang menunggu keputusan final sekretaris prodi."
         );
       }
 
@@ -1893,6 +1932,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       kuotaSisa: kuotaData?.kuota?.sisa ?? 0,
     };
   }, [submissions, pamitRows, topikRows, kuotaData]);
+
+  const filteredMonitoringMahasiswaRows = useMemo(() => {
+    const query = monitoringMahasiswaQuery.trim().toLowerCase();
+    const rows = Array.isArray(monitoringMahasiswa.rows) ? monitoringMahasiswa.rows : [];
+    if (!query) return rows;
+
+    return rows.filter((row) =>
+      [
+        row.mahasiswa?.nim,
+        row.mahasiswa?.nama,
+        row.mahasiswa?.angkatan,
+        row.jalur,
+        row.penjaluran,
+        row.tahap,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(query)
+    );
+  }, [monitoringMahasiswa.rows, monitoringMahasiswaQuery]);
 
   const contextualSubmissions = useMemo(() => {
     if (activeTab === "ketua-cluster-review") {
@@ -3314,7 +3374,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     const result = await Swal.fire({
       title: isApprove ? "Setujui pengajuan magang?" : "Tolak pengajuan magang?",
       text: isApprove
-        ? "Pengajuan akan disetujui oleh dosen pengawas magang."
+        ? "Pengajuan akan diteruskan ke Sekprodi untuk keputusan final."
         : "Mahasiswa akan melihat alasan penolakan ini.",
       input: "textarea",
       inputPlaceholder: isApprove ? "Catatan persetujuan (opsional)" : "Alasan penolakan",
@@ -3336,7 +3396,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         method: "POST",
         body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
       });
-      showSuccessToast(isApprove ? "Pengajuan magang berhasil disetujui." : "Pengajuan magang berhasil ditolak.");
+      showSuccessToast(
+        isApprove
+          ? "Pengajuan magang disetujui dan diteruskan ke Sekprodi."
+          : "Pengajuan magang berhasil ditolak."
+      );
       await loadAllData();
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
@@ -3461,13 +3525,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const handleOpenSekprodiNonPenelitianDetail = async (row) => {
     const id = row?.id;
     if (!id) return;
+
     setSekprodiNonPenelitianActionId(id);
     try {
       const detail = await fetchWithAuth(`/api/sekretaris/non-penelitian/reviews/${id}`);
-      const config =
-        DOSEN_PENGAMPU_REVIEW_TABS[detail?.jalur] ||
-        DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis;
-      const fieldsHtml = getPengampuReviewDetailFields(detail, config)
+      const config = DOSEN_PENGAMPU_REVIEW_TABS[detail?.jalur] || null;
+      const detailFields =
+        detail?.jalur === "magang"
+          ? getMagangDetailFields(detail)
+          : getPengampuReviewDetailFields(
+              detail,
+              config || DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis
+            );
+      const fieldsHtml = detailFields
         .map(
           ([label, value]) => `
             <tr>
@@ -3479,6 +3549,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           `
         )
         .join("");
+
       await Swal.fire({
         title: `Detail Proposal ${formatLabel(detail?.jalur)}`,
         width: 860,
@@ -3505,6 +3576,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const handleSekprodiNonPenelitianDecision = async (row, decision) => {
     const id = row?.id;
     if (!id) return;
+
     const isApprove = decision === "approve";
     const isPerintisan = row?.jalur === "perintisan_bisnis";
     const dosenOptionsHtml = periodeDosenOptions
@@ -3570,7 +3642,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       );
       showSuccessToast(
         isApprove
-          ? "Proposal disetujui dan dosen pembimbing berhasil ditetapkan."
+          ? isPerintisan
+            ? "Proposal disetujui dan dosen pembimbing berhasil ditetapkan."
+            : "Pengajuan Magang berhasil disetujui final."
           : "Proposal berhasil ditolak."
       );
       await loadAllData();
@@ -5462,6 +5536,171 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
               </div>
             ) : null}
 
+            {!loading && activeTab === "monitoring-mahasiswa" ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                  {[
+                    {
+                      label: "Mahasiswa Bimbingan",
+                      value: monitoringMahasiswa.summary?.total || 0,
+                      tone: "border-[#d7e3ff] text-[#2454b8]",
+                    },
+                    {
+                      label: "Perlu Tindakan",
+                      value: monitoringMahasiswa.summary?.perlu_tindakan || 0,
+                      tone: "border-[#f2ddb0] text-[#8a5d00]",
+                    },
+                    {
+                      label: "Tahap Sidang",
+                      value: monitoringMahasiswa.summary?.siap_sidang || 0,
+                      tone: "border-[#cfe9dc] text-[#167347]",
+                    },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className={`rounded-lg border bg-white px-4 py-3 shadow-sm ${item.tone}`}
+                    >
+                      <p className="text-sm font-semibold text-[#5d6c91]">{item.label}</p>
+                      <p className="mt-1 text-2xl font-black">{item.value}</p>
+                    </div>
+                  ))}
+                </section>
+
+                <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">Progress Mahasiswa Bimbingan</h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Progres diperbarui otomatis dari review bimbingan, dokumen, dan pendaftaran sidang.
+                      </p>
+                    </div>
+                    <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                      <div className="relative min-w-0 flex-1 sm:w-[320px] sm:flex-none">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                        <input
+                          type="text"
+                          value={monitoringMahasiswaQuery}
+                          onChange={(event) => setMonitoringMahasiswaQuery(event.target.value)}
+                          placeholder="Cari NIM, nama, jalur, atau tahap..."
+                          className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={loadAllData}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                    <table className="w-full min-w-[1350px] text-left text-sm">
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Progress Bimbingan</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dokumen Sidang</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap Saat Ini</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aktivitas Terakhir</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredMonitoringMahasiswaRows.map((row) => (
+                          <tr key={`monitoring-${row.mahasiswa?.id}`} className="border-b border-[#eff3fb]">
+                            <td className="px-3 py-3">
+                              <p className="font-bold text-[#1f2d53]">{row.mahasiswa?.nama || "-"}</p>
+                              <p className="mt-0.5 text-xs text-[#61709b]">
+                                {row.mahasiswa?.nim || "-"} | Angkatan {row.mahasiswa?.angkatan || "-"}
+                              </p>
+                            </td>
+                            <td className="px-3 py-3">
+                              <p className="font-semibold text-[#2f426f]">
+                                {row.penjaluran ? formatLabel(row.penjaluran) : "-"}
+                              </p>
+                              <p className="mt-0.5 text-xs text-[#69779d]">
+                                {row.jalur ? formatLabel(row.jalur) : "-"}
+                              </p>
+                            </td>
+                            <td className="px-3 py-3">
+                              <div className="w-[220px]">
+                                <div className="mb-1 flex items-center justify-between text-xs font-semibold text-[#405070]">
+                                  <span>
+                                    {row.bimbingan?.tervalidasi || 0}/{row.bimbingan?.target || 8} sesi
+                                  </span>
+                                  <span>{row.bimbingan?.progress_percent || 0}%</span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-[#e8edf8]">
+                                  <div
+                                    className="h-full rounded-full bg-[#2f63e3]"
+                                    style={{ width: `${row.bimbingan?.progress_percent || 0}%` }}
+                                  />
+                                </div>
+                                {row.bimbingan?.pending_permohonan || row.bimbingan?.pending_resume ? (
+                                  <p className="mt-1 text-xs font-semibold text-[#9a6900]">
+                                    Ada review yang perlu ditindaklanjuti
+                                  </p>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-3 py-3">
+                              <p className="font-bold text-[#2f426f]">
+                                {row.dokumen?.approved || 0}/{row.dokumen?.target || 3} disetujui
+                              </p>
+                              <p className="mt-0.5 text-xs text-[#69779d]">
+                                {row.dokumen?.submitted || 0} menunggu review
+                                {row.dokumen?.revisi ? ` | ${row.dokumen.revisi} revisi` : ""}
+                              </p>
+                            </td>
+                            <td className="px-3 py-3">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                                  row.perlu_tindakan
+                                    ? "bg-[#fff2cf] text-[#8b6200]"
+                                    : row.tahap === "Sidang Dijadwalkan"
+                                      ? "bg-[#dff3e8] text-[#167347]"
+                                      : "bg-[#e8efff] text-[#2454b8]"
+                                }`}
+                              >
+                                {row.tahap || "-"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-3 text-[#43537d]">
+                              {formatDateTime(row.aktivitas_terakhir)}
+                            </td>
+                            <td className="px-3 py-3">
+                              <button
+                                type="button"
+                                onClick={() => setActiveTab(row.next_action || "bimbingan-review")}
+                                className="inline-flex items-center gap-1.5 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110"
+                              >
+                                <Activity className="h-3.5 w-3.5" />
+                                Update
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {filteredMonitoringMahasiswaRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="h-[300px] px-4 text-center align-middle">
+                              <Activity className="mx-auto h-9 w-9 text-[#9aa8c7]" />
+                              <p className="mt-3 font-bold text-[#52638d]">
+                                Belum ada mahasiswa bimbingan yang dapat dimonitor
+                              </p>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+
             {!loading &&
             ((isSekretaris && activeTab === "master-mahasiswa") || activeTab === "mahasiswa-bimbingan") ? (
               <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -5688,7 +5927,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             ) : null}
 
             {!loading && isSekretaris && activeTab === "approval-penelitian" ? (
-              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+              <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto">
+              <div className="flex min-h-[520px] flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black text-[#1b274b]">Grid Approval Final Penelitian</h3>
@@ -5696,14 +5936,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       Data muncul setelah ketua cluster menyetujui. Setiap pengajuan ditampilkan dalam satu baris.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="relative">
+                  <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                    <div className="relative min-w-0 flex-1 sm:w-[340px] sm:flex-none">
                       <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                       <input
                         value={finalResearchQuery}
                         onChange={(event) => setFinalResearchQuery(event.target.value)}
                         placeholder="Cari mahasiswa, topik, atau dosen..."
-                        className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
                     <button
@@ -5717,24 +5957,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="w-full min-w-[1320px] table-fixed text-left text-sm">
+                <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                  <table className="w-full min-w-[1465px] table-fixed text-left text-sm">
                     <colgroup>
-                      <col style={{ width: "60px" }} />
-                      <col style={{ width: "230px" }} />
-                      <col style={{ width: "130px" }} />
-                      <col style={{ width: "540px" }} />
-                      <col style={{ width: "220px" }} />
-                      <col style={{ width: "140px" }} />
-                      <col style={{ width: "210px" }} />
+                      <col style={{ width: "50px" }} />
+                      <col style={{ width: "200px" }} />
+                      <col style={{ width: "110px" }} />
+                      <col style={{ width: "430px" }} />
+                      <col style={{ width: "190px" }} />
+                      <col style={{ width: "170px" }} />
+                      <col style={{ width: "135px" }} />
+                      <col style={{ width: "180px" }} />
                     </colgroup>
-                    <thead>
+                    <thead className="sticky top-0 z-10">
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tipe</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Topik yang Diajukan</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ketua Cluster</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Diperbarui</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                       </tr>
@@ -5754,7 +5996,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             <td className="px-3 py-3 font-semibold text-[#2f426f]">
                               {submission.tipe_pengajuan === "judul_mandiri" ? "Judul Mandiri" : "Topik Dosen"}
                             </td>
-                            <td className="space-y-2 px-3 py-3">
+                            <td className="space-y-3 px-3 py-3">
                               {(submission.topik || []).map((topik, topikIndex) => {
                                 const approved = topik.status === "approved";
                                 const rejected = topik.status === "rejected";
@@ -5793,20 +6035,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         </span>
                                       ) : null}
                                     </div>
-                                    <p className="mt-1 text-[#2f426f]">{topik.judul || "-"}</p>
+                                    <p className="mt-1 break-words leading-5 text-[#2f426f]">{topik.judul || "-"}</p>
                                     <p className="mt-0.5 text-xs text-[#69779d]">{topik.dosen_nama || "-"}</p>
                                   </div>
                                 );
                               })}
                             </td>
-                            <td className="px-3 py-3">
+                            <td className="break-words px-3 py-3">
                               <p className="font-semibold text-[#243968]">{submission.ketua_cluster?.nama || "-"}</p>
                               <p className="mt-1 text-xs text-[#61709b]">
                                 {submission.keputusan_ketua_cluster?.catatan || "Disetujui ketua cluster"}
                               </p>
                             </td>
+                            <td className="px-3 py-3 align-middle">
+                              <span className="inline-flex rounded-full bg-[#e8efff] px-2.5 py-1 text-xs font-bold text-[#2454b8]">
+                                Menunggu Keputusan Final Sekprodi
+                              </span>
+                            </td>
                             <td className="px-3 py-3 text-[#43537d]">{formatDateTime(submission.diperbarui_pada)}</td>
-                            <td className="px-3 py-3">
+                            <td className="px-3 py-3 align-middle">
                               <div className="flex flex-wrap gap-2">
                                 <button
                                   type="button"
@@ -5829,14 +6076,103 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           </tr>
                         );
                       })}
+                      {filteredFinalResearchRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="h-[340px] px-4 text-center align-middle">
+                            <div className="mx-auto max-w-md">
+                              <ListChecks className="mx-auto h-9 w-9 text-[#9aa8c7]" />
+                              <p className="mt-3 font-bold text-[#52638d]">
+                                Belum ada pengajuan yang menunggu keputusan final
+                              </p>
+                              <p className="mt-1 text-xs leading-5 text-[#7b88ab]">
+                                Pengajuan akan muncul setelah review dosen selesai dan ketua cluster menyetujuinya.
+                              </p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
-                  {filteredFinalResearchRows.length === 0 ? (
-                    <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center text-sm font-semibold text-[#7b88ab]">
-                      Belum ada pengajuan penelitian yang menunggu persetujuan final.
-                    </div>
-                  ) : null}
                 </div>
+                <div className="mt-3 flex items-center justify-between border-t border-[#e8edf8] pt-3">
+                  <p className="text-sm text-[#4f5e86]">
+                    Menampilkan {filteredFinalResearchRows.length} pengajuan yang menunggu keputusan final.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                <div className="mb-3">
+                  <h3 className="text-lg font-black text-[#1b274b]">Keputusan Final Jalur Non-Penelitian</h3>
+                  <p className="mt-1 text-sm text-[#5d6c91]">
+                    Pengajuan Magang dan Perintisan Bisnis yang sudah melewati review sebelumnya.
+                  </p>
+                </div>
+                <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                  <table className="w-full min-w-[1050px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa/Ketua</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">NIM</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dikirim</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sekprodiNonPenelitianRows.map((row) => (
+                        <tr key={`sekprodi-proposal-${row.id}`} className="border-b border-[#eff3fb]">
+                          <td className="px-3 py-2 font-semibold text-[#1f2d53]">
+                            {row.mahasiswa?.nama || "-"}
+                          </td>
+                          <td className="px-3 py-2 text-[#27407b]">{row.mahasiswa?.nim || "-"}</td>
+                          <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
+                          <td className="max-w-[380px] px-3 py-2">
+                            <p className="line-clamp-2">{getPengampuReviewSummary(row)}</p>
+                          </td>
+                          <td className="px-3 py-2">{formatDateTime(row.submitted_at)}</td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                disabled={sekprodiNonPenelitianActionId === row.id}
+                                onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
+                                className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                              >
+                                Detail
+                              </button>
+                              <button
+                                type="button"
+                                disabled={sekprodiNonPenelitianActionId === row.id}
+                                onClick={() => handleSekprodiNonPenelitianDecision(row, "approve")}
+                                className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                disabled={sekprodiNonPenelitianActionId === row.id}
+                                onClick={() => handleSekprodiNonPenelitianDecision(row, "reject")}
+                                className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                              >
+                                Tolak
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                      {sekprodiNonPenelitianRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-8 text-center font-semibold text-[#7b88ab]">
+                            Belum ada pengajuan non-penelitian yang menunggu keputusan final.
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
               </div>
             ) : null}
 
@@ -5848,7 +6184,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <h3 className="text-lg font-black text-[#1b274b]">
                         {activeTab === "ketua-cluster-review"
                           ? "Grid Review Ketua Cluster"
-                          : "Grid Pengajuan Mahasiswa"}
+                          : "Grid Review Dosen Pembimbing"}
                       </h3>
                       <div className="flex items-center gap-2">
                         <div className="relative">
@@ -8046,81 +8382,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                  <div className="mb-3">
-                    <h3 className="text-lg font-black text-[#1b274b]">
-                      Proposal Menunggu Keputusan Sekprodi
-                    </h3>
-                    <p className="text-sm text-[#5d6c91]">
-                      Proposal pada daftar ini sudah disetujui dosen pengampu. Tetapkan dosen pembimbing saat menyetujui Perintisan Bisnis.
-                    </p>
-                  </div>
-                  <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
-                    <table className="w-full min-w-[1050px] text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa/Ketua</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">NIM</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dikirim</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sekprodiNonPenelitianRows.map((row) => (
-                          <tr key={`sekprodi-proposal-${row.id}`} className="border-b border-[#eff3fb]">
-                            <td className="px-3 py-2 font-semibold text-[#1f2d53]">
-                              {row.mahasiswa?.nama || "-"}
-                            </td>
-                            <td className="px-3 py-2 text-[#27407b]">{row.mahasiswa?.nim || "-"}</td>
-                            <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
-                            <td className="max-w-[380px] px-3 py-2">
-                              <p className="line-clamp-2">{getPengampuReviewSummary(row)}</p>
-                            </td>
-                            <td className="px-3 py-2">{formatDateTime(row.submitted_at)}</td>
-                            <td className="px-3 py-2">
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
-                                  className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Detail
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleSekprodiNonPenelitianDecision(row, "approve")}
-                                  className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleSekprodiNonPenelitianDecision(row, "reject")}
-                                  className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Tolak
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {sekprodiNonPenelitianRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="px-4 py-8 text-center font-semibold text-[#7b88ab]">
-                              Belum ada proposal yang menunggu keputusan Sekprodi.
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
                 <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                   <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -8192,7 +8453,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       {filteredPendaftaranRows.length > 0
                         ? pagedPendaftaranRows.map((row) => {
                             const namaPenjaluran =
-                              row.jenis_jalur_diambil || row.penjaluran_baru || row.penjaluran_sebelumnya;
+                              row.jalur === "alih" && row.penjaluran_sebelumnya && row.penjaluran_baru
+                                ? `${formatLabel(row.penjaluran_sebelumnya)} \u2192 ${formatLabel(row.penjaluran_baru)}`
+                                : formatLabel(
+                                    row.jenis_jalur_diambil ||
+                                      row.penjaluran_baru ||
+                                      row.penjaluran_sebelumnya
+                                  );
 
                             return (
                               <tr key={`pendaftaran-${row.id}`} className="border-b border-[#eff3fb]">
@@ -8214,7 +8481,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                     : "-"}
                                 </td>
                                 <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
-                                <td className="px-3 py-2">{namaPenjaluran ? formatLabel(namaPenjaluran) : "-"}</td>
+                                <td className="px-3 py-2">{namaPenjaluran || "-"}</td>
                                 <td className="px-3 py-2">
                                   {row.kelompok_perintisan?.anggota?.length ? (
                                     <div className="space-y-1">

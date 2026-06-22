@@ -29,12 +29,10 @@ const PROGRAM_KULIAH_OPTIONS = [
   {
     value: "reguler",
     label: "Program Reguler",
-    description: "Pendaftaran akan dikelola oleh Sekretaris Program Studi Sarjana Reguler.",
   },
   {
     value: "internasional",
     label: "International Program",
-    description: "Pendaftaran akan dikelola oleh Sekretaris Program Studi International Program.",
   },
 ];
 const PERAN_TIM_OPTIONS = [
@@ -43,8 +41,27 @@ const PERAN_TIM_OPTIONS = [
   { value: "hacker", label: "Hacker" },
 ];
 const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
-const NIM_REGEX = /^\d{8}$/;
+const NIM_REGEX = /^\d{2}523\d{3}$/;
 const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
+const getNimValidationError = (nim) => {
+  const normalizedNim = String(nim || "").trim();
+  if (!normalizedNim) return "NIM wajib diisi.";
+  if (!NIM_REGEX.test(normalizedNim)) {
+    return "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.";
+  }
+  return "";
+};
+const getNamaValidationError = (nama) => {
+  const normalizedNama = String(nama || "").trim();
+  if (!normalizedNama) return "Nama wajib diisi.";
+  if (normalizedNama.length < 2 || normalizedNama.length > 100) {
+    return "Nama wajib 2 sampai 100 karakter.";
+  }
+  if (!NAMA_REGEX.test(normalizedNama)) {
+    return "Nama hanya boleh berisi huruf, spasi, titik, apostrof, dan tanda hubung.";
+  }
+  return "";
+};
 const buildMahasiswaEmailFromNim = (nim) =>
   nim && nim.length > 0 ? `${nim}@${MAHASISWA_EMAIL_DOMAIN}`.toLowerCase() : "";
 const createAnggotaPerintisan = () => ({
@@ -64,6 +81,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({ nim: "", nama: "" });
+  const [touchedFields, setTouchedFields] = useState({ nim: false, nama: false });
+  const [nimAvailability, setNimAvailability] = useState("idle");
   const [dosenOptions, setDosenOptions] = useState([]);
   const [formData, setFormData] = useState({
     email: "",
@@ -99,6 +119,49 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         ? formData.jenis_jalur_ulang
         : formData.penjaluran_baru;
   const isPerintisanBisnis = selectedTargetJalur === "perintisan_bisnis";
+
+  useEffect(() => {
+    const nim = String(formData.nim || "").trim();
+    const structuralError = getNimValidationError(nim);
+    if (structuralError) {
+      setNimAvailability("idle");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setNimAvailability("checking");
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(
+          `${apiBaseUrl}/api/pendaftaran/check-nim?nim=${encodeURIComponent(nim)}`,
+          { signal: controller.signal }
+        );
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.message || "Gagal memeriksa NIM.");
+        }
+        if (data.data?.available) {
+          setNimAvailability("available");
+          setFieldErrors((prev) => ({
+            ...prev,
+            nim: prev.nim === "NIM sudah terdaftar." ? "" : prev.nim,
+          }));
+        } else {
+          setNimAvailability("unavailable");
+          setFieldErrors((prev) => ({ ...prev, nim: "NIM sudah terdaftar." }));
+        }
+      } catch (checkError) {
+        if (checkError.name !== "AbortError") {
+          setNimAvailability("idle");
+        }
+      }
+    }, 350);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [apiBaseUrl, formData.nim]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -295,11 +358,19 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       value = value.replace(/\D/g, "").slice(0, 8);
       const generatedEmail = buildMahasiswaEmailFromNim(value);
       setFormData((prev) => ({ ...prev, nim: value, email: generatedEmail }));
+      setFieldErrors((prev) => ({
+        ...prev,
+        nim: touchedFields.nim || value.length === 8 ? getNimValidationError(value) : "",
+      }));
       return;
     }
 
     if (name === "nama") {
       value = value.slice(0, 100);
+      setFieldErrors((prev) => ({
+        ...prev,
+        nama: touchedFields.nama ? getNamaValidationError(value) : "",
+      }));
     }
 
     if (name === "email") {
@@ -307,6 +378,25 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     }
 
     setFormField(name, value);
+  };
+
+  const handleFieldBlur = (fieldName) => {
+    setTouchedFields((prev) => ({ ...prev, [fieldName]: true }));
+    if (fieldName === "nim") {
+      setFieldErrors((prev) => ({
+        ...prev,
+        nim:
+          nimAvailability === "unavailable"
+            ? "NIM sudah terdaftar."
+            : getNimValidationError(formData.nim),
+      }));
+    }
+    if (fieldName === "nama") {
+      setFieldErrors((prev) => ({
+        ...prev,
+        nama: getNamaValidationError(formData.nama),
+      }));
+    }
   };
 
   const renderRadioGroup = ({ name, value, options, disabled = false }) => (
@@ -633,6 +723,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setAnggotaSearchResults([[], []]);
     setAnggotaDpaSearchQueries(["", ""]);
     setActiveAnggotaDpaIndex(null);
+    setFieldErrors({ nim: "", nama: "" });
+    setTouchedFields({ nim: false, nama: false });
+    setNimAvailability("idle");
     setStep(1);
   };
 
@@ -657,7 +750,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       const label = `Anggota ${index + 1}`;
       if (anggota.jenis_pendaftaran === "baru") {
         if (!NIM_REGEX.test(String(anggota.nim || "").trim())) {
-          return `${label}: NIM wajib tepat 8 digit angka.`;
+          return `${label}: NIM wajib menggunakan format YY523NNN, contoh 22523001.`;
         }
         if (
           String(anggota.nama || "").trim().length < 2 ||
@@ -684,26 +777,22 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   };
 
   const validateStepOne = () => {
-    if (
-      !formData.nim ||
-      !formData.nama ||
-      !formData.dosen_pembimbing_akademik_id ||
-      !formData.program_kuliah
-    ) {
-      return "Lengkapi data umum terlebih dahulu, termasuk program kuliah.";
-    }
-
     const nim = formData.nim.trim();
-    if (!NIM_REGEX.test(nim)) {
-      return "NIM wajib tepat 8 digit angka.";
-    }
-
     const nama = formData.nama.trim();
-    if (nama.length < 2 || nama.length > 100) {
-      return "Nama wajib 2 sampai 100 karakter.";
+    const nimError =
+      nimAvailability === "unavailable" ? "NIM sudah terdaftar." : getNimValidationError(nim);
+    const namaError = getNamaValidationError(nama);
+    setTouchedFields((prev) => ({ ...prev, nim: true, nama: true }));
+    setFieldErrors({ nim: nimError, nama: namaError });
+
+    if (nimError || namaError) {
+      return "Periksa kembali NIM dan nama mahasiswa.";
     }
-    if (!NAMA_REGEX.test(nama)) {
-      return "Nama hanya boleh huruf, spasi, titik, apostrof, dan tanda hubung.";
+    if (nimAvailability === "checking") {
+      return "Tunggu sebentar, NIM sedang diperiksa.";
+    }
+    if (!formData.dosen_pembimbing_akademik_id || !formData.program_kuliah) {
+      return "Lengkapi Dosen Pembimbing Akademik dan program kuliah.";
     }
 
     const expectedEmail = buildMahasiswaEmailFromNim(nim);
@@ -723,7 +812,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     }
     const commonError = validateStepOne();
     if (commonError) {
-      setError(commonError);
+      setError(commonError === "Periksa kembali NIM dan nama mahasiswa." ? "" : commonError);
       return;
     }
     setStep(2);
@@ -744,7 +833,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
     const commonError = validateStepOne();
     if (commonError) {
-      setError(commonError);
+      setError(commonError === "Periksa kembali NIM dan nama mahasiswa." ? "" : commonError);
       setStep(1);
       return;
     }
@@ -838,7 +927,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.success) {
-        throw new Error(data?.message || "Pendaftaran gagal diproses.");
+        const requestError = new Error(data?.message || "Pendaftaran gagal diproses.");
+        requestError.field = data?.detail?.field || "";
+        throw requestError;
       }
 
       const registeredEmail = generatedEmail;
@@ -852,7 +943,17 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       resetForm();
       onRegisterSuccess?.(registerPayload);
     } catch (submitError) {
-      setError(submitError.message || "Pendaftaran gagal diproses.");
+      if (["nim", "nama"].includes(submitError.field)) {
+        setTouchedFields((prev) => ({ ...prev, [submitError.field]: true }));
+        setFieldErrors((prev) => ({
+          ...prev,
+          [submitError.field]: submitError.message || "Data tidak valid.",
+        }));
+        setStep(1);
+        setError("");
+      } else {
+        setError(submitError.message || "Pendaftaran gagal diproses.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -925,13 +1026,27 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       name="nim"
                       type="text"
                       inputMode="numeric"
-                      pattern="\d{8}"
+                      pattern="[0-9]{2}523[0-9]{3}"
                       maxLength={8}
                       value={formData.nim}
                       onChange={handleChange}
+                      onBlur={() => handleFieldBlur("nim")}
                       placeholder="Contoh: 22523001"
-                      className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                      aria-invalid={Boolean(fieldErrors.nim)}
+                      aria-describedby={fieldErrors.nim ? "nim-error" : undefined}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                        fieldErrors.nim
+                          ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
+                          : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+                      }`}
                     />
+                    {fieldErrors.nim ? (
+                      <p id="nim-error" className="mt-1 text-xs font-semibold text-[#c43f3f]">
+                        {fieldErrors.nim}
+                      </p>
+                    ) : nimAvailability === "checking" ? (
+                      <p className="mt-1 text-xs text-[#6477a8]">Memeriksa ketersediaan NIM...</p>
+                    ) : null}
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-semibold text-[#324c86]">Nama</label>
@@ -940,10 +1055,22 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       type="text"
                       value={formData.nama}
                       onChange={handleChange}
+                      onBlur={() => handleFieldBlur("nama")}
                       maxLength={100}
                       placeholder="Nama mahasiswa"
-                      className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                      aria-invalid={Boolean(fieldErrors.nama)}
+                      aria-describedby={fieldErrors.nama ? "nama-error" : undefined}
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                        fieldErrors.nama
+                          ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
+                          : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+                      }`}
                     />
+                    {fieldErrors.nama ? (
+                      <p id="nama-error" className="mt-1 text-xs font-semibold text-[#c43f3f]">
+                        {fieldErrors.nama}
+                      </p>
+                    ) : null}
                   </div>
                   {renderDosenSelect({
                     name: "dosen_pembimbing_akademik_id",
@@ -959,24 +1086,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     value: formData.program_kuliah,
                     options: PROGRAM_KULIAH_OPTIONS,
                   })}
-                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-                    {PROGRAM_KULIAH_OPTIONS.map((option) => {
-                      const isActive = formData.program_kuliah === option.value;
-                      return (
-                        <div
-                          key={`program-${option.value}`}
-                          className={`rounded-lg border px-3 py-2 ${
-                            isActive
-                              ? "border-[#a9bff5] bg-[#f1f5ff]"
-                              : "border-[#e2e8f6] bg-[#fbfcff]"
-                          }`}
-                        >
-                          <p className="text-sm font-bold text-[#21396f]">{option.label}</p>
-                          <p className="mt-1 text-xs text-[#53689a]">{option.description}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
 
                 <div className="mt-4">

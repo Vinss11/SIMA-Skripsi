@@ -1862,7 +1862,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 const isLockedBySemester =
                   isHardLockedBySemester && item.id !== "izin-lanjut" && !isUlangAlihItem;
                 const isLockedByOnboardingItem =
-                  isLockedByOnboarding && !["pengajuan", "status"].includes(item.id);
+                  isLockedByOnboarding && item.id !== "pengajuan";
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
                 const isDisabled =
                   mustChangePassword ||

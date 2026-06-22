@@ -3042,6 +3042,63 @@ function getPenelitianFinalIncludes(programKuliah = null) {
   ];
 }
 
+async function linkOrphanResearchSubmissionsToRegistration(transaction = null) {
+  const orphanRows = await Pengajuan.findAll({
+    where: {
+      pendaftaran_penjaluran_id: null,
+      tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
+      status: {
+        [Op.in]: ["pending", "menunggu_set_ketua_cluster", "menunggu_approval_sekprodi"],
+      },
+    },
+    attributes: ["id", "mahasiswa_id", "createdAt"],
+    order: [["createdAt", "ASC"]],
+    transaction: transaction || undefined,
+  });
+
+  let linkedCount = 0;
+  for (const submission of orphanRows) {
+    let pendaftaran = await PendaftaranPenjaluran.findOne({
+      where: {
+        mahasiswa_id: submission.mahasiswa_id,
+        createdAt: { [Op.lte]: submission.createdAt },
+        status: { [Op.in]: ["approved", "processed", "submitted"] },
+      },
+      order: [["createdAt", "DESC"]],
+      transaction: transaction || undefined,
+    });
+
+    if (!pendaftaran) {
+      pendaftaran = await PendaftaranPenjaluran.findOne({
+        where: {
+          mahasiswa_id: submission.mahasiswa_id,
+          status: { [Op.in]: ["approved", "processed", "submitted"] },
+        },
+        order: [["createdAt", "DESC"]],
+        transaction: transaction || undefined,
+      });
+    }
+
+    const selectedJalur =
+      pendaftaran?.jalur === "alih"
+        ? pendaftaran.penjaluran_baru
+        : pendaftaran?.jenis_jalur_diambil ||
+          pendaftaran?.penjaluran_baru ||
+          pendaftaran?.penjaluran_sebelumnya;
+    if (!pendaftaran || String(selectedJalur || "").toLowerCase() !== "penelitian") {
+      continue;
+    }
+
+    await submission.update(
+      { pendaftaran_penjaluran_id: pendaftaran.id },
+      { transaction: transaction || undefined }
+    );
+    linkedCount += 1;
+  }
+
+  return linkedCount;
+}
+
 function getFinalResearchWinner(submission) {
   if (submission.tipe_pengajuan === "topik_dosen") {
     return evaluateTopikParallelState(submission).approved_topik || null;
@@ -3125,6 +3182,8 @@ function formatPenelitianFinalRow(submission) {
 }
 
 async function loadPenelitianFinalSubmission(id, programKuliah, transaction = null, lock = false) {
+  await linkOrphanResearchSubmissionsToRegistration(transaction);
+
   const where = {
     id,
     status: "menunggu_approval_sekprodi",
@@ -3150,6 +3209,7 @@ async function loadPenelitianFinalSubmission(id, programKuliah, transaction = nu
 // GET /api/sekretaris/penelitian/final
 exports.getPenelitianFinalQueue = async (req, res) => {
   try {
+    await linkOrphanResearchSubmissionsToRegistration();
     const programKuliah = getSekretarisProgramKuliah(req);
     const rows = await Pengajuan.findAll({
       where: {

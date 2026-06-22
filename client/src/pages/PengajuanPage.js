@@ -3,6 +3,18 @@ import { FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal }
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 
+function showSubmissionSuccessToast(message) {
+  return Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "success",
+    title: message,
+    showConfirmButton: false,
+    timer: 2800,
+    timerProgressBar: true,
+  });
+}
+
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
   "designer",
@@ -685,7 +697,9 @@ function FormJudulDosen({
         throw new Error(data?.message || "Pengajuan topik dosen gagal.");
       }
 
-      setSubmitSuccess(data.message || "Pengajuan topik dosen berhasil dikirim.");
+      const successMessage = data.message || "Pengajuan topik dosen berhasil dikirim.";
+      setSubmitSuccess(successMessage);
+      showSubmissionSuccessToast(successMessage);
       setSelectedCodes({
         topik_1_kode: "",
         topik_2_kode: "",
@@ -1352,7 +1366,9 @@ function FormJudulSendiri({
       }
 
       resetForm();
-      setSubmitSuccess(payload.message || "Pengajuan judul mandiri berhasil dikirim.");
+      const successMessage = payload.message || "Pengajuan judul mandiri berhasil dikirim.";
+      setSubmitSuccess(successMessage);
+      showSubmissionSuccessToast(successMessage);
       onSubmitted?.();
     } catch (error) {
       setSubmitError(error.message || "Pengajuan judul mandiri gagal dikirim.");
@@ -1707,7 +1723,9 @@ function FormNonPenelitianGeneric({
         throw new Error(data?.message || "Submit form jalur gagal.");
       }
 
-      setSubmitSuccess(data.message || `Form ${jalurLabel} berhasil dikirim.`);
+      const successMessage = data.message || `Form ${jalurLabel} berhasil dikirim.`;
+      setSubmitSuccess(successMessage);
+      showSubmissionSuccessToast(successMessage);
       setFormData(initialForm);
       onSubmitted?.();
     } catch (error) {
@@ -2266,7 +2284,10 @@ function FormSuratRekomendasiMagang({
         throw new Error(data?.message || "Permintaan surat rekomendasi magang gagal dikirim.");
       }
 
-      setSubmitSuccess(data.message || "Permintaan surat rekomendasi magang berhasil dikirim.");
+      const successMessage =
+        data.message || "Permintaan surat rekomendasi magang berhasil dikirim.";
+      setSubmitSuccess(successMessage);
+      showSubmissionSuccessToast(successMessage);
       resetForm();
       onSubmitted?.();
     } catch (error) {

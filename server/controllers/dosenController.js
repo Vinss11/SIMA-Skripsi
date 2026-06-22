@@ -14,6 +14,9 @@ const {
   SekretarisProdi,
   IzinLanjutSkripsi,
   PeriodePenjaluran,
+  BimbinganSkripsi,
+  DokumenSidang,
+  PendaftaranSidang,
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
@@ -1116,7 +1119,9 @@ exports.getDosenSubmissions = async (req, res) => {
     const requestedType = String(req.query?.tipe_pengajuan || "")
       .trim()
       .toLowerCase();
-    const isSekretarisRole = req.user?.role === "sekretaris_prodi";
+    const isSekretarisRole =
+      req.user?.role === "sekretaris_prodi" ||
+      (Array.isArray(req.user?.capabilities) && req.user.capabilities.includes("sekretaris_prodi"));
     const allowedTipe = ["topik_dosen", "judul_mandiri"];
     if (requestedType && !allowedTipe.includes(requestedType)) {
       return res.status(400).json({
@@ -1204,7 +1209,11 @@ exports.getDosenSubmissions = async (req, res) => {
       submissions = await Pengajuan.findAll(baseQuery);
     }
 
-    const compactData = submissions.map((submission) => {
+    const visibleSubmissions = isSekretarisRole
+      ? submissions.filter((submission) => submission.status !== "menunggu_approval_sekprodi")
+      : submissions;
+
+    const compactData = visibleSubmissions.map((submission) => {
       const approvalStage =
         submission.tipe_pengajuan === "judul_mandiri"
           ? getClusterApprovalStage(submission)
@@ -1692,7 +1701,15 @@ exports.approveSubmission = async (req, res) => {
         });
       }
 
-      if (isSamePositiveId(ketuaResolution.ketuaKlaster.dosen_id, dosen_id)) {
+      const calonPembimbingId = Number(
+        isJudulMandiri
+          ? submission.prospective_supervisor_id || dosen_id
+          : approvedTopikByDosen?.dosen_id || dosen_id
+      );
+      if (
+        isSamePositiveId(ketuaResolution.ketuaKlaster.dosen_id, dosen_id) ||
+        isSamePositiveId(ketuaResolution.ketuaKlaster.dosen_id, calonPembimbingId)
+      ) {
         const finalTopikForAutoApproval = isTopikDosen ? approvedTopikByDosen : null;
 
         await routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
@@ -3813,6 +3830,261 @@ exports.getKuotaSendiri = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/dosen/monitoring-mahasiswa
+exports.getMonitoringMahasiswa = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req);
+    if (!dosenId) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen.",
+      });
+    }
+
+    const mahasiswas = await Mahasiswa.findAll({
+      where: { dosen_pembimbing_skripsi_id: dosenId },
+      attributes: [
+        "id",
+        "nim",
+        "nama",
+        "email",
+        "angkatan",
+        "status_jalur_saat_ini",
+        "pengajuan_aktif_id",
+        "updatedAt",
+      ],
+      include: [
+        {
+          model: Pengajuan,
+          as: "pengajuanAktif",
+          attributes: ["id", "jenis_jalur", "tipe_pengajuan", "status", "updatedAt"],
+          required: false,
+        },
+        {
+          model: PendaftaranPenjaluran,
+          as: "pendaftaranPenjalurans",
+          attributes: [
+            "id",
+            "jalur",
+            "jenis_jalur_diambil",
+            "penjaluran_baru",
+            "penjaluran_sebelumnya",
+            "status",
+            "form_lanjutan_status",
+            "createdAt",
+            "updatedAt",
+          ],
+          separate: true,
+          limit: 1,
+          order: [["createdAt", "DESC"]],
+        },
+      ],
+      order: [["nama", "ASC"]],
+    });
+
+    const mahasiswaIds = mahasiswas.map((item) => Number(item.id));
+    if (mahasiswaIds.length === 0) {
+      return res.json({
+        success: true,
+        data: { summary: { total: 0, perlu_tindakan: 0, siap_sidang: 0 }, rows: [] },
+      });
+    }
+
+    const [bimbinganRows, dokumenRows, sidangRows] = await Promise.all([
+      BimbinganSkripsi.findAll({
+        where: {
+          dosen_id: dosenId,
+          mahasiswa_id: { [Op.in]: mahasiswaIds },
+        },
+        attributes: [
+          "id",
+          "mahasiswa_id",
+          "status_permohonan",
+          "status_resume",
+          "is_counted",
+          "updatedAt",
+        ],
+        order: [["updatedAt", "DESC"]],
+      }),
+      DokumenSidang.findAll({
+        where: { mahasiswa_id: { [Op.in]: mahasiswaIds } },
+        attributes: [
+          "mahasiswa_id",
+          "transkrip_status",
+          "cept_status",
+          "draft_skripsi_status",
+          "updatedAt",
+        ],
+      }),
+      PendaftaranSidang.findAll({
+        where: { mahasiswa_id: { [Op.in]: mahasiswaIds } },
+        attributes: ["id", "mahasiswa_id", "status", "registered_at", "updatedAt"],
+        order: [["createdAt", "DESC"]],
+      }),
+    ]);
+
+    const bimbinganMap = new Map();
+    for (const row of bimbinganRows) {
+      const mahasiswaId = Number(row.mahasiswa_id);
+      const current = bimbinganMap.get(mahasiswaId) || {
+        total: 0,
+        tervalidasi: 0,
+        pending_permohonan: 0,
+        pending_resume: 0,
+        updated_at: null,
+      };
+      current.total += 1;
+      if (row.status_resume === "approved" && row.is_counted) current.tervalidasi += 1;
+      if (row.status_permohonan === "pending") current.pending_permohonan += 1;
+      if (row.status_resume === "submitted") current.pending_resume += 1;
+      if (!current.updated_at) current.updated_at = row.updatedAt;
+      bimbinganMap.set(mahasiswaId, current);
+    }
+
+    const dokumenMap = new Map(
+      dokumenRows.map((row) => {
+        const statuses = [
+          row.transkrip_status,
+          row.cept_status,
+          row.draft_skripsi_status,
+        ];
+        return [
+          Number(row.mahasiswa_id),
+          {
+            approved: statuses.filter((status) => status === "approved").length,
+            submitted: statuses.filter((status) => status === "submitted").length,
+            revisi: statuses.filter((status) => status === "revisi").length,
+            updated_at: row.updatedAt,
+          },
+        ];
+      })
+    );
+
+    const sidangMap = new Map();
+    for (const row of sidangRows) {
+      const mahasiswaId = Number(row.mahasiswa_id);
+      if (!sidangMap.has(mahasiswaId)) sidangMap.set(mahasiswaId, row);
+    }
+
+    const rows = mahasiswas.map((mahasiswa) => {
+      const mahasiswaId = Number(mahasiswa.id);
+      const bimbingan = bimbinganMap.get(mahasiswaId) || {
+        total: 0,
+        tervalidasi: 0,
+        pending_permohonan: 0,
+        pending_resume: 0,
+        updated_at: null,
+      };
+      const dokumen = dokumenMap.get(mahasiswaId) || {
+        approved: 0,
+        submitted: 0,
+        revisi: 0,
+        updated_at: null,
+      };
+      const sidang = sidangMap.get(mahasiswaId) || null;
+      const pendaftaran = mahasiswa.pendaftaranPenjalurans?.[0] || null;
+      const namaPenjaluran =
+        pendaftaran?.jenis_jalur_diambil ||
+        pendaftaran?.penjaluran_baru ||
+        pendaftaran?.penjaluran_sebelumnya ||
+        null;
+
+      let tahap = "Bimbingan";
+      let nextAction = "bimbingan-review";
+      if (sidang?.status === "scheduled") {
+        tahap = "Sidang Dijadwalkan";
+        nextAction = "dokumen-sidang-review";
+      } else if (sidang?.status === "submitted") {
+        tahap = "Menunggu Penjadwalan Sidang";
+        nextAction = "dokumen-sidang-review";
+      } else if (dokumen.approved === 3) {
+        tahap = "Siap Mendaftar Sidang";
+        nextAction = "dokumen-sidang-review";
+      } else if (bimbingan.tervalidasi >= 8) {
+        tahap = "Kelengkapan Dokumen Sidang";
+        nextAction = "dokumen-sidang-review";
+      } else if (bimbingan.pending_permohonan > 0 || bimbingan.pending_resume > 0) {
+        tahap = "Perlu Review Dosen";
+      } else if (!mahasiswa.pengajuanAktif && !namaPenjaluran) {
+        tahap = "Belum Memulai Pengajuan";
+        nextAction = "mahasiswa-bimbingan";
+      }
+
+      const activityDates = [
+        mahasiswa.updatedAt,
+        mahasiswa.pengajuanAktif?.updatedAt,
+        pendaftaran?.updatedAt,
+        bimbingan.updated_at,
+        dokumen.updated_at,
+        sidang?.updatedAt,
+      ]
+        .filter(Boolean)
+        .map((value) => new Date(value))
+        .filter((value) => !Number.isNaN(value.getTime()));
+      const lastActivity =
+        activityDates.length > 0
+          ? new Date(Math.max(...activityDates.map((value) => value.getTime())))
+          : null;
+
+      return {
+        mahasiswa: {
+          id: mahasiswa.id,
+          nim: mahasiswa.nim,
+          nama: mahasiswa.nama,
+          email: mahasiswa.email,
+          angkatan: mahasiswa.angkatan,
+        },
+        jalur: pendaftaran?.jalur || mahasiswa.status_jalur_saat_ini,
+        penjaluran: namaPenjaluran,
+        status_pengajuan: mahasiswa.pengajuanAktif?.status || null,
+        tahap,
+        perlu_tindakan:
+          bimbingan.pending_permohonan > 0 ||
+          bimbingan.pending_resume > 0 ||
+          dokumen.submitted > 0,
+        bimbingan: {
+          ...bimbingan,
+          target: 8,
+          progress_percent: Math.min(100, Math.round((bimbingan.tervalidasi / 8) * 100)),
+        },
+        dokumen: { ...dokumen, target: 3 },
+        sidang: sidang
+          ? {
+              id: sidang.id,
+              status: sidang.status,
+              registered_at: sidang.registered_at,
+            }
+          : null,
+        aktivitas_terakhir: lastActivity,
+        next_action: nextAction,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        summary: {
+          total: rows.length,
+          perlu_tindakan: rows.filter((item) => item.perlu_tindakan).length,
+          siap_sidang: rows.filter((item) =>
+            ["Siap Mendaftar Sidang", "Menunggu Penjadwalan Sidang", "Sidang Dijadwalkan"].includes(
+              item.tahap
+            )
+          ).length,
+        },
+        rows,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getMonitoringMahasiswa:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat memuat monitoring mahasiswa.",
       error: error.message,
     });
   }

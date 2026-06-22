@@ -922,6 +922,8 @@ async function normalizeKelompokNonPenelitianPayload({
 function normalizeWorkflowStatusLabel(status) {
   const normalized = String(status || "").trim().toLowerCase();
   if (!normalized) return "-";
+  if (normalized === "review_dosen_magang") return "Menunggu Review Dosen Pengawas Magang";
+  if (normalized === "review_sekprodi") return "Menunggu Keputusan Final Sekprodi";
   return normalized
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
@@ -1087,9 +1089,9 @@ const DOSEN_NON_PENELITIAN_REVIEW_CONFIG = {
     actor: "dosen_pengawas_magang",
     assignedError: "Akses ditolak. Anda bukan dosen pengawas magang untuk periode ini.",
     statusError: (status) => `Form magang sudah diproses. Status saat ini: ${status}`,
-    approvedMessage: "Form magang berhasil disetujui dosen pengawas.",
+    approvedMessage: "Form magang disetujui dosen pengawas dan diteruskan ke sekretaris prodi.",
     rejectedMessage: "Form magang ditolak oleh dosen pengawas.",
-    defaultApproveNote: "Disetujui dosen pengawas magang.",
+    defaultApproveNote: "Disetujui dosen pengawas magang dan diteruskan ke sekretaris prodi.",
     defaultRejectNote: "Ditolak dosen pengawas magang.",
   },
   pengabdian: {
@@ -2220,8 +2222,9 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
       at: now,
     });
 
+    const requiresSekprodiFinal = ["magang", "perintisan_bisnis"].includes(targetJalur);
     const nextStatus =
-      targetJalur === "perintisan_bisnis" && decision === "approved"
+      requiresSekprodiFinal && decision === "approved"
         ? "review_sekprodi"
         : decision;
     const nextPayload = {
@@ -2243,7 +2246,10 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
         {
           status: "review_sekprodi",
           actor: "system",
-          note: "Menunggu review sekretaris prodi dan penetapan dosen pembimbing kelompok.",
+          note:
+            targetJalur === "perintisan_bisnis"
+              ? "Menunggu keputusan final sekretaris prodi dan penetapan dosen pembimbing kelompok."
+              : "Menunggu keputusan final sekretaris prodi.",
           at: now,
         },
       ];
@@ -2797,6 +2803,7 @@ exports.submitBaruTopikDosen = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "baru",
         tipe_pengajuan: "topik_dosen",
+        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif?.id || null,
         topik_1_kode,
         topik_1_judul: topik_1_judul_final,
         topik_2_kode,
@@ -2816,6 +2823,16 @@ exports.submitBaruTopikDosen = async (req, res) => {
     );
 
     await ensureParallelReviewerRows(pengajuan, t);
+
+    if (jalurGate.pendaftaranAktif) {
+      await jalurGate.pendaftaranAktif.update(
+        {
+          form_lanjutan_status: "submitted",
+          form_lanjutan_submitted_at: new Date(),
+        },
+        { transaction: t }
+      );
+    }
 
     // Update mahasiswa
     await mahasiswa.update(
@@ -3267,6 +3284,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "baru",
         tipe_pengajuan: "judul_mandiri",
+        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif?.id || null,
         judul_mandiri,
         deskripsi_mandiri,
         keyword_mandiri,
@@ -3780,6 +3798,16 @@ exports.submitUlangTopikDosen = async (req, res) => {
       },
       { transaction: t }
     );
+
+    if (jalurGate.pendaftaranAktif) {
+      await jalurGate.pendaftaranAktif.update(
+        {
+          form_lanjutan_status: "submitted",
+          form_lanjutan_submitted_at: new Date(),
+        },
+        { transaction: t }
+      );
+    }
 
     await ensureParallelReviewerRows(pengajuan, t);
 

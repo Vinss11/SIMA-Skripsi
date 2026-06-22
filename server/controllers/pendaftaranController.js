@@ -21,6 +21,7 @@ const JENIS_JALUR_OPTIONS = ["penelitian", "pengabdian", "perintisan_bisnis", "m
 const PERAN_TIM_PERINTISAN = ["hustler", "hipster", "hacker"];
 const PROGRAM_KULIAH_OPTIONS = ["reguler", "internasional"];
 const EMAIL_DOMAIN_MAHASISWA = "students.uii.ac.id";
+const NIM_MAHASISWA_REGEX = /^\d{2}523\d{3}$/;
 
 function normalizeText(value) {
   if (typeof value !== "string") return "";
@@ -375,6 +376,39 @@ exports.getDosenDropdown = async (req, res) => {
   }
 };
 
+// GET /api/pendaftaran/check-nim?nim=22523001
+exports.checkNimAvailability = async (req, res) => {
+  try {
+    const nim = normalizeText(req.query.nim);
+    if (!NIM_MAHASISWA_REGEX.test(nim)) {
+      return res.status(400).json({
+        success: false,
+        message: "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.",
+        detail: { field: "nim" },
+      });
+    }
+
+    const existingMahasiswa = await Mahasiswa.findOne({
+      where: { nim },
+      attributes: ["id"],
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        nim,
+        available: !existingMahasiswa,
+      },
+    });
+  } catch (error) {
+    console.error("Error checkNimAvailability:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal memeriksa ketersediaan NIM.",
+    });
+  }
+};
+
 // GET /api/pendaftaran/mahasiswa-perintisan?q=...&jenis=ulang|alih
 exports.getMahasiswaPerintisanOptions = async (req, res) => {
   try {
@@ -551,8 +585,8 @@ async function createKelompokPerintisanRegistration({
   const resolvedParticipants = [];
   for (const participant of participants) {
     if (participant.jenis_pendaftaran === "baru") {
-      if (!/^\d{8}$/.test(participant.nim)) {
-        return { error: "NIM mahasiswa jalur Baru wajib tepat 8 digit angka." };
+      if (!NIM_MAHASISWA_REGEX.test(participant.nim)) {
+        return { error: "NIM mahasiswa jalur Baru wajib menggunakan format YY523NNN, contoh 22523001." };
       }
       if (
         participant.nama.length < 2 ||
@@ -737,11 +771,12 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       });
     }
 
-    if (!/^\d{8}$/.test(nim)) {
+    if (!NIM_MAHASISWA_REGEX.test(nim)) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "NIM tidak valid. NIM wajib tepat 8 digit angka.",
+        message: "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.",
+        detail: { field: "nim" },
       });
     }
 
@@ -750,6 +785,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Nama tidak valid. Panjang nama wajib 2 sampai 100 karakter.",
+        detail: { field: "nama" },
       });
     }
 
@@ -758,6 +794,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Nama tidak valid. Nama hanya boleh huruf, spasi, titik, apostrof, dan tanda hubung.",
+        detail: { field: "nama" },
       });
     }
 
@@ -903,6 +940,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: `${conflictField} sudah terdaftar. Gunakan data lain atau login jika sudah punya akun.`,
+        detail: { field: existingMahasiswa.nim === nim ? "nim" : "email" },
       });
     }
 

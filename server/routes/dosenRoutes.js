@@ -111,6 +111,12 @@ router.post("/pamit-mahasiswa/:id/reject", authenticateToken, authorizeRole("dos
 // ========== DOSEN KUOTA ==========
 router.get("/kuota", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getKuotaSendiri);
 router.get("/mahasiswa-master", authenticateToken, authorizeRole("dosen"), dosenController.getMahasiswaMasterReadOnly);
+router.get(
+  "/monitoring-mahasiswa",
+  authenticateToken,
+  authorizeRole("dosen", "sekretaris_prodi"),
+  dosenController.getMonitoringMahasiswa
+);
 
 // ========== BIMBINGAN SKRIPSI ==========
 router.get("/bimbingan", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), bimbinganController.getDosenBimbingan);

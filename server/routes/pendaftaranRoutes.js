@@ -6,6 +6,7 @@ const { authenticateToken, authorizeRole } = require("../middlewares/authMiddlew
 // Public endpoint untuk mahasiswa yang belum memiliki akun
 router.get("/periode-aktif", pendaftaranController.getPeriodeAktif);
 router.get("/dosen", pendaftaranController.getDosenDropdown);
+router.get("/check-nim", pendaftaranController.checkNimAvailability);
 router.get("/mahasiswa-perintisan", pendaftaranController.getMahasiswaPerintisanOptions);
 router.post("/jalur-baru", pendaftaranController.submitPendaftaranJalurBaru);
 router.post("/submit", pendaftaranController.submitPendaftaranJalurBaru);

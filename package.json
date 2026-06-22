@@ -9,6 +9,7 @@
     "start": "npm --prefix server start",
     "build:client": "npm --prefix client run build",
     "db:migrate": "cd server && npx sequelize-cli db:migrate --env production",
-    "db:seed:admin": "cd server && npx sequelize-cli db:seed --seed production-admin-only.js --env production"
+    "db:seed:admin": "cd server && npx sequelize-cli db:seed --seed production-admin-only.js --env production",
+    "db:reset:student-data": "npm --prefix server run db:reset:student-data --"
   }
 }
