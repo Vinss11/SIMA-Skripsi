@@ -429,6 +429,26 @@ function isEmptyDosenUploadRow(values) {
   ].every(isBlankUploadValue);
 }
 
+function validateKuotaBimbinganValue(value) {
+  const rawValue = String(value ?? "").trim();
+  if (!/^\d{1,2}$/.test(rawValue)) {
+    return {
+      isValid: false,
+      message: "Kuota bimbingan harus berupa angka bulat 1-99",
+    };
+  }
+
+  const kuota = Number(rawValue);
+  if (!Number.isInteger(kuota) || kuota < 1 || kuota > 99) {
+    return {
+      isValid: false,
+      message: "Kuota bimbingan harus berupa angka bulat 1-99",
+    };
+  }
+
+  return { isValid: true, value: kuota };
+}
+
 async function getNextDosenSequence(transaction) {
   const [rows] = await sequelize.query(
     `
@@ -582,15 +602,16 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         continue;
       }
 
-      const kuota = Number(kuotaBimbingan);
-      if (!Number.isInteger(kuota) || kuota < 1) {
+      const kuotaValidation = validateKuotaBimbinganValue(kuotaBimbingan);
+      if (!kuotaValidation.isValid) {
         results.failed.push({
           row: rowNumber,
           data: row,
-          error: "Kuota bimbingan harus berupa angka bulat minimal 1",
+          error: kuotaValidation.message,
         });
         continue;
       }
+      const kuota = kuotaValidation.value;
 
       if (normalizedNik) {
         const existingDosenNik = await Dosen.findOne({
@@ -2042,16 +2063,17 @@ exports.uploadDosen = async (req, res) => {
           continue;
         }
 
-        // Validasi kuota bimbingan (kosong akan memakai default 5, selain itu harus bilangan bulat positif).
-        const kuota = Number(kuotaBimbingan);
-        if (!Number.isInteger(kuota) || kuota < 1) {
+        // Validasi kuota bimbingan (kosong akan memakai default 5, selain itu harus bilangan bulat 1-99).
+        const kuotaValidation = validateKuotaBimbinganValue(kuotaBimbingan);
+        if (!kuotaValidation.isValid) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Kuota bimbingan harus berupa angka bulat minimal 1",
+            error: kuotaValidation.message,
           });
           continue;
         }
+        const kuota = kuotaValidation.value;
 
         if (normalizedNik) {
           // Cek apakah NIK sudah ada

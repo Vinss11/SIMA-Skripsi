@@ -57,6 +57,26 @@ function validateHumanName(name, label) {
   };
 }
 
+function validateKuotaBimbinganValue(value) {
+  const rawValue = String(value ?? "").trim();
+  if (!/^\d{1,2}$/.test(rawValue)) {
+    return {
+      isValid: false,
+      message: "Kuota bimbingan harus angka bulat 1-99.",
+    };
+  }
+
+  const kuota = Number(rawValue);
+  if (!Number.isInteger(kuota) || kuota < 1 || kuota > 99) {
+    return {
+      isValid: false,
+      message: "Kuota bimbingan harus angka bulat 1-99.",
+    };
+  }
+
+  return { isValid: true, value: kuota };
+}
+
 async function getNextDosenSequence(transaction) {
   const [rows] = await sequelize.query(
     `
@@ -651,9 +671,11 @@ exports.createDosen = async (req, res) => {
     const normalizedEmail = String(email || "").trim().toLowerCase();
     const normalizedGelar = gelar ? String(gelar).trim() : null;
     const normalizedJabatanStruktural = normalizeJabatanStrukturalInput(jabatan_struktural);
-    const parsedKuota = kuota_bimbingan === undefined || kuota_bimbingan === null || kuota_bimbingan === ""
+    const kuotaInput = kuota_bimbingan === undefined || kuota_bimbingan === null || kuota_bimbingan === ""
       ? 5
-      : Number(kuota_bimbingan);
+      : kuota_bimbingan;
+    const kuotaValidation = validateKuotaBimbinganValue(kuotaInput);
+    const parsedKuota = kuotaValidation.value;
 
     const nameValidation = validateHumanName(nama, "Nama dosen");
     if (!nameValidation.isValid) {
@@ -689,11 +711,11 @@ exports.createDosen = async (req, res) => {
       });
     }
 
-    if (!Number.isFinite(parsedKuota) || parsedKuota < 1 || !Number.isInteger(parsedKuota)) {
+    if (!kuotaValidation.isValid) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Kuota bimbingan harus angka bulat minimal 1.",
+        message: kuotaValidation.message,
       });
     }
 
@@ -1164,12 +1186,14 @@ exports.setKuotaDosen = async (req, res) => {
   try {
     const { id } = req.params;
     const { kuota_bimbingan } = req.body;
+    const kuotaValidation = validateKuotaBimbinganValue(kuota_bimbingan);
+    const parsedKuota = kuotaValidation.value;
 
-    if (!kuota_bimbingan || kuota_bimbingan < 1) {
+    if (!kuotaValidation.isValid) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "kuota_bimbingan harus diisi dan minimal 1",
+        message: kuotaValidation.message,
       });
     }
 
@@ -1186,12 +1210,12 @@ exports.setKuotaDosen = async (req, res) => {
     const oldKuota = dosen.kuota_bimbingan;
 
     // Update kuota
-    await dosen.update({ kuota_bimbingan }, { transaction: t });
+    await dosen.update({ kuota_bimbingan: parsedKuota }, { transaction: t });
 
     // Cek apakah perlu re-enable/disable topik
     const kuotaInfo = await dosen.getKuotaInfo();
 
-    if (kuota_bimbingan > oldKuota && !kuotaInfo.is_penuh) {
+    if (parsedKuota > oldKuota && !kuotaInfo.is_penuh) {
       // Kuota ditambah dan tidak penuh → re-enable topik
       await Topik.update(
         { status: "available" },
@@ -1223,7 +1247,7 @@ exports.setKuotaDosen = async (req, res) => {
 
     res.json({
       success: true,
-      message: `Kuota dosen berhasil diupdate dari ${oldKuota} menjadi ${kuota_bimbingan}`,
+      message: `Kuota dosen berhasil diupdate dari ${oldKuota} menjadi ${parsedKuota}`,
       data: {
         dosen: {
           id: dosen.id,

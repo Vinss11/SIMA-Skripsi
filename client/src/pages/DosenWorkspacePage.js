@@ -117,6 +117,13 @@ const PERIODE_MASTER_INITIAL = {
   pengawas_pengabdian_dosen_id: "",
   pengawas_perintisan_bisnis_dosen_id: "",
 };
+
+function sanitizeTwoDigitPositiveNumber(value) {
+  return String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 2);
+}
+
 function buildPeriodeMasterSearchInitial() {
   const next = {};
   for (const item of PERIODE_MASTER_ALL_FIELDS) {
@@ -4458,8 +4465,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const handleSaveMasterDosenKuota = async () => {
     const parsedKuota = Number(masterDosenKuotaValue);
-    if (!Number.isInteger(parsedKuota) || parsedKuota < 1) {
-      showErrorToast("Kuota bimbingan wajib angka bulat minimal 1.");
+    if (!/^\d{1,2}$/.test(String(masterDosenKuotaValue || "")) || !Number.isInteger(parsedKuota) || parsedKuota < 1 || parsedKuota > 99) {
+      showErrorToast("Kuota bimbingan wajib angka bulat 1-99.");
       return;
     }
 
@@ -7696,11 +7703,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           <option value="selected">Set untuk dosen terpilih</option>
                         </select>
                         <input
-                          type="number"
-                          min={1}
-                          step={1}
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={2}
                           value={masterDosenKuotaValue}
-                          onChange={(event) => setMasterDosenKuotaValue(event.target.value)}
+                          onChange={(event) => setMasterDosenKuotaValue(sanitizeTwoDigitPositiveNumber(event.target.value))}
                           placeholder="Kuota bimbingan"
                           className="w-[180px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
                         />

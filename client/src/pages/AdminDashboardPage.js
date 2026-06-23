@@ -12,6 +12,7 @@ import {
   RefreshCcw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Upload,
   UserCircle2,
 } from "lucide-react";
@@ -58,6 +59,13 @@ const TAB_HEADERS = {
 const DOSEN_PAGE_SIZE = 20;
 const DOSEN_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const DOSEN_UPLOAD_PREVIEW_PAGE_SIZE = 5;
+const DOSEN_FILTER_INITIAL = {
+  jabatan_struktural: "",
+  klaster: "",
+  kuota_bimbingan: "",
+  status_bimbingan: "",
+  status_kuota: "",
+};
 const JABATAN_STRUKTURAL_OPTIONS = [
   "Ketua Jurusan Informatika",
   "Sekretaris Jurusan Informatika",
@@ -104,6 +112,12 @@ function getAdminDosenSearchHaystack(dosen) {
 function parseCount(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sanitizeTwoDigitPositiveNumber(value) {
+  return String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 2);
 }
 
 function formatDateTime(value) {
@@ -347,6 +361,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const [isSavingDosenImport, setIsSavingDosenImport] = useState(false);
   const [dosenUploadPreviewPage, setDosenUploadPreviewPage] = useState(1);
   const [dosenQuery, setDosenQuery] = useState("");
+  const [dosenFilters, setDosenFilters] = useState({ ...DOSEN_FILTER_INITIAL });
+  const [dosenFilterDraft, setDosenFilterDraft] = useState({ ...DOSEN_FILTER_INITIAL });
+  const [showDosenFilterPanel, setShowDosenFilterPanel] = useState(false);
   const [dosenMode, setDosenMode] = useState("list");
   const [dosenManagementTab, setDosenManagementTab] = useState("data-dosen");
   const [dosenPage, setDosenPage] = useState(1);
@@ -381,6 +398,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
   const sessionExpiredRef = useRef(false);
   const contentScrollRef = useRef(null);
   const dosenGridScrollRef = useRef(null);
+  const dosenFilterRef = useRef(null);
   const preserveContentScrollTopRef = useRef(null);
   const preserveGridScrollTopRef = useRef(null);
   const restoreRafRef = useRef([]);
@@ -471,6 +489,33 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    if (!showDosenFilterPanel) return undefined;
+
+    const handleOutsideClick = (event) => {
+      if (dosenFilterRef.current?.contains(event.target)) return;
+      setShowDosenFilterPanel(false);
+    };
+    const handleEscape = (event) => {
+      if (event.key === "Escape") {
+        setShowDosenFilterPanel(false);
+      }
+    };
+
+    window.addEventListener("mousedown", handleOutsideClick);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", handleOutsideClick);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [showDosenFilterPanel]);
+
+  useEffect(() => {
+    if (dosenMode !== "list" || dosenManagementTab !== "data-dosen") {
+      setShowDosenFilterPanel(false);
+    }
+  }, [dosenManagementTab, dosenMode]);
+
   const summary = useMemo(() => aggregateStatistics(statistics), [statistics]);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const templateDosenUrl = `${apiBaseUrl}/api/admin/upload/dosen-template`;
@@ -514,11 +559,108 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
     }
   }, [isEditingJabatanStruktural, jabatanDraftFromRows, jabatanSearchLabelsFromRows]);
 
+  const dosenFilterOptions = useMemo(() => {
+    const jabatanSet = new Set();
+    const klasterMap = new Map();
+    const kuotaSet = new Set();
+    let hasNoJabatan = false;
+    let hasNoKlaster = false;
+
+    for (const row of dosenRows) {
+      const jabatan = String(row?.jabatan_struktural || "").trim();
+      if (jabatan) {
+        jabatanSet.add(jabatan);
+      } else {
+        hasNoJabatan = true;
+      }
+
+      if (Array.isArray(row?.klasters) && row.klasters.length > 0) {
+        for (const klaster of row.klasters) {
+          const kode = String(klaster?.kode || "").trim();
+          if (!kode) continue;
+          klasterMap.set(kode, {
+            value: kode,
+            label: klaster?.nama ? `${kode} - ${klaster.nama}` : kode,
+          });
+        }
+      } else {
+        hasNoKlaster = true;
+      }
+
+      const kuota = Number(row?.kuota_bimbingan);
+      if (Number.isFinite(kuota) && kuota >= 0) {
+        kuotaSet.add(kuota);
+      }
+    }
+
+    return {
+      jabatan_struktural: [
+        ...(hasNoJabatan ? [{ value: "__none__", label: "Tanpa jabatan struktural" }] : []),
+        ...Array.from(jabatanSet)
+          .sort((a, b) => a.localeCompare(b, "id"))
+          .map((value) => ({ value, label: value })),
+      ],
+      klaster: [
+        ...(hasNoKlaster ? [{ value: "__none__", label: "Tanpa klaster" }] : []),
+        ...Array.from(klasterMap.values()).sort((a, b) => a.label.localeCompare(b.label, "id")),
+      ],
+      kuota_bimbingan: Array.from(kuotaSet).sort((a, b) => a - b),
+    };
+  }, [dosenRows]);
+
   const filteredDosenRows = useMemo(() => {
     const keyword = dosenQuery.trim().toLowerCase();
-    if (!keyword) return dosenRows;
+    const selectedJabatan = String(dosenFilters.jabatan_struktural || "").trim();
+    const selectedKlaster = String(dosenFilters.klaster || "").trim().toLowerCase();
+    const selectedKuota = String(dosenFilters.kuota_bimbingan || "").trim();
+    const selectedStatusBimbingan = String(dosenFilters.status_bimbingan || "").trim();
+    const selectedStatusKuota = String(dosenFilters.status_kuota || "").trim();
 
     return dosenRows.filter((row) => {
+      const jabatan = String(row?.jabatan_struktural || "").trim();
+      if (
+        selectedJabatan &&
+        (selectedJabatan === "__none__" ? Boolean(jabatan) : jabatan !== selectedJabatan)
+      ) {
+        return false;
+      }
+
+      const klasterCodes = Array.isArray(row?.klasters)
+        ? row.klasters.map((item) => String(item?.kode || "").trim().toLowerCase()).filter(Boolean)
+        : [];
+      if (
+        selectedKlaster &&
+        (selectedKlaster === "__none__"
+          ? klasterCodes.length > 0
+          : !klasterCodes.includes(selectedKlaster))
+      ) {
+        return false;
+      }
+
+      const kuota = Number(row?.kuota_bimbingan || 0);
+      const jumlahBimbingan = Number(row?.jumlah_bimbingan || 0);
+      const sisaKuota = Number(row?.sisa_kuota || 0);
+      if (selectedKuota && String(kuota) !== selectedKuota) {
+        return false;
+      }
+      if (
+        selectedStatusBimbingan &&
+        (selectedStatusBimbingan === "ada" ? jumlahBimbingan <= 0 : jumlahBimbingan > 0)
+      ) {
+        return false;
+      }
+      if (selectedStatusKuota === "tersedia" && !(kuota > 0 && sisaKuota > 0)) {
+        return false;
+      }
+      if (selectedStatusKuota === "penuh" && !(kuota > 0 && sisaKuota <= 0)) {
+        return false;
+      }
+      if (selectedStatusKuota === "belum_diatur" && kuota > 0) {
+        return false;
+      }
+
+      if (!keyword) return true;
+
       const klasterLabel = Array.isArray(row.klasters)
         ? row.klasters.map((item) => `${item.kode} ${item.nama}`).join(" ")
         : "";
@@ -536,7 +678,75 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [dosenRows, dosenQuery]);
+  }, [dosenFilters, dosenQuery, dosenRows]);
+
+  const dosenActiveFilterChips = useMemo(() => {
+    const chips = [];
+    const jabatan = String(dosenFilters.jabatan_struktural || "").trim();
+    const klaster = String(dosenFilters.klaster || "").trim();
+    const kuota = String(dosenFilters.kuota_bimbingan || "").trim();
+    const statusBimbingan = String(dosenFilters.status_bimbingan || "").trim();
+    const statusKuota = String(dosenFilters.status_kuota || "").trim();
+
+    if (jabatan) {
+      chips.push({
+        key: "jabatan_struktural",
+        label: jabatan === "__none__" ? "Jabatan: Tidak ada" : `Jabatan: ${jabatan}`,
+      });
+    }
+    if (klaster) {
+      chips.push({
+        key: "klaster",
+        label: klaster === "__none__" ? "Klaster: Tidak ada" : `Klaster: ${klaster}`,
+      });
+    }
+    if (kuota) {
+      chips.push({ key: "kuota_bimbingan", label: `Kuota: ${kuota}` });
+    }
+    if (statusBimbingan) {
+      chips.push({
+        key: "status_bimbingan",
+        label: statusBimbingan === "ada" ? "Bimbingan: Ada" : "Bimbingan: Belum ada",
+      });
+    }
+    if (statusKuota) {
+      const labelByStatus = {
+        tersedia: "Tersedia",
+        penuh: "Penuh",
+        belum_diatur: "Belum diatur",
+      };
+      chips.push({ key: "status_kuota", label: `Status Kuota: ${labelByStatus[statusKuota]}` });
+    }
+    return chips;
+  }, [dosenFilters]);
+  const hasDosenActiveFilters = dosenActiveFilterChips.length > 0;
+  const hasDosenDraftFilters = Object.values(dosenFilterDraft).some(
+    (value) => String(value || "").trim().length > 0
+  );
+  const isDosenFilterDraftDirty = Object.keys(DOSEN_FILTER_INITIAL).some(
+    (key) => String(dosenFilterDraft[key] || "").trim() !== String(dosenFilters[key] || "").trim()
+  );
+
+  const handleToggleDosenFilterPanel = () => {
+    setShowDosenFilterPanel((prev) => {
+      const next = !prev;
+      if (next) {
+        setDosenFilterDraft({ ...dosenFilters });
+      }
+      return next;
+    });
+  };
+
+  const handleApplyDosenFilters = () => {
+    setDosenFilters({ ...dosenFilterDraft });
+    setShowDosenFilterPanel(false);
+  };
+
+  const handleResetDosenFilters = () => {
+    setDosenFilters({ ...DOSEN_FILTER_INITIAL });
+    setDosenFilterDraft({ ...DOSEN_FILTER_INITIAL });
+    setShowDosenFilterPanel(false);
+  };
 
   const dosenUploadValidRows = useMemo(() => {
     if (Array.isArray(uploadDosenResult?.data?.detail_valid)) {
@@ -626,7 +836,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
 
   useEffect(() => {
     setDosenPage(1);
-  }, [dosenQuery, dosenMode]);
+  }, [dosenFilters, dosenQuery, dosenMode]);
 
   useEffect(() => {
     if (dosenPage > totalDosenPages) {
@@ -1559,15 +1769,17 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                     <div>
                       <label className="mb-1 block text-sm font-semibold text-[#324c86]">Kuota Bimbingan</label>
                       <input
-                        type="number"
-                        min={1}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
                         value={createDosenForm.kuota_bimbingan}
                         onChange={(event) =>
                           setCreateDosenForm((prev) => ({
                             ...prev,
-                            kuota_bimbingan: event.target.value,
+                            kuota_bimbingan: sanitizeTwoDigitPositiveNumber(event.target.value),
                           }))
                         }
+                        placeholder="Masukkan kuota bimbingan"
                         className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                       />
                     </div>
@@ -1811,7 +2023,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                   <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                       <h3 className="text-lg font-black text-[#1b274b]">Grid Manajemen Dosen</h3>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="relative">
                           <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                           <input
@@ -1822,6 +2034,217 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
                             className="w-[280px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                           />
                         </div>
+                        <div className="relative" ref={dosenFilterRef}>
+                          <button
+                            type="button"
+                            onClick={handleToggleDosenFilterPanel}
+                            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${
+                              showDosenFilterPanel || hasDosenActiveFilters
+                                ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]"
+                                : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                            }`}
+                          >
+                            <SlidersHorizontal className="h-4 w-4" />
+                            Filter
+                            {hasDosenActiveFilters ? (
+                              <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">
+                                {dosenActiveFilterChips.length}
+                              </span>
+                            ) : null}
+                          </button>
+
+                          {showDosenFilterPanel ? (
+                            <div className="absolute right-0 top-[calc(100%+8px)] z-50 flex max-h-[620px] w-[430px] max-w-[calc(100vw-32px)] flex-col rounded-xl border border-[#dbe5f8] bg-white shadow-xl">
+                              <div className="border-b border-[#e5ecf9] px-4 py-3">
+                                <p className="text-base font-bold text-[#1e315f]">Filter Data Dosen</p>
+                                <p className="text-xs text-[#60709a]">
+                                  Atur filter bertumpuk, lalu klik Terapkan.
+                                </p>
+                              </div>
+
+                              <div className="space-y-3 overflow-auto p-3">
+                                <div className="rounded-lg border border-[#e6ecf8] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-sm font-semibold text-[#2a4175]">Jabatan Struktural</p>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDosenFilterDraft((prev) => ({ ...prev, jabatan_struktural: "" }))
+                                      }
+                                      className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                  <select
+                                    value={dosenFilterDraft.jabatan_struktural}
+                                    onChange={(event) =>
+                                      setDosenFilterDraft((prev) => ({
+                                        ...prev,
+                                        jabatan_struktural: event.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                                  >
+                                    <option value="">Semua jabatan struktural</option>
+                                    {dosenFilterOptions.jabatan_struktural.map((item) => (
+                                      <option key={`filter-jabatan-${item.value}`} value={item.value}>
+                                        {item.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="rounded-lg border border-[#e6ecf8] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-sm font-semibold text-[#2a4175]">Klaster</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => setDosenFilterDraft((prev) => ({ ...prev, klaster: "" }))}
+                                      className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                  <select
+                                    value={dosenFilterDraft.klaster}
+                                    onChange={(event) =>
+                                      setDosenFilterDraft((prev) => ({ ...prev, klaster: event.target.value }))
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                                  >
+                                    <option value="">Semua klaster</option>
+                                    {dosenFilterOptions.klaster.map((item) => (
+                                      <option key={`filter-klaster-${item.value}`} value={item.value}>
+                                        {item.label}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="rounded-lg border border-[#e6ecf8] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-sm font-semibold text-[#2a4175]">Kuota Bimbingan</p>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDosenFilterDraft((prev) => ({ ...prev, kuota_bimbingan: "" }))
+                                      }
+                                      className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                  <select
+                                    value={dosenFilterDraft.kuota_bimbingan}
+                                    onChange={(event) =>
+                                      setDosenFilterDraft((prev) => ({
+                                        ...prev,
+                                        kuota_bimbingan: event.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                                  >
+                                    <option value="">Semua kuota bimbingan</option>
+                                    {dosenFilterOptions.kuota_bimbingan.map((item) => (
+                                      <option key={`filter-kuota-${item}`} value={String(item)}>
+                                        Kuota {item}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="rounded-lg border border-[#e6ecf8] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-sm font-semibold text-[#2a4175]">Status Bimbingan</p>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDosenFilterDraft((prev) => ({ ...prev, status_bimbingan: "" }))
+                                      }
+                                      className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                  <select
+                                    value={dosenFilterDraft.status_bimbingan}
+                                    onChange={(event) =>
+                                      setDosenFilterDraft((prev) => ({
+                                        ...prev,
+                                        status_bimbingan: event.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                                  >
+                                    <option value="">Semua status bimbingan</option>
+                                    <option value="ada">Memiliki mahasiswa bimbingan</option>
+                                    <option value="belum">Belum memiliki mahasiswa bimbingan</option>
+                                  </select>
+                                </div>
+
+                                <div className="rounded-lg border border-[#e6ecf8] p-3">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <p className="text-sm font-semibold text-[#2a4175]">
+                                      Status Ketersediaan Kuota
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setDosenFilterDraft((prev) => ({ ...prev, status_kuota: "" }))
+                                      }
+                                      className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                  <select
+                                    value={dosenFilterDraft.status_kuota}
+                                    onChange={(event) =>
+                                      setDosenFilterDraft((prev) => ({
+                                        ...prev,
+                                        status_kuota: event.target.value,
+                                      }))
+                                    }
+                                    className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                                  >
+                                    <option value="">Semua status kuota</option>
+                                    <option value="tersedia">Kuota masih tersedia</option>
+                                    <option value="penuh">Kuota penuh</option>
+                                    <option value="belum_diatur">Kuota belum diatur</option>
+                                  </select>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-2 border-t border-[#e5ecf9] px-3 py-3">
+                                <button
+                                  type="button"
+                                  onClick={() => setDosenFilterDraft({ ...DOSEN_FILTER_INITIAL })}
+                                  disabled={!hasDosenDraftFilters}
+                                  className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Reset all
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleApplyDosenFilters}
+                                  disabled={!isDosenFilterDraftDirty}
+                                  className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Terapkan
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleResetDosenFilters}
+                          disabled={!hasDosenActiveFilters}
+                          className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Reset
+                        </button>
                         <button
                           type="button"
                           onClick={loadData}

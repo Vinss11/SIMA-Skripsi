@@ -109,6 +109,26 @@ function parsePositiveId(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+function validateKuotaBimbinganValue(value) {
+  const rawValue = String(value ?? "").trim();
+  if (!/^\d{1,2}$/.test(rawValue)) {
+    return {
+      isValid: false,
+      message: "kuota_bimbingan harus berupa angka bulat 1-99.",
+    };
+  }
+
+  const kuota = Number(rawValue);
+  if (!Number.isInteger(kuota) || kuota < 1 || kuota > 99) {
+    return {
+      isValid: false,
+      message: "kuota_bimbingan harus berupa angka bulat 1-99.",
+    };
+  }
+
+  return { isValid: true, value: kuota };
+}
+
 function buildRolePayloadFromRequest(body = {}) {
   const payload = {};
   for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
@@ -1853,15 +1873,16 @@ exports.getMasterDosenKuotaOverview = async (req, res) => {
 exports.setMasterDosenKuota = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const rawKuota = Number(req.body?.kuota_bimbingan);
+    const kuotaValidation = validateKuotaBimbinganValue(req.body?.kuota_bimbingan);
+    const rawKuota = kuotaValidation.value;
     const mode = String(req.body?.mode || "all").toLowerCase();
     const selectedIdsRaw = Array.isArray(req.body?.dosen_ids) ? req.body.dosen_ids : [];
 
-    if (!Number.isInteger(rawKuota) || rawKuota < 1) {
+    if (!kuotaValidation.isValid) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "kuota_bimbingan harus berupa angka bulat dan minimal 1.",
+        message: kuotaValidation.message,
       });
     }
 
