@@ -53,7 +53,7 @@ function styleXlsxCommentNotesAsStickyNotes(buffer) {
       const updatedXml = originalXml
         .replace(/fillcolor="#ECFAD4"/g, 'fillcolor="#FFF200"')
         .replace(/strokecolor="#edeaa1"/g, 'strokecolor="#D6B800"')
-        .replace(/width:104pt;height:64pt/g, "width:300pt;height:180pt")
+        .replace(/width:104pt;height:64pt/g, "width:420pt;height:250pt")
         .replace(/<x:Anchor>[^<]+<\/x:Anchor>/g, "<x:Anchor>6,0,1,0,11,20,13,20</x:Anchor>")
         .replace(/<v:fill\b[^>]*(?:\/>|>[\s\S]*?<\/v:fill>)/g, '<v:fill color="#FFF200" color2="#FFF200" type="solid"/>');
 
@@ -2451,7 +2451,7 @@ exports.downloadDosenTemplate = (req, res) => {
       },
       {
         "Tipe Referensi": "Kuota Bimbingan",
-        "Nilai yang Diizinkan": "Bilangan bulat minimal 1",
+        "Nilai yang Diizinkan": "Bilangan bulat 1-99",
         Keterangan: "Jika dikosongkan saat upload, sistem memakai default 5.",
       },
     ];
@@ -2472,6 +2472,17 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 18 }, // Kuota Bimbingan
     ];
     exampleSheet["!cols"] = ws["!cols"];
+    const jabatanStrukturalHeaderNote = [
+      "Opsional.",
+      "Kosongkan jika dosen tidak memegang jabatan struktural.",
+      "",
+      "Jika diisi, tulis persis salah satu pilihan berikut:",
+      ...STRUKTURAL_POSITIONS.map((jabatan) => `- ${jabatan}`),
+      "",
+      "Satu jabatan struktural hanya boleh dipakai oleh satu dosen.",
+      "",
+      "Contoh: Sekretaris Program Studi Informatika - Program Sarjana Reguler",
+    ].join("\n");
     const klasterHeaderNote = [
       "Isi satu atau lebih klaster.",
       "Jika lebih dari satu, pisahkan dengan koma.",
@@ -2486,8 +2497,12 @@ exports.downloadDosenTemplate = (req, res) => {
       "",
       "Contoh: MEDIS, ITSC, SDATA",
     ].join("\n");
+    ws["E1"].c = [{ a: "SIMPS UII", t: jabatanStrukturalHeaderNote }];
+    ws["E1"].c.hidden = true;
     ws["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
     ws["F1"].c.hidden = true;
+    exampleSheet["E1"].c = [{ a: "SIMPS UII", t: jabatanStrukturalHeaderNote }];
+    exampleSheet["E1"].c.hidden = true;
     exampleSheet["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
     exampleSheet["F1"].c.hidden = true;
 

@@ -4084,7 +4084,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
     console.error("Error di getMonitoringMahasiswa:", error);
     return res.status(500).json({
       success: false,
-      message: "Terjadi kesalahan saat memuat monitoring mahasiswa.",
+      message: "Terjadi kesalahan saat memuat data mahasiswa bimbingan.",
       error: error.message,
     });
   }
@@ -4093,16 +4093,29 @@ exports.getMonitoringMahasiswa = async (req, res) => {
 // GET /api/dosen/mahasiswa-master - Read-only master data mahasiswa untuk dosen
 exports.getMahasiswaMasterReadOnly = async (req, res) => {
   try {
+    const dosenId = await resolveAuthenticatedDosenId(req);
+    if (!dosenId) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen.",
+      });
+    }
+
     const data = await fetchMahasiswaMasterData({
       status_jalur: req.query.status_jalur,
       angkatan: req.query.angkatan,
     });
+    const scopedData = data.filter(
+      (mahasiswa) =>
+        Number(mahasiswa.dosen_pembimbing_akademik_id) === Number(dosenId) ||
+        Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId)
+    );
 
     return res.json({
       success: true,
-      data,
-      total: data.length,
-      role_owner: "sekretaris_prodi",
+      data: scopedData,
+      total: scopedData.length,
+      role_owner: "dosen",
       can_edit: false,
     });
   } catch (error) {
