@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import LoginPage from "./pages/LoginPage";
 import PendaftaranJalurPage from "./pages/PendaftaranJalurPage";
 import PendaftaranSuccessPage from "./pages/PendaftaranSuccessPage";
-import MahasiswaRegistrasiLoginPage from "./pages/MahasiswaRegistrasiLoginPage";
 import RoleDummyPage from "./pages/RoleDummyPage";
 import DashboardPage from "./pages/DashboardPage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
@@ -131,8 +130,9 @@ function App() {
   const [auth, setAuth] = useState(() => loadAuth());
   const [showDefaultPasswordToast, setShowDefaultPasswordToast] = useState(false);
   const [authScreen, setAuthScreen] = useState("login");
-  const [registrasiLoginNimPrefill, setRegistrasiLoginNimPrefill] = useState("");
   const [registrationData, setRegistrationData] = useState(null);
+  const [registrationLoginLoading, setRegistrationLoginLoading] = useState(false);
+  const [registrationLoginError, setRegistrationLoginError] = useState("");
   const defaultPasswordToastTokenRef = useRef("");
 
   const session = useMemo(
@@ -144,12 +144,12 @@ function App() {
     [auth]
   );
 
-  const handleLoginSuccess = ({ token, user, prompt_change_password }, rememberMe) => {
+  const handleLoginSuccess = useCallback(({ token, user, prompt_change_password }, rememberMe) => {
     const payload = { token, user, prompt_change_password };
     saveAuth(payload, rememberMe);
     setAuth(payload);
     setAuthScreen("login");
-  };
+  }, []);
 
   const handleLogout = useCallback(() => {
     clearAuthStorage();
@@ -175,6 +175,55 @@ function App() {
       return next;
     });
   }, []);
+
+  const handleOpenRegisteredMahasiswa = useCallback(async () => {
+    const username = String(registrationData?.akun_login?.username || registrationData?.registered_nim || "").trim();
+    const defaultPassword = String(registrationData?.akun_login?.default_password || "").trim();
+
+    if (!username || !defaultPassword) {
+      setAuthScreen("login");
+      return;
+    }
+
+    try {
+      setRegistrationLoginLoading(true);
+      setRegistrationLoginError("");
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          username,
+          password: defaultPassword,
+        }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success || !data?.data?.token || !data?.data?.user) {
+        setRegistrationLoginError(data?.message || "Gagal masuk otomatis. Silakan coba login dari halaman utama.");
+        return;
+      }
+
+      if (data.data.user.role !== "mahasiswa") {
+        setRegistrationLoginError("Akun ini bukan akun mahasiswa.");
+        return;
+      }
+
+      handleLoginSuccess(
+        {
+          token: data.data.token,
+          user: data.data.user,
+          prompt_change_password: data.data.prompt_change_password,
+        },
+        true
+      );
+    } catch (error) {
+      setRegistrationLoginError("Tidak bisa terhubung ke server.");
+    } finally {
+      setRegistrationLoginLoading(false);
+    }
+  }, [registrationData, handleLoginSuccess]);
 
   useEffect(() => {
     if (session.user && session.prompt_change_password && defaultPasswordToastTokenRef.current !== session.token) {
@@ -264,7 +313,7 @@ function App() {
           onBack={() => setAuthScreen("login")}
           onRegisterSuccess={(result) => {
             setRegistrationData(result || null);
-            setRegistrasiLoginNimPrefill(result?.akun_login?.username || result?.registered_nim || "");
+            setRegistrationLoginError("");
             setAuthScreen("register-success");
           }}
         />
@@ -275,21 +324,9 @@ function App() {
       return (
         <PendaftaranSuccessPage
           registrationData={registrationData}
-          onOpenMahasiswaBaruLogin={(nimValue) => {
-            setRegistrasiLoginNimPrefill(nimValue || "");
-            setAuthScreen("registrasi-login");
-          }}
-        />
-      );
-    }
-
-    if (authScreen === "registrasi-login") {
-      return (
-        <MahasiswaRegistrasiLoginPage
-          apiBaseUrl={API_BASE_URL}
-          initialNim={registrasiLoginNimPrefill}
-          onBack={() => setAuthScreen("login")}
-          onLoginSuccess={handleLoginSuccess}
+          isOpeningLogin={registrationLoginLoading}
+          loginError={registrationLoginError}
+          onOpenMahasiswaBaruLogin={handleOpenRegisteredMahasiswa}
         />
       );
     }

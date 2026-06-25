@@ -64,6 +64,20 @@ const getNamaValidationError = (nama) => {
 };
 const buildMahasiswaEmailFromNim = (nim) =>
   nim && nim.length > 0 ? `${nim}@${MAHASISWA_EMAIL_DOMAIN}`.toLowerCase() : "";
+const INITIAL_FIELD_ERRORS = {
+  nim: "",
+  nama: "",
+  dosen_pembimbing_akademik_id: "",
+  program_kuliah: "",
+  dosen_pembimbing_ta_id: "",
+};
+const INITIAL_TOUCHED_FIELDS = {
+  nim: false,
+  nama: false,
+  dosen_pembimbing_akademik_id: false,
+  program_kuliah: false,
+  dosen_pembimbing_ta_id: false,
+};
 const createAnggotaPerintisan = () => ({
   jenis_pendaftaran: "baru",
   peran_tim: "",
@@ -81,8 +95,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
-  const [fieldErrors, setFieldErrors] = useState({ nim: "", nama: "" });
-  const [touchedFields, setTouchedFields] = useState({ nim: false, nama: false });
+  const [fieldErrors, setFieldErrors] = useState(INITIAL_FIELD_ERRORS);
+  const [touchedFields, setTouchedFields] = useState(INITIAL_TOUCHED_FIELDS);
   const [nimAvailability, setNimAvailability] = useState("idle");
   const [dosenOptions, setDosenOptions] = useState([]);
   const [formData, setFormData] = useState({
@@ -345,6 +359,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       dosen_pembimbing_ta_mode: mode,
       dosen_pembimbing_ta_id: mode === "belum_dapat" ? "" : prev.dosen_pembimbing_ta_id,
     }));
+    setFieldErrors((prev) => ({ ...prev, dosen_pembimbing_ta_id: "" }));
     if (mode === "belum_dapat") {
       clearDosenSearchField("dosen_pembimbing_ta_id");
     }
@@ -397,6 +412,23 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         nama: getNamaValidationError(formData.nama),
       }));
     }
+    if (fieldName === "dosen_pembimbing_akademik_id") {
+      setFieldErrors((prev) => ({
+        ...prev,
+        dosen_pembimbing_akademik_id: formData.dosen_pembimbing_akademik_id
+          ? ""
+          : "Dosen Pembimbing Akademik wajib diisi.",
+      }));
+    }
+    if (fieldName === "dosen_pembimbing_ta_id") {
+      setFieldErrors((prev) => ({
+        ...prev,
+        dosen_pembimbing_ta_id:
+          formData.dosen_pembimbing_ta_mode === "belum_dapat" || formData.dosen_pembimbing_ta_id
+            ? ""
+            : "Pilih dosen pembimbing TA sementara atau pilih opsi belum mendapatkan dosen pembimbing.",
+      }));
+    }
   };
 
   const renderRadioGroup = ({ name, value, options, disabled = false }) => (
@@ -419,6 +451,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             onChange={(event) => {
               const { name: inputName, value: inputValue } = event.target;
               setFormData((prev) => ({ ...prev, [inputName]: inputValue }));
+              setFieldErrors((prev) => ({ ...prev, [inputName]: "" }));
               if (
                 ["jenis_jalur_diambil", "jenis_jalur_ulang", "penjaluran_baru"].includes(inputName) &&
                 inputValue === "perintisan_bisnis"
@@ -493,6 +526,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const selectedId = typeof optionValue === "object" && optionValue ? optionValue.id : optionValue;
     const selectedLabel = formatDosenInputLabel(selectedDosen);
     setFormField(fieldName, String(selectedId));
+    setFieldErrors((prev) => ({ ...prev, [fieldName]: "" }));
     setDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: selectedLabel }));
     setDebouncedDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: selectedLabel }));
     setActiveDosenSearchField("");
@@ -505,6 +539,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     disabled = false,
     prioritizeNoBimbingan = false,
     disableKuotaPenuh = false,
+    error = "",
   }) => {
     const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan });
     const searchValue = String(dosenSearchQueryByField?.[name] || "");
@@ -554,10 +589,19 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             value={inputValue}
             disabled={isDisabledField}
             onFocus={() => handleDosenSearchFocus(name)}
-            onBlur={() => handleDosenSearchBlur(name)}
+            onBlur={() => {
+              handleFieldBlur(name);
+              handleDosenSearchBlur(name);
+            }}
             onChange={(event) => handleDosenSearchQueryChange(name, event.target.value)}
             placeholder={loadingDosen ? "Memuat data dosen..." : "Cari nama atau NIK dosen"}
-            className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm text-[#203462] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:bg-[#f2f5fc] disabled:text-[#8b95af]"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? `${name}-error` : undefined}
+            className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${
+              error
+                ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
+                : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+            }`}
           />
           {shouldShowResults ? (
             <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-48 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
@@ -595,6 +639,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             </div>
           ) : null}
         </div>
+        {error ? (
+          <p id={`${name}-error`} className="mt-1 text-xs font-semibold text-[#c43f3f]">
+            {error}
+          </p>
+        ) : null}
       </div>
     );
   };
@@ -723,8 +772,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setAnggotaSearchResults([[], []]);
     setAnggotaDpaSearchQueries(["", ""]);
     setActiveAnggotaDpaIndex(null);
-    setFieldErrors({ nim: "", nama: "" });
-    setTouchedFields({ nim: false, nama: false });
+    setFieldErrors(INITIAL_FIELD_ERRORS);
+    setTouchedFields(INITIAL_TOUCHED_FIELDS);
     setNimAvailability("idle");
     setStep(1);
   };
@@ -782,19 +831,30 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const nimError =
       nimAvailability === "unavailable" ? "NIM sudah terdaftar." : getNimValidationError(nim);
     const namaError = getNamaValidationError(nama);
-    setTouchedFields((prev) => ({ ...prev, nim: true, nama: true }));
-    setFieldErrors({ nim: nimError, nama: namaError });
+    const dpaError = formData.dosen_pembimbing_akademik_id
+      ? ""
+      : "Dosen Pembimbing Akademik wajib diisi.";
+    const programError = formData.program_kuliah ? "" : "Program kuliah wajib dipilih.";
+    setTouchedFields((prev) => ({
+      ...prev,
+      nim: true,
+      nama: true,
+      dosen_pembimbing_akademik_id: true,
+      program_kuliah: true,
+    }));
+    setFieldErrors({
+      nim: nimError,
+      nama: namaError,
+      dosen_pembimbing_akademik_id: dpaError,
+      program_kuliah: programError,
+    });
 
-    if (nimError || namaError) {
-      return "Periksa kembali NIM dan nama mahasiswa.";
+    if (nimError || namaError || dpaError || programError) {
+      return "Periksa kembali informasi umum.";
     }
     if (nimAvailability === "checking") {
       return "Tunggu sebentar, NIM sedang diperiksa.";
     }
-    if (!formData.dosen_pembimbing_akademik_id || !formData.program_kuliah) {
-      return "Lengkapi Dosen Pembimbing Akademik dan program kuliah.";
-    }
-
     const expectedEmail = buildMahasiswaEmailFromNim(nim);
     const email = formData.email.trim().toLowerCase();
     if (email !== expectedEmail) {
@@ -812,7 +872,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     }
     const commonError = validateStepOne();
     if (commonError) {
-      setError(commonError === "Periksa kembali NIM dan nama mahasiswa." ? "" : commonError);
+      setError(commonError === "Periksa kembali informasi umum." ? "" : commonError);
       return;
     }
     setStep(2);
@@ -833,7 +893,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
     const commonError = validateStepOne();
     if (commonError) {
-      setError(commonError === "Periksa kembali NIM dan nama mahasiswa." ? "" : commonError);
+      setError(commonError === "Periksa kembali informasi umum." ? "" : commonError);
       setStep(1);
       return;
     }
@@ -848,7 +908,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         formData.dosen_pembimbing_ta_mode !== "belum_dapat" &&
         !formData.dosen_pembimbing_ta_id
       ) {
-        setError("Pilih dosen pembimbing TA sementara atau pilih opsi belum mendapatkan dosen pembimbing.");
+        setFieldErrors((prev) => ({
+          ...prev,
+          dosen_pembimbing_ta_id:
+            "Pilih dosen pembimbing TA sementara atau pilih opsi belum mendapatkan dosen pembimbing.",
+        }));
         return;
       }
     } else if (formData.pendaftaran === "ulang") {
@@ -943,7 +1007,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       resetForm();
       onRegisterSuccess?.(registerPayload);
     } catch (submitError) {
-      if (["nim", "nama"].includes(submitError.field)) {
+      if (["nim", "nama", "dosen_pembimbing_akademik_id", "program_kuliah"].includes(submitError.field)) {
         setTouchedFields((prev) => ({ ...prev, [submitError.field]: true }));
         setFieldErrors((prev) => ({
           ...prev,
@@ -1076,6 +1140,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     name: "dosen_pembimbing_akademik_id",
                     label: "Dosen Pembimbing Akademik",
                     value: formData.dosen_pembimbing_akademik_id,
+                    error: fieldErrors.dosen_pembimbing_akademik_id,
                   })}
                 </div>
 
@@ -1086,6 +1151,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     value: formData.program_kuliah,
                     options: PROGRAM_KULIAH_OPTIONS,
                   })}
+                  {fieldErrors.program_kuliah ? (
+                    <p className="mt-1 text-xs font-semibold text-[#c43f3f]">
+                      {fieldErrors.program_kuliah}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="mt-4">
@@ -1163,9 +1233,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                           </label>
                         ))}
                       </div>
-                      <p className="mt-2 text-xs font-semibold text-[#60709a]">
-                        Jika belum mendapatkan dosen pembimbing, field dosen akan dikosongkan dan dapat ditentukan pada proses persetujuan berikutnya.
-                      </p>
                     </div>
                     <div className="mt-4">
                       {renderDosenSelect({
@@ -1175,6 +1242,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                         disabled: formData.dosen_pembimbing_ta_mode === "belum_dapat",
                         prioritizeNoBimbingan: true,
                         disableKuotaPenuh: true,
+                        error: fieldErrors.dosen_pembimbing_ta_id,
                       })}
                     </div>
                   </>
@@ -1565,7 +1633,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
               </section>
             ) : null}
 
-            {error ? (
+            {error && step !== 1 ? (
               <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a33f3f]">{error}</div>
             ) : null}
 

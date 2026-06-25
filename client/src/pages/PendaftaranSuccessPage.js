@@ -1,7 +1,12 @@
 import React from "react";
 import { CheckCircle2, LogIn, ShieldCheck } from "lucide-react";
 
-function PendaftaranSuccessPage({ registrationData, onOpenMahasiswaBaruLogin }) {
+function PendaftaranSuccessPage({
+  registrationData,
+  isOpeningLogin = false,
+  loginError = "",
+  onOpenMahasiswaBaruLogin,
+}) {
   const username = registrationData?.akun_login?.username || "-";
   const defaultPassword = registrationData?.akun_login?.default_password || null;
   const isNewAccount = Boolean(registrationData?.akun_login?.prompt_change_password);
@@ -78,12 +83,18 @@ function PendaftaranSuccessPage({ registrationData, onOpenMahasiswaBaruLogin }) 
           <div className="mt-6">
             <button
               type="button"
-              onClick={() => onOpenMahasiswaBaruLogin?.(username)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110"
+              disabled={isOpeningLogin}
+              onClick={() => onOpenMahasiswaBaruLogin?.()}
+              className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <LogIn className="h-4 w-4" />
-              Login Mahasiswa
+              {isOpeningLogin ? "Memproses..." : isNewAccount ? "Lanjut Ganti Password" : "Login Mahasiswa"}
             </button>
+            {loginError ? (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+                {loginError}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

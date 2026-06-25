@@ -1227,16 +1227,13 @@ function IzinLanjutSemesterPanel({
 
 function ForceChangePasswordCard({
   session,
-  oldPassword,
   newPassword,
   confirmPassword,
-  showOldPassword,
   showNewPassword,
   showConfirmPassword,
   isSubmitting,
   errorMessage,
   onFieldChange,
-  onToggleOldPassword,
   onToggleNewPassword,
   onToggleConfirmPassword,
   onSubmit,
@@ -1258,25 +1255,6 @@ function ForceChangePasswordCard({
       </div>
 
       <form onSubmit={onSubmit} className="mt-4 space-y-4">
-        <label className="group relative block">
-          <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#7c6b42]" />
-          <input
-            type={showOldPassword ? "text" : "password"}
-            name="oldPassword"
-            placeholder="Password lama (default: NIM)"
-            value={oldPassword}
-            onChange={onFieldChange}
-            className="h-12 w-full rounded-xl border border-[#d4d9e9] bg-white pl-12 pr-12 text-[#1a2648] outline-none transition focus:border-[#2f63e3] focus:ring-4 focus:ring-[#2f63e3]/15"
-          />
-          <button
-            type="button"
-            onClick={onToggleOldPassword}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-[#5a688d] transition hover:text-[#2b3f74]"
-          >
-            {showOldPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
-        </label>
-
         <label className="group relative block">
           <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#7c6b42]" />
           <input
@@ -1352,13 +1330,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [ulangAlihError, setUlangAlihError] = useState("");
   const [ulangAlihSuccess, setUlangAlihSuccess] = useState("");
   const [passwordForm, setPasswordForm] = useState({
-    oldPassword: "",
     newPassword: "",
     confirmPassword: "",
   });
   const [passwordError, setPasswordError] = useState("");
   const [savingPassword, setSavingPassword] = useState(false);
-  const [showOldPassword, setShowOldPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const sessionExpiredRef = useRef(false);
@@ -1606,7 +1582,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
     event.preventDefault();
     setPasswordError("");
 
-    if (!passwordForm.oldPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
+    if (!passwordForm.newPassword || !passwordForm.confirmPassword) {
       setPasswordError("Semua field password wajib diisi.");
       return;
     }
@@ -1630,7 +1606,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          oldPassword: passwordForm.oldPassword,
+          oldPassword: session?.user?.username || "",
           newPassword: passwordForm.newPassword,
         }),
       });
@@ -1654,8 +1630,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         return;
       }
 
-      setPasswordForm({ oldPassword: "", newPassword: "", confirmPassword: "" });
-      setShowOldPassword(false);
+      setPasswordForm({ newPassword: "", confirmPassword: "" });
       setShowNewPassword(false);
       setShowConfirmPassword(false);
       onPasswordChanged?.();
@@ -1916,16 +1891,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
             {mustChangePassword ? (
               <ForceChangePasswordCard
                 session={session}
-                oldPassword={passwordForm.oldPassword}
                 newPassword={passwordForm.newPassword}
                 confirmPassword={passwordForm.confirmPassword}
-                showOldPassword={showOldPassword}
                 showNewPassword={showNewPassword}
                 showConfirmPassword={showConfirmPassword}
                 isSubmitting={savingPassword}
                 errorMessage={passwordError}
                 onFieldChange={handlePasswordFieldChange}
-                onToggleOldPassword={() => setShowOldPassword((prev) => !prev)}
                 onToggleNewPassword={() => setShowNewPassword((prev) => !prev)}
                 onToggleConfirmPassword={() => setShowConfirmPassword((prev) => !prev)}
                 onSubmit={handleChangePassword}

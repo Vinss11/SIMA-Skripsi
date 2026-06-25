@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Activity,
   BookOpenCheck,
+  Building2,
   CalendarRange,
   ClipboardList,
   Download,
@@ -14,15 +15,19 @@ import {
   ListChecks,
   LogOut,
   MessageSquareText,
+  Pencil,
   Plus,
   RefreshCcw,
+  Save,
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Trash2,
   Upload,
   GraduationCap,
   UserCircle2,
   Users,
+  X,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
@@ -52,6 +57,30 @@ const PENDAFTARAN_FILTER_INITIAL = {
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
+];
+const MITRA_MAGANG_FORM_INITIAL = {
+  nama: "",
+  bidang_jenis: "",
+  lokasi: "",
+  email_kontak: "",
+  website: "",
+  status: "active",
+  catatan: "",
+};
+const MITRA_MAGANG_FORM_ERRORS_INITIAL = {
+  nama: "",
+  bidang_jenis: "",
+  lokasi: "",
+  status: "",
+};
+const MITRA_MAGANG_STATUS_FILTER_OPTIONS = [
+  { value: "active", label: "Aktif" },
+  { value: "inactive", label: "Nonaktif" },
+  { value: "all", label: "Semua" },
+];
+const MITRA_MAGANG_STATUS_OPTIONS = [
+  { value: "active", label: "Aktif" },
+  { value: "inactive", label: "Nonaktif" },
 ];
 const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
@@ -891,6 +920,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
       label: "Penjaluran",
       items: [
         { id: "penjaluran", label: "Manajemen Penjaluran", icon: ListChecks },
+        { id: "mitra-magang", label: "Mitra Magang", icon: Building2 },
         { id: "periode", label: "Manajemen Periode", icon: CalendarRange },
       ],
     },
@@ -1012,6 +1042,11 @@ function buildTabHeaders(isSekretaris) {
       title: "Manajemen Penjaluran",
       subtitle: "Pantau pendaftaran jalur mahasiswa serta tindak lanjut approval penjaluran.",
     },
+    "mitra-magang": {
+      icon: Building2,
+      title: "Manajemen Mitra Magang",
+      subtitle: "Kelola daftar mitra magang aktif yang dapat dipilih mahasiswa pada pengajuan magang.",
+    },
     periode: {
       icon: CalendarRange,
       title: "Manajemen Periode",
@@ -1073,6 +1108,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [pengampuReviewActionId, setPengampuReviewActionId] = useState(null);
   const [sekprodiNonPenelitianRows, setSekprodiNonPenelitianRows] = useState([]);
   const [sekprodiNonPenelitianActionId, setSekprodiNonPenelitianActionId] = useState(null);
+  const [mitraMagangRows, setMitraMagangRows] = useState([]);
+  const [mitraMagangQuery, setMitraMagangQuery] = useState("");
+  const [mitraMagangStatusFilter, setMitraMagangStatusFilter] = useState("active");
+  const [mitraMagangPage, setMitraMagangPage] = useState(1);
+  const [mitraMagangMode, setMitraMagangMode] = useState("list");
+  const [mitraMagangForm, setMitraMagangForm] = useState(MITRA_MAGANG_FORM_INITIAL);
+  const [mitraMagangFormErrors, setMitraMagangFormErrors] = useState(MITRA_MAGANG_FORM_ERRORS_INITIAL);
+  const [editingMitraMagang, setEditingMitraMagang] = useState(null);
+  const [savingMitraMagang, setSavingMitraMagang] = useState(false);
+  const [deletingMitraMagangId, setDeletingMitraMagangId] = useState(null);
   const [kuotaData, setKuotaData] = useState(null);
   const penjaluranResponsibilityItems = useMemo(
     () => (Array.isArray(kuotaData?.tanggung_jawab_penjaluran?.items)
@@ -1333,6 +1378,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       activeTab === "pamit" ||
       (isSekretaris && activeTab === "master-dosen") ||
       (isSekretaris && activeTab === "master-topik") ||
+      (isSekretaris && activeTab === "mitra-magang") ||
       (activeTab === "topik" && topikMode === "list") ||
       (isSekretaris && activeTab === "penjaluran") ||
       (isSekretaris &&
@@ -1703,6 +1749,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       promises.push(fetchWithAuth("/api/sekretaris/periode"));
       promises.push(fetchWithAuth("/api/sekretaris/master-dosen/kuota-overview"));
       promises.push(fetchWithAuth("/api/topics"));
+      promises.push(fetchWithAuth(`/api/sekretaris/mitra-magang?status=${mitraMagangStatusFilter}`));
     }
 
     const results = await Promise.allSettled(promises);
@@ -1724,6 +1771,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       periodeResult,
       masterDosenKuotaResult,
       masterTopikResult,
+      mitraMagangResult,
     ] = results;
 
     if (submissionsResult?.status === "fulfilled") {
@@ -1883,6 +1931,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         setMasterDosenKuotaOverview({ summary: null, dosens: [] });
         issues.push(masterDosenKuotaResult?.reason?.message || "Gagal memuat data kuota dosen.");
       }
+
+      if (mitraMagangResult?.status === "fulfilled") {
+        setMitraMagangRows(Array.isArray(mitraMagangResult.value) ? mitraMagangResult.value : []);
+      } else {
+        setMitraMagangRows([]);
+        issues.push(mitraMagangResult?.reason?.message || "Gagal memuat data mitra magang.");
+      }
       setKetuaKlasterOverview({
         active_periode: null,
         periode_terpilih: null,
@@ -1903,6 +1958,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         penanggung_jawab_lock: null,
       });
       setMasterDosenKuotaOverview({ summary: null, dosens: [] });
+      setMitraMagangRows([]);
       setKetuaKlasterOverview({
         active_periode: null,
         periode_terpilih: null,
@@ -1914,11 +1970,156 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     setError(issues.join(" "));
     setLoading(false);
-  }, [fetchWithAuth, isSekretaris]);
+  }, [fetchWithAuth, isSekretaris, mitraMagangStatusFilter]);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  const resetMitraMagangForm = useCallback(() => {
+    setMitraMagangForm(MITRA_MAGANG_FORM_INITIAL);
+    setMitraMagangFormErrors(MITRA_MAGANG_FORM_ERRORS_INITIAL);
+    setEditingMitraMagang(null);
+  }, []);
+
+  const handleOpenAddMitraMagang = useCallback(() => {
+    resetMitraMagangForm();
+    setMitraMagangMode("form");
+  }, [resetMitraMagangForm]);
+
+  const handleBackFromMitraMagangForm = useCallback(() => {
+    resetMitraMagangForm();
+    setMitraMagangMode("list");
+  }, [resetMitraMagangForm]);
+
+  useEffect(() => {
+    if (!(isSekretaris && activeTab === "mitra-magang")) {
+      setMitraMagangMode("list");
+      resetMitraMagangForm();
+    }
+  }, [activeTab, isSekretaris, resetMitraMagangForm]);
+
+  const handleMitraMagangInputChange = useCallback((event) => {
+    const { name, value } = event.target;
+    setMitraMagangForm((prev) => ({ ...prev, [name]: value }));
+    if (Object.prototype.hasOwnProperty.call(MITRA_MAGANG_FORM_ERRORS_INITIAL, name)) {
+      setMitraMagangFormErrors((prev) => ({ ...prev, [name]: "" }));
+    }
+  }, []);
+
+  const handleEditMitraMagang = useCallback((row) => {
+    if (!row || row.is_active === false || row.status === "inactive") {
+      showErrorToast("Mitra magang nonaktif tidak dapat diedit.");
+      return;
+    }
+    setEditingMitraMagang(row);
+    setMitraMagangForm({
+      nama: row.nama || "",
+      bidang_jenis: row.bidang_jenis || "",
+      lokasi: row.lokasi || "",
+      email_kontak: row.email_kontak || "",
+      website: row.website || "",
+      status: row.status || "active",
+      catatan: row.catatan || "",
+    });
+    setMitraMagangFormErrors(MITRA_MAGANG_FORM_ERRORS_INITIAL);
+    setMitraMagangMode("form");
+  }, []);
+
+  const handleSubmitMitraMagang = useCallback(
+    async (event) => {
+      event.preventDefault();
+      const nama = String(mitraMagangForm.nama || "").trim();
+      const bidangJenis = String(mitraMagangForm.bidang_jenis || "").trim();
+      const lokasi = String(mitraMagangForm.lokasi || "").trim();
+      const status = String(mitraMagangForm.status || "").trim();
+      const nextErrors = {
+        nama: nama ? "" : "Nama mitra magang wajib diisi.",
+        bidang_jenis: bidangJenis ? "" : "Bidang / jenis wajib diisi.",
+        lokasi: lokasi ? "" : "Lokasi wajib diisi.",
+        status: status ? "" : "Status wajib dipilih.",
+      };
+      setMitraMagangFormErrors(nextErrors);
+      if (Object.values(nextErrors).some(Boolean)) {
+        return;
+      }
+
+      const payload = {
+        nama,
+        bidang_jenis: bidangJenis,
+        lokasi,
+        email_kontak: String(mitraMagangForm.email_kontak || "").trim(),
+        website: String(mitraMagangForm.website || "").trim(),
+        status: status === "inactive" ? "inactive" : "active",
+        catatan: String(mitraMagangForm.catatan || "").trim(),
+      };
+
+      const isEditMode = Boolean(editingMitraMagang?.id);
+      setSavingMitraMagang(true);
+      try {
+        await fetchWithAuth(
+          isEditMode
+            ? `/api/sekretaris/mitra-magang/${editingMitraMagang.id}`
+            : "/api/sekretaris/mitra-magang",
+          {
+            method: isEditMode ? "PUT" : "POST",
+            body: JSON.stringify(payload),
+          }
+        );
+        showSuccessToast(isEditMode ? "Mitra magang berhasil diperbarui." : "Mitra magang berhasil ditambahkan.");
+        resetMitraMagangForm();
+        setMitraMagangMode("list");
+        await loadAllData();
+      } catch (submitError) {
+        if (submitError.message !== "__SESSION_EXPIRED__") {
+          const message = submitError.message || "Gagal menyimpan mitra magang.";
+          const lowerMessage = message.toLowerCase();
+          setMitraMagangFormErrors((prev) => ({
+            ...prev,
+            ...(lowerMessage.includes("nama") || lowerMessage.includes("terdaftar")
+              ? { nama: message }
+              : { nama: message }),
+          }));
+        }
+      } finally {
+        setSavingMitraMagang(false);
+      }
+    },
+    [editingMitraMagang, fetchWithAuth, loadAllData, mitraMagangForm, resetMitraMagangForm]
+  );
+
+  const handleDeactivateMitraMagang = useCallback(
+    async (row) => {
+      if (!row?.id) return;
+      const result = await Swal.fire({
+        title: "Nonaktifkan mitra magang?",
+        text: `${row.nama || "Mitra"} tidak akan muncul lagi di pilihan mahasiswa.`,
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Nonaktifkan",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#b73a3a",
+      });
+      if (!result.isConfirmed) return;
+
+      setDeletingMitraMagangId(row.id);
+      try {
+        await fetchWithAuth(`/api/sekretaris/mitra-magang/${row.id}`, { method: "DELETE" });
+        showSuccessToast("Mitra magang berhasil dinonaktifkan.");
+        if (editingMitraMagang?.id === row.id) {
+          resetMitraMagangForm();
+        }
+        await loadAllData();
+      } catch (deleteError) {
+        if (deleteError.message !== "__SESSION_EXPIRED__") {
+          showErrorToast(deleteError.message || "Gagal menonaktifkan mitra magang.");
+        }
+      } finally {
+        setDeletingMitraMagangId(null);
+      }
+    },
+    [editingMitraMagang?.id, fetchWithAuth, loadAllData, resetMitraMagangForm]
+  );
 
   useEffect(() => {
     const pollIntervalMs = 30000;
@@ -2563,6 +2764,44 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const finalApprovalActiveTabLabel =
     FINAL_APPROVAL_TABS.find((item) => item.key === finalApprovalTab)?.label || "Penelitian";
 
+  const filteredMitraMagangRows = useMemo(() => {
+    const keyword = mitraMagangQuery.trim().toLowerCase();
+    if (!keyword) return mitraMagangRows;
+    return mitraMagangRows.filter((row) => {
+      const haystack = [
+        row.id,
+        row.nama,
+        row.bidang_jenis,
+        row.lokasi,
+        row.email_kontak,
+        row.website,
+        row.status,
+        row.is_active ? "aktif active" : "nonaktif inactive",
+        row.catatan,
+        row.createdAt,
+        row.updatedAt,
+      ]
+        .filter((item) => item !== null && item !== undefined && String(item).trim() !== "")
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [mitraMagangQuery, mitraMagangRows]);
+  const totalMitraMagangPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredMitraMagangRows.length / DOSEN_GRID_PAGE_SIZE)),
+    [filteredMitraMagangRows.length]
+  );
+  const pagedMitraMagangRows = useMemo(() => {
+    const start = (mitraMagangPage - 1) * DOSEN_GRID_PAGE_SIZE;
+    return filteredMitraMagangRows.slice(start, start + DOSEN_GRID_PAGE_SIZE);
+  }, [filteredMitraMagangRows, mitraMagangPage]);
+  const mitraMagangRangeStart =
+    filteredMitraMagangRows.length === 0 ? 0 : (mitraMagangPage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
+  const mitraMagangRangeEnd = Math.min(
+    mitraMagangPage * DOSEN_GRID_PAGE_SIZE,
+    filteredMitraMagangRows.length
+  );
+
   const pagedSubmissions = useMemo(() => {
     const start = (submissionPage - 1) * DOSEN_GRID_PAGE_SIZE;
     return filteredSubmissions.slice(start, start + DOSEN_GRID_PAGE_SIZE);
@@ -3152,6 +3391,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       setPamitPage(totalPamitPages);
     }
   }, [pamitPage, totalPamitPages]);
+
+  useEffect(() => {
+    setMitraMagangPage(1);
+  }, [mitraMagangQuery, mitraMagangStatusFilter]);
+
+  useEffect(() => {
+    if (mitraMagangPage > totalMitraMagangPages) {
+      setMitraMagangPage(totalMitraMagangPages);
+    }
+  }, [mitraMagangPage, totalMitraMagangPages]);
 
   useEffect(() => {
     setMagangReviewPage(1);
@@ -7512,6 +7761,445 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </button>
                   </div>
                 </div>
+              </div>
+            ) : null}
+
+            {!loading && isSekretaris && activeTab === "mitra-magang" ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-4">
+                {mitraMagangMode === "form" ? (
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBackFromMitraMagangForm}
+                        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff]"
+                        title="Kembali ke grid mitra magang"
+                        aria-label="Kembali ke grid mitra magang"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={loadAllData}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+
+                {mitraMagangMode === "form" ? (
+                <form
+                  onSubmit={handleSubmitMitraMagang}
+                  className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">
+                        {editingMitraMagang ? "Edit Mitra Magang" : "Tambah Mitra Magang"}
+                      </h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Data aktif akan muncul sebagai pilihan institusi pada form pengajuan magang mahasiswa.
+                      </p>
+                    </div>
+                    {editingMitraMagang ? (
+                      <button
+                        type="button"
+                        onClick={handleBackFromMitraMagangForm}
+                        disabled={savingMitraMagang}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <X className="h-4 w-4" />
+                        Batal Edit
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-3">
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Nama Mitra *</label>
+                      <input
+                        type="text"
+                        name="nama"
+                        value={mitraMagangForm.nama}
+                        onChange={handleMitraMagangInputChange}
+                        maxLength={180}
+                        placeholder="Contoh: PT Contoh Teknologi"
+                        aria-invalid={Boolean(mitraMagangFormErrors.nama)}
+                        aria-describedby={mitraMagangFormErrors.nama ? "mitra-nama-error" : undefined}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                          mitraMagangFormErrors.nama
+                            ? "border-[#dc4b4b] bg-[#fff7f7] focus:border-[#dc4b4b] focus:ring-[#dc4b4b]/15"
+                            : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/15"
+                        }`}
+                      />
+                      {mitraMagangFormErrors.nama ? (
+                        <p id="mitra-nama-error" className="mt-1 text-xs font-semibold text-[#c23737]">
+                          {mitraMagangFormErrors.nama}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Bidang / Jenis *</label>
+                      <input
+                        type="text"
+                        name="bidang_jenis"
+                        value={mitraMagangForm.bidang_jenis}
+                        onChange={handleMitraMagangInputChange}
+                        maxLength={180}
+                        placeholder="Software house, startup, BUMN..."
+                        aria-invalid={Boolean(mitraMagangFormErrors.bidang_jenis)}
+                        aria-describedby={mitraMagangFormErrors.bidang_jenis ? "mitra-bidang-error" : undefined}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                          mitraMagangFormErrors.bidang_jenis
+                            ? "border-[#dc4b4b] bg-[#fff7f7] focus:border-[#dc4b4b] focus:ring-[#dc4b4b]/15"
+                            : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/15"
+                        }`}
+                      />
+                      {mitraMagangFormErrors.bidang_jenis ? (
+                        <p id="mitra-bidang-error" className="mt-1 text-xs font-semibold text-[#c23737]">
+                          {mitraMagangFormErrors.bidang_jenis}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Lokasi *</label>
+                      <input
+                        type="text"
+                        name="lokasi"
+                        value={mitraMagangForm.lokasi}
+                        onChange={handleMitraMagangInputChange}
+                        maxLength={180}
+                        placeholder="Kota / alamat ringkas"
+                        aria-invalid={Boolean(mitraMagangFormErrors.lokasi)}
+                        aria-describedby={mitraMagangFormErrors.lokasi ? "mitra-lokasi-error" : undefined}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                          mitraMagangFormErrors.lokasi
+                            ? "border-[#dc4b4b] bg-[#fff7f7] focus:border-[#dc4b4b] focus:ring-[#dc4b4b]/15"
+                            : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/15"
+                        }`}
+                      />
+                      {mitraMagangFormErrors.lokasi ? (
+                        <p id="mitra-lokasi-error" className="mt-1 text-xs font-semibold text-[#c23737]">
+                          {mitraMagangFormErrors.lokasi}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Email Kontak</label>
+                      <input
+                        type="email"
+                        name="email_kontak"
+                        value={mitraMagangForm.email_kontak}
+                        onChange={handleMitraMagangInputChange}
+                        maxLength={180}
+                        placeholder="hr@mitra.co.id"
+                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Website</label>
+                      <input
+                        type="text"
+                        name="website"
+                        value={mitraMagangForm.website}
+                        onChange={handleMitraMagangInputChange}
+                        maxLength={255}
+                        placeholder="https://..."
+                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Status *</label>
+                      <select
+                        name="status"
+                        value={mitraMagangForm.status}
+                        onChange={handleMitraMagangInputChange}
+                        aria-invalid={Boolean(mitraMagangFormErrors.status)}
+                        aria-describedby={mitraMagangFormErrors.status ? "mitra-status-error" : undefined}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                          mitraMagangFormErrors.status
+                            ? "border-[#dc4b4b] bg-[#fff7f7] focus:border-[#dc4b4b] focus:ring-[#dc4b4b]/15"
+                            : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/15"
+                        }`}
+                      >
+                        {MITRA_MAGANG_STATUS_OPTIONS.map((option) => (
+                          <option key={`mitra-form-status-${option.value}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      {mitraMagangFormErrors.status ? (
+                        <p id="mitra-status-error" className="mt-1 text-xs font-semibold text-[#c23737]">
+                          {mitraMagangFormErrors.status}
+                        </p>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div className="mt-3">
+                    <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Catatan</label>
+                    <textarea
+                      name="catatan"
+                      rows={3}
+                      value={mitraMagangForm.catatan}
+                      onChange={handleMitraMagangInputChange}
+                      placeholder="Catatan internal Sekprodi terkait mitra."
+                      className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                    />
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={resetMitraMagangForm}
+                      disabled={savingMitraMagang}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <X className="h-4 w-4" />
+                      Reset
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingMitraMagang}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {editingMitraMagang ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                      {savingMitraMagang
+                        ? "Menyimpan..."
+                        : editingMitraMagang
+                        ? "Simpan Perubahan"
+                        : "Tambah Mitra"}
+                    </button>
+                  </div>
+                </form>
+                ) : null}
+
+                {mitraMagangMode === "list" ? (
+                  <>
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("dashboard")}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff]"
+                      title="Kembali"
+                      aria-label="Kembali"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={loadAllData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddMitraMagang}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">Grid Mitra Magang</h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Menampilkan master data mitra magang beserta status aktifnya.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={mitraMagangStatusFilter}
+                        onChange={(event) => setMitraMagangStatusFilter(event.target.value)}
+                        className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] outline-none focus:border-[#2f63e3]"
+                      >
+                        {MITRA_MAGANG_STATUS_FILTER_OPTIONS.map((option) => (
+                          <option key={`mitra-filter-${option.value}`} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                        <input
+                          type="text"
+                          value={mitraMagangQuery}
+                          onChange={(event) => setMitraMagangQuery(event.target.value)}
+                          placeholder="Cari nama, bidang, lokasi, kontak..."
+                          className="w-[320px] max-w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={loadAllData}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                    <table className="w-full min-w-[1500px] table-fixed text-left text-sm">
+                      <colgroup>
+                        <col style={{ width: "56px" }} />
+                        <col style={{ width: "250px" }} />
+                        <col style={{ width: "190px" }} />
+                        <col style={{ width: "190px" }} />
+                        <col style={{ width: "220px" }} />
+                        <col style={{ width: "250px" }} />
+                        <col style={{ width: "120px" }} />
+                        <col style={{ width: "260px" }} />
+                        <col style={{ width: "170px" }} />
+                        <col style={{ width: "170px" }} />
+                        <col style={{ width: "170px" }} />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Email Kontak</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Status</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Catatan</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Dibuat</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Diperbarui</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pagedMitraMagangRows.length > 0
+                          ? pagedMitraMagangRows.map((row, index) => {
+                              const nomorUrut = mitraMagangRangeStart + index;
+                              const isActive = row?.is_active !== false && row?.status !== "inactive";
+                              const isBusy = deletingMitraMagangId === row.id;
+                              return (
+                                <tr key={`mitra-magang-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                                  <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap">
+                                    {nomorUrut}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <p className="font-semibold text-[#1f2d53] break-words">{row.nama || "-"}</p>
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.bidang_jenis || "-"}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">{row.lokasi || "-"}</td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.email_kontak || "-"}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.website ? (
+                                      <a
+                                        href={row.website}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="font-semibold text-[#2f63e3] hover:underline"
+                                      >
+                                        {row.website}
+                                      </a>
+                                    ) : (
+                                      "-"
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <span
+                                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                                        isActive
+                                          ? "bg-[#e8f7ef] text-[#137748]"
+                                          : "bg-[#f1f3f8] text-[#6d7898]"
+                                      }`}
+                                    >
+                                      {isActive ? "Aktif" : "Nonaktif"}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">{row.catatan || "-"}</td>
+                                  <td className="px-3 py-2 text-[#43537d] whitespace-nowrap">
+                                    {formatDateTime(row.createdAt)}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#43537d] whitespace-nowrap">
+                                    {formatDateTime(row.updatedAt)}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <button
+                                        type="button"
+                                        disabled={!isActive || savingMitraMagang || isBusy}
+                                        onClick={() => handleEditMitraMagang(row)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                        Edit
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={!isActive || isBusy}
+                                        onClick={() => handleDeactivateMitraMagang(row)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                        {isBusy ? "Proses..." : "Nonaktifkan"}
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          : null}
+                      </tbody>
+                    </table>
+                    {filteredMitraMagangRows.length === 0 ? (
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                        Data mitra magang tidak ditemukan.
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                    <p className="text-sm text-[#4f5e86]">
+                      Menampilkan {mitraMagangRangeStart} - {mitraMagangRangeEnd} dari{" "}
+                      {filteredMitraMagangRows.length} data mitra magang.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setMitraMagangPage((prev) => Math.max(1, prev - 1))}
+                        disabled={mitraMagangPage === 1}
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Sebelumnya
+                      </button>
+                      <span className="text-sm font-semibold text-[#314778]">
+                        Halaman {mitraMagangPage} / {totalMitraMagangPages}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setMitraMagangPage((prev) => Math.min(totalMitraMagangPages, prev + 1))
+                        }
+                        disabled={mitraMagangPage >= totalMitraMagangPages}
+                        className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Berikutnya
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                  </>
+                ) : null}
               </div>
             ) : null}
 
