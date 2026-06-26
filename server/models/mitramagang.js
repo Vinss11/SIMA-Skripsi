@@ -29,6 +29,18 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING(255),
         allowNull: true,
       },
+      quota_magang: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      kriteria: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      prosedur_perusahaan: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
       status: {
         type: DataTypes.ENUM("active", "inactive"),
         allowNull: false,

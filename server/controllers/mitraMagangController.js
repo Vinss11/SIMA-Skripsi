@@ -1,4 +1,4 @@
-const { Op, fn, col, where, QueryTypes } = require("sequelize");
+const { Op, fn, col, cast, where, QueryTypes } = require("sequelize");
 const { MitraMagang, sequelize } = require("../models");
 
 const NON_PARTNER_LABEL = "Other (Non partner Company)";
@@ -18,6 +18,15 @@ function normalizeStatus(value) {
   return "active";
 }
 
+function normalizeOptionalQuota(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const digitsOnly = String(value).replace(/\D/g, "").slice(0, 2);
+  if (!digitsOnly) return null;
+  const parsed = Number(digitsOnly);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 99) return null;
+  return parsed;
+}
+
 function buildMitraPayload(item) {
   return {
     id: item.id,
@@ -26,9 +35,11 @@ function buildMitraPayload(item) {
     lokasi: item.lokasi || null,
     email_kontak: item.email_kontak || null,
     website: item.website || null,
+    quota_magang: item.quota_magang ?? null,
+    kriteria: item.kriteria || null,
+    prosedur_perusahaan: item.prosedur_perusahaan || null,
     status: item.status,
     is_active: item.is_active !== false,
-    catatan: item.catatan || null,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
   };
@@ -87,7 +98,16 @@ exports.getMitraMagangOptions = async (_req, res) => {
   try {
     const rows = await MitraMagang.findAll({
       where: { is_active: true },
-      attributes: ["id", "nama", "bidang_jenis", "lokasi", "website"],
+      attributes: [
+        "id",
+        "nama",
+        "bidang_jenis",
+        "lokasi",
+        "website",
+        "quota_magang",
+        "kriteria",
+        "prosedur_perusahaan",
+      ],
       order: [["nama", "ASC"]],
     });
 
@@ -100,6 +120,9 @@ exports.getMitraMagangOptions = async (_req, res) => {
           bidang_jenis: item.bidang_jenis || null,
           lokasi: item.lokasi || null,
           website: item.website || null,
+          quota_magang: item.quota_magang ?? null,
+          kriteria: item.kriteria || null,
+          prosedur_perusahaan: item.prosedur_perusahaan || null,
         })),
         non_partner_option_label: NON_PARTNER_LABEL,
       },
@@ -135,6 +158,9 @@ exports.getMitraMagangList = async (req, res) => {
         { lokasi: { [Op.iLike]: `%${keyword}%` } },
         { email_kontak: { [Op.iLike]: `%${keyword}%` } },
         { website: { [Op.iLike]: `%${keyword}%` } },
+        where(cast(col("quota_magang"), "TEXT"), { [Op.iLike]: `%${keyword}%` }),
+        { kriteria: { [Op.iLike]: `%${keyword}%` } },
+        { prosedur_perusahaan: { [Op.iLike]: `%${keyword}%` } },
       ];
     }
 
@@ -189,9 +215,11 @@ exports.createMitraMagang = async (req, res) => {
         lokasi: normalizeNullableText(req.body?.lokasi),
         email_kontak: normalizeNullableText(req.body?.email_kontak),
         website: normalizeNullableText(req.body?.website),
+        quota_magang: normalizeOptionalQuota(req.body?.quota_magang),
+        kriteria: normalizeNullableText(req.body?.kriteria),
+        prosedur_perusahaan: normalizeNullableText(req.body?.prosedur_perusahaan),
         status: normalizeStatus(req.body?.status),
         is_active: normalizeStatus(req.body?.status) === "active",
-        catatan: normalizeNullableText(req.body?.catatan),
       },
       { transaction: t }
     );
@@ -271,9 +299,11 @@ exports.updateMitraMagang = async (req, res) => {
     mitra.lokasi = normalizeNullableText(req.body?.lokasi);
     mitra.email_kontak = normalizeNullableText(req.body?.email_kontak);
     mitra.website = normalizeNullableText(req.body?.website);
+    mitra.quota_magang = normalizeOptionalQuota(req.body?.quota_magang);
+    mitra.kriteria = normalizeNullableText(req.body?.kriteria);
+    mitra.prosedur_perusahaan = normalizeNullableText(req.body?.prosedur_perusahaan);
     mitra.status = normalizeStatus(req.body?.status || mitra.status);
     mitra.is_active = mitra.status === "active";
-    mitra.catatan = normalizeNullableText(req.body?.catatan);
     await mitra.save({ transaction: t });
 
     await t.commit();

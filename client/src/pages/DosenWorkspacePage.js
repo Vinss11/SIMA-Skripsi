@@ -65,7 +65,9 @@ const MITRA_MAGANG_FORM_INITIAL = {
   email_kontak: "",
   website: "",
   status: "active",
-  catatan: "",
+  quota_magang: "",
+  kriteria: "",
+  prosedur_perusahaan: "",
 };
 const MITRA_MAGANG_FORM_ERRORS_INITIAL = {
   nama: "",
@@ -77,10 +79,6 @@ const MITRA_MAGANG_STATUS_FILTER_OPTIONS = [
   { value: "active", label: "Aktif" },
   { value: "inactive", label: "Nonaktif" },
   { value: "all", label: "Semua" },
-];
-const MITRA_MAGANG_STATUS_OPTIONS = [
-  { value: "active", label: "Aktif" },
-  { value: "inactive", label: "Nonaktif" },
 ];
 const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
@@ -2007,6 +2005,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   }, []);
 
+  const handleMitraMagangQuotaChange = useCallback((value) => {
+    const digitsOnly = String(value || "").replace(/\D/g, "").slice(0, 2);
+    const normalizedValue = digitsOnly ? String(Math.min(99, Number(digitsOnly))) : "";
+    setMitraMagangForm((prev) => ({ ...prev, quota_magang: normalizedValue }));
+  }, []);
+
+  const handleToggleMitraMagangStatus = useCallback(() => {
+    setMitraMagangForm((prev) => ({
+      ...prev,
+      status: prev.status === "active" ? "inactive" : "active",
+    }));
+    setMitraMagangFormErrors((prev) => ({ ...prev, status: "" }));
+  }, []);
+
   const handleEditMitraMagang = useCallback((row) => {
     if (!row || row.is_active === false || row.status === "inactive") {
       showErrorToast("Mitra magang nonaktif tidak dapat diedit.");
@@ -2020,7 +2032,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       email_kontak: row.email_kontak || "",
       website: row.website || "",
       status: row.status || "active",
-      catatan: row.catatan || "",
+      quota_magang: row.quota_magang ?? "",
+      kriteria: row.kriteria || "",
+      prosedur_perusahaan: row.prosedur_perusahaan || "",
     });
     setMitraMagangFormErrors(MITRA_MAGANG_FORM_ERRORS_INITIAL);
     setMitraMagangMode("form");
@@ -2044,14 +2058,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         return;
       }
 
+      const normalizedQuota = mitraMagangForm.quota_magang
+        ? Math.min(99, Number(String(mitraMagangForm.quota_magang).replace(/\D/g, "").slice(0, 2)))
+        : null;
       const payload = {
         nama,
         bidang_jenis: bidangJenis,
         lokasi,
         email_kontak: String(mitraMagangForm.email_kontak || "").trim(),
         website: String(mitraMagangForm.website || "").trim(),
+        quota_magang: Number.isFinite(normalizedQuota) ? normalizedQuota : null,
+        kriteria: String(mitraMagangForm.kriteria || "").trim(),
+        prosedur_perusahaan: String(mitraMagangForm.prosedur_perusahaan || "").trim(),
         status: status === "inactive" ? "inactive" : "active",
-        catatan: String(mitraMagangForm.catatan || "").trim(),
       };
 
       const isEditMode = Boolean(editingMitraMagang?.id);
@@ -2775,9 +2794,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         row.lokasi,
         row.email_kontak,
         row.website,
+        row.quota_magang,
+        row.kriteria,
+        row.prosedur_perusahaan,
         row.status,
         row.is_active ? "aktif active" : "nonaktif inactive",
-        row.catatan,
         row.createdAt,
         row.updatedAt,
       ]
@@ -7913,24 +7934,33 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </div>
                     <div>
                       <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Status *</label>
-                      <select
-                        name="status"
-                        value={mitraMagangForm.status}
-                        onChange={handleMitraMagangInputChange}
-                        aria-invalid={Boolean(mitraMagangFormErrors.status)}
-                        aria-describedby={mitraMagangFormErrors.status ? "mitra-status-error" : undefined}
-                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
-                          mitraMagangFormErrors.status
-                            ? "border-[#dc4b4b] bg-[#fff7f7] focus:border-[#dc4b4b] focus:ring-[#dc4b4b]/15"
-                            : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/15"
-                        }`}
-                      >
-                        {MITRA_MAGANG_STATUS_OPTIONS.map((option) => (
-                          <option key={`mitra-form-status-${option.value}`} value={option.value}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex h-[38px] items-center gap-3">
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-label="Status mitra magang"
+                          aria-checked={mitraMagangForm.status === "active"}
+                          aria-describedby={mitraMagangFormErrors.status ? "mitra-status-error" : undefined}
+                          title={mitraMagangForm.status === "active" ? "Aktif" : "Nonaktif"}
+                          onClick={handleToggleMitraMagangStatus}
+                          className={`inline-flex h-8 w-14 items-center rounded-full border px-1 transition ${
+                            mitraMagangFormErrors.status
+                              ? "border-[#dc4b4b] bg-[#fff7f7]"
+                              : mitraMagangForm.status === "active"
+                              ? "border-[#2f63e3] bg-[#2f63e3]"
+                              : "border-[#c7cfdf] bg-[#c7cfdf]"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-6 w-6 rounded-full bg-white shadow transition ${
+                              mitraMagangForm.status === "active" ? "translate-x-6" : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                        <span className="text-sm font-semibold text-[#344b7f]">
+                          {mitraMagangForm.status === "active" ? "Aktif" : "Nonaktif"}
+                        </span>
+                      </div>
                       {mitraMagangFormErrors.status ? (
                         <p id="mitra-status-error" className="mt-1 text-xs font-semibold text-[#c23737]">
                           {mitraMagangFormErrors.status}
@@ -7940,15 +7970,45 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
 
                   <div className="mt-3">
-                    <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Catatan</label>
-                    <textarea
-                      name="catatan"
-                      rows={3}
-                      value={mitraMagangForm.catatan}
-                      onChange={handleMitraMagangInputChange}
-                      placeholder="Catatan internal Sekprodi terkait mitra."
-                      className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
-                    />
+                    <div className="max-w-md">
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Quota Magang</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="99"
+                        step="1"
+                        inputMode="numeric"
+                        name="quota_magang"
+                        value={mitraMagangForm.quota_magang}
+                        onChange={(event) => handleMitraMagangQuotaChange(event.target.value)}
+                        placeholder="Contoh: 3"
+                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Kriteria</label>
+                      <textarea
+                        name="kriteria"
+                        rows={5}
+                        value={mitraMagangForm.kriteria}
+                        onChange={handleMitraMagangInputChange}
+                        placeholder="Kriteria mahasiswa yang diterima perusahaan."
+                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                      />
+                    </div>
+                    <div className="mt-3">
+                      <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                        Prosedur dari Perusahaan
+                      </label>
+                      <textarea
+                        name="prosedur_perusahaan"
+                        rows={5}
+                        value={mitraMagangForm.prosedur_perusahaan}
+                        onChange={handleMitraMagangInputChange}
+                        placeholder="Prosedur apply atau tahapan dari perusahaan."
+                        className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/15"
+                      />
+                    </div>
                   </div>
 
                   <div className="mt-4 flex flex-wrap justify-end gap-2">
@@ -8051,7 +8111,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
 
                   <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                    <table className="w-full min-w-[1500px] table-fixed text-left text-sm">
+                    <table className="w-full min-w-[1900px] table-fixed text-left text-sm">
                       <colgroup>
                         <col style={{ width: "56px" }} />
                         <col style={{ width: "250px" }} />
@@ -8059,8 +8119,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         <col style={{ width: "190px" }} />
                         <col style={{ width: "220px" }} />
                         <col style={{ width: "250px" }} />
-                        <col style={{ width: "120px" }} />
+                        <col style={{ width: "170px" }} />
                         <col style={{ width: "260px" }} />
+                        <col style={{ width: "300px" }} />
+                        <col style={{ width: "120px" }} />
                         <col style={{ width: "170px" }} />
                         <col style={{ width: "170px" }} />
                         <col style={{ width: "170px" }} />
@@ -8073,8 +8135,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Email Kontak</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                            Prosedur dari Perusahaan
+                          </th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Status</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Catatan</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Dibuat</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Diperbarui</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
@@ -8115,6 +8181,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       "-"
                                     )}
                                   </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.quota_magang ?? "-"}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.kriteria || "-"}
+                                  </td>
+                                  <td className="px-3 py-2 text-[#2f426f] break-words">
+                                    {row.prosedur_perusahaan || "-"}
+                                  </td>
                                   <td className="px-3 py-2">
                                     <span
                                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
@@ -8126,7 +8201,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                       {isActive ? "Aktif" : "Nonaktif"}
                                     </span>
                                   </td>
-                                  <td className="px-3 py-2 text-[#2f426f] break-words">{row.catatan || "-"}</td>
                                   <td className="px-3 py-2 text-[#43537d] whitespace-nowrap">
                                     {formatDateTime(row.createdAt)}
                                   </td>

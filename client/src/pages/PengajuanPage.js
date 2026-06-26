@@ -1999,7 +1999,15 @@ function FormSuratRekomendasiMagang({
     const keyword = mitraGridQuery.trim().toLowerCase();
     if (!keyword) return activeMitraMagangOptions;
     return activeMitraMagangOptions.filter((item) => {
-      const haystack = [item?.nama, item?.bidang_jenis, item?.lokasi, item?.website]
+      const haystack = [
+        item?.nama,
+        item?.bidang_jenis,
+        item?.lokasi,
+        item?.website,
+        item?.quota_magang,
+        item?.kriteria,
+        item?.prosedur_perusahaan,
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -2369,8 +2377,11 @@ function FormSuratRekomendasiMagang({
         <label className="mb-2 block text-sm font-semibold text-[#324c86]">Phone number *</label>
         <input
           type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={15}
           value={formData.phone_number}
-          onChange={(event) => updateField("phone_number", event.target.value)}
+          onChange={(event) => updateField("phone_number", event.target.value.replace(/\D/g, "").slice(0, 15))}
           disabled={disabled}
           className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
             disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
@@ -2461,7 +2472,7 @@ function FormSuratRekomendasiMagang({
         </div>
 
         <div className="relative mt-3 max-h-72 overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[1280px] text-left text-sm">
             <thead>
               <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
@@ -2469,6 +2480,11 @@ function FormSuratRekomendasiMagang({
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                  Prosedur dari Perusahaan
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -2501,6 +2517,11 @@ function FormSuratRekomendasiMagang({
                           ) : (
                             "-"
                           )}
+                        </td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.quota_magang ?? "-"}</td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.kriteria || "-"}</td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">
+                          {item.prosedur_perusahaan || "-"}
                         </td>
                       </tr>
                     ))

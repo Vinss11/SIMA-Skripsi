@@ -1889,6 +1889,9 @@ exports.submitFormNonPenelitian = async (req, res) => {
             lokasi: selectedMitra.lokasi || null,
             email_kontak: selectedMitra.email_kontak || null,
             website: selectedMitra.website || null,
+            quota_magang: selectedMitra.quota_magang || null,
+            kriteria: selectedMitra.kriteria || null,
+            prosedur_perusahaan: selectedMitra.prosedur_perusahaan || null,
             is_active: selectedMitra.is_active !== false,
           }
         : null;
