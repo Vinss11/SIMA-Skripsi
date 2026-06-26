@@ -1981,12 +1981,31 @@ function FormSuratRekomendasiMagang({
   const [mitraMagangOptions, setMitraMagangOptions] = useState([]);
   const [loadingMitraOptions, setLoadingMitraOptions] = useState(false);
   const [mitraOptionsError, setMitraOptionsError] = useState("");
+  const [mitraGridQuery, setMitraGridQuery] = useState("");
 
   const isNonPartner = formData.company_type === "non_partner_company";
-  const partnerInstitutionOptions = useMemo(
-    () => mitraMagangOptions.map((item) => String(item?.nama || "").trim()).filter(Boolean),
+  const activeMitraMagangOptions = useMemo(
+    () =>
+      mitraMagangOptions.filter(
+        (item) => item?.is_active !== false && String(item?.status || "active").toLowerCase() !== "inactive"
+      ),
     [mitraMagangOptions]
   );
+  const partnerInstitutionOptions = useMemo(
+    () => activeMitraMagangOptions.map((item) => String(item?.nama || "").trim()).filter(Boolean),
+    [activeMitraMagangOptions]
+  );
+  const filteredMitraMagangOptions = useMemo(() => {
+    const keyword = mitraGridQuery.trim().toLowerCase();
+    if (!keyword) return activeMitraMagangOptions;
+    return activeMitraMagangOptions.filter((item) => {
+      const haystack = [item?.nama, item?.bidang_jenis, item?.lokasi, item?.website]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(keyword);
+    });
+  }, [activeMitraMagangOptions, mitraGridQuery]);
 
   useEffect(() => {
     let isMounted = true;
@@ -2123,6 +2142,7 @@ function FormSuratRekomendasiMagang({
     });
     setSubmitError("");
     setSubmitSuccess("");
+    setMitraGridQuery("");
   };
 
   const validateForm = () => {
@@ -2415,6 +2435,94 @@ function FormSuratRekomendasiMagang({
               disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
             }`}
           />
+        ) : null}
+      </div>
+
+      <div className={`mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4 ${isNonPartner ? "opacity-60" : ""}`}>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black text-[#1b274b]">Grid Mitra Magang</h3>
+            <p className="mt-1 text-xs text-[#5d6c91]">
+              Lihat daftar mitra aktif sebelum memilih institusi tujuan magang.
+            </p>
+          </div>
+          <input
+            type="text"
+            value={mitraGridQuery}
+            onChange={(event) => setMitraGridQuery(event.target.value)}
+            disabled={disabled || isNonPartner}
+            placeholder="Cari nama, bidang, lokasi..."
+            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none sm:w-[280px] ${
+              disabled || isNonPartner
+                ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                : "bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+            }`}
+          />
+        </div>
+
+        <div className="relative mt-3 max-h-72 overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
+          <table className="w-full min-w-[760px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredMitraMagangOptions.length > 0
+                ? filteredMitraMagangOptions.map((item, index) => (
+                      <tr
+                        key={`mitra-magang-option-${item.id || item.nama}`}
+                        className="border-b border-[#eff3fb] align-top last:border-b-0"
+                      >
+                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap">
+                          {index + 1}
+                        </td>
+                        <td className="px-3 py-2 font-semibold text-[#1f2d53] break-words">
+                          {item.nama || "-"}
+                        </td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">
+                          {item.bidang_jenis || "-"}
+                        </td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.lokasi || "-"}</td>
+                        <td className="px-3 py-2 text-[#2f426f] break-words">
+                          {item.website ? (
+                            <a
+                              href={item.website}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-semibold text-[#2f63e3] hover:underline"
+                            >
+                              {item.website}
+                            </a>
+                          ) : (
+                            "-"
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                : null}
+            </tbody>
+          </table>
+          {!loadingMitraOptions && filteredMitraMagangOptions.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
+              Data mitra magang tidak ditemukan.
+            </div>
+          ) : null}
+          {loadingMitraOptions ? (
+            <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
+              Memuat daftar mitra magang...
+            </div>
+          ) : null}
+        </div>
+
+        {isNonPartner ? (
+          <p className="mt-2 text-xs text-[#5d6c91]">
+            Grid mitra dinonaktifkan karena Anda memilih Non partner Company.
+          </p>
         ) : null}
       </div>
 
