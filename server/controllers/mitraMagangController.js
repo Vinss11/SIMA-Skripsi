@@ -27,6 +27,11 @@ function normalizeOptionalQuota(value) {
   return parsed;
 }
 
+function normalizeRequiredQuota(value) {
+  const parsed = normalizeOptionalQuota(value);
+  return parsed === null ? null : parsed;
+}
+
 function buildMitraPayload(item) {
   return {
     id: item.id,
@@ -35,6 +40,7 @@ function buildMitraPayload(item) {
     lokasi: item.lokasi || null,
     email_kontak: item.email_kontak || null,
     website: item.website || null,
+    posisi_magang: item.posisi_magang || null,
     quota_magang: item.quota_magang ?? null,
     kriteria: item.kriteria || null,
     prosedur_perusahaan: item.prosedur_perusahaan || null,
@@ -104,6 +110,7 @@ exports.getMitraMagangOptions = async (_req, res) => {
         "bidang_jenis",
         "lokasi",
         "website",
+        "posisi_magang",
         "quota_magang",
         "kriteria",
         "prosedur_perusahaan",
@@ -120,6 +127,7 @@ exports.getMitraMagangOptions = async (_req, res) => {
           bidang_jenis: item.bidang_jenis || null,
           lokasi: item.lokasi || null,
           website: item.website || null,
+          posisi_magang: item.posisi_magang || null,
           quota_magang: item.quota_magang ?? null,
           kriteria: item.kriteria || null,
           prosedur_perusahaan: item.prosedur_perusahaan || null,
@@ -158,6 +166,7 @@ exports.getMitraMagangList = async (req, res) => {
         { lokasi: { [Op.iLike]: `%${keyword}%` } },
         { email_kontak: { [Op.iLike]: `%${keyword}%` } },
         { website: { [Op.iLike]: `%${keyword}%` } },
+        { posisi_magang: { [Op.iLike]: `%${keyword}%` } },
         where(cast(col("quota_magang"), "TEXT"), { [Op.iLike]: `%${keyword}%` }),
         { kriteria: { [Op.iLike]: `%${keyword}%` } },
         { prosedur_perusahaan: { [Op.iLike]: `%${keyword}%` } },
@@ -191,11 +200,19 @@ exports.createMitraMagang = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const nama = normalizeText(req.body?.nama);
+    const quotaMagang = normalizeRequiredQuota(req.body?.quota_magang);
     if (!nama) {
       await t.rollback();
       return res.status(400).json({
         success: false,
         message: "Nama mitra magang wajib diisi.",
+      });
+    }
+    if (quotaMagang === null) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Quota magang wajib diisi.",
       });
     }
 
@@ -215,7 +232,8 @@ exports.createMitraMagang = async (req, res) => {
         lokasi: normalizeNullableText(req.body?.lokasi),
         email_kontak: normalizeNullableText(req.body?.email_kontak),
         website: normalizeNullableText(req.body?.website),
-        quota_magang: normalizeOptionalQuota(req.body?.quota_magang),
+        posisi_magang: normalizeNullableText(req.body?.posisi_magang),
+        quota_magang: quotaMagang,
         kriteria: normalizeNullableText(req.body?.kriteria),
         prosedur_perusahaan: normalizeNullableText(req.body?.prosedur_perusahaan),
         status: normalizeStatus(req.body?.status),
@@ -277,11 +295,19 @@ exports.updateMitraMagang = async (req, res) => {
     }
 
     const nama = normalizeText(req.body?.nama || mitra.nama);
+    const quotaMagang = normalizeRequiredQuota(req.body?.quota_magang);
     if (!nama) {
       await t.rollback();
       return res.status(400).json({
         success: false,
         message: "Nama mitra magang wajib diisi.",
+      });
+    }
+    if (quotaMagang === null) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Quota magang wajib diisi.",
       });
     }
 
@@ -299,7 +325,8 @@ exports.updateMitraMagang = async (req, res) => {
     mitra.lokasi = normalizeNullableText(req.body?.lokasi);
     mitra.email_kontak = normalizeNullableText(req.body?.email_kontak);
     mitra.website = normalizeNullableText(req.body?.website);
-    mitra.quota_magang = normalizeOptionalQuota(req.body?.quota_magang);
+    mitra.posisi_magang = normalizeNullableText(req.body?.posisi_magang);
+    mitra.quota_magang = quotaMagang;
     mitra.kriteria = normalizeNullableText(req.body?.kriteria);
     mitra.prosedur_perusahaan = normalizeNullableText(req.body?.prosedur_perusahaan);
     mitra.status = normalizeStatus(req.body?.status || mitra.status);

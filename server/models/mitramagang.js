@@ -29,6 +29,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING(255),
         allowNull: true,
       },
+      posisi_magang: {
+        type: DataTypes.STRING(180),
+        allowNull: true,
+      },
       quota_magang: {
         type: DataTypes.INTEGER,
         allowNull: true,

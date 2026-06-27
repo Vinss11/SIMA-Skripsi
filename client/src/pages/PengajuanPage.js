@@ -36,8 +36,8 @@ const MAGANG_COMPANY_SECTOR_OPTIONS = [
 const MAGANG_NON_PARTNER_OPTION_LABEL = "Other (Non partner Company)";
 
 const MAGANG_COMPANY_TYPE_OPTIONS = [
-  { value: "partner_company", label: "Partner Company (name listed in the options above)" },
-  { value: "non_partner_company", label: "Non partner Company (name not listed above)" },
+  { value: "partner_company", label: "Partner Company (name listed in the partner list)" },
+  { value: "non_partner_company", label: "Non partner Company (name not listed in the partner list)" },
 ];
 
 const MAGANG_APPLICATION_METHOD_OPTIONS = [
@@ -45,6 +45,11 @@ const MAGANG_APPLICATION_METHOD_OPTIONS = [
   "Independent (no vacancy/via Direct Contact)",
   "other",
 ];
+
+function RequiredMark() {
+  return <span className="text-[#dc4b4b]">*</span>;
+}
+
 const PENELITIAN_CLUSTER_LABEL_BY_CODE = {
   SIRKEL: "Sirkel",
   SIBER: "Siber",
@@ -2004,6 +2009,7 @@ function FormSuratRekomendasiMagang({
         item?.bidang_jenis,
         item?.lokasi,
         item?.website,
+        item?.posisi_magang,
         item?.quota_magang,
         item?.kriteria,
         item?.prosedur_perusahaan,
@@ -2374,7 +2380,9 @@ function FormSuratRekomendasiMagang({
       </div>
 
       <div className="mt-4">
-        <label className="mb-2 block text-sm font-semibold text-[#324c86]">Phone number *</label>
+        <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+          Phone number <RequiredMark />
+        </label>
         <input
           type="text"
           inputMode="numeric"
@@ -2390,7 +2398,286 @@ function FormSuratRekomendasiMagang({
       </div>
 
       <div className="mt-6">
-        <p className="mb-2 text-sm font-semibold text-[#324c86]">Proposed / Expected Position *</p>
+        <p className="mb-2 text-sm font-semibold text-[#324c86]">
+          Type of Company <RequiredMark />
+        </p>
+        <div className="grid grid-cols-1 gap-2">
+          {MAGANG_COMPANY_TYPE_OPTIONS.map((option) => (
+            <label key={`company-type-${option.value}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
+              <input
+                type="radio"
+                name="company_type"
+                disabled={disabled}
+                checked={formData.company_type === option.value}
+                onChange={() => updateField("company_type", option.value)}
+              />
+              <span>{option.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {formData.company_type === "partner_company" ? (
+        <>
+          <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-black text-[#1b274b]">Grid Mitra Magang</h3>
+                <p className="mt-1 text-xs text-[#5d6c91]">
+                  Lihat daftar mitra aktif sebelum memilih institusi tujuan magang.
+                </p>
+              </div>
+              <input
+                type="text"
+                value={mitraGridQuery}
+                onChange={(event) => setMitraGridQuery(event.target.value)}
+                disabled={disabled}
+                placeholder="Cari nama, bidang, lokasi..."
+                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none sm:w-[280px] ${
+                  disabled
+                    ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                    : "bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                }`}
+              />
+            </div>
+
+            <div className="relative mt-3 max-h-72 overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
+              <table className="w-full min-w-[1440px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Posisi Magang</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                      Prosedur dari Perusahaan
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredMitraMagangOptions.length > 0
+                    ? filteredMitraMagangOptions.map((item, index) => (
+                        <tr
+                          key={`mitra-magang-option-${item.id || item.nama}`}
+                          className="border-b border-[#eff3fb] align-top last:border-b-0"
+                        >
+                          <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap">
+                            {index + 1}
+                          </td>
+                          <td className="px-3 py-2 font-semibold text-[#1f2d53] break-words">
+                            {item.nama || "-"}
+                          </td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">
+                            {item.bidang_jenis || "-"}
+                          </td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">{item.lokasi || "-"}</td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">
+                            {item.website ? (
+                              <a
+                                href={item.website}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="font-semibold text-[#2f63e3] hover:underline"
+                              >
+                                {item.website}
+                              </a>
+                            ) : (
+                              "-"
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">
+                            {item.posisi_magang || "-"}
+                          </td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">{item.quota_magang ?? "-"}</td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">{item.kriteria || "-"}</td>
+                          <td className="px-3 py-2 text-[#2f426f] break-words">
+                            {item.prosedur_perusahaan || "-"}
+                          </td>
+                        </tr>
+                      ))
+                    : null}
+                </tbody>
+              </table>
+              {!loadingMitraOptions && filteredMitraMagangOptions.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
+                  Data mitra magang tidak ditemukan.
+                </div>
+              ) : null}
+              {loadingMitraOptions ? (
+                <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
+                  Memuat daftar mitra magang...
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Chosen Institution <RequiredMark />
+            </label>
+            <select
+              value={formData.chosen_institution}
+              onChange={(event) => updateField("chosen_institution", event.target.value)}
+              disabled={disabled || loadingMitraOptions}
+              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                disabled || loadingMitraOptions
+                  ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                  : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            >
+              <option value="">
+                {loadingMitraOptions ? "Memuat daftar mitra..." : "Pilih institusi mitra"}
+              </option>
+              {partnerInstitutionOptions.map((option) => (
+                <option key={`inst-${option}`} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            {mitraOptionsError ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">{mitraOptionsError}</p>
+            ) : null}
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Complete address of the institution <RequiredMark />
+            </label>
+            <textarea
+              rows={3}
+              value={formData.complete_address_of_institution}
+              onChange={(event) => updateField("complete_address_of_institution", event.target.value)}
+              disabled={disabled}
+              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            />
+          </div>
+        </>
+      ) : null}
+
+      {isNonPartner ? (
+        <>
+          <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+            <h3 className="text-sm font-black text-[#1b274b]">Data Tambahan Non Partner Company</h3>
+            <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+                  Company name <RequiredMark />
+                </label>
+                <input
+                  type="text"
+                  value={formData.company_name}
+                  onChange={(event) => updateField("company_name", event.target.value)}
+                  disabled={disabled}
+                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                    disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                  }`}
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+                  Year of establishment <RequiredMark />
+                </label>
+                <input
+                  type="text"
+                  value={formData.year_of_establishment}
+                  onChange={(event) => updateField("year_of_establishment", event.target.value)}
+                  disabled={disabled}
+                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                    disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                  }`}
+                />
+              </div>
+              <div>
+                <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+                  Number of employees <RequiredMark />
+                </label>
+                <input
+                  type="text"
+                  value={formData.number_of_employees}
+                  onChange={(event) => updateField("number_of_employees", event.target.value)}
+                  disabled={disabled}
+                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                    disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                  }`}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <p className="mb-2 text-sm font-semibold text-[#324c86]">
+                Internship Application method <RequiredMark />
+              </p>
+              <div className="grid grid-cols-1 gap-2">
+                {MAGANG_APPLICATION_METHOD_OPTIONS.map((option) => (
+                  <label key={`app-method-${option}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
+                    <input
+                      type="radio"
+                      name="internship_application_method"
+                      disabled={disabled}
+                      checked={formData.internship_application_method === option}
+                      onChange={() => updateField("internship_application_method", option)}
+                    />
+                    <span>{option}</span>
+                  </label>
+                ))}
+              </div>
+              {formData.internship_application_method === "other" ? (
+                <input
+                  type="text"
+                  placeholder="Isi metode lain"
+                  value={formData.internship_application_method_other}
+                  disabled={disabled}
+                  onChange={(event) => updateField("internship_application_method_other", event.target.value)}
+                  className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                    disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                  }`}
+                />
+              ) : null}
+            </div>
+
+            <div className="mt-4">
+              <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+                Selection Processes (satu baris = satu proses) <RequiredMark />
+              </label>
+              <textarea
+                rows={4}
+                value={formData.selection_processes_text}
+                onChange={(event) => updateField("selection_processes_text", event.target.value)}
+                disabled={disabled}
+                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                  disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                }`}
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Complete address of the institution <RequiredMark />
+            </label>
+            <textarea
+              rows={3}
+              value={formData.complete_address_of_institution}
+              onChange={(event) => updateField("complete_address_of_institution", event.target.value)}
+              disabled={disabled}
+              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            />
+          </div>
+        </>
+      ) : null}
+
+      <div className="mt-6">
+        <p className="mb-2 text-sm font-semibold text-[#324c86]">
+          Proposed / Expected Position <RequiredMark />
+        </p>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {MAGANG_PROPOSED_POSITION_OPTIONS.map((option) => (
             <label key={`position-${option}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
@@ -2420,7 +2707,9 @@ function FormSuratRekomendasiMagang({
       </div>
 
       <div className="mt-6">
-        <p className="mb-2 text-sm font-semibold text-[#324c86]">Company Sector *</p>
+        <p className="mb-2 text-sm font-semibold text-[#324c86]">
+          Company Sector <RequiredMark />
+        </p>
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
           {MAGANG_COMPANY_SECTOR_OPTIONS.map((option) => (
             <label key={`sector-${option}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
@@ -2447,167 +2736,6 @@ function FormSuratRekomendasiMagang({
             }`}
           />
         ) : null}
-      </div>
-
-      <div className={`mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4 ${isNonPartner ? "opacity-60" : ""}`}>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-black text-[#1b274b]">Grid Mitra Magang</h3>
-            <p className="mt-1 text-xs text-[#5d6c91]">
-              Lihat daftar mitra aktif sebelum memilih institusi tujuan magang.
-            </p>
-          </div>
-          <input
-            type="text"
-            value={mitraGridQuery}
-            onChange={(event) => setMitraGridQuery(event.target.value)}
-            disabled={disabled || isNonPartner}
-            placeholder="Cari nama, bidang, lokasi..."
-            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none sm:w-[280px] ${
-              disabled || isNonPartner
-                ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-                : "bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-            }`}
-          />
-        </div>
-
-        <div className="relative mt-3 max-h-72 overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
-          <table className="w-full min-w-[1280px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">No</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
-                  Prosedur dari Perusahaan
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredMitraMagangOptions.length > 0
-                ? filteredMitraMagangOptions.map((item, index) => (
-                      <tr
-                        key={`mitra-magang-option-${item.id || item.nama}`}
-                        className="border-b border-[#eff3fb] align-top last:border-b-0"
-                      >
-                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap">
-                          {index + 1}
-                        </td>
-                        <td className="px-3 py-2 font-semibold text-[#1f2d53] break-words">
-                          {item.nama || "-"}
-                        </td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">
-                          {item.bidang_jenis || "-"}
-                        </td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.lokasi || "-"}</td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">
-                          {item.website ? (
-                            <a
-                              href={item.website}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-semibold text-[#2f63e3] hover:underline"
-                            >
-                              {item.website}
-                            </a>
-                          ) : (
-                            "-"
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.quota_magang ?? "-"}</td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">{item.kriteria || "-"}</td>
-                        <td className="px-3 py-2 text-[#2f426f] break-words">
-                          {item.prosedur_perusahaan || "-"}
-                        </td>
-                      </tr>
-                    ))
-                : null}
-            </tbody>
-          </table>
-          {!loadingMitraOptions && filteredMitraMagangOptions.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
-              Data mitra magang tidak ditemukan.
-            </div>
-          ) : null}
-          {loadingMitraOptions ? (
-            <div className="px-4 py-8 text-center text-sm font-semibold text-[#7b88ab]">
-              Memuat daftar mitra magang...
-            </div>
-          ) : null}
-        </div>
-
-        {isNonPartner ? (
-          <p className="mt-2 text-xs text-[#5d6c91]">
-            Grid mitra dinonaktifkan karena Anda memilih Non partner Company.
-          </p>
-        ) : null}
-      </div>
-
-      <div className="mt-6">
-        <label className="mb-2 block text-sm font-semibold text-[#324c86]">Chosen Institution *</label>
-        <select
-          value={formData.chosen_institution}
-          onChange={(event) => updateField("chosen_institution", event.target.value)}
-          disabled={disabled || isNonPartner || loadingMitraOptions}
-          className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-            disabled || isNonPartner || loadingMitraOptions
-              ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-              : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-          }`}
-        >
-          <option value="">
-            {loadingMitraOptions ? "Memuat daftar mitra..." : "Pilih institusi mitra"}
-          </option>
-          {partnerInstitutionOptions.map((option) => (
-            <option key={`inst-${option}`} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-        {isNonPartner ? (
-          <p className="mt-1 text-xs text-[#5d6c91]">
-            Untuk Non partner Company, sistem otomatis menggunakan opsi{" "}
-            <b>{MAGANG_NON_PARTNER_OPTION_LABEL}</b>.
-          </p>
-        ) : null}
-        {mitraOptionsError ? (
-          <p className="mt-1 text-xs font-semibold text-[#c23737]">{mitraOptionsError}</p>
-        ) : null}
-      </div>
-
-      <div className="mt-4">
-        <label className="mb-2 block text-sm font-semibold text-[#324c86]">Complete address of the institution *</label>
-        <textarea
-          rows={3}
-          value={formData.complete_address_of_institution}
-          onChange={(event) => updateField("complete_address_of_institution", event.target.value)}
-          disabled={disabled}
-          className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-            disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-          }`}
-        />
-      </div>
-
-      <div className="mt-6">
-        <p className="mb-2 text-sm font-semibold text-[#324c86]">Type of Company *</p>
-        <div className="grid grid-cols-1 gap-2">
-          {MAGANG_COMPANY_TYPE_OPTIONS.map((option) => (
-            <label key={`company-type-${option.value}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
-              <input
-                type="radio"
-                name="company_type"
-                disabled={disabled}
-                checked={formData.company_type === option.value}
-                onChange={() => updateField("company_type", option.value)}
-              />
-              <span>{option.label}</span>
-            </label>
-          ))}
-        </div>
       </div>
 
       <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
@@ -2641,7 +2769,9 @@ function FormSuratRekomendasiMagang({
 
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Tanggal apply *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Tanggal apply <RequiredMark />
+            </label>
             <input
               type="date"
               value={formData.tanggal_apply}
@@ -2655,7 +2785,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Metode apply *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Metode apply <RequiredMark />
+            </label>
             <input
               type="text"
               placeholder="Contoh: Email / Website / LinkedIn / Walk-in"
@@ -2670,7 +2802,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Bukti apply *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Bukti apply <RequiredMark />
+            </label>
             <input
               type="text"
               placeholder="Nama file / URL / catatan bukti"
@@ -2693,98 +2827,13 @@ function FormSuratRekomendasiMagang({
         ) : null}
       </div>
 
-      {isNonPartner ? (
-        <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
-          <h3 className="text-sm font-black text-[#1b274b]">Data Tambahan Non Partner Company</h3>
-          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-[#324c86]">Company name *</label>
-              <input
-                type="text"
-                value={formData.company_name}
-                onChange={(event) => updateField("company_name", event.target.value)}
-                disabled={disabled}
-                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                  disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-                }`}
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-[#324c86]">Year of establishment *</label>
-              <input
-                type="text"
-                value={formData.year_of_establishment}
-                onChange={(event) => updateField("year_of_establishment", event.target.value)}
-                disabled={disabled}
-                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                  disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-                }`}
-              />
-            </div>
-            <div>
-              <label className="mb-2 block text-sm font-semibold text-[#324c86]">Number of employees *</label>
-              <input
-                type="text"
-                value={formData.number_of_employees}
-                onChange={(event) => updateField("number_of_employees", event.target.value)}
-                disabled={disabled}
-                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                  disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-                }`}
-              />
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <p className="mb-2 text-sm font-semibold text-[#324c86]">Internship Application method *</p>
-            <div className="grid grid-cols-1 gap-2">
-              {MAGANG_APPLICATION_METHOD_OPTIONS.map((option) => (
-                <label key={`app-method-${option}`} className="flex items-center gap-2 rounded-lg border border-[#dce4f5] px-3 py-2 text-sm text-[#334772]">
-                  <input
-                    type="radio"
-                    name="internship_application_method"
-                    disabled={disabled}
-                    checked={formData.internship_application_method === option}
-                    onChange={() => updateField("internship_application_method", option)}
-                  />
-                  <span>{option}</span>
-                </label>
-              ))}
-            </div>
-            {formData.internship_application_method === "other" ? (
-              <input
-                type="text"
-                placeholder="Isi metode lain"
-                value={formData.internship_application_method_other}
-                disabled={disabled}
-                onChange={(event) => updateField("internship_application_method_other", event.target.value)}
-                className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                  disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-                }`}
-              />
-            ) : null}
-          </div>
-
-          <div className="mt-4">
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Selection Processes (satu baris = satu proses) *</label>
-            <textarea
-              rows={4}
-              value={formData.selection_processes_text}
-              onChange={(event) => updateField("selection_processes_text", event.target.value)}
-              disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-              }`}
-            />
-          </div>
-        </div>
-      ) : null}
-
       <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
         <h3 className="text-sm font-black text-[#1b274b]">Dokumen Pendukung</h3>
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Upload CV (nama file) *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Upload CV (nama file) <RequiredMark />
+            </label>
             <input
               type="text"
               value={formData.cv_file_name}
@@ -2796,7 +2845,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Upload portfolios of Past Work (nama file) *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Upload portfolios of Past Work (nama file) <RequiredMark />
+            </label>
             <input
               type="text"
               value={formData.portfolio_file_name}
@@ -2808,7 +2859,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Upload Academic Transcript (nama file) *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Upload Academic Transcript (nama file) <RequiredMark />
+            </label>
             <input
               type="text"
               value={formData.transcript_file_name}
@@ -2820,7 +2873,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Upload other supporting documents (nama file) *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Upload other supporting documents (nama file) <RequiredMark />
+            </label>
             <input
               type="text"
               value={formData.other_supporting_documents_file_name}
@@ -2832,7 +2887,9 @@ function FormSuratRekomendasiMagang({
             />
           </div>
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Internship Company website URL *</label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Internship Company website URL <RequiredMark />
+            </label>
             <input
               type="text"
               value={formData.internship_company_website_url}

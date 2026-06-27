@@ -129,6 +129,7 @@ module.exports = {
       ...item,
       status: "active",
       is_active: true,
+      posisi_magang: null,
       quota_magang: null,
       kriteria: null,
       prosedur_perusahaan: null,
