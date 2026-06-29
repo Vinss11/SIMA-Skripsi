@@ -331,6 +331,14 @@ function formatMagangPayloadValue(value) {
   return String(value);
 }
 
+function pickFormattedMagangValue(values) {
+  for (const value of values) {
+    const formatted = formatMagangPayloadValue(value);
+    if (formatted !== "-") return formatted;
+  }
+  return "-";
+}
+
 function pickMagangPayloadText(row, keys) {
   const payload = getMagangPayload(row);
   for (const key of keys) {
@@ -341,9 +349,16 @@ function pickMagangPayloadText(row, keys) {
   return "-";
 }
 
+function getMagangMitraSnapshot(row) {
+  const payload = getMagangPayload(row);
+  return payload.mitra_snapshot && typeof payload.mitra_snapshot === "object" && !Array.isArray(payload.mitra_snapshot)
+    ? payload.mitra_snapshot
+    : {};
+}
+
 function getMagangCompanyName(row) {
   const payload = getMagangPayload(row);
-  const snapshot = payload.mitra_snapshot && typeof payload.mitra_snapshot === "object" ? payload.mitra_snapshot : {};
+  const snapshot = getMagangMitraSnapshot(row);
   return (
     formatMagangPayloadValue(payload.company_name) !== "-"
       ? formatMagangPayloadValue(payload.company_name)
@@ -358,6 +373,47 @@ function getMagangCompanyTypeLabel(row) {
   if (companyType === "partner_company") return "Mitra";
   if (companyType === "non_partner_company") return "Non Mitra";
   return formatLabel(companyType || "-");
+}
+
+function getMagangCompanySectorLabel(row) {
+  const payload = getMagangPayload(row);
+  return payload.company_sector === "other"
+    ? formatMagangPayloadValue(payload.company_sector_other)
+    : formatLabel(payload.company_sector);
+}
+
+function getMagangProposedPositionLabel(row) {
+  const payload = getMagangPayload(row);
+  return payload.proposed_position === "other"
+    ? formatMagangPayloadValue(payload.proposed_position_other)
+    : formatLabel(payload.proposed_position);
+}
+
+function getMagangApplicationMethodLabel(row) {
+  const payload = getMagangPayload(row);
+  return payload.internship_application_method === "other"
+    ? formatMagangPayloadValue(payload.internship_application_method_other)
+    : formatLabel(payload.internship_application_method);
+}
+
+function getMagangMitraGridData(row) {
+  const payload = getMagangPayload(row);
+  const snapshot = getMagangMitraSnapshot(row);
+  return {
+    nama: getMagangCompanyName(row),
+    bidang_jenis: pickFormattedMagangValue([snapshot.bidang_jenis, getMagangCompanySectorLabel(row)]),
+    lokasi: pickFormattedMagangValue([snapshot.lokasi, payload.complete_address_of_institution]),
+    email_kontak: pickFormattedMagangValue([snapshot.email_kontak]),
+    website: pickFormattedMagangValue([snapshot.website, payload.internship_company_website_url]),
+    posisi_magang: pickFormattedMagangValue([snapshot.posisi_magang, getMagangProposedPositionLabel(row)]),
+    quota_magang: pickFormattedMagangValue([snapshot.quota_magang]),
+    kriteria: pickFormattedMagangValue([snapshot.kriteria]),
+    prosedur_perusahaan: pickFormattedMagangValue([
+      snapshot.prosedur_perusahaan,
+      getMagangApplicationMethodLabel(row),
+      payload.selection_processes,
+    ]),
+  };
 }
 
 function getMagangReviewStatus(row) {
@@ -376,18 +432,10 @@ function getMagangStatusBadgeClass(status) {
 
 function getMagangDetailFields(row) {
   const payload = getMagangPayload(row);
-  const sector =
-    payload.company_sector === "other"
-      ? formatMagangPayloadValue(payload.company_sector_other)
-      : formatLabel(payload.company_sector);
-  const proposedPosition =
-    payload.proposed_position === "other"
-      ? formatMagangPayloadValue(payload.proposed_position_other)
-      : formatLabel(payload.proposed_position);
-  const applicationMethod =
-    payload.internship_application_method === "other"
-      ? formatMagangPayloadValue(payload.internship_application_method_other)
-      : formatLabel(payload.internship_application_method);
+  const mitraData = getMagangMitraGridData(row);
+  const sector = getMagangCompanySectorLabel(row);
+  const proposedPosition = getMagangProposedPositionLabel(row);
+  const applicationMethod = getMagangApplicationMethodLabel(row);
 
   return [
     ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
@@ -398,6 +446,14 @@ function getMagangDetailFields(row) {
     ["Tipe Perusahaan", getMagangCompanyTypeLabel(row)],
     ["Institusi Dipilih", payload.chosen_institution],
     ["Nama Perusahaan", getMagangCompanyName(row)],
+    ["Bidang / Jenis Mitra", mitraData.bidang_jenis],
+    ["Lokasi Mitra", mitraData.lokasi],
+    ["Email Kontak Mitra", mitraData.email_kontak],
+    ["Website Mitra", mitraData.website],
+    ["Posisi Magang Mitra", mitraData.posisi_magang],
+    ["Quota Magang", mitraData.quota_magang],
+    ["Kriteria Mitra", mitraData.kriteria],
+    ["Prosedur dari Perusahaan", mitraData.prosedur_perusahaan],
     ["Alamat Institusi", payload.complete_address_of_institution],
     ["Sektor Perusahaan", sector],
     ["Posisi Diajukan", proposedPosition],
@@ -971,8 +1027,8 @@ function buildTabHeaders(isSekretaris) {
     },
     submissions: {
       icon: ClipboardList,
-      title: "Review Dosen Pembimbing",
-      subtitle: "Berikan keputusan sebagai dosen calon pembimbing pada topik yang diajukan mahasiswa.",
+      title: "Pengajuan Mahasiswa",
+      subtitle: "Tinjau pengajuan penelitian mahasiswa sebagai dosen calon pembimbing.",
     },
     "approval-penelitian": {
       icon: ListChecks,
@@ -2770,6 +2826,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     return sekprodiNonPenelitianRows.filter((row) => {
       if (String(row?.jalur || "").trim().toLowerCase() !== currentJalur) return false;
       if (!keyword) return true;
+      const mitraGridData = currentJalur === "magang" ? getMagangMitraGridData(row) : {};
 
       const haystack = [
         row.id,
@@ -2784,6 +2841,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         row.periode?.label_periode,
         getPengampuReviewSummary(row),
         getPengampuReviewNote(row),
+        mitraGridData.nama,
+        mitraGridData.bidang_jenis,
+        mitraGridData.lokasi,
+        mitraGridData.email_kontak,
+        mitraGridData.website,
+        mitraGridData.posisi_magang,
+        mitraGridData.quota_magang,
+        mitraGridData.kriteria,
+        mitraGridData.prosedur_perusahaan,
       ]
         .filter(Boolean)
         .join(" ")
@@ -6501,6 +6567,130 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       </tbody>
                     </table>
                   </div>
+                ) : finalApprovalTab === "magang" ? (
+                  <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                    <table className="w-full min-w-[2450px] table-fixed text-left text-sm">
+                      <colgroup>
+                        <col style={{ width: "230px" }} />
+                        <col style={{ width: "130px" }} />
+                        <col style={{ width: "230px" }} />
+                        <col style={{ width: "190px" }} />
+                        <col style={{ width: "190px" }} />
+                        <col style={{ width: "220px" }} />
+                        <col style={{ width: "250px" }} />
+                        <col style={{ width: "190px" }} />
+                        <col style={{ width: "140px" }} />
+                        <col style={{ width: "260px" }} />
+                        <col style={{ width: "300px" }} />
+                        <col style={{ width: "170px" }} />
+                        <col style={{ width: "210px" }} />
+                      </colgroup>
+                      <thead className="sticky top-0 z-10">
+                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Mahasiswa</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">NIM</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Email Kontak</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Posisi Magang</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
+                            Prosedur dari Perusahaan
+                          </th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Dikirim</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredFinalNonPenelitianRows.map((row) => {
+                          const mitraData = getMagangMitraGridData(row);
+                          return (
+                            <tr key={`sekprodi-final-magang-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                              <td className="px-3 py-2">
+                                <p className="font-semibold text-[#1f2d53] break-words">
+                                  {row.mahasiswa?.nama || "-"}
+                                </p>
+                                <p className="mt-1 text-xs text-[#61709b]">
+                                  {row.mahasiswa?.email || "-"}
+                                </p>
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap">
+                                {row.mahasiswa?.nim || "-"}
+                              </td>
+                              <td className="px-3 py-2 font-semibold text-[#1f2d53] break-words">
+                                {mitraData.nama}
+                              </td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.bidang_jenis}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.lokasi}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.email_kontak}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">
+                                {mitraData.website !== "-" ? (
+                                  <a
+                                    href={mitraData.website}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-semibold text-[#2f63e3] hover:underline"
+                                  >
+                                    {mitraData.website}
+                                  </a>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.posisi_magang}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.quota_magang}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.kriteria}</td>
+                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.prosedur_perusahaan}</td>
+                              <td className="px-3 py-2 text-[#43537d] whitespace-nowrap">{formatDateTime(row.submitted_at)}</td>
+                              <td className="px-3 py-2">
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={sekprodiNonPenelitianActionId === row.id}
+                                    onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
+                                    className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                  >
+                                    Detail
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={sekprodiNonPenelitianActionId === row.id}
+                                    onClick={() => handleSekprodiNonPenelitianDecision(row, "approve")}
+                                    className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                  >
+                                    Approve
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={sekprodiNonPenelitianActionId === row.id}
+                                    onClick={() => handleSekprodiNonPenelitianDecision(row, "reject")}
+                                    className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                  >
+                                    Tolak
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                        {filteredFinalNonPenelitianRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={13} className="h-[340px] px-4 text-center align-middle">
+                              <div className="mx-auto max-w-md">
+                                <ListChecks className="mx-auto h-9 w-9 text-[#9aa8c7]" />
+                                <p className="mt-3 font-bold text-[#52638d]">
+                                  Belum ada pengajuan magang yang menunggu keputusan final.
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : (
                   <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                     <table className="w-full min-w-[1050px] text-left text-sm">
@@ -6593,7 +6783,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <h3 className="text-lg font-black text-[#1b274b]">
                         {activeTab === "ketua-cluster-review"
                           ? "Grid Review Ketua Cluster"
-                          : "Grid Review Dosen Pembimbing"}
+                          : "Grid Pengajuan Mahasiswa"}
                       </h3>
                       <div className="flex items-center gap-2">
                         <div className="relative">
@@ -6647,13 +6837,207 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         </thead>
                         <tbody>
                             {filteredSubmissions.length > 0
-                              ? pagedSubmissions.map((row, index) => {
+                              ? pagedSubmissions.map((gridRow, index) => {
                                   const nomorUrut = submissionRangeStart + index;
+                                  const row = gridRow.raw || gridRow;
+                                  const source = gridRow.source || "penelitian";
+                                  const activeGridTab = "penelitian";
+                                  const gridStatus = gridRow.status || getSubmissionGridStatus(row);
+                                  const payload = getMagangPayload(row);
+                                  const mitraData = source === "magang" ? getMagangMitraGridData(row) : null;
+                                  const config = DOSEN_PENGAMPU_REVIEW_TABS[source] || null;
+                                  const actionKey = `${source}-${row.id}`;
+                                  const isPengampuBusy = pengampuReviewActionId === actionKey;
+                                  const actionButtons =
+                                    source === "penelitian" ? (
+                                      row.status === "pending" && row.can_review ? (
+                                        <div className="flex items-center gap-2">
+                                          <button
+                                            type="button"
+                                            disabled={loadingSubmissionDetail}
+                                            onClick={() => handleOpenSubmissionReview(row.id, "approve")}
+                                            className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            Approve
+                                          </button>
+                                          <button
+                                            type="button"
+                                            disabled={loadingSubmissionDetail}
+                                            onClick={() => handleOpenSubmissionReview(row.id, "reject")}
+                                            className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                          >
+                                            Reject
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          disabled={loadingSubmissionDetail}
+                                          onClick={() => handleOpenSubmissionReview(row.id)}
+                                          className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        >
+                                          <Eye className="h-3.5 w-3.5" />
+                                          Detail
+                                        </button>
+                                      )
+                                    ) : source === "magang" ? (
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={magangReviewActionId === row.id}
+                                          onClick={() => handleOpenMagangReviewDetail(row.id)}
+                                          className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Detail
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={magangReviewActionId === row.id}
+                                          onClick={() => handleMagangReviewDecision(row, "approve")}
+                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Approve
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={magangReviewActionId === row.id}
+                                          onClick={() => handleMagangReviewDecision(row, "reject")}
+                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Tolak
+                                        </button>
+                                      </div>
+                                    ) : config ? (
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          disabled={isPengampuBusy}
+                                          onClick={() => handleOpenPengampuReviewDetail(row.id, config)}
+                                          className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Detail
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isPengampuBusy}
+                                          onClick={() => handlePengampuReviewDecision(row, config, "approve")}
+                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Approve
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isPengampuBusy}
+                                          onClick={() => handlePengampuReviewDecision(row, config, "reject")}
+                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+                                        >
+                                          Tolak
+                                        </button>
+                                      </div>
+                                    ) : null;
+
+                                  if (activeGridTab === "semua") {
+                                    return (
+                                      <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
+                                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
+                                        <td className="px-3 py-2">
+                                          <p className="font-semibold text-[#1f2d53] break-words">{gridRow.mahasiswa?.nama || "-"}</p>
+                                          <p className="text-xs text-[#61709b]">Angkatan {gridRow.mahasiswa?.angkatan || "-"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{gridRow.mahasiswa?.nim || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] whitespace-nowrap align-top">{formatLabel(source)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{gridRow.summary || "-"}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">
+                                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(gridStatus)}`}>
+                                            {formatLabel(gridStatus)}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 align-top break-words">
+                                          <p className="font-semibold text-[#2a3f74]">{gridRow.tahap || "-"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(gridRow.updatedAt)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  if (source === "magang") {
+                                    return (
+                                      <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
+                                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
+                                        <td className="px-3 py-2">
+                                          <p className="font-semibold text-[#1f2d53] break-words">{gridRow.mahasiswa?.nama || "-"}</p>
+                                          <p className="text-xs text-[#61709b]">Angkatan {gridRow.mahasiswa?.angkatan || "-"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{gridRow.mahasiswa?.nim || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] whitespace-nowrap align-top">{formatLabel(payload.company_type)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{mitraData?.nama || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{mitraData?.posisi_magang || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{mitraData?.lokasi || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] whitespace-nowrap align-top">{formatMagangPayloadValue(payload.sudah_apply_ke_mitra)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">
+                                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(gridStatus)}`}>
+                                            {formatLabel(gridStatus)}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(gridRow.submittedAt)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  if (source === "pengabdian") {
+                                    return (
+                                      <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
+                                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
+                                        <td className="px-3 py-2">
+                                          <p className="font-semibold text-[#1f2d53] break-words">{gridRow.mahasiswa?.nama || "-"}</p>
+                                          <p className="text-xs text-[#61709b]">Angkatan {gridRow.mahasiswa?.angkatan || "-"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{gridRow.mahasiswa?.nim || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.nama_program)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.nama_mitra)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.lokasi_pengabdian)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.target_luaran)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">
+                                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(gridStatus)}`}>
+                                            {formatLabel(gridStatus)}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(gridRow.submittedAt)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
+                                      </tr>
+                                    );
+                                  }
+
+                                  if (source === "perintisan_bisnis") {
+                                    return (
+                                      <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
+                                        <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
+                                        <td className="px-3 py-2">
+                                          <p className="font-semibold text-[#1f2d53] break-words">{gridRow.mahasiswa?.nama || "-"}</p>
+                                          <p className="text-xs text-[#61709b]">Angkatan {gridRow.mahasiswa?.angkatan || "-"}</p>
+                                        </td>
+                                        <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap align-top">{gridRow.mahasiswa?.nim || "-"}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.nama_bisnis)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.jenis_bisnis)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.lokasi_bisnis)}</td>
+                                        <td className="px-3 py-2 text-[#2f426f] break-words align-top">{formatMagangPayloadValue(payload.tahap_perkembangan)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">
+                                          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(gridStatus)}`}>
+                                            {formatLabel(gridStatus)}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(gridRow.submittedAt)}</td>
+                                        <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
+                                      </tr>
+                                    );
+                                  }
+
                                   const topikCount = getSubmissionTopikCount(row);
                                   const hasSameDosenBadge = hasSameDosenTopikBadge(row);
-                                  const gridStatus = getSubmissionGridStatus(row);
                                   return (
-                                    <tr key={`submission-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                                    <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
                                       <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
                                       <td className="px-3 py-2">
                                         <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
@@ -6691,38 +7075,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                         <p className="font-semibold text-[#2a3f74]">{getDosenSubmissionTahapLabel(row)}</p>
                                       </td>
                                       <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
-                                      <td className="px-3 py-2 whitespace-nowrap align-top">
-                                        {row.status === "pending" && row.can_review ? (
-                                          <div className="flex items-center gap-2">
-                                            <button
-                                              type="button"
-                                              disabled={loadingSubmissionDetail}
-                                              onClick={() => handleOpenSubmissionReview(row.id, "approve")}
-                                              className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                              Approve
-                                            </button>
-                                            <button
-                                              type="button"
-                                              disabled={loadingSubmissionDetail}
-                                              onClick={() => handleOpenSubmissionReview(row.id, "reject")}
-                                              className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                            >
-                                              Reject
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <button
-                                            type="button"
-                                            disabled={loadingSubmissionDetail}
-                                            onClick={() => handleOpenSubmissionReview(row.id)}
-                                            className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                          >
-                                            <Eye className="h-3.5 w-3.5" />
-                                            Detail
-                                          </button>
-                                        )}
-                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
                                     </tr>
                                   );
                                 })
