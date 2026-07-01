@@ -1987,6 +1987,7 @@ function FormSuratRekomendasiMagang({
   const [loadingMitraOptions, setLoadingMitraOptions] = useState(false);
   const [mitraOptionsError, setMitraOptionsError] = useState("");
   const [mitraGridQuery, setMitraGridQuery] = useState("");
+  const [fileInputResetKey, setFileInputResetKey] = useState(0);
 
   const isNonPartner = formData.company_type === "non_partner_company";
   const activeMitraMagangOptions = useMemo(
@@ -2126,6 +2127,11 @@ function FormSuratRekomendasiMagang({
     setSubmitSuccess("");
   };
 
+  const updateFileField = (field, fileList) => {
+    const selectedFile = fileList?.[0];
+    updateField(field, selectedFile?.name || "");
+  };
+
   const resetForm = () => {
     setFormData({
       phone_number: "",
@@ -2157,6 +2163,7 @@ function FormSuratRekomendasiMagang({
     setSubmitError("");
     setSubmitSuccess("");
     setMitraGridQuery("");
+    setFileInputResetKey((prev) => prev + 1);
   };
 
   const validateForm = () => {
@@ -2195,13 +2202,13 @@ function FormSuratRekomendasiMagang({
       return "Internship vacancy URL harus berupa URL http/https yang valid.";
     }
     if (!formData.internship_vacancy_url.trim() && !formData.supporting_documents_note.trim()) {
-      return "Jika Internship vacancy URL tidak diisi, jelaskan dokumen pendukung institusi pada kolom catatan.";
+      return "Upload catatan dokumen pendukung wajib diisi jika Internship vacancy URL kosong.";
     }
-    if (!formData.cv_file_name.trim()) return "Upload CV wajib diisi (nama file).";
-    if (!formData.portfolio_file_name.trim()) return "Upload portfolios of Past Work wajib diisi (nama file).";
-    if (!formData.transcript_file_name.trim()) return "Upload Academic Transcript wajib diisi (nama file).";
+    if (!formData.cv_file_name.trim()) return "Upload CV wajib diisi.";
+    if (!formData.portfolio_file_name.trim()) return "Upload portfolios of Past Work wajib diisi.";
+    if (!formData.transcript_file_name.trim()) return "Upload Academic Transcript wajib diisi.";
     if (!formData.other_supporting_documents_file_name.trim()) {
-      return "Upload other supporting documents wajib diisi (nama file).";
+      return "Upload other supporting documents wajib diisi.";
     }
 
     if (isNonPartner) {
@@ -2832,56 +2839,60 @@ function FormSuratRekomendasiMagang({
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Upload CV (nama file) <RequiredMark />
+              Upload CV <RequiredMark />
             </label>
             <input
-              type="text"
-              value={formData.cv_file_name}
-              onChange={(event) => updateField("cv_file_name", event.target.value)}
+              key={`cv-file-${fileInputResetKey}`}
+              type="file"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+              onChange={(event) => updateFileField("cv_file_name", event.target.files)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Upload portfolios of Past Work (nama file) <RequiredMark />
+              Upload portfolios of Past Work <RequiredMark />
             </label>
             <input
-              type="text"
-              value={formData.portfolio_file_name}
-              onChange={(event) => updateField("portfolio_file_name", event.target.value)}
+              key={`portfolio-file-${fileInputResetKey}`}
+              type="file"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
+              onChange={(event) => updateFileField("portfolio_file_name", event.target.files)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Upload Academic Transcript (nama file) <RequiredMark />
+              Upload Academic Transcript <RequiredMark />
             </label>
             <input
-              type="text"
-              value={formData.transcript_file_name}
-              onChange={(event) => updateField("transcript_file_name", event.target.value)}
+              key={`transcript-file-${fileInputResetKey}`}
+              type="file"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+              onChange={(event) => updateFileField("transcript_file_name", event.target.files)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Upload other supporting documents (nama file) <RequiredMark />
+              Upload other supporting documents <RequiredMark />
             </label>
             <input
-              type="text"
-              value={formData.other_supporting_documents_file_name}
-              onChange={(event) => updateField("other_supporting_documents_file_name", event.target.value)}
+              key={`other-supporting-file-${fileInputResetKey}`}
+              type="file"
+              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
+              onChange={(event) => updateFileField("other_supporting_documents_file_name", event.target.files)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
@@ -2918,11 +2929,13 @@ function FormSuratRekomendasiMagang({
         <div className="mt-4">
           <label className="mb-2 block text-sm font-semibold text-[#324c86]">
             Catatan dokumen pendukung (wajib jika internship vacancy URL kosong)
+            {!formData.internship_vacancy_url.trim() ? <RequiredMark /> : null}
           </label>
-          <textarea
-            rows={3}
-            value={formData.supporting_documents_note}
-            onChange={(event) => updateField("supporting_documents_note", event.target.value)}
+          <input
+            key={`supporting-note-file-${fileInputResetKey}`}
+            type="file"
+            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
+            onChange={(event) => updateFileField("supporting_documents_note", event.target.files)}
             disabled={disabled}
             className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
               disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"

@@ -1211,6 +1211,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     keyword: "",
     cluster: "Sirkel",
   });
+  const [topikFormErrors, setTopikFormErrors] = useState({});
   const allowedTopikClusters = useMemo(() => {
     const klasterRows = Array.isArray(kuotaData?.dosen?.klasters) ? kuotaData.dosen.klasters : [];
     const labels = [];
@@ -4261,6 +4262,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const handleTopikFormChange = (event) => {
     const { name, value } = event.target;
     setTopikForm((prev) => ({ ...prev, [name]: value }));
+    setTopikFormErrors((prev) => ({
+      ...prev,
+      [name]: "",
+      ...(name === "kode" || name === "cluster" ? { kode: "", cluster: "" } : {}),
+    }));
   };
 
   const handleTopikApiSubmit = async (event) => {
@@ -4274,30 +4280,38 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       cluster: normalizedCluster || topikForm.cluster,
     };
 
-    if (!payload.kode || !payload.judul || !payload.keyword || !payload.cluster) {
-      showErrorToast("Kode topik, judul, keyword, dan cluster wajib diisi.");
+    const nextErrors = {};
+    if (!payload.kode) nextErrors.kode = "Kode topik wajib diisi.";
+    if (!payload.cluster) nextErrors.cluster = "Cluster wajib dipilih.";
+    if (!payload.judul) nextErrors.judul = "Judul topik wajib diisi.";
+    if (!payload.keyword) nextErrors.keyword = "Keyword wajib diisi.";
+
+    if (Object.keys(nextErrors).length > 0) {
+      setTopikFormErrors(nextErrors);
       return;
     }
 
     if (!allowedTopikClusters.includes(payload.cluster)) {
-      showErrorToast(`Cluster yang bisa dipilih hanya: ${allowedTopikClusters.join(", ")}.`);
+      setTopikFormErrors({ cluster: `Cluster yang bisa dipilih hanya: ${allowedTopikClusters.join(", ")}.` });
       return;
     }
 
     const kodeCluster = resolveTopikClusterFromKode(payload.kode);
     if (!kodeCluster || !kodeCluster.label) {
-      showErrorToast("Format kode topik tidak valid. Gunakan prefix: SIRKEL, SIBER, ITSC, atau MVK.");
+      setTopikFormErrors({ kode: "Format kode topik tidak valid. Gunakan prefix: SIRKEL, SIBER, ITSC, atau MVK." });
       return;
     }
 
     if (kodeCluster.label !== payload.cluster) {
       const expectedCode = TOPIK_CLUSTER_CODE_BY_LABEL[payload.cluster] || payload.cluster;
-      showErrorToast(
-        `Kode topik ${payload.kode} tidak sesuai dengan cluster ${payload.cluster}. Prefix kode harus ${expectedCode}.`
-      );
+      setTopikFormErrors({
+        kode: `Kode topik ${payload.kode} tidak sesuai dengan cluster ${payload.cluster}.`,
+        cluster: `Prefix kode harus ${expectedCode}.`,
+      });
       return;
     }
 
+    setTopikFormErrors({});
     setSavingTopik(true);
     try {
       await fetchWithAuth("/api/topics", {
@@ -4311,6 +4325,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         keyword: "",
         cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
       });
+      setTopikFormErrors({});
       showSuccessToast("Topik berhasil ditambahkan.");
       await loadAllData();
       setTopikMode("list");
@@ -4342,7 +4357,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       const formData = new FormData();
       formData.append("file", topikUploadFile);
 
-      const response = await fetch(`${apiBaseUrl}/api/admin/upload/topics/preview`, {
+      const response = await fetch(`${apiBaseUrl}/api/dosen/upload/topics/preview`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
@@ -4387,7 +4402,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
     } catch (uploadError) {
       if (uploadError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(uploadError.message || "Gagal memproses preview topik.");
+        const isNetworkError =
+          uploadError instanceof TypeError ||
+          String(uploadError?.message || "").toLowerCase() === "failed to fetch";
+        showErrorToast(
+          isNetworkError
+            ? "Gagal menghubungi endpoint upload topik. Pastikan backend sudah berjalan dan refresh halaman."
+            : uploadError.message || "Gagal memproses preview topik."
+        );
       }
     } finally {
       setUploadingTopik(false);
@@ -4402,7 +4424,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     setSavingUploadedTopik(true);
     try {
-      await fetchWithAuth("/api/admin/upload/topics/commit", {
+      await fetchWithAuth("/api/dosen/upload/topics/commit", {
         method: "POST",
         body: JSON.stringify({ rows: topikUploadValidRows }),
       });
@@ -9568,23 +9590,34 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <h3 className="mb-3 text-lg font-black text-[#1b274b]">Tambah Topik via Form</h3>
                       <form onSubmit={handleTopikApiSubmit} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                         <div>
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Kode Topik</label>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                            Kode Topik <span className="text-[#d93030]">*</span>
+                          </label>
                           <input
                             type="text"
                             name="kode"
                             value={topikForm.kode}
                             onChange={handleTopikFormChange}
                             placeholder="Contoh: SIRKEL99"
-                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              topikFormErrors.kode ? "border-[#d93030]" : "border-[#d3dbef]"
+                            }`}
                           />
+                          {topikFormErrors.kode ? (
+                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.kode}</p>
+                          ) : null}
                         </div>
                         <div>
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Cluster</label>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                            Cluster <span className="text-[#d93030]">*</span>
+                          </label>
                           <select
                             name="cluster"
                             value={topikForm.cluster}
                             onChange={handleTopikFormChange}
-                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              topikFormErrors.cluster ? "border-[#d93030]" : "border-[#d3dbef]"
+                            }`}
                           >
                             {allowedTopikClusters.map((cluster) => (
                               <option key={cluster} value={cluster}>
@@ -9592,31 +9625,48 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               </option>
                             ))}
                           </select>
+                          {topikFormErrors.cluster ? (
+                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.cluster}</p>
+                          ) : null}
                           <p className="mt-1 text-xs text-[#6b789e]">
                             Opsi cluster mengikuti assignment cluster dosen login.
                           </p>
                         </div>
                         <div className="lg:col-span-2">
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Judul Topik</label>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                            Judul Topik <span className="text-[#d93030]">*</span>
+                          </label>
                           <input
                             type="text"
                             name="judul"
                             value={topikForm.judul}
                             onChange={handleTopikFormChange}
                             placeholder="Masukkan judul topik"
-                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              topikFormErrors.judul ? "border-[#d93030]" : "border-[#d3dbef]"
+                            }`}
                           />
+                          {topikFormErrors.judul ? (
+                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.judul}</p>
+                          ) : null}
                         </div>
                         <div className="lg:col-span-2">
-                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Keyword</label>
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                            Keyword <span className="text-[#d93030]">*</span>
+                          </label>
                           <input
                             type="text"
                             name="keyword"
                             value={topikForm.keyword}
                             onChange={handleTopikFormChange}
                             placeholder="Contoh: machine learning, rekomendasi, sistem informasi"
-                            className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              topikFormErrors.keyword ? "border-[#d93030]" : "border-[#d3dbef]"
+                            }`}
                           />
+                          {topikFormErrors.keyword ? (
+                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.keyword}</p>
+                          ) : null}
                           <p className="mt-1 text-xs text-[#6b789e]">
                             Pisahkan beberapa keyword dengan koma agar mudah dicari mahasiswa.
                           </p>

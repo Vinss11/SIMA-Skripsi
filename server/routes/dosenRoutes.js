@@ -6,7 +6,33 @@ const dokumenSidangController = require("../controllers/dokumenSidangController"
 const sidangAkhirController = require("../controllers/sidangAkhirController");
 const submissionController = require("../controllers/submissionController");
 const jalurController = require("../controllers/jalurController");
+const uploadController = require("../controllers/uploadController");
+const upload = require("../middlewares/uploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
+
+function handleUploadMulterError(err, res) {
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({
+      success: false,
+      message: "Ukuran file terlalu besar. Maksimal 5MB.",
+      error: err.message,
+    });
+  }
+
+  if (err.message && err.message.toLowerCase().includes("format excel")) {
+    return res.status(400).json({
+      success: false,
+      message: "File tidak valid. Hanya file Excel (.xls, .xlsx, .ods) yang diperbolehkan.",
+      error: err.message,
+    });
+  }
+
+  return res.status(400).json({
+    success: false,
+    message: "Error pada file upload",
+    error: err.message,
+  });
+}
 
 // ========== PENGAJUAN SUBMISSIONS ==========
 // Dosen mereview pengajuan yang ditujukan kepadanya
@@ -116,6 +142,30 @@ router.get(
   authenticateToken,
   authorizeRole("dosen", "sekretaris_prodi"),
   dosenController.getMonitoringMahasiswa
+);
+
+// ========== UPLOAD TOPIK ==========
+router.post(
+  "/upload/topics/preview",
+  authenticateToken,
+  authorizeRole("dosen", "sekretaris_prodi"),
+  (req, res, next) => {
+    upload.single("file")(req, res, (err) => {
+      if (err) {
+        console.error("Multer Error:", err.message);
+        return handleUploadMulterError(err, res);
+      }
+      next();
+    });
+  },
+  uploadController.previewUploadTopics
+);
+
+router.post(
+  "/upload/topics/commit",
+  authenticateToken,
+  authorizeRole("dosen", "sekretaris_prodi"),
+  uploadController.commitUploadTopics
 );
 
 // ========== BIMBINGAN SKRIPSI ==========
