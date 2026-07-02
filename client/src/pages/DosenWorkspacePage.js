@@ -1228,6 +1228,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [savingUploadedTopik, setSavingUploadedTopik] = useState(false);
   const [uploadTopikResult, setUploadTopikResult] = useState(null);
   const [topikUploadPreviewPage, setTopikUploadPreviewPage] = useState(1);
+  const [topikUploadCommitEndpoint, setTopikUploadCommitEndpoint] = useState("/api/dosen/upload/topics/commit");
   const topikUploadPreviewRows = useMemo(() => {
     const successRows = Array.isArray(uploadTopikResult?.data?.detail_berhasil)
       ? uploadTopikResult.data.detail_berhasil
@@ -4343,6 +4344,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     setTopikUploadFile(selectedFile);
     setUploadTopikResult(null);
     setTopikUploadPreviewPage(1);
+    setTopikUploadCommitEndpoint("/api/dosen/upload/topics/commit");
   };
 
   const handleTopikUploadSubmit = async () => {
@@ -4354,46 +4356,104 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     setUploadingTopik(true);
     setUploadTopikResult(null);
     try {
-      const formData = new FormData();
-      formData.append("file", topikUploadFile);
+      const normalizedApiBaseUrl = String(apiBaseUrl || "").replace(/\/+$/, "");
+      const uploadBaseUrls = [];
+      if (normalizedApiBaseUrl) uploadBaseUrls.push(normalizedApiBaseUrl);
+      if (
+        typeof window !== "undefined" &&
+        ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname) &&
+        !uploadBaseUrls.includes("http://localhost:3000")
+      ) {
+        uploadBaseUrls.push("http://localhost:3000");
+      }
+      if (typeof window !== "undefined" && !uploadBaseUrls.includes(window.location.origin)) {
+        uploadBaseUrls.push(window.location.origin);
+      }
 
-      const response = await fetch(`${apiBaseUrl}/api/dosen/upload/topics/preview`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-        },
-        body: formData,
-      });
-
+      const uploadEndpoints = ["/api/dosen/upload/topics", "/api/admin/upload/topics"];
+      let lastUploadError = null;
       let json = null;
-      try {
-        json = await response.json();
-      } catch (parseError) {
-        json = null;
-      }
+      let activeCommitEndpoint = `${normalizedApiBaseUrl}${uploadEndpoints[0]}/commit`;
 
-      const uploadMessage = String(json?.message || "");
-      const uploadLowerMessage = uploadMessage.toLowerCase();
-      const isUploadTokenError =
-        uploadLowerMessage.includes("token tidak valid") ||
-        uploadLowerMessage.includes("token tidak ditemukan") ||
-        uploadLowerMessage.includes("kadaluarsa");
+      for (const baseUrl of uploadBaseUrls) {
+        for (const basePath of uploadEndpoints) {
+          try {
+            const formData = new FormData();
+            formData.append("file", topikUploadFile);
 
-      if (response.status === 401 || (response.status === 403 && isUploadTokenError)) {
-        if (!sessionExpiredRef.current) {
-          sessionExpiredRef.current = true;
-          onSessionExpired?.();
+            const response = await fetch(`${baseUrl}${basePath}/preview`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${session.token}`,
+              },
+              body: formData,
+            });
+
+            let responseJson = null;
+            try {
+              responseJson = await response.json();
+            } catch (parseError) {
+              responseJson = null;
+            }
+
+            const uploadMessage = String(responseJson?.message || "");
+            const uploadLowerMessage = uploadMessage.toLowerCase();
+            const isUploadTokenError =
+              uploadLowerMessage.includes("token tidak valid") ||
+              uploadLowerMessage.includes("token tidak ditemukan") ||
+              uploadLowerMessage.includes("kadaluarsa");
+
+            if (response.status === 401 || (response.status === 403 && isUploadTokenError)) {
+              if (!sessionExpiredRef.current) {
+                sessionExpiredRef.current = true;
+                onSessionExpired?.();
+              }
+              throw new Error("__SESSION_EXPIRED__");
+            }
+
+            const isMissingEndpoint =
+              response.status === 404 ||
+              String(responseJson?.message || "").toLowerCase().includes("endpoint tidak ditemukan");
+
+            if (isMissingEndpoint) {
+              lastUploadError = new Error(responseJson?.message || "Endpoint upload topik tidak ditemukan.");
+              continue;
+            }
+
+            if (!response.ok || !responseJson) {
+              if (responseJson) {
+                setUploadTopikResult(responseJson);
+              }
+              throw new Error(responseJson?.message || "Upload topik gagal diproses.");
+            }
+
+            json = responseJson;
+            activeCommitEndpoint = `${baseUrl}${basePath}/commit`;
+            break;
+          } catch (endpointError) {
+            if (endpointError?.message === "__SESSION_EXPIRED__") {
+              throw endpointError;
+            }
+
+            const isNetworkError =
+              endpointError instanceof TypeError ||
+              String(endpointError?.message || "").toLowerCase() === "failed to fetch";
+            if (isNetworkError) {
+              lastUploadError = endpointError;
+              continue;
+            }
+
+            throw endpointError;
+          }
         }
-        throw new Error("__SESSION_EXPIRED__");
+        if (json) break;
       }
 
-      if (!response.ok || !json) {
-        if (json) {
-          setUploadTopikResult(json);
-        }
-        throw new Error(json?.message || "Upload topik gagal diproses.");
+      if (!json) {
+        throw lastUploadError || new Error("Upload topik gagal diproses.");
       }
 
+      setTopikUploadCommitEndpoint(activeCommitEndpoint);
       setUploadTopikResult(json);
       if (json.success) {
         showSuccessToast("Preview topik berhasil dibuat.");
@@ -4424,10 +4484,43 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     setSavingUploadedTopik(true);
     try {
-      await fetchWithAuth("/api/dosen/upload/topics/commit", {
+      const commitUrl = topikUploadCommitEndpoint.startsWith("http")
+        ? topikUploadCommitEndpoint
+        : `${apiBaseUrl}${topikUploadCommitEndpoint}`;
+      const response = await fetch(commitUrl, {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ rows: topikUploadValidRows }),
       });
+
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (parseError) {
+        payload = null;
+      }
+
+      const message = String(payload?.message || "").toLowerCase();
+      const tokenError =
+        message.includes("token tidak valid") ||
+        message.includes("token tidak ditemukan") ||
+        message.includes("kadaluarsa");
+
+      if (response.status === 401 || (response.status === 403 && tokenError)) {
+        if (!sessionExpiredRef.current) {
+          sessionExpiredRef.current = true;
+          onSessionExpired?.();
+        }
+        throw new Error("__SESSION_EXPIRED__");
+      }
+
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Gagal menyimpan topik hasil preview.");
+      }
+
       showSuccessToast("Topik valid berhasil disimpan ke database.");
       setUploadTopikResult(null);
       setTopikUploadFile(null);
