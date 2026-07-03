@@ -3,6 +3,29 @@ const router = express.Router();
 const jalurController = require("../controllers/jalurController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
+const nonPenelitianUpload = require("../middlewares/nonPenelitianUploadMiddleware");
+
+const nonPenelitianUploadFields = nonPenelitianUpload.fields([
+  { name: "cv_file_name", maxCount: 1 },
+  { name: "portfolio_file_name", maxCount: 1 },
+  { name: "transcript_file_name", maxCount: 1 },
+  { name: "other_supporting_documents_file_name", maxCount: 1 },
+  { name: "supporting_documents_note", maxCount: 1 },
+]);
+
+const handleNonPenelitianUpload = (req, res, next) => {
+  nonPenelitianUploadFields(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    res.status(400).json({
+      success: false,
+      message: error.message || "Upload dokumen tidak valid.",
+    });
+  });
+};
 
 // Mahasiswa only - semua endpoint ini hanya untuk mahasiswa
 
@@ -16,7 +39,13 @@ router.get(
   authorizeRole("mahasiswa"),
   mitraMagangController.getMitraMagangOptions
 );
-router.post("/non-penelitian/submit", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitFormNonPenelitian);
+router.post(
+  "/non-penelitian/submit",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  handleNonPenelitianUpload,
+  jalurController.submitFormNonPenelitian
+);
 
 // ========== JALUR ULANG - PAMIT ==========
 router.post("/ulang/pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitPamit);

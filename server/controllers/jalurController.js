@@ -15,6 +15,8 @@ const {
   AnggotaKelompokPerintisan,
   sequelize,
 } = require("../models");
+const fs = require("fs");
+const path = require("path");
 const { Op } = require("sequelize");
 const {
   buildSemesterLanjutanGate,
@@ -69,6 +71,64 @@ const PENELITIAN_CLUSTER_LABEL_BY_CODE = {
   ITSC: "ITSC",
   MVK: "MVK",
 };
+
+function parseJsonPayload(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return null;
+
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function getUploadedFile(req, fieldName) {
+  const fileList = req.files?.[fieldName];
+  return Array.isArray(fileList) && fileList.length > 0 ? fileList[0] : null;
+}
+
+function buildUploadedFileMetadata(file) {
+  if (!file) return null;
+
+  return {
+    original_name: file.originalname,
+    stored_name: file.filename,
+    relative_path: path.join("uploads", "non-penelitian", file.filename).replace(/\\/g, "/"),
+    mimetype: file.mimetype,
+    size: file.size,
+    uploaded_at: new Date().toISOString(),
+  };
+}
+
+function cleanupUploadedFiles(req) {
+  const fileGroups = req.files && typeof req.files === "object" ? Object.values(req.files) : [];
+  for (const fileList of fileGroups) {
+    for (const file of Array.isArray(fileList) ? fileList : []) {
+      if (file?.path && fs.existsSync(file.path)) {
+        try {
+          fs.unlinkSync(file.path);
+        } catch (error) {
+          console.warn(`Gagal menghapus file upload sementara: ${file.path}`, error.message);
+        }
+      }
+    }
+  }
+}
+
+function buildMagangUploadedDocuments(req) {
+  return {
+    cv: buildUploadedFileMetadata(getUploadedFile(req, "cv_file_name")),
+    portfolio: buildUploadedFileMetadata(getUploadedFile(req, "portfolio_file_name")),
+    transcript: buildUploadedFileMetadata(getUploadedFile(req, "transcript_file_name")),
+    other_supporting_documents: buildUploadedFileMetadata(
+      getUploadedFile(req, "other_supporting_documents_file_name")
+    ),
+    supporting_documents_note: buildUploadedFileMetadata(getUploadedFile(req, "supporting_documents_note")),
+  };
+}
 
 // ========== HELPER FUNCTION - VALIDASI KUOTA DOSEN ==========
 
@@ -484,7 +544,20 @@ async function findActiveMitraMagangByNama(nama, transaction) {
         sequelize.where(sequelize.fn("LOWER", sequelize.col("nama")), String(nama).trim().toLowerCase()),
       ],
     },
-    attributes: ["id", "nama", "bidang_jenis", "lokasi", "email_kontak", "website", "status", "is_active"],
+    attributes: [
+      "id",
+      "nama",
+      "bidang_jenis",
+      "lokasi",
+      "email_kontak",
+      "website",
+      "posisi_magang",
+      "quota_magang",
+      "kriteria",
+      "prosedur_perusahaan",
+      "status",
+      "is_active",
+    ],
     transaction,
   });
 }
@@ -1797,13 +1870,18 @@ exports.submitIzinLanjutSemester = async (req, res) => {
 exports.submitFormNonPenelitian = async (req, res) => {
   const t = await sequelize.transaction();
 
+  const rollbackAndRespond = async (statusCode, payload) => {
+    if (!t.finished) await t.rollback();
+    cleanupUploadedFiles(req);
+    return res.status(statusCode).json(payload);
+  };
+
   try {
     const mahasiswa_id = req.user.id;
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t, lock: t.LOCK.UPDATE });
 
     if (!mahasiswa) {
-      await t.rollback();
-      return res.status(404).json({
+      return rollbackAndRespond(404, {
         success: false,
         message: "Data mahasiswa tidak ditemukan",
       });
@@ -1813,8 +1891,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
       allowUlangFlow: true,
     });
     if (!semesterGateCheck.allowed) {
-      await t.rollback();
-      return res.status(403).json({
+      return rollbackAndRespond(403, {
         success: false,
         message: semesterGateCheck.message,
         detail: semesterGateCheck.gate,
@@ -1823,16 +1900,14 @@ exports.submitFormNonPenelitian = async (req, res) => {
 
     const requestedJalur = String(req.body?.jalur || "").trim().toLowerCase().replace(/\s+/g, "_");
     if (!requestedJalur || requestedJalur === "penelitian") {
-      await t.rollback();
-      return res.status(400).json({
+      return rollbackAndRespond(400, {
         success: false,
         message: "Endpoint ini hanya untuk jalur non-penelitian.",
       });
     }
 
     if (!["magang", "pengabdian", "perintisan_bisnis"].includes(requestedJalur)) {
-      await t.rollback();
-      return res.status(400).json({
+      return rollbackAndRespond(400, {
         success: false,
         message: "Pilihan jalur non-penelitian tidak valid.",
       });
@@ -1846,8 +1921,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
     });
 
     if (!gate.allowed) {
-      await t.rollback();
-      return res.status(gate.statusCode || 409).json({
+      return rollbackAndRespond(gate.statusCode || 409, {
         success: false,
         message: gate.message,
         code: gate.code,
@@ -1856,8 +1930,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
     }
 
     if (mahasiswa.pengajuan_aktif_id) {
-      await t.rollback();
-      return res.status(409).json({
+      return rollbackAndRespond(409, {
         success: false,
         message: "Anda sudah memiliki pengajuan aktif. Jalur lain tidak dapat diajukan.",
       });
@@ -1865,12 +1938,32 @@ exports.submitFormNonPenelitian = async (req, res) => {
 
     let payloadToSave = {};
     if (requestedJalur === "magang") {
-      payloadToSave = normalizeMagangSubmissionPayload(req.body?.payload || {});
+      const rawPayload = parseJsonPayload(req.body?.payload || {});
+      if (!rawPayload) {
+        return rollbackAndRespond(400, {
+          success: false,
+          message: "Payload form magang tidak valid.",
+        });
+      }
+
+      payloadToSave = normalizeMagangSubmissionPayload(rawPayload);
+      const uploadedDocuments = buildMagangUploadedDocuments(req);
+      payloadToSave.cv_file_name = uploadedDocuments.cv?.original_name || payloadToSave.cv_file_name;
+      payloadToSave.portfolio_file_name =
+        uploadedDocuments.portfolio?.original_name || payloadToSave.portfolio_file_name;
+      payloadToSave.transcript_file_name =
+        uploadedDocuments.transcript?.original_name || payloadToSave.transcript_file_name;
+      payloadToSave.other_supporting_documents_file_name =
+        uploadedDocuments.other_supporting_documents?.original_name ||
+        payloadToSave.other_supporting_documents_file_name;
+      payloadToSave.supporting_documents_note =
+        uploadedDocuments.supporting_documents_note?.original_name || payloadToSave.supporting_documents_note;
+      payloadToSave.uploaded_documents = uploadedDocuments;
+
       const activeMitraNameSet = await getActiveMitraMagangNameSet(t);
       const validationResult = validateMagangSubmissionPayload(payloadToSave, activeMitraNameSet);
       if (validationResult.message) {
-        await t.rollback();
-        return res.status(validationResult.statusCode || 400).json({
+        return rollbackAndRespond(validationResult.statusCode || 400, {
           success: false,
           message: validationResult.message,
         });
@@ -1897,10 +1990,9 @@ exports.submitFormNonPenelitian = async (req, res) => {
           }
         : null;
     } else {
-      const rawPayload = req.body?.payload || {};
-      if (!rawPayload || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
-        await t.rollback();
-        return res.status(400).json({
+      const rawPayload = parseJsonPayload(req.body?.payload || {});
+      if (!rawPayload) {
+        return rollbackAndRespond(400, {
           success: false,
           message: "Payload form jalur non-penelitian tidak valid.",
         });
@@ -1913,8 +2005,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
         transaction: t,
       });
       if (normalizedKelompok.error) {
-        await t.rollback();
-        return res.status(400).json({
+        return rollbackAndRespond(400, {
           success: false,
           message: normalizedKelompok.error,
         });
@@ -1924,11 +2015,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
 
     const now = new Date();
     const workflowStatus =
-      requestedJalur === "magang"
-        ? payloadToSave.company_type === "non_partner_company"
-          ? "review_sekprodi"
-          : "review_dosen_magang"
-        : "submitted";
+      requestedJalur === "magang" ? "review_dosen_magang" : "submitted";
     const workflowTimeline =
       requestedJalur === "magang"
         ? [
@@ -1941,10 +2028,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
             {
               status: workflowStatus,
               actor: "system",
-              note:
-                workflowStatus === "review_sekprodi"
-                  ? "Menunggu review sekretaris prodi (non-mitra)."
-                  : "Menunggu review dosen pengawas magang.",
+              note: "Menunggu review dosen pengawas magang.",
               at: now,
             },
           ]
@@ -2021,9 +2105,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
       success: true,
       message:
         requestedJalur === "magang"
-          ? workflowStatus === "review_sekprodi"
-            ? "Permintaan surat rekomendasi magang berhasil dikirim. Status: menunggu review sekretaris prodi."
-            : "Permintaan surat rekomendasi magang berhasil dikirim. Status: menunggu review dosen pengawas magang."
+          ? "Permintaan surat rekomendasi magang berhasil dikirim. Status: menunggu review dosen pengawas magang."
           : "Form jalur non-penelitian berhasil dikirim.",
       data: {
         pendaftaran_id: gate.pendaftaranAktif.id,
@@ -2034,6 +2116,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
     });
   } catch (error) {
     if (!t.finished) await t.rollback();
+    cleanupUploadedFiles(req);
     console.error("Error di submitFormNonPenelitian:", error);
     return res.status(500).json({
       success: false,
@@ -2284,7 +2367,7 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
   }
 }
 
-// GET /api/dosen/non-penelitian/magang/reviews - Antrian review magang (partner) untuk dosen pengawas magang
+// GET /api/dosen/non-penelitian/magang/reviews - Antrian review magang untuk dosen pengawas magang
 exports.getMagangReviewQueueForDosen = async (req, res) =>
   getNonPenelitianReviewQueueForDosenByJalur(req, res, "magang");
 

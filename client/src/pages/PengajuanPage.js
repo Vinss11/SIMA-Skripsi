@@ -1988,6 +1988,7 @@ function FormSuratRekomendasiMagang({
   const [mitraOptionsError, setMitraOptionsError] = useState("");
   const [mitraGridQuery, setMitraGridQuery] = useState("");
   const [fileInputResetKey, setFileInputResetKey] = useState(0);
+  const [magangUploadFiles, setMagangUploadFiles] = useState({});
 
   const isNonPartner = formData.company_type === "non_partner_company";
   const activeMitraMagangOptions = useMemo(
@@ -2129,6 +2130,10 @@ function FormSuratRekomendasiMagang({
 
   const updateFileField = (field, fileList) => {
     const selectedFile = fileList?.[0];
+    setMagangUploadFiles((prev) => ({
+      ...prev,
+      [field]: selectedFile || null,
+    }));
     updateField(field, selectedFile?.name || "");
   };
 
@@ -2163,6 +2168,7 @@ function FormSuratRekomendasiMagang({
     setSubmitError("");
     setSubmitSuccess("");
     setMitraGridQuery("");
+    setMagangUploadFiles({});
     setFileInputResetKey((prev) => prev + 1);
   };
 
@@ -2297,16 +2303,23 @@ function FormSuratRekomendasiMagang({
     setSubmitSuccess("");
 
     try {
+      const payload = buildPayload();
+      const requestBody = new FormData();
+      requestBody.append("jalur", "magang");
+      requestBody.append("payload", JSON.stringify(payload));
+
+      Object.entries(magangUploadFiles).forEach(([field, file]) => {
+        if (file instanceof File) {
+          requestBody.append(field, file);
+        }
+      });
+
       const response = await fetch(`${apiBaseUrl}/api/jalur/non-penelitian/submit`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          jalur: "magang",
-          payload: buildPayload(),
-        }),
+        body: requestBody,
       });
 
       const data = await response.json().catch(() => null);
