@@ -153,6 +153,8 @@ function mapMahasiswaMasterRows(mahasiswas, activePeriode) {
         semester_mahasiswa: item.semester_mahasiswa,
         semester_penjaluran_ke: semesterPenjaluranCounter,
         nama_penjaluran: resolveNamaPenjaluranFromPendaftaran(item),
+        penjaluran_sebelumnya: item.penjaluran_sebelumnya || null,
+        penjaluran_baru: item.penjaluran_baru || null,
         periode_penjaluran: item.periode
           ? {
               id: item.periode.id,

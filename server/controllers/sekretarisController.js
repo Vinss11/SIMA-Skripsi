@@ -735,9 +735,11 @@ function flattenMahasiswaMasterRows(mahasiswaRows = []) {
           nama: mahasiswa.nama,
           email: mahasiswa.email,
           angkatan: mahasiswa.angkatan,
+          program_kuliah: mahasiswa.program_kuliah || null,
           status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
           dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
           dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+          semester_mahasiswa: null,
           semester_penjaluran_ke: 0,
           semester_penjaluran_aktif: mahasiswa.semester_penjaluran_aktif || 0,
           tahun_akademik: null,
@@ -745,7 +747,11 @@ function flattenMahasiswaMasterRows(mahasiswaRows = []) {
           periode_label: null,
           jalur: null,
           nama_penjaluran: null,
+          penjaluran_sebelumnya: null,
+          penjaluran_baru: null,
           pembimbing_ta: null,
+          pembimbing_ta_sebelumnya: null,
+          pembimbing_ta_baru: null,
           pendaftaran_status: null,
           tanggal_penjaluran: null,
           updatedAt: mahasiswa.updatedAt,
@@ -760,9 +766,11 @@ function flattenMahasiswaMasterRows(mahasiswaRows = []) {
       nama: mahasiswa.nama,
       email: mahasiswa.email,
       angkatan: mahasiswa.angkatan,
+      program_kuliah: item.program_kuliah || mahasiswa.program_kuliah || null,
       status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
       dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
       dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+      semester_mahasiswa: item.semester_mahasiswa || null,
       semester_penjaluran_ke: item.semester_penjaluran_ke || 0,
       semester_penjaluran_aktif:
         item.semester_penjaluran_aktif ??
@@ -774,7 +782,11 @@ function flattenMahasiswaMasterRows(mahasiswaRows = []) {
       periode_label: item.periode_penjaluran?.label_periode || null,
       jalur: item.jalur || null,
       nama_penjaluran: item.nama_penjaluran || null,
+      penjaluran_sebelumnya: item.penjaluran_sebelumnya || null,
+      penjaluran_baru: item.penjaluran_baru || null,
       pembimbing_ta: item.pembimbing_ta?.nama || null,
+      pembimbing_ta_sebelumnya: item.dosen_pembimbing_ta_sebelumnya?.nama || null,
+      pembimbing_ta_baru: item.dosen_pembimbing_ta_baru?.nama || null,
       pendaftaran_status: item.status || null,
       tanggal_penjaluran: item.createdAt || null,
       updatedAt: item.updatedAt || mahasiswa.updatedAt,
@@ -784,6 +796,7 @@ function flattenMahasiswaMasterRows(mahasiswaRows = []) {
 
 function filterMahasiswaMasterRows(rows = [], query = {}) {
   const selectedAngkatan = String(query?.angkatan || "").trim();
+  const selectedProgramKuliah = String(query?.program_kuliah || "").trim().toLowerCase();
   const selectedSemesterPenjaluran = String(query?.semester_penjaluran || "").trim();
   const selectedPeriode = String(query?.periode || "").trim();
   const selectedPenjaluran = String(query?.penjaluran || "").trim().toLowerCase();
@@ -792,6 +805,10 @@ function filterMahasiswaMasterRows(rows = [], query = {}) {
 
   return (Array.isArray(rows) ? rows : []).filter((row) => {
     if (selectedAngkatan && String(row?.angkatan || "").trim() !== selectedAngkatan) {
+      return false;
+    }
+
+    if (selectedProgramKuliah && String(row?.program_kuliah || "").trim().toLowerCase() !== selectedProgramKuliah) {
       return false;
     }
 
@@ -822,7 +839,10 @@ function filterMahasiswaMasterRows(rows = [], query = {}) {
       row.nama,
       row.email,
       row.angkatan,
+      row.program_kuliah,
+      row.program_kuliah ? formatEnumLabel(row.program_kuliah) : null,
       row.status_jalur_saat_ini,
+      row.semester_mahasiswa ? `semester mahasiswa ${row.semester_mahasiswa}` : null,
       row.dosen_pembimbing_akademik,
       row.dosen_pembimbing_skripsi,
       row.semester_penjaluran_aktif || row.semester_penjaluran_ke
@@ -833,7 +853,11 @@ function filterMahasiswaMasterRows(rows = [], query = {}) {
       row.periode_label,
       row.jalur,
       row.nama_penjaluran,
+      row.penjaluran_sebelumnya,
+      row.penjaluran_baru,
       row.pembimbing_ta,
+      row.pembimbing_ta_sebelumnya,
+      row.pembimbing_ta_baru,
       row.pendaftaran_status,
       `tipe ${formatEnumLabel(row.jalur)}`,
     ]
@@ -891,6 +915,7 @@ exports.exportMahasiswaMasterData = async (req, res) => {
       Angkatan: row.angkatan || "-",
       "Status Jalur Saat Ini": row.status_jalur_saat_ini || "-",
       "Program Kuliah": formatEnumLabel(row.program_kuliah),
+      "Semester Mahasiswa": row.semester_mahasiswa || "-",
       "Semester Penjaluran":
         row.semester_penjaluran_aktif || row.semester_penjaluran_ke
           ? `Semester ${row.semester_penjaluran_aktif || row.semester_penjaluran_ke}`
@@ -900,7 +925,11 @@ exports.exportMahasiswaMasterData = async (req, res) => {
       "Semester Akademik": row.semester_akademik ? formatEnumLabel(row.semester_akademik) : "-",
       Jalur: row.jalur ? formatEnumLabel(row.jalur) : "-",
       "Nama Penjaluran": row.nama_penjaluran ? formatEnumLabel(row.nama_penjaluran) : "-",
+      "Penjaluran Sebelumnya": row.penjaluran_sebelumnya ? formatEnumLabel(row.penjaluran_sebelumnya) : "-",
+      "Penjaluran Baru": row.penjaluran_baru ? formatEnumLabel(row.penjaluran_baru) : "-",
       "Pembimbing TA": row.pembimbing_ta || "-",
+      "Pembimbing TA Sebelumnya": row.pembimbing_ta_sebelumnya || "-",
+      "Pembimbing TA Baru": row.pembimbing_ta_baru || "-",
       DPA: row.dosen_pembimbing_akademik || "-",
       "Dospem Skripsi": row.dosen_pembimbing_skripsi || "-",
       "Status Pendaftaran": row.pendaftaran_status ? formatEnumLabel(row.pendaftaran_status) : "-",
@@ -917,12 +946,17 @@ exports.exportMahasiswaMasterData = async (req, res) => {
       { wch: 34 },
       { wch: 10 },
       { wch: 20 },
+      { wch: 18 },
       { wch: 20 },
       { wch: 24 },
       { wch: 16 },
       { wch: 18 },
       { wch: 12 },
       { wch: 24 },
+      { wch: 24 },
+      { wch: 24 },
+      { wch: 28 },
+      { wch: 28 },
       { wch: 28 },
       { wch: 28 },
       { wch: 28 },
@@ -1936,7 +1970,7 @@ exports.setMasterDosenKuota = async (req, res) => {
       const kuotaInfoSaatIni = await dosen.getKuotaInfo();
       const sisaSaatIni = Number(kuotaInfoSaatIni?.sisa || 0);
       const terpakaiSaatIni = Number(kuotaInfoSaatIni?.terpakai || 0);
-      const minimalKuota = Math.max(1, sisaSaatIni, terpakaiSaatIni);
+      const minimalKuota = Math.max(1, terpakaiSaatIni);
       if (rawKuota < minimalKuota) {
         invalidKuotaRows.push({
           id: dosen.id,
@@ -1956,7 +1990,7 @@ exports.setMasterDosenKuota = async (req, res) => {
       const labelContoh = contoh.nama || contoh.kode_dosen || contoh.nik || `ID ${contoh.id}`;
       return res.status(400).json({
         success: false,
-        message: `Kuota ${rawKuota} tidak valid. Contoh: ${labelContoh} minimal ${contoh.minimal_kuota} (sisa ${contoh.sisa_saat_ini}, terpakai ${contoh.terpakai_saat_ini}).`,
+        message: `Kuota ${rawKuota} tidak valid. Contoh: ${labelContoh} minimal ${contoh.minimal_kuota} karena sudah terpakai ${contoh.terpakai_saat_ini}.`,
         detail: {
           invalid_rows: invalidKuotaRows,
         },

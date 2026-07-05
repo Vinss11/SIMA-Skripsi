@@ -42,10 +42,16 @@ const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_FILTER_INITIAL = {
   angkatan: "",
+  program_kuliah: "",
   semester_penjaluran: "",
   periode: "",
   penjaluran: "",
   tipe_pendaftaran: "",
+};
+const MASTER_TOPIK_FILTER_INITIAL = {
+  cluster: "",
+  status: "",
+  dosen: "",
 };
 const PENDAFTARAN_FILTER_INITIAL = {
   angkatan: "",
@@ -1192,6 +1198,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [topikPage, setTopikPage] = useState(1);
   const [masterTopikRows, setMasterTopikRows] = useState([]);
   const [masterTopikQuery, setMasterTopikQuery] = useState("");
+  const [masterTopikFilters, setMasterTopikFilters] = useState({ ...MASTER_TOPIK_FILTER_INITIAL });
   const [masterTopikPage, setMasterTopikPage] = useState(1);
   const [masterDosenKuotaOverview, setMasterDosenKuotaOverview] = useState({
     summary: null,
@@ -2431,11 +2438,59 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   }, [topikPage, totalTopikPages]);
 
+  const masterTopikFilterOptions = useMemo(() => {
+    const clusterSet = new Set();
+    const statusSet = new Set();
+    const dosenMap = new Map();
+
+    for (const row of masterTopikRows) {
+      const cluster = String(row?.cluster || "").trim();
+      if (cluster) clusterSet.add(cluster);
+
+      const status = String(row?.status || "").trim().toLowerCase();
+      if (status) statusSet.add(status);
+
+      const dosenId = row?.dosen?.id ?? row?.dosen_id ?? row?.dosenId;
+      const dosenName = String(row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen || "").trim();
+      const dosenKey = dosenId ? String(dosenId) : dosenName.toLowerCase();
+      if (dosenKey && dosenName) {
+        dosenMap.set(dosenKey, dosenName);
+      }
+    }
+
+    return {
+      cluster: Array.from(clusterSet).sort((a, b) => a.localeCompare(b, "id")),
+      status: Array.from(statusSet).sort((a, b) => a.localeCompare(b, "id")),
+      dosen: Array.from(dosenMap.entries())
+        .map(([value, label]) => ({ value, label }))
+        .sort((a, b) => a.label.localeCompare(b.label, "id")),
+    };
+  }, [masterTopikRows]);
+
   const filteredMasterTopikRows = useMemo(() => {
     const keyword = masterTopikQuery.trim().toLowerCase();
-    if (!keyword) return masterTopikRows;
+    const selectedCluster = String(masterTopikFilters.cluster || "").trim();
+    const selectedStatus = String(masterTopikFilters.status || "").trim().toLowerCase();
+    const selectedDosen = String(masterTopikFilters.dosen || "").trim();
 
     return masterTopikRows.filter((row) => {
+      if (selectedCluster && String(row?.cluster || "").trim() !== selectedCluster) {
+        return false;
+      }
+
+      if (selectedStatus && String(row?.status || "").trim().toLowerCase() !== selectedStatus) {
+        return false;
+      }
+
+      const dosenId = row?.dosen?.id ?? row?.dosen_id ?? row?.dosenId;
+      const dosenName = String(row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen || "").trim();
+      const rowDosenKey = dosenId ? String(dosenId) : dosenName.toLowerCase();
+      if (selectedDosen && rowDosenKey !== selectedDosen) {
+        return false;
+      }
+
+      if (!keyword) return true;
+
       const haystack = [
         row.kode,
         row.judul,
@@ -2451,7 +2506,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [masterTopikRows, masterTopikQuery]);
+  }, [masterTopikRows, masterTopikFilters, masterTopikQuery]);
 
   const totalMasterTopikPages = useMemo(
     () => Math.max(1, Math.ceil(filteredMasterTopikRows.length / MASTER_TOPIK_PAGE_SIZE)),
@@ -2465,7 +2520,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   useEffect(() => {
     setMasterTopikPage(1);
-  }, [masterTopikQuery]);
+  }, [masterTopikFilters, masterTopikQuery]);
 
   useEffect(() => {
     if (masterTopikPage > totalMasterTopikPages) {
@@ -3184,9 +3239,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             nama: mahasiswa.nama,
             email: mahasiswa.email,
             angkatan: mahasiswa.angkatan,
+            program_kuliah: mahasiswa.program_kuliah || null,
             status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
             dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
             dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+            semester_mahasiswa: null,
             semester_penjaluran_ke: 0,
             semester_penjaluran_aktif: mahasiswa.semester_penjaluran_aktif || 0,
             tahun_akademik: null,
@@ -3194,7 +3251,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             periode_label: null,
             jalur: null,
             nama_penjaluran: null,
+            penjaluran_sebelumnya: null,
+            penjaluran_baru: null,
             pembimbing_ta: null,
+            pembimbing_ta_sebelumnya: null,
+            pembimbing_ta_baru: null,
             pendaftaran_status: null,
             tanggal_penjaluran: null,
             updatedAt: mahasiswa.updatedAt,
@@ -3209,9 +3270,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         nama: mahasiswa.nama,
         email: mahasiswa.email,
         angkatan: mahasiswa.angkatan,
+        program_kuliah: item.program_kuliah || mahasiswa.program_kuliah || null,
         status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
         dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
         dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+        semester_mahasiswa: item.semester_mahasiswa || null,
         semester_penjaluran_ke: item.semester_penjaluran_ke || 0,
         semester_penjaluran_aktif:
           item.semester_penjaluran_aktif ??
@@ -3223,7 +3286,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         periode_label: item.periode_penjaluran?.label_periode || null,
         jalur: item.jalur || null,
         nama_penjaluran: item.nama_penjaluran || null,
+        penjaluran_sebelumnya: item.penjaluran_sebelumnya || null,
+        penjaluran_baru: item.penjaluran_baru || null,
         pembimbing_ta: item.pembimbing_ta?.nama || null,
+        pembimbing_ta_sebelumnya: item.dosen_pembimbing_ta_sebelumnya?.nama || null,
+        pembimbing_ta_baru: item.dosen_pembimbing_ta_baru?.nama || null,
         pendaftaran_status: item.status || null,
         tanggal_penjaluran: item.createdAt || null,
         updatedAt: item.updatedAt || mahasiswa.updatedAt,
@@ -3265,6 +3332,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const mahasiswaMasterFilterOptions = useMemo(() => {
     const angkatanSet = new Set();
+    const programKuliahSet = new Set();
     const semesterPenjaluranSet = new Set();
     const periodeSet = new Set();
     const penjaluranSet = new Set();
@@ -3273,6 +3341,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     for (const row of mahasiswaRowsByActiveTab) {
       if (row?.angkatan) {
         angkatanSet.add(String(row.angkatan).trim());
+      }
+      if (row?.program_kuliah) {
+        programKuliahSet.add(String(row.program_kuliah).trim().toLowerCase());
       }
       const semesterPenjaluran = Number(row?.semester_penjaluran_aktif || row?.semester_penjaluran_ke || 0);
       if (Number.isFinite(semesterPenjaluran) && semesterPenjaluran > 0) {
@@ -3301,6 +3372,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     return {
       angkatan: Array.from(angkatanSet).sort((a, b) => Number(b) - Number(a)),
+      program_kuliah: Array.from(programKuliahSet).sort((a, b) => a.localeCompare(b, "id")),
       semester_penjaluran: Array.from(semesterPenjaluranSet).sort((a, b) => Number(a) - Number(b)),
       periode: Array.from(periodeSet).sort((a, b) => a.localeCompare(b, "id")),
       penjaluran: Array.from(penjaluranSet).sort((a, b) => a.localeCompare(b, "id")),
@@ -3310,6 +3382,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const filteredMahasiswaMasterRows = useMemo(() => {
     const selectedAngkatan = String(mahasiswaMasterFilters.angkatan || "").trim();
+    const selectedProgramKuliah = String(mahasiswaMasterFilters.program_kuliah || "").trim().toLowerCase();
     const selectedSemesterPenjaluran = String(mahasiswaMasterFilters.semester_penjaluran || "").trim();
     const selectedPeriode = String(mahasiswaMasterFilters.periode || "").trim();
     const selectedPenjaluran = String(mahasiswaMasterFilters.penjaluran || "").trim().toLowerCase();
@@ -3320,6 +3393,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     return mahasiswaRowsByActiveTab.filter((row) => {
       if (selectedAngkatan && String(row?.angkatan || "").trim() !== selectedAngkatan) {
+        return false;
+      }
+
+      if (selectedProgramKuliah && String(row?.program_kuliah || "").trim().toLowerCase() !== selectedProgramKuliah) {
         return false;
       }
 
@@ -3350,7 +3427,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         row.nama,
         row.email,
         row.angkatan,
+        row.program_kuliah,
+        row.program_kuliah ? formatLabel(row.program_kuliah) : null,
         row.status_jalur_saat_ini,
+        row.semester_mahasiswa ? `semester mahasiswa ${row.semester_mahasiswa}` : null,
         row.dosen_pembimbing_akademik,
         row.dosen_pembimbing_skripsi,
         (row.semester_penjaluran_aktif || row.semester_penjaluran_ke)
@@ -3361,7 +3441,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         row.periode_label,
         row.jalur,
         row.nama_penjaluran,
+        row.penjaluran_sebelumnya,
+        row.penjaluran_baru,
         row.pembimbing_ta,
+        row.pembimbing_ta_sebelumnya,
+        row.pembimbing_ta_baru,
         row.pendaftaran_status,
         `tipe ${formatLabel(row.jalur)}`,
       ]
@@ -3394,6 +3478,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const mahasiswaMasterActiveFilterChips = useMemo(() => {
     const chips = [];
     const angkatan = String(mahasiswaMasterFilters.angkatan || "").trim();
+    const programKuliah = String(mahasiswaMasterFilters.program_kuliah || "").trim();
     const semesterPenjaluran = String(mahasiswaMasterFilters.semester_penjaluran || "").trim();
     const periode = String(mahasiswaMasterFilters.periode || "").trim();
     const penjaluran = String(mahasiswaMasterFilters.penjaluran || "").trim();
@@ -3401,6 +3486,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     if (angkatan) {
       chips.push({ key: "angkatan", label: `Angkatan: ${angkatan}` });
+    }
+    if (programKuliah) {
+      chips.push({ key: "program_kuliah", label: `Program: ${formatLabel(programKuliah)}` });
     }
     if (semesterPenjaluran) {
       chips.push({
@@ -4682,12 +4770,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       }
 
       const selectedAngkatan = String(mahasiswaMasterFilters?.angkatan || "").trim();
+      const selectedProgramKuliah = String(mahasiswaMasterFilters?.program_kuliah || "").trim();
       const selectedSemesterPenjaluran = String(mahasiswaMasterFilters?.semester_penjaluran || "").trim();
       const selectedPeriode = String(mahasiswaMasterFilters?.periode || "").trim();
       const selectedPenjaluran = String(mahasiswaMasterFilters?.penjaluran || "").trim();
       const selectedTipePendaftaran = String(mahasiswaMasterFilters?.tipe_pendaftaran || "").trim();
 
       if (selectedAngkatan) params.set("angkatan", selectedAngkatan);
+      if (selectedProgramKuliah) params.set("program_kuliah", selectedProgramKuliah);
       if (selectedSemesterPenjaluran) params.set("semester_penjaluran", selectedSemesterPenjaluran);
       if (selectedPeriode) params.set("periode", selectedPeriode);
       if (selectedPenjaluran) params.set("penjaluran", selectedPenjaluran);
@@ -5024,7 +5114,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       .map((row) => {
         const sisa = Number(row?.kuota?.sisa || 0);
         const terpakai = Number(row?.kuota?.terpakai || 0);
-        const minimalKuota = Math.max(1, sisa, terpakai);
+        const minimalKuota = Math.max(1, terpakai);
         return {
           nama: row?.nama || row?.kode_dosen || row?.nik || "Dosen",
           minimalKuota,
@@ -5037,7 +5127,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     if (invalidKuotaRows.length > 0) {
       const contoh = invalidKuotaRows[0];
       showErrorToast(
-        `Kuota ${parsedKuota} tidak valid. Contoh: ${contoh.nama} minimal ${contoh.minimalKuota} (sisa ${contoh.sisa}, terpakai ${contoh.terpakai}).`
+        `Kuota ${parsedKuota} tidak valid. Contoh: ${contoh.nama} minimal ${contoh.minimalKuota} karena sudah terpakai ${contoh.terpakai}.`
       );
       return;
     }
@@ -5517,6 +5607,35 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 {mahasiswaMasterFilterOptions.angkatan.map((item) => (
                   <option key={`filter-angkatan-${item}`} value={item}>
                     Angkatan {item}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rounded-lg border border-[#e6ecf8] p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <p className="text-sm font-semibold text-[#2a4175]">Program</p>
+                <button
+                  type="button"
+                  onClick={() => setMahasiswaMasterFilterDraft((prev) => ({ ...prev, program_kuliah: "" }))}
+                  className="text-xs font-semibold text-[#2f63e3] hover:underline"
+                >
+                  Reset
+                </button>
+              </div>
+              <select
+                value={mahasiswaMasterFilterDraft.program_kuliah}
+                onChange={(event) =>
+                  setMahasiswaMasterFilterDraft((prev) => ({
+                    ...prev,
+                    program_kuliah: event.target.value,
+                  }))
+                }
+                className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+              >
+                <option value="">Semua program</option>
+                {mahasiswaMasterFilterOptions.program_kuliah.map((item) => (
+                  <option key={`filter-program-kuliah-${item}`} value={item}>
+                    {formatLabel(item)}
                   </option>
                 ))}
               </select>
@@ -6337,7 +6456,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
 
                   <div className="relative mt-1 overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
-                  <table className="w-full min-w-[2300px] text-left text-sm">
+                  <table className="w-full min-w-[3000px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
@@ -6345,14 +6464,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Email</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Angkatan</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Program</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Jalur Saat Ini</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Semester Mahasiswa</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Semester Penjaluran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Periode Penjaluran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahun Akademik</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Semester Akademik</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama Penjaluran</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran Sebelumnya</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran Baru</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pembimbing TA</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pembimbing TA Sebelumnya</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pembimbing TA Baru</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">DPA</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dospem Skripsi</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Pendaftaran</th>
@@ -6374,7 +6499,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               <td className="px-3 py-2">{row.nama || "-"}</td>
                               <td className="px-3 py-2">{row.email || "-"}</td>
                               <td className="px-3 py-2">{row.angkatan || "-"}</td>
+                              <td className="px-3 py-2">
+                                {row.program_kuliah ? formatLabel(row.program_kuliah) : "-"}
+                              </td>
                               <td className="px-3 py-2">{row.status_jalur_saat_ini || "-"}</td>
+                              <td className="px-3 py-2">{row.semester_mahasiswa || "-"}</td>
                               <td className="px-3 py-2">
                                 {row.semester_penjaluran_aktif || row.semester_penjaluran_ke
                                   ? `Semester ${row.semester_penjaluran_aktif || row.semester_penjaluran_ke}`
@@ -6389,7 +6518,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               <td className="px-3 py-2">
                                 {row.nama_penjaluran ? formatLabel(row.nama_penjaluran) : "-"}
                               </td>
+                              <td className="px-3 py-2">
+                                {row.penjaluran_sebelumnya ? formatLabel(row.penjaluran_sebelumnya) : "-"}
+                              </td>
+                              <td className="px-3 py-2">
+                                {row.penjaluran_baru ? formatLabel(row.penjaluran_baru) : "-"}
+                              </td>
                               <td className="px-3 py-2">{row.pembimbing_ta || "-"}</td>
+                              <td className="px-3 py-2">{row.pembimbing_ta_sebelumnya || "-"}</td>
+                              <td className="px-3 py-2">{row.pembimbing_ta_baru || "-"}</td>
                               <td className="px-3 py-2">{row.dosen_pembimbing_akademik || "-"}</td>
                               <td className="px-3 py-2">{row.dosen_pembimbing_skripsi || "-"}</td>
                               <td className="px-3 py-2">
@@ -7655,7 +7792,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       Hanya menampilkan permintaan surat rekomendasi magang yang masuk ke dosen pengawas magang pada periode aktif.
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <div className="relative">
                       <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                       <input
@@ -8041,6 +8178,56 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
+                    <select
+                      value={masterTopikFilters.cluster}
+                      onChange={(event) =>
+                        setMasterTopikFilters((prev) => ({ ...prev, cluster: event.target.value }))
+                      }
+                      className="w-[150px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                    >
+                      <option value="">Semua cluster</option>
+                      {masterTopikFilterOptions.cluster.map((item) => (
+                        <option key={`master-topik-filter-cluster-${item}`} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={masterTopikFilters.status}
+                      onChange={(event) =>
+                        setMasterTopikFilters((prev) => ({ ...prev, status: event.target.value }))
+                      }
+                      className="w-[150px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                    >
+                      <option value="">Semua status</option>
+                      {masterTopikFilterOptions.status.map((item) => (
+                        <option key={`master-topik-filter-status-${item}`} value={item}>
+                          {formatLabel(item)}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={masterTopikFilters.dosen}
+                      onChange={(event) =>
+                        setMasterTopikFilters((prev) => ({ ...prev, dosen: event.target.value }))
+                      }
+                      className="w-[220px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]"
+                    >
+                      <option value="">Semua dosen</option>
+                      {masterTopikFilterOptions.dosen.map((item) => (
+                        <option key={`master-topik-filter-dosen-${item.value}`} value={item.value}>
+                          {item.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setMasterTopikFilters({ ...MASTER_TOPIK_FILTER_INITIAL })}
+                      disabled={!Object.values(masterTopikFilters).some((value) => String(value || "").trim())}
+                      className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Reset
+                    </button>
                     <button
                       type="button"
                       onClick={loadAllData}
