@@ -159,6 +159,28 @@ function sanitizeTwoDigitPositiveNumber(value) {
     .slice(0, 2);
 }
 
+function formatAcademicYearInput(value) {
+  const digits = String(value || "")
+    .replace(/\D/g, "")
+    .slice(0, 8);
+  if (digits.length <= 4) return digits;
+  return `${digits.slice(0, 4)}/${digits.slice(4)}`;
+}
+
+function getAcademicYearError(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})\/(\d{4})$/);
+  if (!match) return "Gunakan format YYYY/YYYY, contoh 2026/2027.";
+
+  const startYear = Number(match[1]);
+  const endYear = Number(match[2]);
+  if (!Number.isFinite(startYear) || !Number.isFinite(endYear) || endYear !== startYear + 1) {
+    return "Tahun kedua harus satu tahun setelah tahun pertama, contoh 2026/2027.";
+  }
+
+  return "";
+}
+
 function buildPeriodeMasterSearchInitial() {
   const next = {};
   for (const item of PERIODE_MASTER_ALL_FIELDS) {
@@ -4750,7 +4772,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   const handlePeriodeInputChange = (event) => {
     const { name, value } = event.target;
-    setPeriodeForm((prev) => ({ ...prev, [name]: value }));
+    const nextValue = name === "tahun_akademik" ? formatAcademicYearInput(value) : value;
+    setPeriodeForm((prev) => ({ ...prev, [name]: nextValue }));
     setPeriodeFormErrors((prev) => {
       if (!prev[name]) return prev;
       const next = { ...prev };
@@ -5174,7 +5197,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     const fieldErrors = {};
     const masterErrors = {};
     const tahunAkademik = periodeForm.tahun_akademik.trim();
-    const tahunRegex = /^\d{4}\/\d{4}$/;
 
     PERIODE_MASTER_ALL_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
@@ -5186,8 +5208,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
     if (!tahunAkademik) {
       fieldErrors.tahun_akademik = "Tahun akademik wajib diisi.";
-    } else if (!tahunRegex.test(tahunAkademik)) {
-      fieldErrors.tahun_akademik = "Gunakan format YYYY/YYYY, contoh 2026/2027.";
+    } else {
+      const tahunAkademikError = getAcademicYearError(tahunAkademik);
+      if (tahunAkademikError) {
+        fieldErrors.tahun_akademik = tahunAkademikError;
+      }
     }
     if (!periodeForm.semester) {
       fieldErrors.semester = "Semester wajib dipilih.";
@@ -10568,6 +10593,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               name="tahun_akademik"
                               value={periodeForm.tahun_akademik}
                               onChange={handlePeriodeInputChange}
+                              inputMode="numeric"
+                              maxLength={9}
+                              pattern="\d{4}/\d{4}"
                               placeholder="Contoh: 2026/2027"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.tahun_akademik ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"

@@ -340,6 +340,20 @@ function validateTahunAkademik(value) {
   return Number.isFinite(tahunAwal) && Number.isFinite(tahunAkhir) && tahunAkhir === tahunAwal + 1;
 }
 
+function getTahunAkademikValidationMessage(value) {
+  const text = normalizeText(value);
+  const match = text.match(/^(\d{4})\/(\d{4})$/);
+  if (!match) return "Format tahun akademik tidak valid. Gunakan YYYY/YYYY (contoh: 2026/2027).";
+
+  const tahunAwal = Number(match[1]);
+  const tahunAkhir = Number(match[2]);
+  if (!Number.isFinite(tahunAwal) || !Number.isFinite(tahunAkhir) || tahunAkhir !== tahunAwal + 1) {
+    return "Tahun kedua harus satu tahun setelah tahun pertama (contoh: 2026/2027).";
+  }
+
+  return "";
+}
+
 function formatPeriodeLabel(semester, tahunAkademik) {
   const semesterLabel = semester === "ganjil" ? "Ganjil" : "Genap";
   return `${semesterLabel} ${tahunAkademik}`;
@@ -2528,9 +2542,9 @@ exports.openPeriodePendaftaran = async (req, res) => {
         "Dosen pengampu jalur perintisan bisnis wajib dipilih di Master Data penanggung jawab.";
     }
 
-    if (!validateTahunAkademik(tahunAkademik)) {
-      fieldErrors.tahun_akademik =
-        "Format tahun akademik tidak valid. Gunakan YYYY/YYYY (contoh: 2026/2027).";
+    const tahunAkademikError = getTahunAkademikValidationMessage(tahunAkademik);
+    if (tahunAkademikError) {
+      fieldErrors.tahun_akademik = tahunAkademikError;
     }
 
     if (!["ganjil", "genap"].includes(semester)) {
