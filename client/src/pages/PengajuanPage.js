@@ -218,6 +218,21 @@ function getTopikStatusLabel(key) {
   return "Tidak Tersedia";
 }
 
+function getTopikOptionLabel(item) {
+  if (!item) return "";
+  const kode = item.kode || "-";
+  const judul = item.judul || "-";
+  const dosen = item.dosen?.nama ? ` | ${item.dosen.nama}` : "";
+  return `${kode} - ${judul}${dosen}`;
+}
+
+function getTopikOptionSearchText(item) {
+  return [item?.kode, item?.judul, item?.keyword, item?.cluster, item?.dosen?.nama, item?.dosen?.nik]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 function getTopikDosenFilterValue(item) {
   const dosen = item?.dosen || {};
   if (dosen.id !== null && dosen.id !== undefined && String(dosen.id).trim() !== "") return `id:${dosen.id}`;
@@ -319,6 +334,12 @@ function FormJudulDosen({
     topik_2_kode: "",
     topik_3_kode: "",
   });
+  const [topikComboQueries, setTopikComboQueries] = useState({
+    topik_1_kode: "",
+    topik_2_kode: "",
+    topik_3_kode: "",
+  });
+  const [openTopikComboSlot, setOpenTopikComboSlot] = useState(null);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
@@ -327,6 +348,7 @@ function FormJudulDosen({
   const topikFilterButtonRef = useRef(null);
   const topikFilterPopupRef = useRef(null);
   const topikDosenComboboxRef = useRef(null);
+  const topikComboRefs = useRef({});
 
   useEffect(() => {
     let isMounted = true;
@@ -580,6 +602,21 @@ function FormJudulDosen({
   }, [showTopikFilterPanel]);
 
   useEffect(() => {
+    if (!openTopikComboSlot) return undefined;
+
+    const handleComboboxOutsideClick = (event) => {
+      const activeRef = topikComboRefs.current[openTopikComboSlot];
+      if (activeRef?.contains(event.target)) return;
+      setOpenTopikComboSlot(null);
+    };
+
+    document.addEventListener("mousedown", handleComboboxOutsideClick);
+    return () => {
+      document.removeEventListener("mousedown", handleComboboxOutsideClick);
+    };
+  }, [openTopikComboSlot]);
+
+  useEffect(() => {
     if (showTopikDosenFilterOptions) return;
     if (selectedTopikDosenFilter) {
       setTopikDosenFilterQuery(selectedTopikDosenFilter.label);
@@ -641,58 +678,103 @@ function FormJudulDosen({
     return availableTopik.filter((item) => !selectedElsewhere.has(item.kode));
   };
 
+  const buildNextSelectedCodes = (prev, field, value) => {
+    if (field === "topik_1_kode") {
+      const next = { ...prev, topik_1_kode: value };
+      if (!value) {
+        next.topik_2_kode = "";
+        next.topik_3_kode = "";
+        return next;
+      }
+      if (next.topik_2_kode === value) {
+        next.topik_2_kode = "";
+        next.topik_3_kode = "";
+        return next;
+      }
+      if (next.topik_3_kode === value) {
+        next.topik_3_kode = "";
+      }
+      if (!next.topik_2_kode) {
+        next.topik_3_kode = "";
+      }
+      return next;
+    }
+
+    if (field === "topik_2_kode") {
+      const next = { ...prev, topik_2_kode: value };
+      if (!prev.topik_1_kode) {
+        next.topik_2_kode = "";
+        next.topik_3_kode = "";
+        return next;
+      }
+      if (!value || value === prev.topik_1_kode) {
+        next.topik_2_kode = "";
+        next.topik_3_kode = "";
+        return next;
+      }
+      if (next.topik_3_kode === value) {
+        next.topik_3_kode = "";
+      }
+      return next;
+    }
+
+    if (field === "topik_3_kode") {
+      if (!prev.topik_1_kode || !prev.topik_2_kode) {
+        return {
+          ...prev,
+          topik_3_kode: "",
+        };
+      }
+    }
+
+    return { ...prev, [field]: value };
+  };
+
+  const buildTopikComboQueriesFromCodes = (codes, activeField = null, activeValue = null) => ({
+    topik_1_kode:
+      activeField === "topik_1_kode"
+        ? activeValue
+        : codes.topik_1_kode
+          ? getTopikOptionLabel(topikByKode[codes.topik_1_kode])
+          : "",
+    topik_2_kode:
+      activeField === "topik_2_kode"
+        ? activeValue
+        : codes.topik_2_kode
+          ? getTopikOptionLabel(topikByKode[codes.topik_2_kode])
+          : "",
+    topik_3_kode:
+      activeField === "topik_3_kode"
+        ? activeValue
+        : codes.topik_3_kode
+          ? getTopikOptionLabel(topikByKode[codes.topik_3_kode])
+          : "",
+  });
+
+  const getFilteredTopikOptionsForSlot = (slotNumber) => {
+    const field = `topik_${slotNumber}_kode`;
+    const keyword = String(topikComboQueries[field] || "").trim().toLowerCase();
+    if (!keyword) return [];
+    return optionListForSlot(slotNumber)
+      .filter((item) => getTopikOptionSearchText(item).includes(keyword))
+      .slice(0, 40);
+  };
+
   const handleSelectChange = (field, value) => {
-    setSelectedCodes((prev) => {
-      if (field === "topik_1_kode") {
-        const next = { ...prev, topik_1_kode: value };
-        if (!value) {
-          next.topik_2_kode = "";
-          next.topik_3_kode = "";
-          return next;
-        }
-        if (next.topik_2_kode === value) {
-          next.topik_2_kode = "";
-          next.topik_3_kode = "";
-          return next;
-        }
-        if (next.topik_3_kode === value) {
-          next.topik_3_kode = "";
-        }
-        if (!next.topik_2_kode) {
-          next.topik_3_kode = "";
-        }
-        return next;
-      }
+    const nextCodes = buildNextSelectedCodes(selectedCodes, field, value);
+    setSelectedCodes(nextCodes);
+    setTopikComboQueries(buildTopikComboQueriesFromCodes(nextCodes));
+    setOpenTopikComboSlot(null);
+    setSubmitError("");
+    setSubmitSuccess("");
+  };
 
-      if (field === "topik_2_kode") {
-        const next = { ...prev, topik_2_kode: value };
-        if (!prev.topik_1_kode) {
-          next.topik_2_kode = "";
-          next.topik_3_kode = "";
-          return next;
-        }
-        if (!value || value === prev.topik_1_kode) {
-          next.topik_2_kode = "";
-          next.topik_3_kode = "";
-          return next;
-        }
-        if (next.topik_3_kode === value) {
-          next.topik_3_kode = "";
-        }
-        return next;
-      }
-
-      if (field === "topik_3_kode") {
-        if (!prev.topik_1_kode || !prev.topik_2_kode) {
-          return {
-            ...prev,
-            topik_3_kode: "",
-          };
-        }
-      }
-
-      return { ...prev, [field]: value };
-    });
+  const handleTopikComboInputChange = (slotNumber, value) => {
+    const field = `topik_${slotNumber}_kode`;
+    const nextCodes = selectedCodes[field] ? buildNextSelectedCodes(selectedCodes, field, "") : selectedCodes;
+    setSelectedCodes(nextCodes);
+    setTopikComboQueries(buildTopikComboQueriesFromCodes(nextCodes, field, value));
+    setOpenTopikComboSlot(slotNumber);
     setSubmitError("");
     setSubmitSuccess("");
   };
@@ -703,6 +785,12 @@ function FormJudulDosen({
       topik_2_kode: "",
       topik_3_kode: "",
     });
+    setTopikComboQueries({
+      topik_1_kode: "",
+      topik_2_kode: "",
+      topik_3_kode: "",
+    });
+    setOpenTopikComboSlot(null);
     setSubmitError("");
     setSubmitSuccess("");
   };
@@ -785,12 +873,104 @@ function FormJudulDosen({
         topik_2_kode: "",
         topik_3_kode: "",
       });
+      setTopikComboQueries({
+        topik_1_kode: "",
+        topik_2_kode: "",
+        topik_3_kode: "",
+      });
+      setOpenTopikComboSlot(null);
       onSubmitted?.();
     } catch (error) {
       setSubmitError(error.message || "Pengajuan topik dosen gagal.");
     } finally {
       setSubmitLoading(false);
     }
+  };
+
+  const renderTopikCombobox = (slotNumber, label, enabled, placeholder) => {
+    const field = `topik_${slotNumber}_kode`;
+    const query = topikComboQueries[field] || "";
+    const options = getFilteredTopikOptionsForSlot(slotNumber);
+    const showOptions = openTopikComboSlot === slotNumber && enabled && query.trim().length > 0;
+
+    return (
+      <div ref={(node) => { topikComboRefs.current[slotNumber] = node; }}>
+        <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+        <div className="relative">
+          <input
+            type="text"
+            role="combobox"
+            aria-expanded={showOptions}
+            aria-controls={`topik-combo-options-${slotNumber}`}
+            aria-autocomplete="list"
+            value={query}
+            onChange={(event) => handleTopikComboInputChange(slotNumber, event.target.value)}
+            onFocus={() => {
+              if (enabled && query.trim()) setOpenTopikComboSlot(slotNumber);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setOpenTopikComboSlot(null);
+            }}
+            disabled={!enabled}
+            placeholder={placeholder}
+            autoComplete="off"
+            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${
+              enabled ? "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20" : "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+            }`}
+          />
+          <button
+            type="button"
+            aria-label={`Buka pilihan topik ${slotNumber}`}
+            onClick={() => {
+              if (!enabled || !query.trim()) {
+                setOpenTopikComboSlot(null);
+                return;
+              }
+              setOpenTopikComboSlot((prev) => (prev === slotNumber ? null : slotNumber));
+            }}
+            disabled={!enabled}
+            className={`absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md ${
+              enabled ? "text-[#4c5f8d] hover:bg-[#f2f5ff]" : "cursor-not-allowed text-[#9aa6c2]"
+            }`}
+          >
+            <ChevronDown className="h-4 w-4" />
+          </button>
+
+          {showOptions ? (
+            <div
+              id={`topik-combo-options-${slotNumber}`}
+              role="listbox"
+              className="absolute z-30 mt-1 max-h-72 w-full overflow-auto rounded-lg border border-[#d0dbf4] bg-white shadow-lg"
+            >
+              {options.length > 0 ? (
+                options.map((item) => (
+                  <button
+                    key={`slot-${slotNumber}-combo-${item.kode}`}
+                    type="button"
+                    role="option"
+                    aria-selected={selectedCodes[field] === item.kode}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => handleSelectChange(field, item.kode)}
+                    className={`block w-full border-b border-[#eef2fa] px-3 py-2 text-left text-sm transition last:border-b-0 hover:bg-[#eef3ff] ${
+                      selectedCodes[field] === item.kode ? "bg-[#eef3ff] font-semibold text-[#254db4]" : "text-[#263a68]"
+                    }`}
+                  >
+                    <span className="block font-semibold">{item.kode} - {item.judul || "-"}</span>
+                    <span className="mt-0.5 block text-xs text-[#64739a]">
+                      {formatCluster(item.cluster)} | {item.dosen?.nama || "-"} | Keyword: {item.keyword || "-"}
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-3 py-3 text-sm font-semibold text-[#7b88ab]">
+                  Topik tidak ditemukan.
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
   };
 
   const topikFilterPopup =
@@ -1077,62 +1257,9 @@ function FormJudulDosen({
         <p className="mb-4 text-sm text-[#5d6c91]">Pilih minimal 1 topik. Pilihan tidak boleh duplikat.</p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Topik Pilihan 1 (Wajib)</label>
-            <select
-              value={selectedCodes.topik_1_kode}
-              onChange={(event) => handleSelectChange("topik_1_kode", event.target.value)}
-              disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-              }`}
-            >
-              <option value="">Pilih topik 1</option>
-              {optionListForSlot(1).map((item) => (
-                <option key={`slot-1-${item.kode}`} value={item.kode}>
-                  {item.kode} - {item.judul}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Topik Pilihan 2 (Opsional)</label>
-            <select
-              value={selectedCodes.topik_2_kode}
-              onChange={(event) => handleSelectChange("topik_2_kode", event.target.value)}
-              disabled={!isTopik2Enabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                isTopik2Enabled ? "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20" : "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-              }`}
-            >
-              <option value="">Pilih topik 2</option>
-              {optionListForSlot(2).map((item) => (
-                <option key={`slot-2-${item.kode}`} value={item.kode}>
-                  {item.kode} - {item.judul}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Topik Pilihan 3 (Opsional)</label>
-            <select
-              value={selectedCodes.topik_3_kode}
-              onChange={(event) => handleSelectChange("topik_3_kode", event.target.value)}
-              disabled={!isTopik3Enabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                isTopik3Enabled ? "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20" : "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-              }`}
-            >
-              <option value="">Pilih topik 3</option>
-              {optionListForSlot(3).map((item) => (
-                <option key={`slot-3-${item.kode}`} value={item.kode}>
-                  {item.kode} - {item.judul}
-                </option>
-              ))}
-            </select>
-          </div>
+          {renderTopikCombobox(1, "Topik Pilihan 1 (Wajib)", !disabled, "Ketik kode, judul, dosen, atau bidang")}
+          {renderTopikCombobox(2, "Topik Pilihan 2 (Opsional)", isTopik2Enabled, "Ketik untuk mencari topik 2")}
+          {renderTopikCombobox(3, "Topik Pilihan 3 (Opsional)", isTopik3Enabled, "Ketik untuk mencari topik 3")}
         </div>
 
         {duplicateCodes ? (

@@ -1177,6 +1177,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [magangReviewQuery, setMagangReviewQuery] = useState("");
   const [magangReviewPage, setMagangReviewPage] = useState(1);
   const [magangReviewActionId, setMagangReviewActionId] = useState(null);
+  const [magangReviewMode, setMagangReviewMode] = useState("list");
+  const [selectedMagangReviewId, setSelectedMagangReviewId] = useState(null);
+  const [magangReviewDetail, setMagangReviewDetail] = useState(null);
+  const [loadingMagangReviewDetail, setLoadingMagangReviewDetail] = useState(false);
+  const [magangReviewDecisionNote, setMagangReviewDecisionNote] = useState("");
   const [pengampuReviewRowsByJalur, setPengampuReviewRowsByJalur] = useState({
     pengabdian: [],
     perintisan_bisnis: [],
@@ -1190,6 +1195,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     perintisan_bisnis: 1,
   });
   const [pengampuReviewActionId, setPengampuReviewActionId] = useState(null);
+  const [pengampuReviewMode, setPengampuReviewMode] = useState("list");
+  const [selectedPengampuReviewId, setSelectedPengampuReviewId] = useState(null);
+  const [pengampuReviewDetail, setPengampuReviewDetail] = useState(null);
+  const [loadingPengampuReviewDetail, setLoadingPengampuReviewDetail] = useState(false);
+  const [pengampuReviewDecisionNote, setPengampuReviewDecisionNote] = useState("");
   const [sekprodiNonPenelitianRows, setSekprodiNonPenelitianRows] = useState([]);
   const [sekprodiNonPenelitianActionId, setSekprodiNonPenelitianActionId] = useState(null);
   const [mitraMagangRows, setMitraMagangRows] = useState([]);
@@ -3681,6 +3691,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [isSubmissionReviewTabActive]);
 
   useEffect(() => {
+    if (activeTab !== "magang-review") {
+      handleBackToMagangReviewList();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    handleBackToPengampuReviewList();
+  }, [activePengampuReviewJalur]);
+
+  useEffect(() => {
     if (submissionReviewTopikOptions.length === 0) {
       if (submissionTopikFocusSlot) {
         setSubmissionTopikFocusSlot("");
@@ -3863,81 +3883,65 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   };
 
+  const handleBackToMagangReviewList = () => {
+    setMagangReviewMode("list");
+    setSelectedMagangReviewId(null);
+    setMagangReviewDetail(null);
+    setMagangReviewDecisionNote("");
+  };
+
   const handleOpenMagangReviewDetail = async (id) => {
-    setMagangReviewActionId(id);
+    setSelectedMagangReviewId(id);
+    setMagangReviewDecisionNote("");
+    setLoadingMagangReviewDetail(true);
+    setMagangReviewMode("review");
     try {
       const detail = await fetchWithAuth(`/api/dosen/non-penelitian/magang/reviews/${id}`);
-      const fieldsHtml = getMagangDetailFields(detail)
-        .map(
-          ([label, value]) => `
-            <tr>
-              <td style="width:220px;padding:8px 10px;border-bottom:1px solid #edf2fb;color:#52638d;font-weight:700;vertical-align:top;">${escapeHtml(label)}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #edf2fb;color:#203665;vertical-align:top;">${escapeHtml(
-                formatMagangPayloadValue(value)
-              )}</td>
-            </tr>
-          `
-        )
-        .join("");
-
-      await Swal.fire({
-        title: `Detail Review Magang #${detail?.id || id}`,
-        width: 860,
-        confirmButtonText: "Tutup",
-        html: `
-          <div style="text-align:left;font-size:14px;line-height:1.55;color:#24345e;">
-            <p style="margin-bottom:10px;color:#52638d;">
-              Form ini masuk ke antrean dosen pengawas magang. Beri keputusan setelah data perusahaan, posisi, dan dokumen pendukung sesuai.
-            </p>
-            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e9f6;border-radius:10px;overflow:hidden;">
-              <tbody>${fieldsHtml}</tbody>
-            </table>
-            <h4 style="margin:16px 0 8px;color:#1b274b;font-size:15px;">Timeline Workflow</h4>
-            ${getMagangTimelineHtml(detail)}
-          </div>
-        `,
-      });
+      setMagangReviewDetail(detail || null);
     } catch (detailError) {
       if (detailError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(detailError.message || "Gagal memuat detail review magang.");
       }
+      handleBackToMagangReviewList();
     } finally {
-      setMagangReviewActionId(null);
+      setLoadingMagangReviewDetail(false);
     }
   };
 
-  const handleMagangReviewDecision = async (row, decision) => {
-    const id = row?.id;
+  const handleRefreshMagangReviewDetail = async () => {
+    if (!selectedMagangReviewId) return;
+    setLoadingMagangReviewDetail(true);
+    try {
+      const detail = await fetchWithAuth(`/api/dosen/non-penelitian/magang/reviews/${selectedMagangReviewId}`);
+      setMagangReviewDetail(detail || null);
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || "Gagal memuat ulang detail review magang.");
+      }
+    } finally {
+      setLoadingMagangReviewDetail(false);
+    }
+  };
+
+  const handleSubmitMagangReviewDecision = async (decision) => {
+    const id = selectedMagangReviewId || magangReviewDetail?.id;
     if (!id) {
       showErrorToast("Data review magang tidak valid.");
       return;
     }
 
     const isApprove = decision === "approve";
-    const result = await Swal.fire({
-      title: isApprove ? "Setujui pengajuan magang?" : "Tolak pengajuan magang?",
-      text: isApprove
-        ? "Pengajuan akan diteruskan ke Sekprodi untuk keputusan final."
-        : "Mahasiswa akan melihat alasan penolakan ini.",
-      input: "textarea",
-      inputPlaceholder: isApprove ? "Catatan persetujuan (opsional)" : "Alasan penolakan",
-      showCancelButton: true,
-      confirmButtonText: isApprove ? "Setujui" : "Tolak",
-      cancelButtonText: "Batal",
-      confirmButtonColor: isApprove ? "#137748" : "#b73a3a",
-      inputValidator: (value) => {
-        const note = String(value || "").trim();
-        if (!isApprove && !note) return "Alasan penolakan wajib diisi.";
-        return undefined;
-      },
-    });
-    if (!result.isConfirmed) return;
+    const note = String(magangReviewDecisionNote || "").trim();
+    if (!isApprove && !note) {
+      showErrorToast("Alasan penolakan wajib diisi.");
+      return;
+    }
 
     setMagangReviewActionId(id);
     try {
       await fetchWithAuth(`/api/dosen/non-penelitian/magang/reviews/${id}/${isApprove ? "approve" : "reject"}`, {
         method: "POST",
-        body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
+        body: JSON.stringify({ keterangan: note }),
       });
       showSuccessToast(
         isApprove
@@ -3945,6 +3949,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
           : "Pengajuan magang berhasil ditolak."
       );
       await loadAllData();
+      handleBackToMagangReviewList();
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || "Gagal memproses keputusan review magang.");
@@ -3969,93 +3974,77 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   };
 
+  const handleBackToPengampuReviewList = () => {
+    setPengampuReviewMode("list");
+    setSelectedPengampuReviewId(null);
+    setPengampuReviewDetail(null);
+    setPengampuReviewDecisionNote("");
+  };
+
   const handleOpenPengampuReviewDetail = async (id, config) => {
     if (!id || !config?.endpointSlug) {
       showErrorToast("Data review tidak valid.");
       return;
     }
 
-    const actionKey = `${config.jalur}-${id}`;
-    setPengampuReviewActionId(actionKey);
+    setSelectedPengampuReviewId(id);
+    setPengampuReviewDecisionNote("");
+    setLoadingPengampuReviewDetail(true);
+    setPengampuReviewMode("review");
     try {
       const detail = await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}`);
-      const fieldsHtml = getPengampuReviewDetailFields(detail, config)
-        .map(
-          ([label, value]) => `
-            <tr>
-              <td style="width:220px;padding:8px 10px;border-bottom:1px solid #edf2fb;color:#52638d;font-weight:700;vertical-align:top;">${escapeHtml(label)}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #edf2fb;color:#203665;vertical-align:top;">${escapeHtml(
-                formatMagangPayloadValue(value)
-              )}</td>
-            </tr>
-          `
-        )
-        .join("");
-
-      await Swal.fire({
-        title: `Detail ${config.title} #${detail?.id || id}`,
-        width: 820,
-        confirmButtonText: "Tutup",
-        html: `
-          <div style="text-align:left;font-size:14px;line-height:1.55;color:#24345e;">
-            <p style="margin-bottom:10px;color:#52638d;">
-              Form ini masuk ke antrean ${escapeHtml(config.title.toLowerCase())}. Beri keputusan setelah ringkasan dan catatan mahasiswa sudah sesuai.
-            </p>
-            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e9f6;border-radius:10px;overflow:hidden;">
-              <tbody>${fieldsHtml}</tbody>
-            </table>
-            <h4 style="margin:16px 0 8px;color:#1b274b;font-size:15px;">Timeline Workflow</h4>
-            ${getMagangTimelineHtml(detail)}
-          </div>
-        `,
-      });
+      setPengampuReviewDetail(detail || null);
     } catch (detailError) {
       if (detailError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(detailError.message || `Gagal memuat detail ${config.title.toLowerCase()}.`);
       }
+      handleBackToPengampuReviewList();
     } finally {
-      setPengampuReviewActionId(null);
+      setLoadingPengampuReviewDetail(false);
     }
   };
 
-  const handlePengampuReviewDecision = async (row, config, decision) => {
-    const id = row?.id;
+  const handleRefreshPengampuReviewDetail = async () => {
+    if (!selectedPengampuReviewId || !activePengampuReviewConfig?.endpointSlug) return;
+    setLoadingPengampuReviewDetail(true);
+    try {
+      const detail = await fetchWithAuth(
+        `/api/dosen/non-penelitian/${activePengampuReviewConfig.endpointSlug}/reviews/${selectedPengampuReviewId}`
+      );
+      setPengampuReviewDetail(detail || null);
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || `Gagal memuat ulang detail ${activePengampuReviewConfig.title.toLowerCase()}.`);
+      }
+    } finally {
+      setLoadingPengampuReviewDetail(false);
+    }
+  };
+
+  const handleSubmitPengampuReviewDecision = async (config, decision) => {
+    const id = selectedPengampuReviewId || pengampuReviewDetail?.id;
     if (!id || !config?.endpointSlug) {
       showErrorToast("Data review tidak valid.");
       return;
     }
 
     const isApprove = decision === "approve";
-    const result = await Swal.fire({
-      title: isApprove ? `Setujui ${config.title.toLowerCase()}?` : `Tolak ${config.title.toLowerCase()}?`,
-      text: isApprove
-        ? config.jalur === "perintisan_bisnis"
-          ? "Proposal akan diteruskan ke Sekprodi untuk keputusan akhir dan penetapan dosen pembimbing."
-          : "Pengajuan akan disetujui oleh dosen pengampu."
-        : "Mahasiswa akan melihat alasan penolakan ini.",
-      input: "textarea",
-      inputPlaceholder: isApprove ? "Catatan persetujuan (opsional)" : "Alasan penolakan",
-      showCancelButton: true,
-      confirmButtonText: isApprove ? "Setujui" : "Tolak",
-      cancelButtonText: "Batal",
-      confirmButtonColor: isApprove ? "#137748" : "#b73a3a",
-      inputValidator: (value) => {
-        const note = String(value || "").trim();
-        if (!isApprove && !note) return "Alasan penolakan wajib diisi.";
-        return undefined;
-      },
-    });
-    if (!result.isConfirmed) return;
+    const note = String(pengampuReviewDecisionNote || "").trim();
+    if (!isApprove && !note) {
+      showErrorToast("Alasan penolakan wajib diisi.");
+      return;
+    }
 
     const actionKey = `${config.jalur}-${id}`;
     setPengampuReviewActionId(actionKey);
     try {
       await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}/${isApprove ? "approve" : "reject"}`, {
         method: "POST",
-        body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
+        body: JSON.stringify({ keterangan: note }),
       });
       showSuccessToast(isApprove ? config.approveSuccess : config.rejectSuccess);
       await loadAllData();
+      handleBackToPengampuReviewList();
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || `Gagal memproses keputusan ${config.title.toLowerCase()}.`);
@@ -7127,90 +7116,35 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   const isPengampuBusy = pengampuReviewActionId === actionKey;
                                   const actionButtons =
                                     source === "penelitian" ? (
-                                      row.status === "pending" && row.can_review ? (
-                                        <div className="flex items-center gap-2">
-                                          <button
-                                            type="button"
-                                            disabled={loadingSubmissionDetail}
-                                            onClick={() => handleOpenSubmissionReview(row.id, "approve")}
-                                            className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                          >
-                                            Approve
-                                          </button>
-                                          <button
-                                            type="button"
-                                            disabled={loadingSubmissionDetail}
-                                            onClick={() => handleOpenSubmissionReview(row.id, "reject")}
-                                            className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                          >
-                                            Reject
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          disabled={loadingSubmissionDetail}
-                                          onClick={() => handleOpenSubmissionReview(row.id)}
-                                          className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          <Eye className="h-3.5 w-3.5" />
-                                          Detail
-                                        </button>
-                                      )
+                                      <button
+                                        type="button"
+                                        disabled={loadingSubmissionDetail}
+                                        onClick={() => handleOpenSubmissionReview(row.id)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        <Eye className="h-3.5 w-3.5" />
+                                        Review
+                                      </button>
                                     ) : source === "magang" ? (
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          type="button"
-                                          disabled={magangReviewActionId === row.id}
-                                          onClick={() => handleOpenMagangReviewDetail(row.id)}
-                                          className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Detail
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={magangReviewActionId === row.id}
-                                          onClick={() => handleMagangReviewDecision(row, "approve")}
-                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Approve
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={magangReviewActionId === row.id}
-                                          onClick={() => handleMagangReviewDecision(row, "reject")}
-                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Tolak
-                                        </button>
-                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={magangReviewActionId === row.id}
+                                        onClick={() => handleOpenMagangReviewDetail(row.id)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        <Eye className="h-3.5 w-3.5" />
+                                        Review
+                                      </button>
                                     ) : config ? (
-                                      <div className="flex items-center gap-2">
-                                        <button
-                                          type="button"
-                                          disabled={isPengampuBusy}
-                                          onClick={() => handleOpenPengampuReviewDetail(row.id, config)}
-                                          className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Detail
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isPengampuBusy}
-                                          onClick={() => handlePengampuReviewDecision(row, config, "approve")}
-                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Approve
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isPengampuBusy}
-                                          onClick={() => handlePengampuReviewDecision(row, config, "reject")}
-                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                        >
-                                          Tolak
-                                        </button>
-                                      </div>
+                                      <button
+                                        type="button"
+                                        disabled={isPengampuBusy}
+                                        onClick={() => handleOpenPengampuReviewDetail(row.id, config)}
+                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                      >
+                                        <Eye className="h-3.5 w-3.5" />
+                                        Review
+                                      </button>
                                     ) : null;
 
                                   if (activeGridTab === "semua") {
@@ -7809,6 +7743,129 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             ) : null}
 
             {!loading && activeTab === "magang-review" ? (
+              magangReviewMode === "review" ? (
+                <div className="flex min-h-0 flex-1 flex-col gap-4">
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBackToMagangReviewList}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                        title="Kembali ke grid review magang"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRefreshMagangReviewDetail}
+                        disabled={loadingMagangReviewDetail}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <h3 className="text-lg font-black text-[#1b274b]">Review Magang</h3>
+                    <p className="text-sm text-[#5d6c91]">
+                      Tinjau permintaan surat rekomendasi magang sebelum memberi keputusan.
+                    </p>
+
+                    {loadingMagangReviewDetail ? (
+                      <div className="mt-4 rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-6 text-center text-sm font-semibold text-[#60709a]">
+                        Memuat detail review magang...
+                      </div>
+                    ) : null}
+
+                    {!loadingMagangReviewDetail && magangReviewDetail ? (
+                      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                        {getMagangDetailFields(magangReviewDetail).map(([label, value]) => (
+                          <div key={`magang-review-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                            <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
+                            <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
+                              {formatMagangPayloadValue(value)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {!loadingMagangReviewDetail && magangReviewDetail ? (
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Timeline Workflow</h3>
+                      <div className="mt-3 space-y-2">
+                        {Array.isArray(getMagangPayload(magangReviewDetail).workflow_timeline) &&
+                        getMagangPayload(magangReviewDetail).workflow_timeline.length > 0 ? (
+                          getMagangPayload(magangReviewDetail).workflow_timeline.map((item, index) => (
+                            <div key={`magang-review-timeline-${index}`} className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-black text-[#27407b]">{formatLabel(item?.status || "-")}</p>
+                                <p className="text-xs font-semibold text-[#60709a]">{formatDateTime(item?.at)}</p>
+                              </div>
+                              <p className="mt-1 text-sm font-semibold text-[#42537d]">{formatLabel(item?.actor || "-")}</p>
+                              <p className="mt-1 text-sm text-[#2f426f]">{item?.note || "-"}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3 text-sm font-semibold text-[#65749b]">
+                            Belum ada timeline workflow.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {!loadingMagangReviewDetail && magangReviewDetail ? (
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan</h3>
+                      {String(getMagangReviewStatus(magangReviewDetail) || "").toLowerCase() === "review_dosen_magang" ? (
+                        <>
+                          <p className="mt-1 text-sm text-[#5d6c91]">
+                            Approve akan meneruskan pengajuan ke Sekprodi. Tolak wajib menyertakan alasan.
+                          </p>
+                          <div className="mt-3">
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                              Catatan keputusan
+                            </label>
+                            <textarea
+                              rows={4}
+                              value={magangReviewDecisionNote}
+                              onChange={(event) => setMagangReviewDecisionNote(event.target.value)}
+                              placeholder="Isi catatan persetujuan atau alasan penolakan..."
+                              className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            />
+                          </div>
+                          <div className="mt-4 flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={magangReviewActionId === selectedMagangReviewId}
+                              onClick={() => handleSubmitMagangReviewDecision("reject")}
+                              className="rounded-lg bg-[#b73a3a] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Tolak
+                            </button>
+                            <button
+                              type="button"
+                              disabled={magangReviewActionId === selectedMagangReviewId}
+                              onClick={() => handleSubmitMagangReviewDecision("approve")}
+                              className="rounded-lg bg-[#137748] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Approve
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                          Pengajuan ini sudah tidak berada pada tahap review dosen pengawas magang.
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -7850,7 +7907,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <col style={{ width: "150px" }} />
                       <col style={{ width: "190px" }} />
                       <col style={{ width: "180px" }} />
-                      <col style={{ width: "220px" }} />
+                      <col style={{ width: "130px" }} />
                     </colgroup>
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -7870,7 +7927,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         ? pagedMagangReviewRows.map((row, index) => {
                             const nomorUrut = magangReviewRangeStart + index;
                             const status = getMagangReviewStatus(row);
-                            const canReview = String(status || "").toLowerCase() === "review_dosen_magang";
                             const isRowBusy = magangReviewActionId === row.id;
                             const proposedPosition = pickMagangPayloadText(row, [
                               "proposed_position_other",
@@ -7917,37 +7973,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   </p>
                                 </td>
                                 <td className="px-3 py-2 align-top">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={isRowBusy}
-                                      onClick={() => handleOpenMagangReviewDetail(row.id)}
-                                      className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      <Eye className="h-3.5 w-3.5" />
-                                      Detail
-                                    </button>
-                                    {canReview ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          disabled={isRowBusy}
-                                          onClick={() => handleMagangReviewDecision(row, "approve")}
-                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          Approve
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isRowBusy}
-                                          onClick={() => handleMagangReviewDecision(row, "reject")}
-                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          Reject
-                                        </button>
-                                      </>
-                                    ) : null}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={isRowBusy}
+                                    onClick={() => handleOpenMagangReviewDetail(row.id)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Review
+                                  </button>
                                 </td>
                               </tr>
                             );
@@ -7992,9 +8026,133 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
               </div>
+              )
             ) : null}
 
             {!loading && activePengampuReviewConfig ? (
+              pengampuReviewMode === "review" ? (
+                <div className="flex min-h-0 flex-1 flex-col gap-4">
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBackToPengampuReviewList}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                        title="Kembali ke grid review"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRefreshPengampuReviewDetail}
+                        disabled={loadingPengampuReviewDetail}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <h3 className="text-lg font-black text-[#1b274b]">{activePengampuReviewConfig.title}</h3>
+                    <p className="text-sm text-[#5d6c91]">
+                      Tinjau detail pengajuan sebelum memberi keputusan sebagai dosen pengampu.
+                    </p>
+
+                    {loadingPengampuReviewDetail ? (
+                      <div className="mt-4 rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-6 text-center text-sm font-semibold text-[#60709a]">
+                        Memuat detail review...
+                      </div>
+                    ) : null}
+
+                    {!loadingPengampuReviewDetail && pengampuReviewDetail ? (
+                      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                        {getPengampuReviewDetailFields(pengampuReviewDetail, activePengampuReviewConfig).map(([label, value]) => (
+                          <div key={`pengampu-review-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                            <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
+                            <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
+                              {formatMagangPayloadValue(value)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {!loadingPengampuReviewDetail && pengampuReviewDetail ? (
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Timeline Workflow</h3>
+                      <div className="mt-3 space-y-2">
+                        {Array.isArray(getMagangPayload(pengampuReviewDetail).workflow_timeline) &&
+                        getMagangPayload(pengampuReviewDetail).workflow_timeline.length > 0 ? (
+                          getMagangPayload(pengampuReviewDetail).workflow_timeline.map((item, index) => (
+                            <div key={`pengampu-review-timeline-${index}`} className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-black text-[#27407b]">{formatLabel(item?.status || "-")}</p>
+                                <p className="text-xs font-semibold text-[#60709a]">{formatDateTime(item?.at)}</p>
+                              </div>
+                              <p className="mt-1 text-sm font-semibold text-[#42537d]">{formatLabel(item?.actor || "-")}</p>
+                              <p className="mt-1 text-sm text-[#2f426f]">{item?.note || "-"}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3 text-sm font-semibold text-[#65749b]">
+                            Belum ada timeline workflow.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {!loadingPengampuReviewDetail && pengampuReviewDetail ? (
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan</h3>
+                      {String(getPengampuReviewStatus(pengampuReviewDetail) || "").toLowerCase() === "submitted" ? (
+                        <>
+                          <p className="mt-1 text-sm text-[#5d6c91]">
+                            Approve akan memproses pengajuan ke tahap berikutnya. Tolak wajib menyertakan alasan.
+                          </p>
+                          <div className="mt-3">
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                              Catatan keputusan
+                            </label>
+                            <textarea
+                              rows={4}
+                              value={pengampuReviewDecisionNote}
+                              onChange={(event) => setPengampuReviewDecisionNote(event.target.value)}
+                              placeholder="Isi catatan persetujuan atau alasan penolakan..."
+                              className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            />
+                          </div>
+                          <div className="mt-4 flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={pengampuReviewActionId === `${activePengampuReviewConfig.jalur}-${selectedPengampuReviewId}`}
+                              onClick={() => handleSubmitPengampuReviewDecision(activePengampuReviewConfig, "reject")}
+                              className="rounded-lg bg-[#b73a3a] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Tolak
+                            </button>
+                            <button
+                              type="button"
+                              disabled={pengampuReviewActionId === `${activePengampuReviewConfig.jalur}-${selectedPengampuReviewId}`}
+                              onClick={() => handleSubmitPengampuReviewDecision(activePengampuReviewConfig, "approve")}
+                              className="rounded-lg bg-[#137748] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Approve
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                          Pengajuan ini sudah tidak berada pada tahap review dosen pengampu.
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -8036,7 +8194,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <col style={{ width: "320px" }} />
                       <col style={{ width: "240px" }} />
                       <col style={{ width: "170px" }} />
-                      <col style={{ width: "220px" }} />
+                      <col style={{ width: "130px" }} />
                     </colgroup>
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -8060,7 +8218,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                         ? pagedPengampuReviewRows.map((row, index) => {
                             const nomorUrut = pengampuReviewRangeStart + index;
                             const status = getPengampuReviewStatus(row);
-                            const canReview = String(status || "").toLowerCase() === "submitted";
                             const actionKey = `${activePengampuReviewConfig.jalur}-${row.id}`;
                             const isRowBusy = pengampuReviewActionId === actionKey;
 
@@ -8101,41 +8258,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   </p>
                                 </td>
                                 <td className="px-3 py-2 align-top">
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={isRowBusy}
-                                      onClick={() => handleOpenPengampuReviewDetail(row.id, activePengampuReviewConfig)}
-                                      className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                      <Eye className="h-3.5 w-3.5" />
-                                      Detail
-                                    </button>
-                                    {canReview ? (
-                                      <>
-                                        <button
-                                          type="button"
-                                          disabled={isRowBusy}
-                                          onClick={() =>
-                                            handlePengampuReviewDecision(row, activePengampuReviewConfig, "approve")
-                                          }
-                                          className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          Approve
-                                        </button>
-                                        <button
-                                          type="button"
-                                          disabled={isRowBusy}
-                                          onClick={() =>
-                                            handlePengampuReviewDecision(row, activePengampuReviewConfig, "reject")
-                                          }
-                                          className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                                        >
-                                          Reject
-                                        </button>
-                                      </>
-                                    ) : null}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={isRowBusy}
+                                    onClick={() => handleOpenPengampuReviewDetail(row.id, activePengampuReviewConfig)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Review
+                                  </button>
                                 </td>
                               </tr>
                             );
@@ -8186,6 +8317,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 </div>
               </div>
+              )
             ) : null}
 
             {!loading && activeTab === "permohonan-extend" ? (

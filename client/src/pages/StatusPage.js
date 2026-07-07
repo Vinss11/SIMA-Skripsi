@@ -8,6 +8,31 @@ import {
 } from "lucide-react";
 
 const PAGE_SIZE = 20;
+const MAGANG_PROPOSED_POSITION_OPTIONS = [
+  "analyst",
+  "designer",
+  "programmer",
+  "tester",
+  "network engineer",
+  "data scientist",
+  "other",
+];
+const MAGANG_COMPANY_SECTOR_OPTIONS = [
+  "it industry",
+  "goverment",
+  "education/school",
+  "economy/financial",
+  "other",
+];
+const MAGANG_COMPANY_TYPE_OPTIONS = [
+  { value: "partner_company", label: "Partner Company (name listed in the partner list)" },
+  { value: "non_partner_company", label: "Non partner Company (name not listed in the partner list)" },
+];
+const MAGANG_APPLICATION_METHOD_OPTIONS = [
+  "via Internship Vacancy",
+  "Independent (no vacancy/via Direct Contact)",
+  "other",
+];
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -201,33 +226,254 @@ function TextBlock({ label, children }) {
   );
 }
 
+function DisabledFormInput({ label, value, wide = false }) {
+  return (
+    <div className={wide ? "md:col-span-2 xl:col-span-3" : ""}>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <input
+        type="text"
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-not-allowed rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none"
+      />
+    </div>
+  );
+}
+
+function DisabledFormTextarea({ label, value, rows = 3 }) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <textarea
+        rows={rows}
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-not-allowed rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none"
+      />
+    </div>
+  );
+}
+
+function DisabledRadioGroup({ label, name, options, value, columns = "md:grid-cols-2" }) {
+  return (
+    <div>
+      {label ? <p className="mb-2 text-sm font-semibold text-[#324c86]">{label}</p> : null}
+      <div className={`grid grid-cols-1 gap-2 ${columns}`}>
+        {options.map((option) => {
+          const optionValue = typeof option === "string" ? option : option.value;
+          const optionLabel = typeof option === "string" ? option : option.label;
+          return (
+            <label
+              key={`${name}-${optionValue}`}
+              className="flex items-center gap-2 rounded-lg border border-[#dce4f5] bg-[#f7f9fe] px-3 py-2 text-sm text-[#334772]"
+            >
+              <input type="radio" name={name} disabled checked={String(value || "") === String(optionValue)} readOnly />
+              <span>{optionLabel}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DisabledFileField({ label, value }) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <div className="flex min-h-[42px] items-center gap-2 rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789]">
+        <button
+          type="button"
+          disabled
+          className="cursor-not-allowed rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm text-[#1a2648] opacity-80"
+        >
+          Choose File
+        </button>
+        <span className="truncate">{value || "No file chosen"}</span>
+      </div>
+    </div>
+  );
+}
+
 function NonPenelitianDetail({ detail }) {
   const payload = detail?.detail_pengajuan?.payload || {};
   const jalur = String(detail?.detail_pengajuan?.jalur || detail?.jalur_program || "").toLowerCase();
 
   if (jalur === "magang") {
+    const mahasiswa = detail?.mahasiswa || {};
+    const isNonPartner = payload.company_type === "non_partner_company";
     return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <DetailField label="Tipe Perusahaan" value={formatLabel(payload.company_type)} />
-          <DetailField label="Institusi / Perusahaan" value={payload.chosen_institution || payload.company_name || "-"} />
-          <DetailField label="Posisi Magang" value={payload.proposed_position_other || payload.proposed_position || "-"} />
-          <DetailField label="Sektor Perusahaan" value={payload.company_sector_other || payload.company_sector || "-"} />
-          <DetailField label="Nomor Telepon" value={payload.phone_number || "-"} />
-          <DetailField label="Sudah Apply" value={payload.sudah_apply_ke_mitra === true ? "Sudah" : "Belum"} />
-          <DetailField label="Tanggal Apply" value={payload.tanggal_apply || "-"} />
-          <DetailField label="Metode Apply" value={payload.metode_apply || "-"} />
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-black text-[#1b274b]">Permintaan Surat Rekomendasi Magang</h2>
+          <p className="mt-1 text-sm text-[#5d6c91]">
+            Tampilan read-only dari form pendaftaran magang yang telah dikirim.
+          </p>
         </div>
-        <TextBlock label="Alamat Institusi">{payload.complete_address_of_institution || "-"}</TextBlock>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <DetailField label="Website Perusahaan" value={payload.internship_company_website_url || "-"} />
-          <DetailField label="URL Vacancy" value={payload.internship_vacancy_url || "-"} />
-          <DetailField label="CV" value={payload.cv_file_name || "-"} />
-          <DetailField label="Portfolio" value={payload.portfolio_file_name || "-"} />
-          <DetailField label="Transkrip" value={payload.transcript_file_name || "-"} />
-          <DetailField label="Dokumen Pendukung" value={payload.other_supporting_documents_file_name || "-"} />
-          <DetailField label="Catatan Dokumen" value={payload.supporting_documents_note || "-"} />
-          <DetailField label="Bukti Apply" value={payload.bukti_apply || "-"} />
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <DisabledFormInput label="NIM" value={mahasiswa.nim || "-"} />
+          <DisabledFormInput label="Nama" value={mahasiswa.nama || "-"} />
+        </div>
+
+        <DisabledFormInput label="Phone number" value={payload.phone_number || "-"} wide />
+
+        <DisabledRadioGroup
+          label="Type of Company"
+          name={`company-type-${detail.id}`}
+          options={MAGANG_COMPANY_TYPE_OPTIONS}
+          value={payload.company_type}
+          columns="grid-cols-1"
+        />
+
+        {!isNonPartner ? (
+          <>
+            {payload.mitra_snapshot ? (
+              <div>
+                <h3 className="text-sm font-black text-[#1b274b]">Detail Mitra Magang Terpilih</h3>
+                <p className="mt-1 text-xs text-[#5d6c91]">Snapshot mitra yang dipilih saat form dikirim.</p>
+                <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <DisabledFormInput label="Nama Mitra" value={payload.mitra_snapshot.nama || "-"} />
+                  <DisabledFormInput label="Bidang / Jenis" value={payload.mitra_snapshot.bidang_jenis || "-"} />
+                  <DisabledFormInput label="Lokasi" value={payload.mitra_snapshot.lokasi || "-"} />
+                  <DisabledFormInput label="Website" value={payload.mitra_snapshot.website || "-"} />
+                  <DisabledFormInput label="Posisi Magang" value={payload.mitra_snapshot.posisi_magang || "-"} />
+                  <DisabledFormInput label="Quota Magang" value={payload.mitra_snapshot.quota_magang ?? "-"} />
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <DisabledFormTextarea label="Kriteria" value={payload.mitra_snapshot.kriteria || "-"} rows={2} />
+                  <DisabledFormTextarea
+                    label="Prosedur dari Perusahaan"
+                    value={payload.mitra_snapshot.prosedur_perusahaan || "-"}
+                    rows={2}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-4">
+              <DisabledFormInput label="Chosen Institution" value={payload.chosen_institution || "-"} wide />
+              <DisabledFormTextarea
+                label="Complete address of the institution"
+                value={payload.complete_address_of_institution || "-"}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+              <h3 className="text-sm font-black text-[#1b274b]">Data Tambahan Non Partner Company</h3>
+              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <DisabledFormInput label="Company name" value={payload.company_name || "-"} />
+                <DisabledFormInput label="Year of establishment" value={payload.year_of_establishment || "-"} />
+                <DisabledFormInput label="Number of employees" value={payload.number_of_employees || "-"} />
+              </div>
+              <div className="mt-4">
+                <DisabledRadioGroup
+                  label="Internship Application method"
+                  name={`internship-method-${detail.id}`}
+                  options={MAGANG_APPLICATION_METHOD_OPTIONS}
+                  value={payload.internship_application_method}
+                  columns="grid-cols-1"
+                />
+                {payload.internship_application_method === "other" ? (
+                  <div className="mt-3">
+                    <DisabledFormInput
+                      label="Metode lainnya"
+                      value={payload.internship_application_method_other || "-"}
+                    />
+                  </div>
+                ) : null}
+              </div>
+              <div className="mt-4">
+                <DisabledFormTextarea
+                  label="Selection Processes (satu baris = satu proses)"
+                  value={
+                    Array.isArray(payload.selection_processes)
+                      ? payload.selection_processes.join("\n")
+                      : payload.selection_processes || "-"
+                  }
+                  rows={4}
+                />
+              </div>
+            </div>
+            <DisabledFormTextarea
+              label="Complete address of the institution"
+              value={payload.complete_address_of_institution || "-"}
+            />
+          </>
+        )}
+
+        <DisabledRadioGroup
+          label="Proposed / Expected Position"
+          name={`proposed-position-${detail.id}`}
+          options={MAGANG_PROPOSED_POSITION_OPTIONS}
+          value={payload.proposed_position}
+        />
+        {payload.proposed_position === "other" ? (
+          <DisabledFormInput label="Posisi lainnya" value={payload.proposed_position_other || "-"} wide />
+        ) : null}
+
+        <DisabledRadioGroup
+          label="Company Sector"
+          name={`company-sector-${detail.id}`}
+          options={MAGANG_COMPANY_SECTOR_OPTIONS}
+          value={payload.company_sector}
+        />
+        {payload.company_sector === "other" ? (
+          <DisabledFormInput label="Sektor lainnya" value={payload.company_sector_other || "-"} wide />
+        ) : null}
+
+        <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+          <h3 className="text-sm font-black text-[#1b274b]">Konfirmasi Apply ke Mitra</h3>
+          <p className="mt-1 text-xs text-[#5d6c91]">
+            Status apply mahasiswa pada saat form dikirim.
+          </p>
+          <div className="mt-3">
+            <DisabledRadioGroup
+              label=""
+              name={`apply-status-${detail.id}`}
+              options={[
+                { value: "true", label: "Sudah apply ke mitra magang" },
+                { value: "false", label: "Belum apply ke mitra magang" },
+              ]}
+              value={String(payload.sudah_apply_ke_mitra === true)}
+            />
+          </div>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+            <DisabledFormInput label="Tanggal apply" value={payload.tanggal_apply || "-"} />
+            <DisabledFormInput label="Metode apply" value={payload.metode_apply || "-"} />
+            <DisabledFormInput label="Bukti apply" value={payload.bukti_apply || "-"} />
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+          <h3 className="text-sm font-black text-[#1b274b]">Dokumen Pendukung</h3>
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <DisabledFileField label="Upload CV" value={payload.cv_file_name || "-"} />
+            <DisabledFileField label="Upload portfolios of Past Work" value={payload.portfolio_file_name || "-"} />
+            <DisabledFileField label="Upload Academic Transcript" value={payload.transcript_file_name || "-"} />
+            <DisabledFileField
+              label="Upload other supporting documents"
+              value={payload.other_supporting_documents_file_name || "-"}
+            />
+            <DisabledFormInput
+              label="Internship Company website URL"
+              value={payload.internship_company_website_url || "-"}
+            />
+            <DisabledFormInput
+              label="Internship vacancy URL (opsional)"
+              value={payload.internship_vacancy_url || "-"}
+            />
+          </div>
+          <div className="mt-4">
+            <DisabledFileField
+              label="Catatan dokumen pendukung (wajib jika internship vacancy URL kosong)"
+              value={payload.supporting_documents_note || "-"}
+            />
+          </div>
         </div>
       </div>
     );
@@ -294,6 +540,70 @@ function NonPenelitianDetail({ detail }) {
     <TextBlock label="Payload Pengajuan">
       {payload.ringkasan || detail?.detail_pengajuan?.ringkasan || "-"}
     </TextBlock>
+  );
+}
+
+function NonPenelitianReviewSummary({ detail }) {
+  const reviewDosen = detail?.hasil_pengajuan?.review_dosen_pengampu || null;
+  const reviewFinal = detail?.hasil_pengajuan?.review_result || null;
+  const dosenPembimbing = detail?.hasil_pengajuan?.dosen_pembimbing || null;
+  const reviewDosenChip = reviewDosen?.status ? getStatusChip(reviewDosen.status) : null;
+  const reviewFinalChip = reviewFinal?.status ? getStatusChip(reviewFinal.status) : null;
+
+  return (
+    <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+      <div className="mb-3">
+        <h3 className="text-xl font-black text-[#1a2648]">Hasil Keputusan</h3>
+        <p className="mt-1 text-sm text-[#5f6b89]">
+          Keputusan dosen pengampu atau pengawas, keputusan final Sekprodi, dan dosen pembimbing jika sudah ditetapkan.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <div className="rounded-lg border border-[#e3ebf8] bg-[#fbfdff] p-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Review Dosen</p>
+          <div className="mt-2">
+            {reviewDosenChip ? (
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${reviewDosenChip.className}`}>
+                {reviewDosenChip.label}
+              </span>
+            ) : (
+              <span className="text-sm font-black text-[#1a2648]">Belum ada keputusan</span>
+            )}
+          </div>
+        </div>
+        <div className="rounded-lg border border-[#e3ebf8] bg-[#fbfdff] p-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Keputusan Final</p>
+          <div className="mt-2">
+            {reviewFinalChip ? (
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${reviewFinalChip.className}`}>
+                {reviewFinalChip.label}
+              </span>
+            ) : (
+              <span className="text-sm font-black text-[#1a2648]">Belum ada keputusan</span>
+            )}
+          </div>
+        </div>
+        <DetailField label="Dosen Pembimbing" value={dosenPembimbing?.nama || "-"} />
+      </div>
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <TextBlock label="Catatan Dosen">{reviewDosen?.note || "-"}</TextBlock>
+        <TextBlock label="Catatan Sekprodi">{reviewFinal?.note || "-"}</TextBlock>
+      </div>
+    </section>
+  );
+}
+
+function NonPenelitianDecisionTimeline({ detail }) {
+  return (
+    <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+      <div className="mb-3">
+        <h3 className="text-xl font-black text-[#1a2648]">Detail Keputusan</h3>
+        <p className="mt-1 text-sm text-[#5f6b89]">
+          Timeline progress dari submit form sampai keputusan terakhir.
+        </p>
+      </div>
+      <Timeline items={detail?.workflow_timeline || []} />
+    </section>
   );
 }
 
@@ -972,10 +1282,23 @@ function StatusPage({
                   </span>
                 </div>
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <DetailField label="Jalur" value={formatLabel(selectedDetail.jenis_jalur)} />
-                  <DetailField label="Tipe" value={formatLabel(selectedDetail.tipe_pengajuan)} />
-                  <DetailField label="Diajukan Pada" value={formatDateTime(selectedDetail.diajukan_pada)} />
-                  <DetailField label="Diperbarui Pada" value={formatDateTime(selectedDetail.diperbarui_pada)} />
+                  {selectedDetail.record_type === "non_penelitian" ? (
+                    <>
+                      <DetailField label="Pendaftaran" value={formatLabel(selectedDetail.jenis_jalur)} />
+                      <DetailField label="Jalur" value={formatLabel(selectedDetail.jalur_program || selectedDetail.tipe_pengajuan)} />
+                      <DetailField label="Reviewer Saat Ini" value={selectedDetail.reviewer_saat_ini || "-"} />
+                      <DetailField label="Dosen Pembimbing" value={selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"} />
+                      <DetailField label="Diajukan Pada" value={formatDateTime(selectedDetail.diajukan_pada)} />
+                      <DetailField label="Diperbarui Pada" value={formatDateTime(selectedDetail.diperbarui_pada)} />
+                    </>
+                  ) : (
+                    <>
+                      <DetailField label="Jalur" value={formatLabel(selectedDetail.jenis_jalur)} />
+                      <DetailField label="Tipe" value={formatLabel(selectedDetail.tipe_pengajuan)} />
+                      <DetailField label="Diajukan Pada" value={formatDateTime(selectedDetail.diajukan_pada)} />
+                      <DetailField label="Diperbarui Pada" value={formatDateTime(selectedDetail.diperbarui_pada)} />
+                    </>
+                  )}
                 </div>
               </section>
 
@@ -1066,49 +1389,16 @@ function StatusPage({
                 )}
               </section>
 
-              {selectedDetail.record_type === "non_penelitian" ? (
-                <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
-                  <div className="mb-3">
-                    <h4 className="text-base font-black text-[#1a2648]">Timeline Progress</h4>
-                    <p className="mt-1 text-sm text-[#5f6b89]">
-                      Urutan proses dari submit form sampai keputusan akhir.
-                    </p>
-                  </div>
-                  <Timeline items={selectedDetail.workflow_timeline || []} />
-                </section>
-              ) : null}
-
-              {selectedDetail.record_type === "non_penelitian" ? (
-                <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
-                  <div className="mb-3">
-                    <h4 className="text-base font-black text-[#1a2648]">Hasil Review</h4>
-                    <p className="mt-1 text-sm text-[#5f6b89]">
-                      Keputusan dosen pengampu, keputusan final Sekprodi, dan dosen pembimbing jika sudah ditetapkan.
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    <DetailField
-                      label="Review Dosen Pengampu"
-                      value={formatLabel(selectedDetail.hasil_pengajuan?.review_dosen_pengampu?.status || "-")}
-                    />
-                    <DetailField
-                      label="Catatan Dosen"
-                      value={selectedDetail.hasil_pengajuan?.review_dosen_pengampu?.note || "-"}
-                    />
-                    <DetailField
-                      label="Keputusan Final"
-                      value={formatLabel(selectedDetail.hasil_pengajuan?.review_result?.status || "-")}
-                    />
-                    <DetailField
-                      label="Dosen Pembimbing"
-                      value={selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
-                    />
-                  </div>
-                </section>
-              ) : null}
               </div>
             ) : null}
           </section>
+
+          {!loadingDetail && selectedDetail && selectedDetail.record_type === "non_penelitian" ? (
+            <>
+              <NonPenelitianReviewSummary detail={selectedDetail} />
+              <NonPenelitianDecisionTimeline detail={selectedDetail} />
+            </>
+          ) : null}
 
           {!loadingDetail && selectedDetail && selectedDetail.record_type !== "non_penelitian" ? (
             <>
