@@ -57,8 +57,20 @@ function getStatusChip(status) {
   }
   if (normalized === "menunggu_pengajuan") {
     return {
-      label: "Belum Mengajukan Judul",
+      label: "Belum Mengajukan",
       className: "bg-[#eef3ff] text-[#2f63e3]",
+    };
+  }
+  if (normalized === "review_dosen_magang" || normalized === "submitted") {
+    return {
+      label: "Menunggu Review Dosen",
+      className: "bg-[#fdf1d4] text-[#a06a00]",
+    };
+  }
+  if (normalized === "review_sekprodi") {
+    return {
+      label: "Menunggu Sekprodi",
+      className: "bg-[#e8efff] text-[#2f63e3]",
     };
   }
   return {
@@ -73,7 +85,10 @@ function getTahapLabel(tahapApproval, tipePengajuan, status) {
 
   if (normalizedStatus === "approved") return "Selesai (Disetujui)";
   if (normalizedStatus === "rejected") return "Selesai (Ditolak)";
-  if (tahap === "menunggu_pengajuan_judul") return "Menunggu Pengajuan Judul";
+  if (tahap === "menunggu_pengajuan_judul") return "Menunggu Pengajuan";
+  if (tahap === "submitted") return "Menunggu Review Dosen Pengampu";
+  if (tahap === "review_dosen_magang") return "Menunggu Review Dosen Pengawas Magang";
+  if (tahap === "review_sekprodi") return "Menunggu Keputusan Final Sekprodi";
   if (tahap === "pending_ketua_klaster") return "Menunggu Review Ketua Cluster";
   if (tahap === "menunggu_set_ketua_cluster") return "Menunggu Penetapan Ketua Cluster";
   if (tahap === "menunggu_approval_sekprodi") return "Menunggu Persetujuan Sekprodi";
@@ -90,6 +105,72 @@ function getJenisPendaftaranDisplay(row) {
 
 function getProgramJalurDisplay(row) {
   return formatLabel(row?.pendaftaran?.jalur_program || row?.jalur_program || "penelitian");
+}
+
+function getUniversalTitleDisplay(row, detail = null) {
+  if (!row) return "-";
+  if (row.record_type === "non_penelitian") {
+    return row.summary_title || detail?.detail_pengajuan?.ringkasan || "-";
+  }
+  return getJudulDisplay(row, detail);
+}
+
+function getUniversalSummaryDetail(row, detail = null) {
+  if (!row) return "-";
+  if (row.record_type === "non_penelitian") {
+    return row.summary_detail || detail?.detail_pengajuan?.ringkasan_detail || "-";
+  }
+  const cluster = getClusterDisplay(row);
+  const kode = getKodeTopikDisplay(row);
+  return [cluster !== "-" ? cluster : null, kode !== "-" ? kode : null].filter(Boolean).join(" | ") || "-";
+}
+
+function getCurrentReviewerDisplay(row, detail = null) {
+  if (!row) return "-";
+  if (row.record_type === "non_penelitian") return row.reviewer_saat_ini || "-";
+  if (shouldShowTopikReviewCountdown(row)) return "Dosen Pembimbing";
+  const latestHistory = Array.isArray(detail?.riwayat_persetujuan)
+    ? detail.riwayat_persetujuan[detail.riwayat_persetujuan.length - 1]
+    : null;
+  return latestHistory?.dosen?.nama || "-";
+}
+
+function getDosenPembimbingDisplay(row, detail = null) {
+  if (!row) return "-";
+  return (
+    row.dosen_pembimbing ||
+    detail?.hasil_pengajuan?.dosen_pembimbing?.nama ||
+    detail?.detail_pengajuan?.calon_dosen_pembimbing?.nama ||
+    "-"
+  );
+}
+
+function Timeline({ items = [] }) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return (
+      <div className="rounded-lg border border-[#e8ecf6] bg-white p-4 text-sm text-[#5f6b89]">
+        Belum ada timeline workflow.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {items.map((item, index) => {
+        const chip = getStatusChip(item.status);
+        return (
+          <div key={`timeline-${index}-${item.status || "item"}`} className="rounded-lg border border-[#e8ecf6] bg-white p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}>{chip.label}</span>
+              <span className="text-xs font-semibold text-[#68779e]">{formatDateTime(item.at)}</span>
+            </div>
+            <p className="mt-2 text-sm font-semibold text-[#26355f]">{item.note || "-"}</p>
+            {item.actor ? <p className="mt-1 text-xs text-[#68779e]">Aktor: {formatLabel(item.actor)}</p> : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function getApprovalRoleLabel(value) {
@@ -117,6 +198,102 @@ function TextBlock({ label, children }) {
         {children || "-"}
       </div>
     </div>
+  );
+}
+
+function NonPenelitianDetail({ detail }) {
+  const payload = detail?.detail_pengajuan?.payload || {};
+  const jalur = String(detail?.detail_pengajuan?.jalur || detail?.jalur_program || "").toLowerCase();
+
+  if (jalur === "magang") {
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="Tipe Perusahaan" value={formatLabel(payload.company_type)} />
+          <DetailField label="Institusi / Perusahaan" value={payload.chosen_institution || payload.company_name || "-"} />
+          <DetailField label="Posisi Magang" value={payload.proposed_position_other || payload.proposed_position || "-"} />
+          <DetailField label="Sektor Perusahaan" value={payload.company_sector_other || payload.company_sector || "-"} />
+          <DetailField label="Nomor Telepon" value={payload.phone_number || "-"} />
+          <DetailField label="Sudah Apply" value={payload.sudah_apply_ke_mitra === true ? "Sudah" : "Belum"} />
+          <DetailField label="Tanggal Apply" value={payload.tanggal_apply || "-"} />
+          <DetailField label="Metode Apply" value={payload.metode_apply || "-"} />
+        </div>
+        <TextBlock label="Alamat Institusi">{payload.complete_address_of_institution || "-"}</TextBlock>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <DetailField label="Website Perusahaan" value={payload.internship_company_website_url || "-"} />
+          <DetailField label="URL Vacancy" value={payload.internship_vacancy_url || "-"} />
+          <DetailField label="CV" value={payload.cv_file_name || "-"} />
+          <DetailField label="Portfolio" value={payload.portfolio_file_name || "-"} />
+          <DetailField label="Transkrip" value={payload.transcript_file_name || "-"} />
+          <DetailField label="Dokumen Pendukung" value={payload.other_supporting_documents_file_name || "-"} />
+          <DetailField label="Catatan Dokumen" value={payload.supporting_documents_note || "-"} />
+          <DetailField label="Bukti Apply" value={payload.bukti_apply || "-"} />
+        </div>
+      </div>
+    );
+  }
+
+  if (jalur === "pengabdian") {
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="Nama Program" value={payload.nama_program || "-"} />
+          <DetailField label="Nama Mitra" value={payload.nama_mitra || "-"} />
+          <DetailField label="Jenis Mitra" value={payload.jenis_mitra || "-"} />
+          <DetailField label="Lokasi" value={payload.lokasi_pengabdian || "-"} />
+          <DetailField label="Kontak Mitra" value={payload.kontak_mitra || "-"} />
+          <DetailField label="Periode Mulai" value={payload.periode_mulai || "-"} />
+          <DetailField label="Periode Selesai" value={payload.periode_selesai || "-"} />
+          <DetailField label="Target Luaran" value={payload.target_luaran || "-"} />
+        </div>
+        <TextBlock label="Permasalahan Mitra">{payload.permasalahan_mitra || "-"}</TextBlock>
+        <TextBlock label="Solusi Ditawarkan">{payload.solusi_ditawarkan || "-"}</TextBlock>
+        <TextBlock label="Deskripsi Kegiatan">{payload.deskripsi_kegiatan || "-"}</TextBlock>
+        <TextBlock label="Penerima Manfaat">{payload.penerima_manfaat || "-"}</TextBlock>
+        <TextBlock label="Rencana Pelaksanaan">{payload.rencana_pelaksanaan || "-"}</TextBlock>
+        <TextBlock label="Indikator Keberhasilan">{payload.indikator_keberhasilan || "-"}</TextBlock>
+      </div>
+    );
+  }
+
+  if (jalur === "perintisan_bisnis") {
+    const members = Array.isArray(payload.kelompok?.anggota) ? payload.kelompok.anggota : [];
+    return (
+      <div className="space-y-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <DetailField label="Nama Bisnis" value={payload.nama_bisnis || "-"} />
+          <DetailField label="Jenis Bisnis" value={payload.jenis_bisnis || "-"} />
+          <DetailField label="Lokasi Bisnis" value={payload.lokasi_bisnis || "-"} />
+          <DetailField label="Peran Anda" value={formatLabel(payload.kelompok?.current_peran_tim || "-")} />
+          <DetailField label="Model Bisnis" value={payload.model_bisnis || "-"} />
+          <DetailField label="Tahap Perkembangan" value={payload.tahap_perkembangan || "-"} />
+          <DetailField label="Target Luaran" value={payload.target_luaran || "-"} />
+          <DetailField label="Tautan Bisnis" value={payload.tautan_bisnis || "-"} />
+        </div>
+        <TextBlock label="Anggota Kelompok">
+          <div className="space-y-1">
+            {members.length > 0
+              ? members.map((member) => (
+                  <p key={`member-${member.mahasiswa_id || member.nim}`}>
+                    {member.nama || "-"} ({member.nim || "-"}) - {formatLabel(member.peran_tim || member.posisi || "-")}
+                  </p>
+                ))
+              : "-"}
+          </div>
+        </TextBlock>
+        <TextBlock label="Deskripsi Bisnis">{payload.deskripsi_bisnis || "-"}</TextBlock>
+        <TextBlock label="Masalah yang Diselesaikan">{payload.masalah_yang_diselesaikan || "-"}</TextBlock>
+        <TextBlock label="Produk / Layanan">{payload.produk_layanan || "-"}</TextBlock>
+        <TextBlock label="Target Konsumen">{payload.target_konsumen || "-"}</TextBlock>
+        <TextBlock label="Rencana Kegiatan">{payload.rencana_kegiatan || "-"}</TextBlock>
+      </div>
+    );
+  }
+
+  return (
+    <TextBlock label="Payload Pengajuan">
+      {payload.ringkasan || detail?.detail_pengajuan?.ringkasan || "-"}
+    </TextBlock>
   );
 }
 
@@ -418,7 +595,7 @@ function StatusPage({
     if (!keyword) return submissions;
 
     return submissions.filter((row) => {
-      const topikText = getJudulDisplay(row);
+      const topikText = getUniversalTitleDisplay(row);
       const kodeTopik = getKodeTopikDisplay(row);
       const cluster = getClusterDisplay(row);
 
@@ -431,6 +608,10 @@ function StatusPage({
         row.tipe_pengajuan,
         row.status,
         row.tahap_approval,
+        row.tahap_label,
+        row.summary_title,
+        row.summary_detail,
+        row.reviewer_saat_ini,
         topikText,
         kodeTopik,
         cluster,
@@ -630,27 +811,26 @@ function StatusPage({
                 setQuery(event.target.value);
                 setPage(1);
               }}
-              placeholder="Cari ID, jalur, tipe, status, judul, cluster, kode..."
+              placeholder="Cari ID, jalur, status, ringkasan, reviewer..."
               className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
             />
           </div>
         </div>
 
         <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height-dynamic">
-          <table className="w-full min-w-[1150px] text-left text-sm">
+          <table className="w-full min-w-[1180px] text-left text-sm">
             <thead>
               <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pendaftaran</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tipe</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode Topik</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Detail</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Reviewer Saat Ini</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dosen Pembimbing</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Diperbarui</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Review</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
               </tr>
             </thead>
@@ -658,25 +838,23 @@ function StatusPage({
               {pagedRows.map((row, index) => {
                 const chip = getStatusChip(row.status);
                 const isSelected = row.id === selectedSubmissionId;
-                const judulDisplay = getJudulDisplay(
+                const titleDisplay = getUniversalTitleDisplay(
                   row,
                   row.id === selectedSubmissionId ? selectedDetail : null
                 );
-                const clusterDisplay = getClusterDisplay(row);
-                const kodeTopikDisplay = getKodeTopikDisplay(row);
+                const detailDisplay = getUniversalSummaryDetail(
+                  row,
+                  row.id === selectedSubmissionId ? selectedDetail : null
+                );
                 return (
                   <tr key={`status-row-${row.id}`} className="border-b border-[#eff3fb]">
                     <td className="px-3 py-2 font-bold text-[#274181]">{rowStart + index}</td>
                     <td className="px-3 py-2">{getJenisPendaftaranDisplay(row)}</td>
                     <td className="px-3 py-2">{getProgramJalurDisplay(row)}</td>
-                    <td className="px-3 py-2">
-                      {row.record_type === "pendaftaran" ? "Belum dipilih" : formatLabel(row.tipe_pengajuan)}
+                    <td className="px-3 py-2 max-w-[300px] truncate" title={titleDisplay}>
+                      {titleDisplay}
                     </td>
-                    <td className="px-3 py-2 max-w-[280px] truncate" title={judulDisplay}>
-                      {judulDisplay}
-                    </td>
-                    <td className="px-3 py-2">{clusterDisplay}</td>
-                    <td className="px-3 py-2">{kodeTopikDisplay}</td>
+                    <td className="px-3 py-2 max-w-[260px] truncate" title={detailDisplay}>{detailDisplay}</td>
                     <td className="px-3 py-2">
                       <span className={`rounded-full px-2 py-1 text-xs font-bold ${chip.className}`}>
                         {chip.label}
@@ -684,22 +862,15 @@ function StatusPage({
                     </td>
                     <td className="px-3 py-2">
                       <span className="text-xs font-semibold text-[#4f5d85]">
-                        {getTahapLabel(row.tahap_approval, row.tipe_pengajuan, row.status)}
+                        {row.tahap_label || getTahapLabel(row.tahap_approval, row.tipe_pengajuan, row.status)}
                       </span>
                     </td>
+                    <td className="px-3 py-2">{getCurrentReviewerDisplay(row)}</td>
+                    <td className="px-3 py-2">{getDosenPembimbingDisplay(row)}</td>
                     <td className="px-3 py-2">{formatDateTime(row.updatedAt || row.createdAt)}</td>
                     <td className="px-3 py-2">
-                      {shouldShowTopikReviewCountdown(row) ? (
-                        <span className="text-xs font-bold text-[#31559f]">
-                          Menunggu keputusan dosen
-                        </span>
-                      ) : (
-                        <span className="text-xs text-[#7b88ab]">-</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
                       {row.record_type === "pendaftaran" ? (
-                        <span className="text-xs font-semibold text-[#7180a5]">Menunggu judul</span>
+                        <span className="text-xs font-semibold text-[#7180a5]">Menunggu form</span>
                       ) : (
                         <button
                           type="button"
@@ -819,12 +990,16 @@ function StatusPage({
 
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3">
-                  <h4 className="text-base font-black text-[#1a2648]">Detail Topik / Judul</h4>
+                  <h4 className="text-base font-black text-[#1a2648]">
+                    {selectedDetail.record_type === "non_penelitian" ? "Detail Form Jalur" : "Detail Topik / Judul"}
+                  </h4>
                   <p className="mt-1 text-sm text-[#5f6b89]">
                     Informasi substansi pengajuan yang sedang direview.
                   </p>
                 </div>
-                {selectedDetail.tipe_pengajuan === "judul_mandiri" ? (
+                {selectedDetail.record_type === "non_penelitian" ? (
+                  <NonPenelitianDetail detail={selectedDetail} />
+                ) : selectedDetail.tipe_pengajuan === "judul_mandiri" ? (
                   <div className="space-y-3">
                     <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
                       <DetailField label="Judul" value={selectedDetail.detail_pengajuan?.judul_mandiri || "-"} />
@@ -890,11 +1065,52 @@ function StatusPage({
                   </div>
                 )}
               </section>
+
+              {selectedDetail.record_type === "non_penelitian" ? (
+                <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+                  <div className="mb-3">
+                    <h4 className="text-base font-black text-[#1a2648]">Timeline Progress</h4>
+                    <p className="mt-1 text-sm text-[#5f6b89]">
+                      Urutan proses dari submit form sampai keputusan akhir.
+                    </p>
+                  </div>
+                  <Timeline items={selectedDetail.workflow_timeline || []} />
+                </section>
+              ) : null}
+
+              {selectedDetail.record_type === "non_penelitian" ? (
+                <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
+                  <div className="mb-3">
+                    <h4 className="text-base font-black text-[#1a2648]">Hasil Review</h4>
+                    <p className="mt-1 text-sm text-[#5f6b89]">
+                      Keputusan dosen pengampu, keputusan final Sekprodi, dan dosen pembimbing jika sudah ditetapkan.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    <DetailField
+                      label="Review Dosen Pengampu"
+                      value={formatLabel(selectedDetail.hasil_pengajuan?.review_dosen_pengampu?.status || "-")}
+                    />
+                    <DetailField
+                      label="Catatan Dosen"
+                      value={selectedDetail.hasil_pengajuan?.review_dosen_pengampu?.note || "-"}
+                    />
+                    <DetailField
+                      label="Keputusan Final"
+                      value={formatLabel(selectedDetail.hasil_pengajuan?.review_result?.status || "-")}
+                    />
+                    <DetailField
+                      label="Dosen Pembimbing"
+                      value={selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+                    />
+                  </div>
+                </section>
+              ) : null}
               </div>
             ) : null}
           </section>
 
-          {!loadingDetail && selectedDetail ? (
+          {!loadingDetail && selectedDetail && selectedDetail.record_type !== "non_penelitian" ? (
             <>
               <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
                 <div className="mb-3">

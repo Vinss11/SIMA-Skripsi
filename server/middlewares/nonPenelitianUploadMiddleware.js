@@ -21,19 +21,34 @@ const storage = multer.diskStorage({
   },
 });
 
-const allowedExtensions = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"];
+const defaultAllowedExtensions = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"];
+const allowedExtensionsByField = {
+  cv_file_name: [".pdf", ".doc", ".docx"],
+  portfolio_file_name: defaultAllowedExtensions,
+  transcript_file_name: [".pdf", ".jpg", ".jpeg", ".png"],
+  other_supporting_documents_file_name: defaultAllowedExtensions,
+  supporting_documents_note: defaultAllowedExtensions,
+};
 const allowedMimePrefixes = ["application/", "image/"];
 
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname || "").toLowerCase();
   const mimetype = String(file.mimetype || "").toLowerCase();
+  const allowedExtensions = allowedExtensionsByField[file.fieldname] || defaultAllowedExtensions;
 
   if (allowedExtensions.includes(ext) && allowedMimePrefixes.some((prefix) => mimetype.startsWith(prefix))) {
     cb(null, true);
     return;
   }
 
-  cb(new Error("File dokumen harus berformat PDF, DOC, DOCX, JPG, PNG, ZIP, atau RAR."), false);
+  cb(
+    new Error(
+      `Format file ${file.fieldname} tidak valid. Format yang diizinkan: ${allowedExtensions
+        .map((item) => item.replace(".", "").toUpperCase())
+        .join(", ")}.`
+    ),
+    false
+  );
 };
 
 const nonPenelitianUpload = multer({

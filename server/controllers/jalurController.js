@@ -510,8 +510,17 @@ async function validateSubmissionTargetJalur({
 function isHttpUrl(value) {
   if (!value) return false;
   try {
-    const parsed = new URL(String(value));
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    const text = String(value).trim();
+    if (/\s/.test(text)) return false;
+
+    const parsed = new URL(text);
+    const hostname = parsed.hostname.toLowerCase();
+    const validHostname =
+      hostname === "localhost" ||
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) ||
+      /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(hostname);
+
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && validHostname;
   } catch (error) {
     return false;
   }
@@ -614,23 +623,22 @@ function normalizeMagangSubmissionPayload(rawPayload) {
 }
 
 function validateMagangSubmissionPayload(payload, mitraNameSet) {
-  if (payload.sudah_apply_ke_mitra !== true) {
-    return {
-      statusCode: 409,
-      message: "Pengajuan magang hanya bisa dikirim setelah Anda apply ke mitra magang.",
-    };
+  if (payload.sudah_apply_ke_mitra === null) {
+    return { statusCode: 400, message: "Konfirmasi apply ke mitra magang wajib dipilih." };
   }
-  if (!payload.tanggal_apply) {
-    return { statusCode: 400, message: "Tanggal apply wajib diisi." };
-  }
-  if (Number.isNaN(new Date(payload.tanggal_apply).getTime())) {
-    return { statusCode: 400, message: "Format tanggal apply tidak valid." };
-  }
-  if (!payload.metode_apply) {
-    return { statusCode: 400, message: "Metode apply wajib diisi." };
-  }
-  if (!payload.bukti_apply) {
-    return { statusCode: 400, message: "Bukti apply wajib diisi (nama file/url/catatan)." };
+  if (payload.sudah_apply_ke_mitra === true) {
+    if (!payload.tanggal_apply) {
+      return { statusCode: 400, message: "Tanggal apply wajib diisi." };
+    }
+    if (Number.isNaN(new Date(payload.tanggal_apply).getTime())) {
+      return { statusCode: 400, message: "Format tanggal apply tidak valid." };
+    }
+    if (!payload.metode_apply) {
+      return { statusCode: 400, message: "Metode apply wajib diisi." };
+    }
+    if (!payload.bukti_apply) {
+      return { statusCode: 400, message: "Bukti apply wajib diisi (nama file/url/catatan)." };
+    }
   }
 
   if (!payload.phone_number) return { statusCode: 400, message: "Phone number wajib diisi." };

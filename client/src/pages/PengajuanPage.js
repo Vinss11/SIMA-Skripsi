@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal } from "lucide-react";
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 
@@ -39,6 +39,40 @@ const MAGANG_COMPANY_TYPE_OPTIONS = [
   { value: "partner_company", label: "Partner Company (name listed in the partner list)" },
   { value: "non_partner_company", label: "Non partner Company (name not listed in the partner list)" },
 ];
+
+const MEGABYTE = 1024 * 1024;
+const MAGANG_FILE_RULES = {
+  cv_file_name: {
+    label: "CV",
+    extensions: [".pdf", ".doc", ".docx"],
+    maxSizeMb: 5,
+    hint: "Format: PDF, DOC, atau DOCX. Maks 5 MB.",
+  },
+  portfolio_file_name: {
+    label: "Portfolio",
+    extensions: [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"],
+    maxSizeMb: 10,
+    hint: "Format: PDF, DOC, DOCX, JPG, PNG, ZIP, atau RAR. Maks 10 MB.",
+  },
+  transcript_file_name: {
+    label: "Academic Transcript",
+    extensions: [".pdf", ".jpg", ".jpeg", ".png"],
+    maxSizeMb: 5,
+    hint: "Format: PDF, JPG, JPEG, atau PNG. Maks 5 MB.",
+  },
+  other_supporting_documents_file_name: {
+    label: "Other supporting documents",
+    extensions: [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"],
+    maxSizeMb: 10,
+    hint: "Format: PDF, DOC, DOCX, JPG, PNG, ZIP, atau RAR. Maks 10 MB.",
+  },
+  supporting_documents_note: {
+    label: "Catatan dokumen pendukung",
+    extensions: [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"],
+    maxSizeMb: 10,
+    hint: "Wajib jika URL vacancy kosong. Format: PDF, DOC, DOCX, JPG, PNG, ZIP, atau RAR. Maks 10 MB.",
+  },
+};
 
 const MAGANG_APPLICATION_METHOD_OPTIONS = [
   "via Internship Vacancy",
@@ -94,11 +128,52 @@ function getDosenPenelitianClusterLabels(dosen) {
 function isHttpUrl(value) {
   if (!value) return false;
   try {
-    const parsed = new URL(String(value));
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    const text = String(value).trim();
+    if (/\s/.test(text)) return false;
+
+    const parsed = new URL(text);
+    const hostname = parsed.hostname.toLowerCase();
+    const validHostname =
+      hostname === "localhost" ||
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname) ||
+      /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(hostname);
+
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && validHostname;
   } catch (error) {
     return false;
   }
+}
+
+function getFileExtension(filename) {
+  const text = String(filename || "").toLowerCase();
+  const dotIndex = text.lastIndexOf(".");
+  return dotIndex >= 0 ? text.slice(dotIndex) : "";
+}
+
+function validateMagangFile(field, file) {
+  const rule = MAGANG_FILE_RULES[field];
+  if (!rule || !file) return "";
+
+  const extension = getFileExtension(file.name);
+  if (!rule.extensions.includes(extension)) {
+    return `${rule.label} harus berformat ${rule.extensions.map((item) => item.replace(".", "").toUpperCase()).join(", ")}.`;
+  }
+
+  if (file.size > rule.maxSizeMb * MEGABYTE) {
+    return `${rule.label} maksimal ${rule.maxSizeMb} MB.`;
+  }
+
+  return "";
+}
+
+function getMagangUrlError(value, { required = false, label = "URL" } = {}) {
+  const text = String(value || "").trim();
+  if (!text) return required ? `${label} wajib diisi.` : "";
+  return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
+}
+
+function FieldError({ message }) {
+  return message ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{message}</p> : null;
 }
 
 function statusBadge(item) {
@@ -1983,12 +2058,15 @@ function FormSuratRekomendasiMagang({
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [magangFieldErrors, setMagangFieldErrors] = useState({});
   const [mitraMagangOptions, setMitraMagangOptions] = useState([]);
   const [loadingMitraOptions, setLoadingMitraOptions] = useState(false);
   const [mitraOptionsError, setMitraOptionsError] = useState("");
   const [mitraGridQuery, setMitraGridQuery] = useState("");
   const [fileInputResetKey, setFileInputResetKey] = useState(0);
   const [magangUploadFiles, setMagangUploadFiles] = useState({});
+  const [institutionComboOpen, setInstitutionComboOpen] = useState(false);
+  const institutionComboRef = useRef(null);
 
   const isNonPartner = formData.company_type === "non_partner_company";
   const activeMitraMagangOptions = useMemo(
@@ -2022,6 +2100,13 @@ function FormSuratRekomendasiMagang({
       return haystack.includes(keyword);
     });
   }, [activeMitraMagangOptions, mitraGridQuery]);
+  const filteredPartnerInstitutionOptions = useMemo(() => {
+    const keyword = String(formData.chosen_institution || "").trim().toLowerCase();
+    if (!keyword) return [];
+    return partnerInstitutionOptions.filter((option) => option.toLowerCase().includes(keyword));
+  }, [formData.chosen_institution, partnerInstitutionOptions]);
+  const shouldShowInstitutionOptions =
+    institutionComboOpen && !disabled && !loadingMitraOptions && formData.chosen_institution.trim().length > 0;
 
   useEffect(() => {
     let isMounted = true;
@@ -2094,18 +2179,25 @@ function FormSuratRekomendasiMagang({
       return;
     }
 
-    if (!partnerInstitutionOptions.includes(formData.chosen_institution)) {
-      setFormData((prev) => ({
-        ...prev,
-        chosen_institution: "",
-      }));
-    }
   }, [formData.chosen_institution, isNonPartner, partnerInstitutionOptions]);
+
+  useEffect(() => {
+    if (!institutionComboOpen) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (institutionComboRef.current?.contains(event.target)) return;
+      setInstitutionComboOpen(false);
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [institutionComboOpen]);
 
   const updateField = (field, value) => {
     setFormData((prev) => {
       if (field === "company_type") {
         if (value === "non_partner_company") {
+          setInstitutionComboOpen(false);
           return {
             ...prev,
             company_type: value,
@@ -2124,17 +2216,108 @@ function FormSuratRekomendasiMagang({
 
       return { ...prev, [field]: value };
     });
+    setMagangFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
     setSubmitError("");
     setSubmitSuccess("");
   };
 
-  const updateFileField = (field, fileList) => {
-    const selectedFile = fileList?.[0];
+  const updateFileField = (field, event) => {
+    const selectedFile = event?.target?.files?.[0] || null;
+    const fileError = selectedFile ? validateMagangFile(field, selectedFile) : "";
+
+    if (fileError && event?.target) {
+      event.target.value = "";
+    }
+
+    setMagangFieldErrors((prev) => {
+      const next = { ...prev };
+      if (fileError) next[field] = fileError;
+      else delete next[field];
+      return next;
+    });
     setMagangUploadFiles((prev) => ({
       ...prev,
-      [field]: selectedFile || null,
+      [field]: fileError ? null : selectedFile,
     }));
-    updateField(field, selectedFile?.name || "");
+    setFormData((prev) => ({ ...prev, [field]: fileError ? "" : selectedFile?.name || "" }));
+    setSubmitError("");
+    setSubmitSuccess("");
+  };
+
+  const handleUrlFieldBlur = (field) => {
+    const label =
+      field === "internship_company_website_url"
+        ? "Internship Company website URL"
+        : "Internship vacancy URL";
+    const error = getMagangUrlError(formData[field], {
+      required: field === "internship_company_website_url",
+      label,
+    });
+    setMagangFieldErrors((prev) => {
+      const next = { ...prev };
+      if (error) next[field] = error;
+      else delete next[field];
+      return next;
+    });
+  };
+
+  const validateMagangDocumentFields = () => {
+    const errors = {};
+    const requiredFiles = [
+      "cv_file_name",
+      "portfolio_file_name",
+      "transcript_file_name",
+      "other_supporting_documents_file_name",
+    ];
+
+    for (const field of requiredFiles) {
+      const rule = MAGANG_FILE_RULES[field];
+      const file = magangUploadFiles[field];
+      if (!formData[field]?.trim()) {
+        errors[field] = `${rule.label} wajib diisi.`;
+      } else {
+        const fileError = validateMagangFile(field, file);
+        if (fileError) errors[field] = fileError;
+      }
+    }
+
+    const companyUrlError = getMagangUrlError(formData.internship_company_website_url, {
+      required: true,
+      label: "Internship Company website URL",
+    });
+    if (companyUrlError) errors.internship_company_website_url = companyUrlError;
+
+    const vacancyUrlError = getMagangUrlError(formData.internship_vacancy_url, {
+      required: false,
+      label: "Internship vacancy URL",
+    });
+    if (vacancyUrlError) errors.internship_vacancy_url = vacancyUrlError;
+
+    if (!formData.internship_vacancy_url.trim()) {
+      if (!formData.supporting_documents_note.trim()) {
+        errors.supporting_documents_note =
+          "Upload catatan dokumen pendukung wajib diisi jika Internship vacancy URL kosong.";
+      } else {
+        const supportingFileError = validateMagangFile(
+          "supporting_documents_note",
+          magangUploadFiles.supporting_documents_note
+        );
+        if (supportingFileError) errors.supporting_documents_note = supportingFileError;
+      }
+    } else if (formData.supporting_documents_note.trim()) {
+      const supportingFileError = validateMagangFile(
+        "supporting_documents_note",
+        magangUploadFiles.supporting_documents_note
+      );
+      if (supportingFileError) errors.supporting_documents_note = supportingFileError;
+    }
+
+    return errors;
   };
 
   const resetForm = () => {
@@ -2167,75 +2350,76 @@ function FormSuratRekomendasiMagang({
     });
     setSubmitError("");
     setSubmitSuccess("");
+    setMagangFieldErrors({});
     setMitraGridQuery("");
     setMagangUploadFiles({});
     setFileInputResetKey((prev) => prev + 1);
   };
 
-  const validateForm = () => {
-    if (formData.sudah_apply_ke_mitra !== true) {
-      return "Pengajuan magang hanya dapat dikirim setelah Anda apply ke mitra magang.";
-    }
-    if (!formData.tanggal_apply.trim()) return "Tanggal apply wajib diisi.";
-    if (!formData.metode_apply.trim()) return "Metode apply wajib diisi.";
-    if (!formData.bukti_apply.trim()) return "Bukti apply wajib diisi.";
+  const validateMagangRequiredFields = () => {
+    const errors = {};
 
-    if (!formData.phone_number.trim()) return "Phone number wajib diisi.";
-    if (!formData.proposed_position) return "Proposed / Expected Position wajib dipilih.";
+    if (formData.sudah_apply_ke_mitra === null) {
+      errors.sudah_apply_ke_mitra = "Konfirmasi apply ke mitra magang wajib dipilih.";
+    }
+    if (formData.sudah_apply_ke_mitra === true && !formData.tanggal_apply.trim()) {
+      errors.tanggal_apply = "Tanggal apply wajib diisi.";
+    }
+    if (formData.sudah_apply_ke_mitra === true && !formData.metode_apply.trim()) {
+      errors.metode_apply = "Metode apply wajib diisi.";
+    }
+    if (formData.sudah_apply_ke_mitra === true && !formData.bukti_apply.trim()) {
+      errors.bukti_apply = "Bukti apply wajib diisi.";
+    }
+
+    if (!formData.phone_number.trim()) errors.phone_number = "Phone number wajib diisi.";
+    if (!formData.proposed_position) {
+      errors.proposed_position = "Proposed / Expected Position wajib dipilih.";
+    }
     if (formData.proposed_position === "other" && !formData.proposed_position_other.trim()) {
-      return "Isian other pada Proposed / Expected Position wajib diisi.";
+      errors.proposed_position_other = "Isian other pada Proposed / Expected Position wajib diisi.";
     }
-    if (!formData.company_sector) return "Company Sector wajib dipilih.";
+    if (!formData.company_sector) errors.company_sector = "Company Sector wajib dipilih.";
     if (formData.company_sector === "other" && !formData.company_sector_other.trim()) {
-      return "Isian other pada Company Sector wajib diisi.";
+      errors.company_sector_other = "Isian other pada Company Sector wajib diisi.";
     }
-    if (!formData.company_type) return "Type of Company wajib dipilih.";
-    if (!formData.chosen_institution) return "Chosen Institution wajib dipilih.";
+    if (!formData.company_type) errors.company_type = "Type of Company wajib dipilih.";
+    if (!formData.chosen_institution) errors.chosen_institution = "Chosen Institution wajib dipilih.";
     if (!isNonPartner) {
       if (partnerInstitutionOptions.length === 0) {
-        return "Daftar mitra magang belum tersedia. Hubungi sekretaris prodi.";
+        errors.chosen_institution = "Daftar mitra magang belum tersedia. Hubungi sekretaris prodi.";
       }
       if (!partnerInstitutionOptions.includes(formData.chosen_institution)) {
-        return "Chosen Institution tidak valid. Pilih dari daftar mitra yang tersedia.";
+        errors.chosen_institution = "Chosen Institution tidak valid. Pilih dari daftar mitra yang tersedia.";
       }
     }
-    if (!formData.complete_address_of_institution.trim()) return "Complete address of the institution wajib diisi.";
-    if (!formData.internship_company_website_url.trim()) return "Internship Company website URL wajib diisi.";
-    if (!isHttpUrl(formData.internship_company_website_url.trim())) {
-      return "Internship Company website URL harus berupa URL http/https yang valid.";
-    }
-    if (formData.internship_vacancy_url.trim() && !isHttpUrl(formData.internship_vacancy_url.trim())) {
-      return "Internship vacancy URL harus berupa URL http/https yang valid.";
-    }
-    if (!formData.internship_vacancy_url.trim() && !formData.supporting_documents_note.trim()) {
-      return "Upload catatan dokumen pendukung wajib diisi jika Internship vacancy URL kosong.";
-    }
-    if (!formData.cv_file_name.trim()) return "Upload CV wajib diisi.";
-    if (!formData.portfolio_file_name.trim()) return "Upload portfolios of Past Work wajib diisi.";
-    if (!formData.transcript_file_name.trim()) return "Upload Academic Transcript wajib diisi.";
-    if (!formData.other_supporting_documents_file_name.trim()) {
-      return "Upload other supporting documents wajib diisi.";
+    if (!formData.complete_address_of_institution.trim()) {
+      errors.complete_address_of_institution = "Complete address of the institution wajib diisi.";
     }
 
     if (isNonPartner) {
-      if (!formData.company_name.trim()) return "Company name wajib diisi untuk Non partner Company.";
-      if (!formData.year_of_establishment.trim()) return "Year of establishment wajib diisi untuk Non partner Company.";
-      if (!formData.number_of_employees.trim()) return "Number of employees wajib diisi untuk Non partner Company.";
+      if (!formData.company_name.trim()) errors.company_name = "Company name wajib diisi untuk Non partner Company.";
+      if (!formData.year_of_establishment.trim()) {
+        errors.year_of_establishment = "Year of establishment wajib diisi untuk Non partner Company.";
+      }
+      if (!formData.number_of_employees.trim()) {
+        errors.number_of_employees = "Number of employees wajib diisi untuk Non partner Company.";
+      }
       if (!formData.internship_application_method) {
-        return "Internship Application method wajib dipilih untuk Non partner Company.";
+        errors.internship_application_method = "Internship Application method wajib dipilih untuk Non partner Company.";
       }
       if (
         formData.internship_application_method === "other" &&
         !formData.internship_application_method_other.trim()
       ) {
-        return "Isian other pada Internship Application method wajib diisi.";
+        errors.internship_application_method_other = "Isian other pada Internship Application method wajib diisi.";
       }
       if (!formData.selection_processes_text.trim()) {
-        return "Selection Processes wajib diisi untuk Non partner Company.";
+        errors.selection_processes_text = "Selection Processes wajib diisi untuk Non partner Company.";
       }
     }
 
-    return "";
+    return errors;
   };
 
   const buildPayload = () => {
@@ -2281,9 +2465,12 @@ function FormSuratRekomendasiMagang({
 
   const handleSubmit = async () => {
     if (disabled) return;
-    const validationError = validateForm();
-    if (validationError) {
-      setSubmitError(validationError);
+    const requiredFieldErrors = validateMagangRequiredFields();
+    const documentFieldErrors = validateMagangDocumentFields();
+    const nextFieldErrors = { ...requiredFieldErrors, ...documentFieldErrors };
+    setMagangFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) {
+      setSubmitError("");
       return;
     }
 
@@ -2355,11 +2542,11 @@ function FormSuratRekomendasiMagang({
     if (formData.sudah_apply_ke_mitra === null) {
       return "Konfirmasi status apply ke mitra wajib dipilih terlebih dahulu.";
     }
-    if (formData.sudah_apply_ke_mitra === false) {
-      return "Submit dinonaktifkan karena Anda belum apply ke mitra magang.";
-    }
-    if (!formData.tanggal_apply.trim() || !formData.metode_apply.trim() || !formData.bukti_apply.trim()) {
-      return "Lengkapi tanggal apply, metode apply, dan bukti apply untuk mengaktifkan submit.";
+    if (
+      formData.sudah_apply_ke_mitra === true &&
+      (!formData.tanggal_apply.trim() || !formData.metode_apply.trim() || !formData.bukti_apply.trim())
+    ) {
+      return "Lengkapi tanggal apply, metode apply, dan bukti apply sebelum mengirim permintaan.";
     }
     return "";
   }, [
@@ -2369,7 +2556,7 @@ function FormSuratRekomendasiMagang({
     formData.bukti_apply,
   ]);
 
-  const submitIsDisabled = disabled || submitLoading || Boolean(applyGateReason);
+  const submitIsDisabled = disabled || submitLoading;
 
   return (
     <div className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
@@ -2415,6 +2602,7 @@ function FormSuratRekomendasiMagang({
             disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
           }`}
         />
+        <FieldError message={magangFieldErrors.phone_number} />
       </div>
 
       <div className="mt-6">
@@ -2435,6 +2623,7 @@ function FormSuratRekomendasiMagang({
             </label>
           ))}
         </div>
+        <FieldError message={magangFieldErrors.company_type} />
       </div>
 
       {formData.company_type === "partner_company" ? (
@@ -2539,28 +2728,89 @@ function FormSuratRekomendasiMagang({
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
               Chosen Institution <RequiredMark />
             </label>
-            <select
-              value={formData.chosen_institution}
-              onChange={(event) => updateField("chosen_institution", event.target.value)}
-              disabled={disabled || loadingMitraOptions}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-                disabled || loadingMitraOptions
-                  ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-                  : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-              }`}
-            >
-              <option value="">
-                {loadingMitraOptions ? "Memuat daftar mitra..." : "Pilih institusi mitra"}
-              </option>
-              {partnerInstitutionOptions.map((option) => (
-                <option key={`inst-${option}`} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            <div ref={institutionComboRef} className="relative">
+              <input
+                type="text"
+                role="combobox"
+                aria-expanded={institutionComboOpen}
+                aria-controls="chosen-institution-options"
+                aria-autocomplete="list"
+                value={formData.chosen_institution}
+                onChange={(event) => {
+                  updateField("chosen_institution", event.target.value);
+                  setInstitutionComboOpen(true);
+                }}
+                onFocus={() => {
+                  if (formData.chosen_institution.trim()) setInstitutionComboOpen(true);
+                }}
+                disabled={disabled || loadingMitraOptions}
+                placeholder={loadingMitraOptions ? "Memuat daftar mitra..." : "Ketik atau pilih institusi mitra"}
+                autoComplete="off"
+                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${
+                  disabled || loadingMitraOptions
+                    ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                    : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                }`}
+              />
+              <button
+                type="button"
+                aria-label="Buka daftar institusi mitra"
+                onClick={() => {
+                  if (!formData.chosen_institution.trim()) {
+                    setInstitutionComboOpen(false);
+                    return;
+                  }
+                  setInstitutionComboOpen((prev) => !prev);
+                }}
+                disabled={disabled || loadingMitraOptions}
+                className={`absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-sm ${
+                  disabled || loadingMitraOptions
+                    ? "cursor-not-allowed text-[#9aa6c2]"
+                    : "text-[#4c5f8d] hover:bg-[#f2f5ff]"
+                }`}
+              >
+                <ChevronDown className="h-4 w-4" />
+              </button>
+
+              {shouldShowInstitutionOptions ? (
+                <div
+                  id="chosen-institution-options"
+                  role="listbox"
+                  className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-[#d0dbf4] bg-white shadow-lg"
+                >
+                  {filteredPartnerInstitutionOptions.length > 0 ? (
+                    filteredPartnerInstitutionOptions.map((option) => (
+                      <button
+                        key={`inst-combo-${option}`}
+                        type="button"
+                        role="option"
+                        aria-selected={formData.chosen_institution === option}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          updateField("chosen_institution", option);
+                          setInstitutionComboOpen(false);
+                        }}
+                        className={`block w-full px-3 py-2 text-left text-sm transition hover:bg-[#eef3ff] ${
+                          formData.chosen_institution === option
+                            ? "bg-[#eef3ff] font-semibold text-[#254db4]"
+                            : "text-[#263a68]"
+                        }`}
+                      >
+                        {option}
+                      </button>
+                    ))
+                  ) : (
+                    <div className="px-3 py-3 text-sm font-semibold text-[#7b88ab]">
+                      Institusi mitra tidak ditemukan.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
             {mitraOptionsError ? (
               <p className="mt-1 text-xs font-semibold text-[#c23737]">{mitraOptionsError}</p>
             ) : null}
+            <FieldError message={magangFieldErrors.chosen_institution} />
           </div>
 
           <div className="mt-4">
@@ -2576,6 +2826,7 @@ function FormSuratRekomendasiMagang({
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.complete_address_of_institution} />
           </div>
         </>
       ) : null}
@@ -2598,6 +2849,7 @@ function FormSuratRekomendasiMagang({
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
+                <FieldError message={magangFieldErrors.company_name} />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2612,6 +2864,7 @@ function FormSuratRekomendasiMagang({
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
+                <FieldError message={magangFieldErrors.year_of_establishment} />
               </div>
               <div>
                 <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2626,6 +2879,7 @@ function FormSuratRekomendasiMagang({
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
+                <FieldError message={magangFieldErrors.number_of_employees} />
               </div>
             </div>
 
@@ -2647,6 +2901,7 @@ function FormSuratRekomendasiMagang({
                   </label>
                 ))}
               </div>
+              <FieldError message={magangFieldErrors.internship_application_method} />
               {formData.internship_application_method === "other" ? (
                 <input
                   type="text"
@@ -2659,6 +2914,7 @@ function FormSuratRekomendasiMagang({
                   }`}
                 />
               ) : null}
+              <FieldError message={magangFieldErrors.internship_application_method_other} />
             </div>
 
             <div className="mt-4">
@@ -2674,6 +2930,7 @@ function FormSuratRekomendasiMagang({
                   disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                 }`}
               />
+              <FieldError message={magangFieldErrors.selection_processes_text} />
             </div>
           </div>
 
@@ -2690,6 +2947,7 @@ function FormSuratRekomendasiMagang({
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.complete_address_of_institution} />
           </div>
         </>
       ) : null}
@@ -2713,17 +2971,21 @@ function FormSuratRekomendasiMagang({
           ))}
         </div>
         {formData.proposed_position === "other" ? (
-          <input
-            type="text"
-            placeholder="Isi posisi lain"
-            value={formData.proposed_position_other}
-            disabled={disabled}
-            onChange={(event) => updateField("proposed_position_other", event.target.value)}
-            className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-              disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-            }`}
-          />
+          <>
+            <input
+              type="text"
+              placeholder="Isi posisi lain"
+              value={formData.proposed_position_other}
+              disabled={disabled}
+              onChange={(event) => updateField("proposed_position_other", event.target.value)}
+              className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            />
+            <FieldError message={magangFieldErrors.proposed_position_other} />
+          </>
         ) : null}
+        <FieldError message={magangFieldErrors.proposed_position} />
       </div>
 
       <div className="mt-6">
@@ -2745,17 +3007,21 @@ function FormSuratRekomendasiMagang({
           ))}
         </div>
         {formData.company_sector === "other" ? (
-          <input
-            type="text"
-            placeholder="Isi sektor lain"
-            value={formData.company_sector_other}
-            disabled={disabled}
-            onChange={(event) => updateField("company_sector_other", event.target.value)}
-            className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-              disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-            }`}
-          />
+          <>
+            <input
+              type="text"
+              placeholder="Isi sektor lain"
+              value={formData.company_sector_other}
+              disabled={disabled}
+              onChange={(event) => updateField("company_sector_other", event.target.value)}
+              className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            />
+            <FieldError message={magangFieldErrors.company_sector_other} />
+          </>
         ) : null}
+        <FieldError message={magangFieldErrors.company_sector} />
       </div>
 
       <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
@@ -2786,6 +3052,7 @@ function FormSuratRekomendasiMagang({
             <span>Belum apply ke mitra magang</span>
           </label>
         </div>
+        <FieldError message={magangFieldErrors.sudah_apply_ke_mitra} />
 
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
           <div>
@@ -2803,6 +3070,7 @@ function FormSuratRekomendasiMagang({
                   : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.tanggal_apply} />
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2820,6 +3088,7 @@ function FormSuratRekomendasiMagang({
                   : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.metode_apply} />
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2837,6 +3106,7 @@ function FormSuratRekomendasiMagang({
                   : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.bukti_apply} />
           </div>
         </div>
 
@@ -2857,13 +3127,19 @@ function FormSuratRekomendasiMagang({
             <input
               key={`cv-file-${fileInputResetKey}`}
               type="file"
-              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-              onChange={(event) => updateFileField("cv_file_name", event.target.files)}
+              accept=".pdf,.doc,.docx"
+              onChange={(event) => updateFileField("cv_file_name", event)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.cv_file_name ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.cv_file_name.hint}</p>
+            {magangFieldErrors.cv_file_name ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">{magangFieldErrors.cv_file_name}</p>
+            ) : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2873,12 +3149,18 @@ function FormSuratRekomendasiMagang({
               key={`portfolio-file-${fileInputResetKey}`}
               type="file"
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
-              onChange={(event) => updateFileField("portfolio_file_name", event.target.files)}
+              onChange={(event) => updateFileField("portfolio_file_name", event)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.portfolio_file_name ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.portfolio_file_name.hint}</p>
+            {magangFieldErrors.portfolio_file_name ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">{magangFieldErrors.portfolio_file_name}</p>
+            ) : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2887,13 +3169,19 @@ function FormSuratRekomendasiMagang({
             <input
               key={`transcript-file-${fileInputResetKey}`}
               type="file"
-              accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-              onChange={(event) => updateFileField("transcript_file_name", event.target.files)}
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={(event) => updateFileField("transcript_file_name", event)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.transcript_file_name ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.transcript_file_name.hint}</p>
+            {magangFieldErrors.transcript_file_name ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">{magangFieldErrors.transcript_file_name}</p>
+            ) : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2903,12 +3191,20 @@ function FormSuratRekomendasiMagang({
               key={`other-supporting-file-${fileInputResetKey}`}
               type="file"
               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
-              onChange={(event) => updateFileField("other_supporting_documents_file_name", event.target.files)}
+              onChange={(event) => updateFileField("other_supporting_documents_file_name", event)}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.other_supporting_documents_file_name ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.other_supporting_documents_file_name.hint}</p>
+            {magangFieldErrors.other_supporting_documents_file_name ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">
+                {magangFieldErrors.other_supporting_documents_file_name}
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
@@ -2918,12 +3214,20 @@ function FormSuratRekomendasiMagang({
               type="text"
               value={formData.internship_company_website_url}
               onChange={(event) => updateField("internship_company_website_url", event.target.value)}
+              onBlur={() => handleUrlFieldBlur("internship_company_website_url")}
               disabled={disabled}
               placeholder="https://..."
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.internship_company_website_url ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            {magangFieldErrors.internship_company_website_url ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">
+                {magangFieldErrors.internship_company_website_url}
+              </p>
+            ) : null}
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">Internship vacancy URL (opsional)</label>
@@ -2931,12 +3235,18 @@ function FormSuratRekomendasiMagang({
               type="text"
               value={formData.internship_vacancy_url}
               onChange={(event) => updateField("internship_vacancy_url", event.target.value)}
+              onBlur={() => handleUrlFieldBlur("internship_vacancy_url")}
               disabled={disabled}
               placeholder="https://..."
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.internship_vacancy_url ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            {magangFieldErrors.internship_vacancy_url ? (
+              <p className="mt-1 text-xs font-semibold text-[#c23737]">{magangFieldErrors.internship_vacancy_url}</p>
+            ) : null}
           </div>
         </div>
         <div className="mt-4">
@@ -2948,12 +3258,18 @@ function FormSuratRekomendasiMagang({
             key={`supporting-note-file-${fileInputResetKey}`}
             type="file"
             accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.zip,.rar"
-            onChange={(event) => updateFileField("supporting_documents_note", event.target.files)}
+            onChange={(event) => updateFileField("supporting_documents_note", event)}
             disabled={disabled}
-            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+              magangFieldErrors.supporting_documents_note ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4]"
+            } ${
               disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
             }`}
           />
+          <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.supporting_documents_note.hint}</p>
+          {magangFieldErrors.supporting_documents_note ? (
+            <p className="mt-1 text-xs font-semibold text-[#c23737]">{magangFieldErrors.supporting_documents_note}</p>
+          ) : null}
         </div>
       </div>
 

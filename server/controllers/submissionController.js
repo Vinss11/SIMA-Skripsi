@@ -286,6 +286,198 @@ async function loadSubmissionDetailById(submissionId) {
   });
 }
 
+function toObjectPayload(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+
+function resolveSelectedJalurFromPendaftaran(row) {
+  return String(row?.jenis_jalur_diambil || row?.penjaluran_baru || "").trim().toLowerCase();
+}
+
+function isNonPenelitianJalurForStatus(jalur) {
+  return ["magang", "pengabdian", "perintisan_bisnis"].includes(String(jalur || "").trim().toLowerCase());
+}
+
+function formatWorkflowStatusLabel(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) return "-";
+  if (normalized === "review_dosen_magang") return "Menunggu Review Dosen Pengawas Magang";
+  if (normalized === "review_sekprodi") return "Menunggu Keputusan Final Sekprodi";
+  if (normalized === "submitted") return "Menunggu Review Dosen Pengampu";
+  if (normalized === "approved") return "Selesai (Disetujui)";
+  if (normalized === "rejected") return "Selesai (Ditolak)";
+  if (normalized === "draft") return "Draft";
+  if (normalized === "pending") return "Menunggu Form Lanjutan";
+  return normalized.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getNonPenelitianSummary(payload, jalur) {
+  const normalizedJalur = String(jalur || "").toLowerCase();
+  if (normalizedJalur === "magang") {
+    return {
+      title: payload.chosen_institution || payload.company_name || payload.mitra_snapshot?.nama || "Pengajuan Magang",
+      detail: payload.proposed_position_other || payload.proposed_position || payload.company_sector || "-",
+    };
+  }
+  if (normalizedJalur === "pengabdian") {
+    return {
+      title: payload.nama_program || "Pengajuan Pengabdian Masyarakat",
+      detail: payload.nama_mitra || payload.lokasi_pengabdian || "-",
+    };
+  }
+  if (normalizedJalur === "perintisan_bisnis") {
+    return {
+      title: payload.nama_usaha || payload.nama_bisnis || payload.nama_startup || payload.kelompok?.nama_kelompok || "Pengajuan Perintisan Bisnis",
+      detail: payload.bidang_usaha || payload.model_bisnis || payload.kelompok?.current_peran_tim || "-",
+    };
+  }
+  return {
+    title: payload.ringkasan || "Pengajuan Non-Penelitian",
+    detail: "-",
+  };
+}
+
+function getNonPenelitianReviewer(row, payload, jalur) {
+  const workflowStatus = String(payload.workflow_status || row.form_lanjutan_status || "").toLowerCase();
+  if (workflowStatus === "review_sekprodi") return "Sekretaris Prodi";
+  if (["submitted", "review_dosen_magang"].includes(workflowStatus)) {
+    if (jalur === "magang") return "Dosen Pengawas Magang";
+    if (jalur === "pengabdian") return "Dosen Pengampu Pengabdian";
+    if (jalur === "perintisan_bisnis") return "Dosen Pengampu Perintisan Bisnis";
+  }
+  return "-";
+}
+
+function buildNonPenelitianStatusRow(row) {
+  const payload = toObjectPayload(row.form_lanjutan_payload);
+  const jalur = payload.jalur || resolveSelectedJalurFromPendaftaran(row);
+  const workflowStatus = payload.workflow_status || row.form_lanjutan_status || "draft";
+  const summary = getNonPenelitianSummary(payload, jalur);
+  const dosenPembimbing =
+    payload.dosen_pembimbing?.nama ||
+    row.dosenPembimbingTA?.nama ||
+    row.dosenPembimbingTABaru?.nama ||
+    null;
+
+  return {
+    id: `nonpen-${row.id}`,
+    record_type: "non_penelitian",
+    pendaftaran_id: row.id,
+    jenis_jalur: row.jalur,
+    jalur_program: jalur,
+    tipe_pengajuan: jalur,
+    status: workflowStatus,
+    tahap_approval: workflowStatus,
+    tahap_label: formatWorkflowStatusLabel(workflowStatus),
+    createdAt: row.form_lanjutan_submitted_at || row.createdAt,
+    updatedAt: row.updatedAt,
+    summary_title: summary.title,
+    summary_detail: summary.detail,
+    reviewer_saat_ini: getNonPenelitianReviewer(row, payload, jalur),
+    dosen_pembimbing: dosenPembimbing,
+    workflow_timeline: Array.isArray(payload.workflow_timeline) ? payload.workflow_timeline : [],
+    pendaftaran: {
+      id: row.id,
+      jenis_pendaftaran: row.jalur,
+      jalur_program: jalur,
+      periode: row.periode || null,
+    },
+  };
+}
+
+async function loadNonPenelitianRegistrationById(id) {
+  return PendaftaranPenjaluran.findByPk(Number(id), {
+    include: [
+      {
+        model: Mahasiswa,
+        as: "mahasiswa",
+        attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
+      },
+      {
+        model: PeriodePenjaluran,
+        as: "periode",
+        attributes: ["id", "label_periode", "tahun_akademik", "semester", "status", "is_active"],
+        required: false,
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingTA",
+        attributes: ["id", "nik", "nama", "email"],
+        required: false,
+      },
+      {
+        model: Dosen,
+        as: "dosenPembimbingTABaru",
+        attributes: ["id", "nik", "nama", "email"],
+        required: false,
+      },
+    ],
+  });
+}
+
+function buildNonPenelitianDetail(row) {
+  const listRow = buildNonPenelitianStatusRow(row);
+  const payload = toObjectPayload(row.form_lanjutan_payload);
+  const workflowTimeline = Array.isArray(payload.workflow_timeline) ? payload.workflow_timeline : [];
+  const dosenPembimbing =
+    payload.dosen_pembimbing ||
+    (row.dosenPembimbingTA
+      ? {
+          id: row.dosenPembimbingTA.id,
+          nik: row.dosenPembimbingTA.nik,
+          nama: row.dosenPembimbingTA.nama,
+          email: row.dosenPembimbingTA.email,
+        }
+      : row.dosenPembimbingTABaru
+      ? {
+          id: row.dosenPembimbingTABaru.id,
+          nik: row.dosenPembimbingTABaru.nik,
+          nama: row.dosenPembimbingTABaru.nama,
+          email: row.dosenPembimbingTABaru.email,
+        }
+      : null);
+
+  return {
+    ...listRow,
+    diajukan_pada: row.form_lanjutan_submitted_at || row.createdAt,
+    diperbarui_pada: row.updatedAt,
+    mahasiswa: row.mahasiswa
+      ? {
+          id: row.mahasiswa.id,
+          nim: row.mahasiswa.nim,
+          nama: row.mahasiswa.nama,
+          email: row.mahasiswa.email,
+          angkatan: row.mahasiswa.angkatan,
+          status_jalur_saat_ini: row.mahasiswa.status_jalur_saat_ini,
+        }
+      : null,
+    detail_pengajuan: {
+      jalur: listRow.jalur_program,
+      payload,
+      ringkasan: listRow.summary_title,
+      ringkasan_detail: listRow.summary_detail,
+      periode: row.periode || null,
+    },
+    hasil_pengajuan: {
+      status_pengajuan: listRow.status,
+      dosen_pembimbing: dosenPembimbing,
+      review_dosen_pengampu: payload.review_dosen_pengampu || null,
+      review_result: payload.review_result || null,
+    },
+    workflow_timeline: workflowTimeline,
+    riwayat_persetujuan: workflowTimeline
+      .filter((item) => ["approved", "rejected", "review_sekprodi"].includes(String(item?.status || "").toLowerCase()))
+      .map((item) => ({
+        status: item.status,
+        tipe_approval: item.actor || "system",
+        keterangan: item.note || null,
+        tanggal_keputusan: item.at || null,
+        dosen: null,
+      })),
+  };
+}
+
 // GET /api/submissions - Mahasiswa melihat pengajuan mereka
 exports.getMySubmissions = async (req, res) => {
   try {
@@ -501,6 +693,7 @@ exports.getMySubmissions = async (req, res) => {
     const pendingRegistrationRows = pendaftaranRows
       .filter((row) => {
         if (linkedPendaftaranIds.has(Number(row.id))) return false;
+        if (isNonPenelitianJalurForStatus(resolveSelectedJalurFromPendaftaran(row))) return false;
 
         const registrationCreatedAt = new Date(row.createdAt || 0).getTime();
         const hasLegacySubmissionMatch = submissions.some((submission) => {
@@ -529,7 +722,43 @@ exports.getMySubmissions = async (req, res) => {
         },
       }));
 
-    const statusRows = [...compactData, ...pendingRegistrationRows].sort(
+    const nonPenelitianRowsRaw = await PendaftaranPenjaluran.findAll({
+      where: {
+        mahasiswa_id,
+        form_lanjutan_status: { [Op.notIn]: ["draft", "pending"] },
+        [Op.or]: [
+          { jenis_jalur_diambil: { [Op.in]: ["magang", "pengabdian", "perintisan_bisnis"] } },
+          { penjaluran_baru: { [Op.in]: ["magang", "pengabdian", "perintisan_bisnis"] } },
+        ],
+      },
+      include: [
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: ["id", "label_periode", "tahun_akademik", "semester"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTA",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+        {
+          model: Dosen,
+          as: "dosenPembimbingTABaru",
+          attributes: ["id", "nik", "nama", "email"],
+          required: false,
+        },
+      ],
+      order: [["updatedAt", "DESC"]],
+    });
+
+    const nonPenelitianRows = nonPenelitianRowsRaw
+      .filter((row) => isNonPenelitianJalurForStatus(resolveSelectedJalurFromPendaftaran(row)))
+      .map((row) => buildNonPenelitianStatusRow(row));
+
+    const statusRows = [...compactData, ...nonPenelitianRows, ...pendingRegistrationRows].sort(
       (left, right) =>
         new Date(right.updatedAt || right.createdAt || 0).getTime() -
         new Date(left.updatedAt || left.createdAt || 0).getTime()
@@ -558,7 +787,10 @@ exports.getSubmissionById = async (req, res) => {
     const userRole = typeof req.user.role === "string" ? req.user.role.trim().toLowerCase() : "";
     let accessorDosenId = null;
 
-    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+    const nonPenelitianMatch = String(id || "").match(/^nonpen-(\d+)$/);
+    const numericSubmissionId = Number(id);
+
+    if (!nonPenelitianMatch && (!Number.isInteger(numericSubmissionId) || numericSubmissionId <= 0)) {
       return res.status(400).json({
         success: false,
         message: "ID pengajuan tidak valid",
@@ -584,7 +816,42 @@ exports.getSubmissionById = async (req, res) => {
       }
     }
 
-    let submission = await loadSubmissionDetailById(Number(id));
+    if (nonPenelitianMatch) {
+      const registrationId = Number(nonPenelitianMatch[1]);
+      const registration = await loadNonPenelitianRegistrationById(registrationId);
+
+      if (
+        !registration ||
+        !isNonPenelitianJalurForStatus(resolveSelectedJalurFromPendaftaran(registration)) ||
+        ["draft", "pending"].includes(String(registration.form_lanjutan_status || "").toLowerCase())
+      ) {
+        return res.status(404).json({
+          success: false,
+          message: "Pengajuan tidak ditemukan",
+        });
+      }
+
+      if (userRole === "mahasiswa" && Number(registration.mahasiswa_id) !== userId) {
+        return res.status(403).json({
+          success: false,
+          message: "Anda tidak memiliki akses ke pengajuan ini",
+        });
+      }
+
+      if (userRole === "dosen" || userRole === "sekretaris_prodi") {
+        return res.status(403).json({
+          success: false,
+          message: "Detail status non-penelitian hanya tersedia untuk mahasiswa pada endpoint ini",
+        });
+      }
+
+      return res.json({
+        success: true,
+        data: buildNonPenelitianDetail(registration),
+      });
+    }
+
+    let submission = await loadSubmissionDetailById(numericSubmissionId);
 
     if (!submission) {
       return res.status(404).json({
@@ -624,12 +891,12 @@ exports.getSubmissionById = async (req, res) => {
     if (isTopikParallelSubmission(submission) && submission.status === "pending") {
       const finalizationResult = await finalizeTopikParallelSubmission(submission.id);
       if (finalizationResult?.changed || finalizationResult?.finalized) {
-        submission = await loadSubmissionDetailById(Number(id));
+        submission = await loadSubmissionDetailById(numericSubmissionId);
       }
     } else if (isJudulMandiriSubmission(submission) && submission.status === "pending") {
       const finalizationResult = await finalizeJudulMandiriDeadlineSubmission(submission.id);
       if (finalizationResult?.changed || finalizationResult?.finalized) {
-        submission = await loadSubmissionDetailById(Number(id));
+        submission = await loadSubmissionDetailById(numericSubmissionId);
       }
     }
 
