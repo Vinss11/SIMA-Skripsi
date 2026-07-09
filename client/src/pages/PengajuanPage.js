@@ -343,6 +343,7 @@ function FormJudulDosen({
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [topikFieldErrors, setTopikFieldErrors] = useState({});
   const [topikDosenFilterQuery, setTopikDosenFilterQuery] = useState("");
   const [showTopikDosenFilterOptions, setShowTopikDosenFilterOptions] = useState(false);
   const topikFilterButtonRef = useRef(null);
@@ -515,7 +516,7 @@ function FormJudulDosen({
     return entries.length !== new Set(entries).size;
   }, [selectedCodes.topik_1_kode, selectedCodes.topik_2_kode, selectedCodes.topik_3_kode]);
 
-  const canSubmit = Boolean(selectedCodes.topik_1_kode) && !duplicateCodes && !submitLoading && !disabled;
+  const canSubmit = !submitLoading && !disabled;
   const isTopik2Enabled = Boolean(selectedCodes.topik_1_kode) && !disabled;
   const isTopik3Enabled = Boolean(selectedCodes.topik_1_kode && selectedCodes.topik_2_kode) && !disabled;
   const canResetGridControl = Boolean(searchQuery.trim()) || hasAppliedTopikFilter;
@@ -765,6 +766,7 @@ function FormJudulDosen({
     setSelectedCodes(nextCodes);
     setTopikComboQueries(buildTopikComboQueriesFromCodes(nextCodes));
     setOpenTopikComboSlot(null);
+    setTopikFieldErrors((prev) => ({ ...prev, [field]: "" }));
     setSubmitError("");
     setSubmitSuccess("");
   };
@@ -775,6 +777,7 @@ function FormJudulDosen({
     setSelectedCodes(nextCodes);
     setTopikComboQueries(buildTopikComboQueriesFromCodes(nextCodes, field, value));
     setOpenTopikComboSlot(slotNumber);
+    setTopikFieldErrors((prev) => ({ ...prev, [field]: "" }));
     setSubmitError("");
     setSubmitSuccess("");
   };
@@ -793,16 +796,29 @@ function FormJudulDosen({
     setOpenTopikComboSlot(null);
     setSubmitError("");
     setSubmitSuccess("");
+    setTopikFieldErrors({});
   };
 
   const handleSubmitTopik = async () => {
     if (disabled) return;
+    const nextErrors = {};
     if (!selectedCodes.topik_1_kode) {
-      setSubmitError("Minimal pilih 1 topik di pilihan pertama.");
-      return;
+      nextErrors.topik_1_kode = "Topik pilihan 1 wajib dipilih.";
     }
     if (duplicateCodes) {
-      setSubmitError("Pilihan topik tidak boleh duplikat.");
+      const usedCodes = new Set();
+      [1, 2, 3].forEach((slot) => {
+        const field = `topik_${slot}_kode`;
+        const code = selectedCodes[field];
+        if (!code) return;
+        if (usedCodes.has(code)) {
+          nextErrors[field] = "Pilihan topik tidak boleh sama.";
+        }
+        usedCodes.add(code);
+      });
+    }
+    setTopikFieldErrors(nextErrors);
+    if (Object.values(nextErrors).some(Boolean)) {
       return;
     }
     if (needsPamitId && !pamitId) {
@@ -812,7 +828,10 @@ function FormJudulDosen({
 
     const unavailableChoice = selectedList.find((item) => !item?.is_available);
     if (unavailableChoice) {
-      setSubmitError(`Topik ${unavailableChoice.kode} sudah tidak tersedia. Silakan pilih topik lain.`);
+      setTopikFieldErrors((prev) => ({
+        ...prev,
+        [`topik_${unavailableChoice.slot}_kode`]: `Topik ${unavailableChoice.kode} sudah tidak tersedia. Silakan pilih topik lain.`,
+      }));
       return;
     }
 
@@ -887,15 +906,18 @@ function FormJudulDosen({
     }
   };
 
-  const renderTopikCombobox = (slotNumber, label, enabled, placeholder) => {
+  const renderTopikCombobox = (slotNumber, label, enabled, placeholder, required = false) => {
     const field = `topik_${slotNumber}_kode`;
     const query = topikComboQueries[field] || "";
     const options = getFilteredTopikOptionsForSlot(slotNumber);
     const showOptions = openTopikComboSlot === slotNumber && enabled && query.trim().length > 0;
+    const errorMessage = topikFieldErrors[field] || "";
 
     return (
       <div ref={(node) => { topikComboRefs.current[slotNumber] = node; }}>
-        <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+        <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+          {label} {required ? <RequiredMark /> : null}
+        </label>
         <div className="relative">
           <input
             type="text"
@@ -969,6 +991,7 @@ function FormJudulDosen({
             </div>
           ) : null}
         </div>
+        <FieldError message={errorMessage} />
       </div>
     );
   };
@@ -1257,16 +1280,10 @@ function FormJudulDosen({
         <p className="mb-4 text-sm text-[#5d6c91]">Pilih minimal 1 topik. Pilihan tidak boleh duplikat.</p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {renderTopikCombobox(1, "Topik Pilihan 1 (Wajib)", !disabled, "Ketik kode, judul, dosen, atau bidang")}
+          {renderTopikCombobox(1, "Topik Pilihan 1", !disabled, "Ketik kode, judul, dosen, atau bidang", true)}
           {renderTopikCombobox(2, "Topik Pilihan 2 (Opsional)", isTopik2Enabled, "Ketik untuk mencari topik 2")}
           {renderTopikCombobox(3, "Topik Pilihan 3 (Opsional)", isTopik3Enabled, "Ketik untuk mencari topik 3")}
         </div>
-
-        {duplicateCodes ? (
-          <div className="mt-4 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
-            Pilihan topik tidak boleh sama.
-          </div>
-        ) : null}
 
         <div className="mt-6 rounded-lg border border-[#e8edf8] bg-[#f8fbff] p-4">
           <h3 className="text-sm font-black text-[#1b274b]">Detail Pengajuan</h3>
@@ -1351,6 +1368,7 @@ function FormJudulSendiri({
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
 
   useEffect(() => {
     let isMounted = true;
@@ -1438,24 +1456,41 @@ function FormJudulSendiri({
     ? `${selectedDosen.nama || "-"}${selectedDosen.nik ? ` - NIK: ${selectedDosen.nik}` : ""}`
     : "";
   const dosenInputValue = dosenQuery || selectedDosenLabel;
-  const canSubmit =
-    !disabled &&
-    !submitLoading &&
-    judulMandiri.trim().length >= 8 &&
-    deskripsiMandiri.trim().length >= 20 &&
-    keywordMandiri.trim().length >= 3 &&
-    Boolean(selectedCluster) &&
-    Boolean(selectedDosenId) &&
-    !selectedDosen?.is_kuota_penuh &&
-    selectedDosenClusterLabels.includes(selectedCluster);
+  const canSubmit = !disabled && !submitLoading;
   const endpointPrefix = submissionMode === "ulang" ? "ulang" : "baru";
   const needsPamitId = endpointPrefix === "ulang";
+
+  const clearFieldError = (field) => {
+    setFieldErrors((prev) => ({ ...prev, [field]: "" }));
+  };
+
+  const validateManualSubmission = () => {
+    const nextErrors = {};
+    if (judulMandiri.trim().length < 8) {
+      nextErrors.judulMandiri = "Judul penelitian wajib diisi minimal 8 karakter.";
+    }
+    if (deskripsiMandiri.trim().length < 20) {
+      nextErrors.deskripsiMandiri = "Deskripsi singkat wajib diisi minimal 20 karakter.";
+    }
+    if (!selectedCluster) {
+      nextErrors.selectedCluster = "Cluster penelitian wajib dipilih.";
+    }
+    if (!selectedDosenId) {
+      nextErrors.selectedDosenId = "Calon dosen pembimbing wajib dipilih.";
+    } else if (!selectedDosenClusterLabels.includes(selectedCluster)) {
+      nextErrors.selectedDosenId = "Calon dosen pembimbing harus sesuai dengan cluster penelitian yang dipilih.";
+    } else if (selectedDosen?.is_kuota_penuh) {
+      nextErrors.selectedDosenId = "Dosen yang dipilih sudah penuh kuota bimbingannya. Silakan pilih dosen lain.";
+    }
+    return nextErrors;
+  };
 
   const handleClusterChange = (value) => {
     setSelectedCluster(value);
     setSelectedDosenId("");
     setDosenQuery("");
     setShowDosenOptions(false);
+    setFieldErrors((prev) => ({ ...prev, selectedCluster: "", selectedDosenId: "" }));
     setSubmitError("");
     setSubmitSuccess("");
   };
@@ -1466,6 +1501,7 @@ function FormJudulSendiri({
     if (selectedDosenId) {
       setSelectedDosenId("");
     }
+    clearFieldError("selectedDosenId");
   };
 
   const handleSelectDosen = (dosen) => {
@@ -1474,6 +1510,7 @@ function FormJudulSendiri({
     setSelectedDosenId(String(dosen.id));
     setDosenQuery(`${dosen.nama || "-"}${dosen.nik ? ` - NIK: ${dosen.nik}` : ""}`);
     setShowDosenOptions(false);
+    clearFieldError("selectedDosenId");
   };
 
   const resetForm = () => {
@@ -1485,6 +1522,7 @@ function FormJudulSendiri({
     setDosenQuery("");
     setSubmitError("");
     setSubmitSuccess("");
+    setFieldErrors({});
   };
 
   const handleSubmit = async () => {
@@ -1492,32 +1530,9 @@ function FormJudulSendiri({
     setSubmitError("");
     setSubmitSuccess("");
 
-    if (judulMandiri.trim().length < 8) {
-      setSubmitError("Judul mandiri wajib diisi minimal 8 karakter.");
-      return;
-    }
-    if (deskripsiMandiri.trim().length < 20) {
-      setSubmitError("Deskripsi judul wajib diisi minimal 20 karakter.");
-      return;
-    }
-    if (keywordMandiri.trim().length < 3) {
-      setSubmitError("Keyword wajib diisi minimal 3 karakter.");
-      return;
-    }
-    if (!selectedCluster) {
-      setSubmitError("Pilih cluster penelitian terlebih dahulu.");
-      return;
-    }
-    if (!selectedDosenId) {
-      setSubmitError("Pilih calon dosen pembimbing untuk mereview judul mandiri.");
-      return;
-    }
-    if (!selectedDosenClusterLabels.includes(selectedCluster)) {
-      setSubmitError("Calon dosen pembimbing harus sesuai dengan cluster penelitian yang dipilih.");
-      return;
-    }
-    if (selectedDosen?.is_kuota_penuh) {
-      setSubmitError("Dosen yang dipilih sudah penuh kuota bimbingannya. Silakan pilih dosen lain.");
+    const nextErrors = validateManualSubmission();
+    setFieldErrors(nextErrors);
+    if (Object.values(nextErrors).some(Boolean)) {
       return;
     }
     if (needsPamitId && !pamitId) {
@@ -1597,15 +1612,21 @@ function FormJudulSendiri({
 
       <div className="mt-5 grid grid-cols-1 gap-4 xl:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-semibold text-[#324c86]">Judul Penelitian</label>
+          <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+            Judul Penelitian <RequiredMark />
+          </label>
           <input
             type="text"
             value={judulMandiri}
-            onChange={(event) => setJudulMandiri(event.target.value)}
+            onChange={(event) => {
+              setJudulMandiri(event.target.value);
+              clearFieldError("judulMandiri");
+            }}
             disabled={disabled || submitLoading}
             placeholder="Contoh: Sistem rekomendasi topik skripsi berbasis machine learning"
             className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
           />
+          <FieldError message={fieldErrors.judulMandiri} />
         </div>
 
         <div>
@@ -1622,19 +1643,27 @@ function FormJudulSendiri({
       </div>
 
       <div className="mt-4">
-        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Deskripsi Singkat</label>
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+          Deskripsi Singkat <RequiredMark />
+        </label>
         <textarea
           rows={4}
           value={deskripsiMandiri}
-          onChange={(event) => setDeskripsiMandiri(event.target.value)}
+          onChange={(event) => {
+            setDeskripsiMandiri(event.target.value);
+            clearFieldError("deskripsiMandiri");
+          }}
           disabled={disabled || submitLoading}
           placeholder="Jelaskan latar belakang, ruang lingkup, dan gambaran singkat penelitian yang ingin diajukan..."
           className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
         />
+        <FieldError message={fieldErrors.deskripsiMandiri} />
       </div>
 
       <div className="mt-4">
-        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Cluster Penelitian</label>
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+          Cluster Penelitian <RequiredMark />
+        </label>
         <select
           value={selectedCluster}
           onChange={(event) => handleClusterChange(event.target.value)}
@@ -1651,10 +1680,13 @@ function FormJudulSendiri({
         <p className="mt-1 text-xs text-[#60709a]">
           Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
         </p>
+        <FieldError message={fieldErrors.selectedCluster} />
       </div>
 
       <div className="mt-4">
-        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Calon Dosen Pembimbing</label>
+        <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+          Calon Dosen Pembimbing <RequiredMark />
+        </label>
         <div className="relative">
           <input
             type="text"
@@ -1717,6 +1749,7 @@ function FormJudulSendiri({
             Terpilih: {selectedDosen.nama} {selectedDosen.sisa_kuota !== undefined ? `(sisa kuota: ${selectedDosen.sisa_kuota})` : ""}
           </p>
         ) : null}
+        <FieldError message={fieldErrors.selectedDosenId} />
       </div>
 
       {submitError ? (

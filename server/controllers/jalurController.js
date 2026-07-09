@@ -2973,6 +2973,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
   try {
     const mahasiswa_id = req.user.id;
     const { pamit_id, judul_mandiri, deskripsi_mandiri, keyword_mandiri, cluster_mandiri, prospective_supervisor_id } = req.body;
+    const normalizedKeywordMandiri = String(keyword_mandiri || "").trim();
 
     // Validasi
     if (!pamit_id) {
@@ -2983,11 +2984,11 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       });
     }
 
-    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
+    if (!judul_mandiri || !deskripsi_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Semua field wajib diisi: judul, deskripsi, keyword, cluster, dan calon dosen pembimbing",
+        message: "Semua field wajib diisi: judul, deskripsi, cluster, dan calon dosen pembimbing",
       });
     }
 
@@ -3093,7 +3094,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         pengajuan_sebelumnya_id: pamit.pengajuan_sebelumnya_id,
         judul_mandiri,
         deskripsi_mandiri,
-        keyword_mandiri,
+        keyword_mandiri: normalizedKeywordMandiri,
         cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,
         is_approved_by_supervisor: false,
@@ -3288,13 +3289,14 @@ exports.submitBaruJudulMandiri = async (req, res) => {
   try {
     const mahasiswa_id = req.user.id;
     const { judul_mandiri, deskripsi_mandiri, keyword_mandiri, cluster_mandiri, prospective_supervisor_id } = req.body;
+    const normalizedKeywordMandiri = String(keyword_mandiri || "").trim();
 
     // Validasi input
-    if (!judul_mandiri || !deskripsi_mandiri || !keyword_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
+    if (!judul_mandiri || !deskripsi_mandiri || !cluster_mandiri || !prospective_supervisor_id) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Semua field wajib diisi: judul, deskripsi, keyword, cluster, dan calon dosen pembimbing",
+        message: "Semua field wajib diisi: judul, deskripsi, cluster, dan calon dosen pembimbing",
       });
     }
 
@@ -3382,7 +3384,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif?.id || null,
         judul_mandiri,
         deskripsi_mandiri,
-        keyword_mandiri,
+        keyword_mandiri: normalizedKeywordMandiri,
         cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,
         is_approved_by_supervisor: false,

@@ -235,7 +235,7 @@ function DisabledFormInput({ label, value, wide = false }) {
         readOnly
         disabled
         value={value || ""}
-        className="w-full cursor-not-allowed rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none"
+        className="w-full cursor-default rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none disabled:cursor-default"
       />
     </div>
   );
@@ -250,7 +250,7 @@ function DisabledFormTextarea({ label, value, rows = 3 }) {
         readOnly
         disabled
         value={value || ""}
-        className="w-full cursor-not-allowed rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none"
+        className="w-full cursor-default rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none disabled:cursor-default"
       />
     </div>
   );
@@ -287,13 +287,116 @@ function DisabledFileField({ label, value }) {
         <button
           type="button"
           disabled
-          className="cursor-not-allowed rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm text-[#1a2648] opacity-80"
+        className="cursor-default rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm text-[#1a2648] opacity-80 disabled:cursor-default"
         >
           Choose File
         </button>
         <span className="truncate">{value || "No file chosen"}</span>
       </div>
     </div>
+  );
+}
+
+function ResearchReadonlyInput({ label, value }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <input
+        type="text"
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#5c6888] outline-none disabled:cursor-default disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+      />
+    </div>
+  );
+}
+
+function ResearchReadonlyTextarea({ label, value, rows = 4 }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <textarea
+        rows={rows}
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#5c6888] outline-none disabled:cursor-default disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+      />
+    </div>
+  );
+}
+
+function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
+  const isJudulMandiri = detail?.tipe_pengajuan === "judul_mandiri";
+
+  if (isJudulMandiri) {
+    return (
+      <section className="bg-white">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <ResearchReadonlyInput label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri || "-"} />
+          <ResearchReadonlyInput label="Keyword" value={detail.detail_pengajuan?.keyword_mandiri || "-"} />
+        </div>
+        <div className="mt-4">
+          <ResearchReadonlyTextarea label="Deskripsi Singkat" value={detail.detail_pengajuan?.deskripsi_mandiri || "-"} />
+        </div>
+        <div className="mt-4">
+          <ResearchReadonlyInput label="Cluster Penelitian" value={detail.detail_pengajuan?.cluster_mandiri || "-"} />
+          <p className="mt-1 text-xs text-[#60709a]">
+            Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
+          </p>
+        </div>
+        <div className="mt-4">
+          <ResearchReadonlyInput
+            label="Calon Dosen Pembimbing"
+            value={detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-white">
+      <div className="space-y-5">
+        {topikRows.length > 0 ? (
+          topikRows.map((item, index) => (
+            <div key={`research-readonly-topic-${item.slot || index}-${item.kode || "none"}`}>
+              <h3 className="text-sm font-black text-[#1b274b]">
+                Topik Pilihan {item.slot || index + 1}
+              </h3>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ResearchReadonlyInput label="Judul Penelitian" value={item.judul || "-"} />
+                <ResearchReadonlyInput label="Keyword" value={item.keyword || "-"} />
+              </div>
+              <div className="mt-4">
+                <ResearchReadonlyTextarea
+                  label="Deskripsi Singkat"
+                  value={item.deskripsi || item.description || item.ringkasan || "-"}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div>
+                  <ResearchReadonlyInput label="Cluster Penelitian" value={item.cluster || "-"} />
+                  <p className="mt-1 text-xs text-[#60709a]">
+                    Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
+                  </p>
+                </div>
+                <ResearchReadonlyInput label="Calon Dosen Pembimbing" value={item.dosen || "-"} />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ResearchReadonlyInput label="Kode Topik" value={item.kode || "-"} />
+                <ResearchReadonlyInput label="Status Review" value={formatLabel(item.reviewer_status || "pending")} />
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-lg border border-[#e8ecf8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#5f6b89]">
+            Detail topik belum tersedia.
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -749,6 +852,7 @@ function StatusPage({
   );
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [viewMode, setViewMode] = useState("list");
+  const [activeStatusTab, setActiveStatusTab] = useState("riwayat");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   useEffect(() => {
@@ -1028,7 +1132,34 @@ function StatusPage({
 
       
 
+      
+
       <section className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          {[
+            { key: "riwayat", label: "Riwayat Pengajuan" },
+            { key: "sidang", label: "Status Sidang" },
+          ].map((tab) => (
+            <button
+              key={`status-tab-${tab.key}`}
+              type="button"
+              onClick={() => {
+                setActiveStatusTab(tab.key);
+                setViewMode("list");
+              }}
+              className={`rounded-full border px-4 py-2 text-sm font-bold transition ${
+                activeStatusTab === tab.key
+                  ? "border-[#2f63e3] bg-[#2f63e3] text-white"
+                  : "border-[#d3dbef] bg-white text-[#27407b] hover:bg-[#f3f6ff]"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </section>
+      
+<section className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -1050,6 +1181,7 @@ function StatusPage({
         </div>
       </section>
 
+      {viewMode === "list" && activeStatusTab === "sidang" ? (
       <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-lg font-black text-[#1a2648]">Status Sidang Akhir</h3>
@@ -1107,8 +1239,9 @@ function StatusPage({
           </p>
         ) : null}
       </section>
+      ) : null}
 
-      {viewMode === "list" ? (
+      {viewMode === "list" && activeStatusTab === "riwayat" ? (
       <section className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-lg font-black text-[#1a2648]">Riwayat Pengajuan</h3>
@@ -1238,7 +1371,7 @@ function StatusPage({
 
       {viewMode === "detail" && selectedDetail ? (
         <div className="space-y-4">
-          <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+          <section className="rounded-xl bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-2">
               <h3 className="text-xl font-black text-[#1a2648]">Detail Pengajuan</h3>
               <span className={`rounded-full px-3 py-1 text-xs font-bold ${selectedStatusChip.className}`}>
@@ -1269,6 +1402,9 @@ function StatusPage({
 
             {!loadingDetail && selectedDetail ? (
               <div className="space-y-4">
+              {selectedDetail.record_type !== "non_penelitian" ? (
+                <ResearchSubmissionDetailForm detail={selectedDetail} topikRows={selectedTopikRows} />
+              ) : (
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -1301,16 +1437,9 @@ function StatusPage({
                   )}
                 </div>
               </section>
+              )}
 
-              {shouldShowTopikReviewCountdown(selectedDetail) ? (
-                <div className="rounded-lg border border-[#dbe4fa] bg-[#f8fbff] px-3 py-2 text-sm text-[#2f426f]">
-                  <p className="font-bold">Menunggu seluruh dosen pilihan memberikan keputusan.</p>
-                  <p className="mt-1 text-xs font-semibold">
-                    Pengajuan tidak akan disetujui atau ditolak otomatis berdasarkan waktu.
-                  </p>
-                </div>
-              ) : null}
-
+              {selectedDetail.record_type === "non_penelitian" ? (
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3">
                   <h4 className="text-base font-black text-[#1a2648]">
@@ -1322,72 +1451,11 @@ function StatusPage({
                 </div>
                 {selectedDetail.record_type === "non_penelitian" ? (
                   <NonPenelitianDetail detail={selectedDetail} />
-                ) : selectedDetail.tipe_pengajuan === "judul_mandiri" ? (
-                  <div className="space-y-3">
-                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
-                      <DetailField label="Judul" value={selectedDetail.detail_pengajuan?.judul_mandiri || "-"} />
-                      <DetailField label="Cluster" value={selectedDetail.detail_pengajuan?.cluster_mandiri || "-"} />
-                    </div>
-                    <TextBlock label="Deskripsi">
-                      {selectedDetail.detail_pengajuan?.deskripsi_mandiri || "-"}
-                    </TextBlock>
-                    <TextBlock label="Keyword">
-                      <div className="flex flex-wrap gap-2">
-                        {String(selectedDetail.detail_pengajuan?.keyword_mandiri || "")
-                          .split(",")
-                          .map((item) => item.trim())
-                          .filter(Boolean)
-                          .map((item) => (
-                            <span
-                              key={`keyword-${selectedDetail.id}-${item}`}
-                              className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-xs font-bold text-[#3158b7]"
-                            >
-                              {item}
-                            </span>
-                          ))}
-                        {!selectedDetail.detail_pengajuan?.keyword_mandiri ? "-" : null}
-                      </div>
-                    </TextBlock>
-                  </div>
                 ) : (
-                  <div className="mt-3 space-y-3">
-                    {selectedTopikRows.length > 0 ? (
-                      selectedTopikRows.map((item) => (
-                        <div
-                          key={`status-detail-topik-${item.slot || item.kode}`}
-                          className="rounded-lg border border-[#e8ecf6] bg-[#fbfdff] p-3"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div>
-                              <p className="text-xs font-bold uppercase tracking-wide text-[#60719a]">
-                                Pilihan {item.slot || "-"} {item.kode ? `- ${item.kode}` : ""}
-                              </p>
-                              <p className="mt-1 text-sm font-black text-[#1a2648]">{item.judul || "-"}</p>
-                            </div>
-                            {item.reviewer_status ? (
-                              <span className={`rounded-full px-2 py-1 text-xs font-bold ${getStatusChip(item.reviewer_status).className}`}>
-                                {getStatusChip(item.reviewer_status).label}
-                              </span>
-                            ) : null}
-                          </div>
-                          <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-[#495a84] md:grid-cols-3">
-                            <p><span className="font-semibold">Cluster:</span> {item.cluster || "-"}</p>
-                            <p><span className="font-semibold">Keyword:</span> {item.keyword || "-"}</p>
-                            <p><span className="font-semibold">Dosen:</span> {item.dosen || "-"}</p>
-                          </div>
-                          {item.reviewer_note ? (
-                            <p className="mt-2 rounded-md bg-white px-3 py-2 text-sm text-[#26355f]">
-                              {item.reviewer_note}
-                            </p>
-                          ) : null}
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-sm text-[#5f6b89]">Detail topik belum tersedia.</p>
-                    )}
-                  </div>
+                  null
                 )}
               </section>
+              ) : null}
 
               </div>
             ) : null}
@@ -1402,63 +1470,56 @@ function StatusPage({
 
           {!loadingDetail && selectedDetail && selectedDetail.record_type !== "non_penelitian" ? (
             <>
-              <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
+              <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
                 <div className="mb-3">
-                  <h3 className="text-xl font-black text-[#1a2648]">Hasil Keputusan Dosen</h3>
+                  <h3 className="text-lg font-black text-[#1b274b]">Hasil Keputusan Dosen</h3>
                   <p className="mt-1 text-sm text-[#5f6b89]">
                     Keputusan awal dari dosen pembimbing sebelum masuk ke ketua cluster.
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                  <DetailField label="Dosen Pembimbing" value={pembimbingName} />
-                  <div className="rounded-lg border border-[#e3ebf8] bg-[#fbfdff] p-3">
-                    <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Keputusan</p>
-                    <div className="mt-2">
-                      {pembimbingDecisionChip ? (
-                        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${pembimbingDecisionChip.className}`}>
-                          {pembimbingDecisionChip.label}
-                        </span>
-                      ) : (
-                        <span className="text-sm font-black text-[#1a2648]">Belum ada keputusan</span>
-                      )}
-                    </div>
-                  </div>
-                  <DetailField
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                  <ResearchReadonlyInput label="Dosen Pembimbing" value={pembimbingName} />
+                  <ResearchReadonlyInput
+                    label="Keputusan"
+                    value={pembimbingDecisionChip?.label || "Belum ada keputusan"}
+                  />
+                  <ResearchReadonlyInput
                     label="Tanggal Keputusan"
                     value={formatDateTime(pembimbingDecision?.tanggal_keputusan)}
                   />
                 </div>
-                <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                  <TextBlock label="Catatan Persetujuan">
-                    {pembimbingDecision?.status === "approved"
+                <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  <ResearchReadonlyTextarea
+                    label="Catatan Persetujuan"
+                    rows={2}
+                    value={
+                      pembimbingDecision?.status === "approved"
                       ? pembimbingDecision?.keterangan || selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
-                      : selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"}
-                  </TextBlock>
-                  <TextBlock label="Catatan Penolakan">
-                    {alasanPenolakanList.length > 0 ? alasanPenolakanList.join("; ") : "-"}
-                  </TextBlock>
+                      : selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
+                    }
+                  />
+                  <ResearchReadonlyTextarea
+                    label="Catatan Penolakan"
+                    rows={2}
+                    value={alasanPenolakanList.length > 0 ? alasanPenolakanList.join("; ") : "-"}
+                  />
                 </div>
-                <div className="mt-3 rounded-lg border border-[#e8ecf6] bg-[#fbfdff] p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wide text-[#68779e]">Keputusan Ketua Cluster</p>
-                      <p className="mt-1 text-sm font-semibold text-[#26355f]">
-                        {ketuaClusterDecision?.dosen?.nama || "Belum ada keputusan ketua cluster."}
-                      </p>
-                    </div>
-                    {ketuaClusterDecisionChip ? (
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${ketuaClusterDecisionChip.className}`}>
-                        {ketuaClusterDecisionChip.label}
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-[#eef4ff] px-2.5 py-1 text-xs font-bold text-[#3158b7]">
-                        {selectedTahapLabel}
-                      </span>
-                    )}
-                  </div>
-                  {ketuaClusterDecision?.keterangan ? (
-                    <p className="mt-2 text-sm text-[#26355f]">{ketuaClusterDecision.keterangan}</p>
-                  ) : null}
+                <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                  <ResearchReadonlyInput
+                    label="Keputusan Ketua Cluster"
+                    value={ketuaClusterDecision?.dosen?.nama || "Belum ada keputusan ketua cluster."}
+                  />
+                  <ResearchReadonlyInput
+                    label="Status Ketua Cluster"
+                    value={ketuaClusterDecisionChip?.label || selectedTahapLabel}
+                  />
+                </div>
+                <div className="mt-4">
+                  <ResearchReadonlyTextarea
+                    label="Catatan Ketua Cluster"
+                    rows={2}
+                    value={ketuaClusterDecision?.keterangan || "-"}
+                  />
                 </div>
               </section>
 
@@ -1506,5 +1567,4 @@ function StatusPage({
 }
 
 export default StatusPage;
-
 
