@@ -130,6 +130,37 @@ function buildMagangUploadedDocuments(req) {
   };
 }
 
+const NON_PENELITIAN_UPLOAD_ROOT = process.env.VERCEL
+  ? path.join("/tmp", "sima-uploads", "non-penelitian")
+  : path.resolve(__dirname, "..", "uploads", "non-penelitian");
+
+const MAGANG_DOCUMENT_KEY_LABELS = {
+  cv: "CV",
+  portfolio: "Portfolio",
+  transcript: "Transkrip",
+  other_supporting_documents: "Dokumen Pendukung Lain",
+  supporting_documents_note: "Catatan Dokumen Pendukung",
+};
+
+function resolveNonPenelitianUploadPath(fileMetadata) {
+  if (!fileMetadata || typeof fileMetadata !== "object") return null;
+
+  const storedName = String(fileMetadata.stored_name || "").trim();
+  const relativePath = String(fileMetadata.relative_path || "").trim();
+  const candidatePath = storedName
+    ? path.resolve(NON_PENELITIAN_UPLOAD_ROOT, path.basename(storedName))
+    : relativePath
+    ? path.resolve(__dirname, "..", relativePath)
+    : null;
+
+  if (!candidatePath) return null;
+
+  const relativeToRoot = path.relative(NON_PENELITIAN_UPLOAD_ROOT, candidatePath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) return null;
+
+  return candidatePath;
+}
+
 // ========== HELPER FUNCTION - VALIDASI KUOTA DOSEN ==========
 
 /**
@@ -2383,6 +2414,68 @@ exports.getMagangReviewQueueForDosen = async (req, res) =>
 exports.getMagangReviewDetailForDosen = async (req, res) =>
   getNonPenelitianReviewDetailForDosenByJalur(req, res, "magang");
 
+// GET /api/dosen/non-penelitian/magang/reviews/:id/documents/:documentKey
+exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
+  try {
+    const config = getDosenNonPenelitianReviewConfig("magang");
+    const dosenId = Number(req.user?.id || 0);
+    const id = Number(req.params?.id || 0);
+    const documentKey = String(req.params?.documentKey || "").trim();
+
+    if (!dosenId || !id || !MAGANG_DOCUMENT_KEY_LABELS[documentKey]) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter download dokumen magang tidak valid.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, null, false);
+    if (!row) {
+      return res.status(404).json({
+        success: false,
+        message: "Data form magang tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message || "Data bukan pengajuan magang.",
+      });
+    }
+
+    const assigned = resolveNonPenelitianPengampuByJalur(row.periode, reviewable.selectedJalur);
+    if (!assigned.dosen_id || assigned.dosen_id !== dosenId) {
+      return res.status(403).json({
+        success: false,
+        message: config.assignedError,
+      });
+    }
+
+    const payload = toObjectPayload(row.form_lanjutan_payload);
+    const documentMetadata = payload.uploaded_documents?.[documentKey] || null;
+    const absolutePath = resolveNonPenelitianUploadPath(documentMetadata);
+
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
+      return res.status(404).json({
+        success: false,
+        message: `${MAGANG_DOCUMENT_KEY_LABELS[documentKey]} tidak ditemukan.`,
+      });
+    }
+
+    const fileName = documentMetadata.original_name || path.basename(absolutePath);
+    return res.download(absolutePath, fileName);
+  } catch (error) {
+    console.error("Error di downloadMagangReviewDocumentForDosen:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
 // POST /api/dosen/non-penelitian/magang/reviews/:id/approve
 exports.approveMagangReviewByDosen = async (req, res) =>
   decideNonPenelitianReviewByDosen(req, res, "approved", "magang");
@@ -2529,6 +2622,58 @@ exports.getNonPenelitianReviewDetailForSekretaris = async (req, res) => {
   }
 };
 
+// GET /api/sekretaris/non-penelitian/reviews/:id/documents/:documentKey
+exports.downloadNonPenelitianReviewDocumentForSekretaris = async (req, res) => {
+  try {
+    const id = Number(req.params?.id || 0);
+    const documentKey = String(req.params?.documentKey || "").trim();
+
+    if (!id || !MAGANG_DOCUMENT_KEY_LABELS[documentKey]) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter download dokumen tidak valid.",
+      });
+    }
+
+    const row = await getNonPenelitianSubmissionForReview(id, null, false);
+    if (!row || row.program_kuliah !== req.user?.program_kuliah) {
+      return res.status(404).json({
+        success: false,
+        message: "Data form non-penelitian tidak ditemukan.",
+      });
+    }
+
+    const reviewable = ensureReviewableNonPenelitian(row);
+    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+      return res.status(reviewable.statusCode || 409).json({
+        success: false,
+        message: reviewable.message || "Dokumen ini hanya tersedia untuk pengajuan magang.",
+      });
+    }
+
+    const payload = toObjectPayload(row.form_lanjutan_payload);
+    const documentMetadata = payload.uploaded_documents?.[documentKey] || null;
+    const absolutePath = resolveNonPenelitianUploadPath(documentMetadata);
+
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
+      return res.status(404).json({
+        success: false,
+        message: `${MAGANG_DOCUMENT_KEY_LABELS[documentKey]} tidak ditemukan.`,
+      });
+    }
+
+    const fileName = documentMetadata.original_name || path.basename(absolutePath);
+    return res.download(absolutePath, fileName);
+  } catch (error) {
+    console.error("Error di downloadNonPenelitianReviewDocumentForSekretaris:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
 async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
   const t = await sequelize.transaction();
   try {
@@ -2586,15 +2731,11 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       });
     }
 
-    if (
-      decision === "approved" &&
-      reviewable.selectedJalur === "perintisan_bisnis" &&
-      !dosenPembimbingId
-    ) {
+    if (decision === "approved" && !dosenPembimbingId) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Dosen pembimbing kelompok wajib dipilih.",
+        message: "Dosen pembimbing wajib dipilih sebelum menyetujui final.",
       });
     }
 
@@ -2658,17 +2799,19 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     });
     await row.reload({ transaction: t });
 
-    if (
-      decision === "approved" &&
-      reviewable.selectedJalur === "perintisan_bisnis" &&
-      dosenPembimbing
-    ) {
+    if (decision === "approved" && dosenPembimbing) {
       const payload = toObjectPayload(row.form_lanjutan_payload);
       const teamMembers = Array.isArray(payload?.kelompok?.anggota)
         ? payload.kelompok.anggota
         : [];
-      const mahasiswaIds = teamMembers.map((item) => Number(item.mahasiswa_id)).filter(Boolean);
-      const pendaftaranIds = teamMembers.map((item) => Number(item.pendaftaran_id)).filter(Boolean);
+      const mahasiswaIds =
+        reviewable.selectedJalur === "perintisan_bisnis"
+          ? teamMembers.map((item) => Number(item.mahasiswa_id)).filter(Boolean)
+          : [Number(row.mahasiswa_id)].filter(Boolean);
+      const pendaftaranIds =
+        reviewable.selectedJalur === "perintisan_bisnis"
+          ? teamMembers.map((item) => Number(item.pendaftaran_id)).filter(Boolean)
+          : [Number(row.id)].filter(Boolean);
       if (mahasiswaIds.length > 0) {
         await Mahasiswa.update(
           { dosen_pembimbing_skripsi_id: dosenPembimbing.id },

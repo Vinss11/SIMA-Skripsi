@@ -59,6 +59,13 @@ router.get(
   authorizeSekretarisAccess,
   jalurController.getNonPenelitianReviewDetailForSekretaris
 );
+router.get(
+  "/non-penelitian/reviews/:id/documents/:documentKey",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  jalurController.downloadNonPenelitianReviewDocumentForSekretaris
+);
 router.post(
   "/non-penelitian/reviews/:id/approve",
   authenticateToken,

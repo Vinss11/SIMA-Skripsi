@@ -405,7 +405,10 @@ exports.createMahasiswaBimbingan = async (req, res) => {
     const pendaftaranAktif = await getLatestPendaftaranForBimbingan(mahasiswa_id, transaction);
     const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
 
-    if (selectedJalur && NON_PENELITIAN_JALUR_SET.has(String(selectedJalur).toLowerCase())) {
+    const selectedJalurIsNonPenelitian =
+      selectedJalur && NON_PENELITIAN_JALUR_SET.has(String(selectedJalur).toLowerCase());
+    const nonPenelitianStatus = String(pendaftaranAktif?.form_lanjutan_status || "").toLowerCase();
+    if (selectedJalurIsNonPenelitian && nonPenelitianStatus !== "approved") {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
@@ -415,7 +418,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
         detail: {
           field: "jalur",
           selected_jalur: selectedJalur,
-          reason: "Bimbingan saat ini baru tersedia untuk jalur penelitian.",
+          reason: "Bimbingan akan aktif setelah keputusan final sekretaris prodi disetujui.",
         },
       });
     }

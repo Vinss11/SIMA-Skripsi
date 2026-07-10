@@ -88,11 +88,21 @@ const createAnggotaPerintisan = () => ({
   mahasiswa: null,
 });
 
+function RequiredLabel({ children, className = "mb-1 block text-sm font-semibold text-[#324c86]" }) {
+  return (
+    <label className={className}>
+      {children}
+      <span className="ml-1 text-[#c43f3f]">*</span>
+    </label>
+  );
+}
+
 function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [periodeAktif, setPeriodeAktif] = useState(null);
   const [loadingPeriode, setLoadingPeriode] = useState(true);
   const [loadingDosen, setLoadingDosen] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isStepTwoSubmitReady, setIsStepTwoSubmitReady] = useState(false);
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState(INITIAL_FIELD_ERRORS);
@@ -133,6 +143,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         ? formData.jenis_jalur_ulang
         : formData.penjaluran_baru;
   const isPerintisanBisnis = selectedTargetJalur === "perintisan_bisnis";
+
+  useEffect(() => {
+    if (step !== 2) {
+      setIsStepTwoSubmitReady(false);
+      return undefined;
+    }
+    setIsStepTwoSubmitReady(false);
+    const timer = window.setTimeout(() => setIsStepTwoSubmitReady(true), 400);
+    return () => window.clearTimeout(timer);
+  }, [step]);
 
   useEffect(() => {
     const nim = String(formData.nim || "").trim();
@@ -540,6 +560,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     prioritizeNoBimbingan = false,
     disableKuotaPenuh = false,
     error = "",
+    required = false,
   }) => {
     const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan });
     const searchValue = String(dosenSearchQueryByField?.[name] || "");
@@ -582,7 +603,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
     return (
       <div>
-        <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+        {required ? (
+          <RequiredLabel>{label}</RequiredLabel>
+        ) : (
+          <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+        )}
         <div className="relative">
           <input
             type="text"
@@ -866,6 +891,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
   const handleNext = () => {
     setError("");
+    setIsStepTwoSubmitReady(false);
     if (pendaftaranDitutup) {
       setError("Periode pendaftaran masih belum dibuka oleh sekretaris prodi.");
       return;
@@ -880,14 +906,28 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
   const handleBackStep = () => {
     setError("");
+    setIsStepTwoSubmitReady(false);
     setStep(1);
   };
 
   const handleSubmit = async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
     setError("");
     if (pendaftaranDitutup) {
       setError("Periode pendaftaran masih belum dibuka oleh sekretaris prodi.");
+      return;
+    }
+
+    if (step !== 2) {
+      const commonError = validateStepOne();
+      if (commonError) {
+        setError(commonError === "Periksa kembali informasi umum." ? "" : commonError);
+        return;
+      }
+      setStep(2);
+      return;
+    }
+    if (!isStepTwoSubmitReady) {
       return;
     }
 
@@ -1064,13 +1104,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             </span>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-6 space-y-6">
+          <form onSubmit={(event) => event.preventDefault()} className="mt-6 space-y-6">
             {step === 1 ? (
               <section className="rounded-xl border border-[#e1e7f4] bg-white p-4">
                 <h2 className="text-lg font-black text-[#1a315f]">Informasi Umum</h2>
                 <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
-                    <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email UII (Otomatis)</label>
+                    <RequiredLabel>Email UII (Otomatis)</RequiredLabel>
                     <input
                       name="email"
                       type="text"
@@ -1085,7 +1125,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     </p>
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-semibold text-[#324c86]">NIM</label>
+                    <RequiredLabel>NIM</RequiredLabel>
                     <input
                       name="nim"
                       type="text"
@@ -1113,7 +1153,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     ) : null}
                   </div>
                   <div>
-                    <label className="mb-1 block text-sm font-semibold text-[#324c86]">Nama</label>
+                    <RequiredLabel>Nama</RequiredLabel>
                     <input
                       name="nama"
                       type="text"
@@ -1141,11 +1181,12 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     label: "Dosen Pembimbing Akademik",
                     value: formData.dosen_pembimbing_akademik_id,
                     error: fieldErrors.dosen_pembimbing_akademik_id,
+                    required: true,
                   })}
                 </div>
 
                 <div className="mt-4">
-                  <label className="block text-sm font-semibold text-[#324c86]">Program Kuliah</label>
+                  <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Program Kuliah</RequiredLabel>
                   {renderRadioGroup({
                     name: "program_kuliah",
                     value: formData.program_kuliah,
@@ -1159,7 +1200,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                 </div>
 
                 <div className="mt-4">
-                  <label className="block text-sm font-semibold text-[#324c86]">Pendaftaran</label>
+                  <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Pendaftaran</RequiredLabel>
                   {renderRadioGroup({
                     name: "pendaftaran",
                     value: formData.pendaftaran,
@@ -1191,7 +1232,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
               <section className="rounded-xl border border-[#e1e7f4] bg-white p-4">
                 <h2 className="text-lg font-black text-[#1a315f]">Form Lanjutan - Penjaluran Baru</h2>
                 <div className="mt-4">
-                  <label className="block text-sm font-semibold text-[#324c86]">Jenis jalur yang diambil</label>
+                  <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Jenis jalur yang diambil</RequiredLabel>
                   {renderRadioGroup({
                     name: "jenis_jalur_diambil",
                     value: formData.jenis_jalur_diambil,
@@ -1201,7 +1242,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                 {!isPerintisanBisnis ? (
                   <>
                     <div className="mt-4">
-                      <label className="block text-sm font-semibold text-[#324c86]">Status Dosen Pembimbing TA</label>
+                      <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Status Dosen Pembimbing TA</RequiredLabel>
                       <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                         {[
                           {
@@ -1243,6 +1284,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                         prioritizeNoBimbingan: true,
                         disableKuotaPenuh: true,
                         error: fieldErrors.dosen_pembimbing_ta_id,
+                        required: formData.dosen_pembimbing_ta_mode !== "belum_dapat",
                       })}
                     </div>
                   </>
@@ -1669,8 +1711,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     Kembali
                   </button>
                   <button
-                    type="submit"
-                    disabled={isSubmitting || pendaftaranDitutup}
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={isSubmitting || pendaftaranDitutup || !isStepTwoSubmitReady}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}

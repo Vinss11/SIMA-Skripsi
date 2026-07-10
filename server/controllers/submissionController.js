@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const { Op } = require("sequelize");
 const {
   Pengajuan,
@@ -22,6 +24,37 @@ const {
   finalizeJudulMandiriDeadlineSubmission,
   finalizeJudulMandiriDeadlineSubmissionsByIds,
 } = require("../services/topikParallelReviewService");
+
+const NON_PENELITIAN_UPLOAD_ROOT = process.env.VERCEL
+  ? path.join("/tmp", "sima-uploads", "non-penelitian")
+  : path.resolve(__dirname, "..", "uploads", "non-penelitian");
+
+const MAGANG_DOCUMENT_KEY_LABELS = {
+  cv: "CV",
+  portfolio: "Portfolio",
+  transcript: "Transkrip",
+  other_supporting_documents: "Dokumen Pendukung Lain",
+  supporting_documents_note: "Catatan Dokumen Pendukung",
+};
+
+function resolveNonPenelitianUploadPath(fileMetadata) {
+  if (!fileMetadata || typeof fileMetadata !== "object") return null;
+
+  const storedName = String(fileMetadata.stored_name || "").trim();
+  const relativePath = String(fileMetadata.relative_path || "").trim();
+  const candidatePath = storedName
+    ? path.resolve(NON_PENELITIAN_UPLOAD_ROOT, path.basename(storedName))
+    : relativePath
+    ? path.resolve(__dirname, "..", relativePath)
+    : null;
+
+  if (!candidatePath) return null;
+
+  const relativeToRoot = path.relative(NON_PENELITIAN_UPLOAD_ROOT, candidatePath);
+  if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) return null;
+
+  return candidatePath;
+}
 
 async function resolveSekretarisAsDosenId(req, sekretarisId) {
   const sekretaris = await SekretarisProdi.findByPk(sekretarisId, {
@@ -1218,6 +1251,67 @@ exports.getSubmissionById = async (req, res) => {
     });
   } catch (error) {
     console.error("Error di getSubmissionById:", error);
+    res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/submissions/:id/documents/:documentKey - Download dokumen magang milik mahasiswa
+exports.downloadSubmissionDocumentById = async (req, res) => {
+  try {
+    const { id, documentKey } = req.params;
+    const userId = Number(req.user.id);
+    const userRole = typeof req.user.role === "string" ? req.user.role.trim().toLowerCase() : "";
+    const nonPenelitianMatch = String(id || "").match(/^nonpen-(\d+)$/);
+
+    if (!nonPenelitianMatch || !MAGANG_DOCUMENT_KEY_LABELS[documentKey]) {
+      return res.status(400).json({
+        success: false,
+        message: "Parameter download dokumen tidak valid.",
+      });
+    }
+
+    if (!Number.isInteger(userId) || userRole !== "mahasiswa") {
+      return res.status(403).json({
+        success: false,
+        message: "Anda tidak memiliki akses ke dokumen ini.",
+      });
+    }
+
+    const registration = await loadNonPenelitianRegistrationById(Number(nonPenelitianMatch[1]));
+    if (!registration || Number(registration.mahasiswa_id) !== userId) {
+      return res.status(404).json({
+        success: false,
+        message: "Pengajuan tidak ditemukan.",
+      });
+    }
+
+    const payload = toObjectPayload(registration.form_lanjutan_payload);
+    const selectedJalur = String(payload.jalur || resolveSelectedJalurFromPendaftaran(registration) || "").toLowerCase();
+    if (selectedJalur !== "magang") {
+      return res.status(409).json({
+        success: false,
+        message: "Dokumen ini hanya tersedia untuk pengajuan magang.",
+      });
+    }
+
+    const documentMetadata = payload.uploaded_documents?.[documentKey] || null;
+    const absolutePath = resolveNonPenelitianUploadPath(documentMetadata);
+
+    if (!absolutePath || !fs.existsSync(absolutePath)) {
+      return res.status(404).json({
+        success: false,
+        message: `${MAGANG_DOCUMENT_KEY_LABELS[documentKey]} tidak ditemukan.`,
+      });
+    }
+
+    const fileName = documentMetadata.original_name || path.basename(absolutePath);
+    return res.download(absolutePath, fileName);
+  } catch (error) {
+    console.error("Error di downloadSubmissionDocumentById:", error);
     res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",

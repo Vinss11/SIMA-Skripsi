@@ -170,6 +170,38 @@ function getDosenPembimbingDisplay(row, detail = null) {
   );
 }
 
+function getTimelineActorLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "mahasiswa") return "Mahasiswa";
+  if (normalized === "system") return "Sistem";
+  if (normalized === "dosen_pengawas_magang") return "Dosen Pengawas Magang";
+  if (normalized === "dosen_pengampu_pengabdian") return "Dosen Pengampu Pengabdian Masyarakat";
+  if (normalized === "dosen_pengampu_perintisan_bisnis") return "Dosen Pengampu Perintisan Bisnis";
+  if (normalized === "sekretaris_prodi") return "Sekretaris Prodi";
+  return formatLabel(value);
+}
+
+function getTimelineNoteDisplay(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  const actor = String(item?.actor || "").trim().toLowerCase();
+  const note = String(item?.note || "").trim();
+
+  if (actor === "system" && status === "review_dosen_magang") {
+    return "Menunggu review dosen pengawas magang.";
+  }
+  if (actor === "system" && status === "review_sekprodi") {
+    return "Menunggu keputusan final sekretaris prodi.";
+  }
+  if (actor === "dosen_pengawas_magang" && note) {
+    return `Catatan Dosen Pengawas Magang: ${note}`;
+  }
+  if (actor === "sekretaris_prodi" && note) {
+    return `Catatan Sekretaris Prodi: ${note}`;
+  }
+  return note || "-";
+}
+
 function Timeline({ items = [] }) {
   if (!Array.isArray(items) || items.length === 0) {
     return (
@@ -183,14 +215,15 @@ function Timeline({ items = [] }) {
     <div className="space-y-3">
       {items.map((item, index) => {
         const chip = getStatusChip(item.status);
+        const actorLabel = getTimelineActorLabel(item.actor);
         return (
           <div key={`timeline-${index}-${item.status || "item"}`} className="rounded-lg border border-[#e8ecf6] bg-white p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}>{chip.label}</span>
               <span className="text-xs font-semibold text-[#68779e]">{formatDateTime(item.at)}</span>
             </div>
-            <p className="mt-2 text-sm font-semibold text-[#26355f]">{item.note || "-"}</p>
-            {item.actor ? <p className="mt-1 text-xs text-[#68779e]">Aktor: {formatLabel(item.actor)}</p> : null}
+            <p className="mt-2 text-sm font-semibold text-[#26355f]">{getTimelineNoteDisplay(item)}</p>
+            {actorLabel ? <p className="mt-1 text-xs text-[#68779e]">Aktor: {actorLabel}</p> : null}
           </div>
         );
       })}
@@ -279,19 +312,24 @@ function DisabledRadioGroup({ label, name, options, value, columns = "md:grid-co
   );
 }
 
-function DisabledFileField({ label, value }) {
+function DisabledFileField({ label, value, onOpen }) {
+  const hasFile = Boolean(value && value !== "-");
+  const canOpen = hasFile && typeof onOpen === "function";
   return (
     <div>
       <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
       <div className="flex min-h-[42px] items-center gap-2 rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789]">
         <button
           type="button"
-          disabled
-        className="cursor-default rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm text-[#1a2648] opacity-80 disabled:cursor-default"
+          disabled={!canOpen}
+          onClick={onOpen}
+          className="inline-flex items-center gap-1 rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm font-semibold text-[#1a2648] opacity-90 transition hover:bg-[#eef4ff] disabled:cursor-not-allowed disabled:opacity-60"
+          title={canOpen ? `Lihat ${label}` : "File belum tersedia"}
         >
-          Choose File
+          <Eye className="h-3.5 w-3.5" />
+          Lihat File
         </button>
-        <span className="truncate">{value || "No file chosen"}</span>
+        <span className="truncate">{hasFile ? value : "No file chosen"}</span>
       </div>
     </div>
   );
@@ -400,21 +438,33 @@ function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
   );
 }
 
-function NonPenelitianDetail({ detail }) {
+function NonPenelitianDetail({ detail, hideIntro = false, onOpenDocument }) {
   const payload = detail?.detail_pengajuan?.payload || {};
   const jalur = String(detail?.detail_pengajuan?.jalur || detail?.jalur_program || "").toLowerCase();
 
   if (jalur === "magang") {
     const mahasiswa = detail?.mahasiswa || {};
     const isNonPartner = payload.company_type === "non_partner_company";
+    const uploadedDocuments =
+      payload.uploaded_documents && typeof payload.uploaded_documents === "object" && !Array.isArray(payload.uploaded_documents)
+        ? payload.uploaded_documents
+        : {};
+    const makeDocumentOpenHandler = (documentKey, fallbackName) => {
+      const metadata = uploadedDocuments[documentKey];
+      const fileName = metadata?.original_name || fallbackName || "-";
+      if (!metadata || !fileName || fileName === "-" || typeof onOpenDocument !== "function") return undefined;
+      return () => onOpenDocument(documentKey, fileName);
+    };
     return (
       <div className="space-y-6">
-        <div>
-          <h2 className="text-xl font-black text-[#1b274b]">Permintaan Surat Rekomendasi Magang</h2>
-          <p className="mt-1 text-sm text-[#5d6c91]">
-            Tampilan read-only dari form pendaftaran magang yang telah dikirim.
-          </p>
-        </div>
+        {!hideIntro ? (
+          <div>
+            <h2 className="text-xl font-black text-[#1b274b]">Permintaan Surat Rekomendasi Magang</h2>
+            <p className="mt-1 text-sm text-[#5d6c91]">
+              Tampilan read-only dari form pendaftaran magang yang telah dikirim.
+            </p>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <DisabledFormInput label="NIM" value={mahasiswa.nim || "-"} />
@@ -555,12 +605,32 @@ function NonPenelitianDetail({ detail }) {
         <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
           <h3 className="text-sm font-black text-[#1b274b]">Dokumen Pendukung</h3>
           <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-            <DisabledFileField label="Upload CV" value={payload.cv_file_name || "-"} />
-            <DisabledFileField label="Upload portfolios of Past Work" value={payload.portfolio_file_name || "-"} />
-            <DisabledFileField label="Upload Academic Transcript" value={payload.transcript_file_name || "-"} />
+            <DisabledFileField
+              label="Upload CV"
+              value={uploadedDocuments.cv?.original_name || payload.cv_file_name || "-"}
+              onOpen={makeDocumentOpenHandler("cv", payload.cv_file_name)}
+            />
+            <DisabledFileField
+              label="Upload portfolios of Past Work"
+              value={uploadedDocuments.portfolio?.original_name || payload.portfolio_file_name || "-"}
+              onOpen={makeDocumentOpenHandler("portfolio", payload.portfolio_file_name)}
+            />
+            <DisabledFileField
+              label="Upload Academic Transcript"
+              value={uploadedDocuments.transcript?.original_name || payload.transcript_file_name || "-"}
+              onOpen={makeDocumentOpenHandler("transcript", payload.transcript_file_name)}
+            />
             <DisabledFileField
               label="Upload other supporting documents"
-              value={payload.other_supporting_documents_file_name || "-"}
+              value={
+                uploadedDocuments.other_supporting_documents?.original_name ||
+                payload.other_supporting_documents_file_name ||
+                "-"
+              }
+              onOpen={makeDocumentOpenHandler(
+                "other_supporting_documents",
+                payload.other_supporting_documents_file_name
+              )}
             />
             <DisabledFormInput
               label="Internship Company website URL"
@@ -574,7 +644,8 @@ function NonPenelitianDetail({ detail }) {
           <div className="mt-4">
             <DisabledFileField
               label="Catatan dokumen pendukung (wajib jika internship vacancy URL kosong)"
-              value={payload.supporting_documents_note || "-"}
+              value={uploadedDocuments.supporting_documents_note?.original_name || payload.supporting_documents_note || "-"}
+              onOpen={makeDocumentOpenHandler("supporting_documents_note", payload.supporting_documents_note)}
             />
           </div>
         </div>
@@ -1083,6 +1154,11 @@ function StatusPage({
     selectedDetail?.tipe_pengajuan || selectedSubmissionRow?.tipe_pengajuan,
     selectedDetail?.status || selectedSubmissionRow?.status
   );
+  const selectedNonPenelitianJalur = String(
+    selectedDetail?.detail_pengajuan?.jalur || selectedDetail?.jalur_program || ""
+  ).toLowerCase();
+  const isSelectedMagangDetail =
+    selectedDetail?.record_type === "non_penelitian" && selectedNonPenelitianJalur === "magang";
   const selectedHistory = Array.isArray(selectedDetail?.riwayat_persetujuan)
     ? selectedDetail.riwayat_persetujuan
     : [];
@@ -1112,6 +1188,56 @@ function StatusPage({
   const handleOpenDetail = (submissionId) => {
     setSelectedSubmissionId(submissionId);
     setViewMode("detail");
+  };
+
+  const handleOpenNonPenelitianDocument = async (documentKey, fileName) => {
+    const id = selectedDetail?.id || selectedSubmissionId;
+    if (!id || !documentKey) {
+      setDetailError("Dokumen pengajuan tidak valid.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/submissions/${id}/documents/${documentKey}`, {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = String(payload?.message || "Gagal membuka dokumen pengajuan.");
+        const lowerMessage = message.toLowerCase();
+        const tokenError =
+          lowerMessage.includes("token tidak valid") ||
+          lowerMessage.includes("token tidak ditemukan") ||
+          lowerMessage.includes("kadaluarsa");
+
+        if (response.status === 401 || (response.status === 403 && tokenError)) {
+          onSessionExpired?.();
+          throw new Error("__SESSION_EXPIRED__");
+        }
+
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const openedWindow = window.open(url, "_blank", "noopener,noreferrer");
+      if (!openedWindow) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName || "dokumen-pengajuan";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (documentError) {
+      if (documentError?.message !== "__SESSION_EXPIRED__") {
+        setDetailError(documentError.message || "Gagal membuka dokumen pengajuan.");
+      }
+    }
   };
 
   const handleBackToList = () => {
@@ -1404,7 +1530,7 @@ function StatusPage({
               <div className="space-y-4">
               {selectedDetail.record_type !== "non_penelitian" ? (
                 <ResearchSubmissionDetailForm detail={selectedDetail} topikRows={selectedTopikRows} />
-              ) : (
+              ) : !isSelectedMagangDetail ? (
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -1437,20 +1563,26 @@ function StatusPage({
                   )}
                 </div>
               </section>
-              )}
+              ) : null}
 
               {selectedDetail.record_type === "non_penelitian" ? (
-              <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
-                <div className="mb-3">
-                  <h4 className="text-base font-black text-[#1a2648]">
-                    {selectedDetail.record_type === "non_penelitian" ? "Detail Form Jalur" : "Detail Topik / Judul"}
-                  </h4>
-                  <p className="mt-1 text-sm text-[#5f6b89]">
-                    Informasi substansi pengajuan yang sedang direview.
-                  </p>
-                </div>
+              <section className={isSelectedMagangDetail ? "bg-white" : "rounded-lg border border-[#dfe8f7] bg-white p-4"}>
+                {!isSelectedMagangDetail ? (
+                  <div className="mb-3">
+                    <h4 className="text-base font-black text-[#1a2648]">
+                      {selectedDetail.record_type === "non_penelitian" ? "Detail Form Jalur" : "Detail Topik / Judul"}
+                    </h4>
+                    <p className="mt-1 text-sm text-[#5f6b89]">
+                      Informasi substansi pengajuan yang sedang direview.
+                    </p>
+                  </div>
+                ) : null}
                 {selectedDetail.record_type === "non_penelitian" ? (
-                  <NonPenelitianDetail detail={selectedDetail} />
+                  <NonPenelitianDetail
+                    detail={selectedDetail}
+                    hideIntro={isSelectedMagangDetail}
+                    onOpenDocument={handleOpenNonPenelitianDocument}
+                  />
                 ) : (
                   null
                 )}
@@ -1463,7 +1595,7 @@ function StatusPage({
 
           {!loadingDetail && selectedDetail && selectedDetail.record_type === "non_penelitian" ? (
             <>
-              <NonPenelitianReviewSummary detail={selectedDetail} />
+              {!isSelectedMagangDetail ? <NonPenelitianReviewSummary detail={selectedDetail} /> : null}
               <NonPenelitianDecisionTimeline detail={selectedDetail} />
             </>
           ) : null}
@@ -1567,4 +1699,3 @@ function StatusPage({
 }
 
 export default StatusPage;
-

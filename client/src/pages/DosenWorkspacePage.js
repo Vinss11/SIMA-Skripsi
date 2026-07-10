@@ -88,6 +88,31 @@ const MITRA_MAGANG_STATUS_FILTER_OPTIONS = [
   { value: "inactive", label: "Nonaktif" },
   { value: "all", label: "Semua" },
 ];
+const MAGANG_PROPOSED_POSITION_OPTIONS = [
+  "analyst",
+  "designer",
+  "programmer",
+  "tester",
+  "network engineer",
+  "data scientist",
+  "other",
+];
+const MAGANG_COMPANY_SECTOR_OPTIONS = [
+  "it industry",
+  "goverment",
+  "education/school",
+  "economy/financial",
+  "other",
+];
+const MAGANG_COMPANY_TYPE_OPTIONS = [
+  { value: "partner_company", label: "Partner Company (name listed in the partner list)" },
+  { value: "non_partner_company", label: "Non partner Company (name not listed in the partner list)" },
+];
+const MAGANG_APPLICATION_METHOD_OPTIONS = [
+  "via Internship Vacancy",
+  "Independent (no vacancy/via Direct Contact)",
+  "other",
+];
 const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
@@ -458,76 +483,283 @@ function getMagangStatusBadgeClass(status) {
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
 
-function getMagangDetailFields(row) {
-  const payload = getMagangPayload(row);
-  const mitraData = getMagangMitraGridData(row);
-  const sector = getMagangCompanySectorLabel(row);
-  const proposedPosition = getMagangProposedPositionLabel(row);
-  const applicationMethod = getMagangApplicationMethodLabel(row);
-
-  return [
-    ["Mahasiswa", `${row?.mahasiswa?.nama || "-"} (${row?.mahasiswa?.nim || "-"})`],
-    ["Email", row?.mahasiswa?.email || "-"],
-    ["Angkatan", row?.mahasiswa?.angkatan || "-"],
-    ["Periode", row?.periode?.label_periode || "-"],
-    ["Status Review", row?.workflow_status_label || formatLabel(getMagangReviewStatus(row))],
-    ["Tipe Perusahaan", getMagangCompanyTypeLabel(row)],
-    ["Institusi Dipilih", payload.chosen_institution],
-    ["Nama Perusahaan", getMagangCompanyName(row)],
-    ["Bidang / Jenis Mitra", mitraData.bidang_jenis],
-    ["Lokasi Mitra", mitraData.lokasi],
-    ["Email Kontak Mitra", mitraData.email_kontak],
-    ["Website Mitra", mitraData.website],
-    ["Posisi Magang Mitra", mitraData.posisi_magang],
-    ["Quota Magang", mitraData.quota_magang],
-    ["Kriteria Mitra", mitraData.kriteria],
-    ["Prosedur dari Perusahaan", mitraData.prosedur_perusahaan],
-    ["Alamat Institusi", payload.complete_address_of_institution],
-    ["Sektor Perusahaan", sector],
-    ["Posisi Diajukan", proposedPosition],
-    ["Nomor Telepon", payload.phone_number],
-    ["Tanggal Apply", payload.tanggal_apply],
-    ["Metode Apply", payload.metode_apply],
-    ["Bukti Apply", payload.bukti_apply],
-    ["Website Perusahaan", payload.internship_company_website_url],
-    ["URL Vacancy", payload.internship_vacancy_url],
-    ["Catatan Dokumen Pendukung", payload.supporting_documents_note],
-    ["CV", payload.cv_file_name],
-    ["Portfolio", payload.portfolio_file_name],
-    ["Transkrip", payload.transcript_file_name],
-    ["Dokumen Pendukung Lain", payload.other_supporting_documents_file_name],
-    ["Tahun Berdiri", payload.year_of_establishment],
-    ["Jumlah Karyawan", payload.number_of_employees],
-    ["Metode Pendaftaran Magang", applicationMethod],
-    ["Proses Seleksi", payload.selection_processes],
-  ];
+function ReadonlyMagangInput({ label, value, wide = false }) {
+  return (
+    <div className={wide ? "md:col-span-2 xl:col-span-3" : ""}>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <input
+        type="text"
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none disabled:cursor-default"
+      />
+    </div>
+  );
 }
 
-function getMagangTimelineHtml(row) {
-  const timeline = Array.isArray(getMagangPayload(row).workflow_timeline)
-    ? getMagangPayload(row).workflow_timeline
-    : [];
-  if (timeline.length === 0) {
-    return `<div style="border:1px solid #e4e9f6;border-radius:8px;padding:10px;background:#f8fbff;color:#65749b;font-weight:600;">Belum ada timeline workflow.</div>`;
-  }
+function ReadonlyMagangTextarea({ label, value, rows = 3 }) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <textarea
+        rows={rows}
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789] outline-none disabled:cursor-default"
+      />
+    </div>
+  );
+}
 
-  return timeline
-    .map((item) => {
-      const actor = formatLabel(item?.actor || "-");
-      const status = formatLabel(item?.status || "-");
-      const at = formatDateTime(item?.at);
-      return `
-        <div style="border:1px solid #e4e9f6;border-radius:8px;padding:10px;background:#f8fbff;margin-top:8px;">
-          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;">
-            <b>${escapeHtml(status)}</b>
-            <span style="font-size:12px;color:#60709a;">${escapeHtml(at)}</span>
+function ReadonlyMagangRadioGroup({ label, name, options, value, columns = "md:grid-cols-2" }) {
+  return (
+    <div>
+      {label ? <p className="mb-2 text-sm font-semibold text-[#324c86]">{label}</p> : null}
+      <div className={`grid grid-cols-1 gap-2 ${columns}`}>
+        {options.map((option) => {
+          const optionValue = typeof option === "string" ? option : option.value;
+          const optionLabel = typeof option === "string" ? option : option.label;
+          return (
+            <label
+              key={`${name}-${optionValue}`}
+              className="flex items-center gap-2 rounded-lg border border-[#dce4f5] bg-[#f7f9fe] px-3 py-2 text-sm text-[#334772]"
+            >
+              <input type="radio" name={name} disabled checked={String(value || "") === String(optionValue)} readOnly />
+              <span>{optionLabel}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ReadonlyMagangFileField({ label, value, onOpen }) {
+  const hasFile = Boolean(value && value !== "-");
+  const canOpen = hasFile && typeof onOpen === "function";
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <div className="flex min-h-[42px] items-center gap-2 rounded-lg border border-[#d0dbf4] bg-[#f3f5fb] px-3 py-2 text-sm text-[#596789]">
+        <button
+          type="button"
+          disabled={!canOpen}
+          onClick={onOpen}
+          className="inline-flex items-center gap-1 rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm font-semibold text-[#1a2648] opacity-90 transition hover:bg-[#eef4ff] disabled:cursor-not-allowed disabled:opacity-60"
+          title={canOpen ? `Lihat ${label}` : "File belum tersedia"}
+        >
+          <Eye className="h-3.5 w-3.5" />
+          Lihat File
+        </button>
+        <span className="truncate">{hasFile ? value : "No file chosen"}</span>
+      </div>
+    </div>
+  );
+}
+
+function MagangReadonlyDetailForm({ detail, onOpenDocument }) {
+  const payload = getMagangPayload(detail);
+  const mahasiswa = detail?.mahasiswa || {};
+  const isNonPartner = payload.company_type === "non_partner_company";
+  const uploadedDocuments =
+    payload.uploaded_documents && typeof payload.uploaded_documents === "object" && !Array.isArray(payload.uploaded_documents)
+      ? payload.uploaded_documents
+      : {};
+  const makeDocumentOpenHandler = (documentKey, fallbackName) => {
+    const metadata = uploadedDocuments[documentKey];
+    const fileName = metadata?.original_name || fallbackName || "-";
+    if (!metadata || !fileName || fileName === "-" || typeof onOpenDocument !== "function") return undefined;
+    return () => onOpenDocument(documentKey, fileName);
+  };
+  const applyStatusValue =
+    payload.sudah_apply_ke_mitra === true || String(payload.sudah_apply_ke_mitra).toLowerCase() === "true"
+      ? "true"
+      : "false";
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ReadonlyMagangInput label="NIM" value={mahasiswa.nim || "-"} />
+        <ReadonlyMagangInput label="Nama" value={mahasiswa.nama || "-"} />
+      </div>
+
+      <ReadonlyMagangInput label="Phone number" value={payload.phone_number || "-"} wide />
+
+      <ReadonlyMagangRadioGroup
+        label="Type of Company"
+        name={`review-company-type-${detail.id}`}
+        options={MAGANG_COMPANY_TYPE_OPTIONS}
+        value={payload.company_type}
+        columns="grid-cols-1"
+      />
+
+      {!isNonPartner ? (
+        <>
+          {payload.mitra_snapshot ? (
+            <div>
+              <h3 className="text-sm font-black text-[#1b274b]">Detail Mitra Magang Terpilih</h3>
+              <p className="mt-1 text-xs text-[#5d6c91]">Snapshot mitra yang dipilih saat form dikirim.</p>
+              <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <ReadonlyMagangInput label="Nama Mitra" value={payload.mitra_snapshot.nama || "-"} />
+                <ReadonlyMagangInput label="Bidang / Jenis" value={payload.mitra_snapshot.bidang_jenis || "-"} />
+                <ReadonlyMagangInput label="Lokasi" value={payload.mitra_snapshot.lokasi || "-"} />
+                <ReadonlyMagangInput label="Website" value={payload.mitra_snapshot.website || "-"} />
+                <ReadonlyMagangInput label="Posisi Magang" value={payload.mitra_snapshot.posisi_magang || "-"} />
+                <ReadonlyMagangInput label="Quota Magang" value={payload.mitra_snapshot.quota_magang ?? "-"} />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <ReadonlyMagangTextarea label="Kriteria" value={payload.mitra_snapshot.kriteria || "-"} rows={2} />
+                <ReadonlyMagangTextarea
+                  label="Prosedur dari Perusahaan"
+                  value={payload.mitra_snapshot.prosedur_perusahaan || "-"}
+                  rows={2}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <div className="space-y-4">
+            <ReadonlyMagangInput label="Chosen Institution" value={payload.chosen_institution || "-"} wide />
+            <ReadonlyMagangTextarea
+              label="Complete address of the institution"
+              value={payload.complete_address_of_institution || "-"}
+            />
           </div>
-          <p style="margin:4px 0 0;color:#42537d;">${escapeHtml(actor)}</p>
-          <p style="margin:4px 0 0;color:#2f426f;">${escapeHtml(item?.note || "-")}</p>
+        </>
+      ) : (
+        <>
+          <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+            <h3 className="text-sm font-black text-[#1b274b]">Data Tambahan Non Partner Company</h3>
+            <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ReadonlyMagangInput label="Company name" value={payload.company_name || "-"} />
+              <ReadonlyMagangInput label="Year of establishment" value={payload.year_of_establishment || "-"} />
+              <ReadonlyMagangInput label="Number of employees" value={payload.number_of_employees || "-"} />
+            </div>
+            <div className="mt-4">
+              <ReadonlyMagangRadioGroup
+                label="Internship Application method"
+                name={`review-internship-method-${detail.id}`}
+                options={MAGANG_APPLICATION_METHOD_OPTIONS}
+                value={payload.internship_application_method}
+                columns="grid-cols-1"
+              />
+              {payload.internship_application_method === "other" ? (
+                <div className="mt-3">
+                  <ReadonlyMagangInput
+                    label="Metode lainnya"
+                    value={payload.internship_application_method_other || "-"}
+                  />
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-4">
+              <ReadonlyMagangTextarea
+                label="Selection Processes (satu baris = satu proses)"
+                value={
+                  Array.isArray(payload.selection_processes)
+                    ? payload.selection_processes.join("\n")
+                    : payload.selection_processes || "-"
+                }
+                rows={4}
+              />
+            </div>
+          </div>
+          <ReadonlyMagangTextarea
+            label="Complete address of the institution"
+            value={payload.complete_address_of_institution || "-"}
+          />
+        </>
+      )}
+
+      <ReadonlyMagangRadioGroup
+        label="Proposed / Expected Position"
+        name={`review-proposed-position-${detail.id}`}
+        options={MAGANG_PROPOSED_POSITION_OPTIONS}
+        value={payload.proposed_position}
+      />
+      {payload.proposed_position === "other" ? (
+        <ReadonlyMagangInput label="Posisi lainnya" value={payload.proposed_position_other || "-"} wide />
+      ) : null}
+
+      <ReadonlyMagangRadioGroup
+        label="Company Sector"
+        name={`review-company-sector-${detail.id}`}
+        options={MAGANG_COMPANY_SECTOR_OPTIONS}
+        value={payload.company_sector}
+      />
+      {payload.company_sector === "other" ? (
+        <ReadonlyMagangInput label="Sektor lainnya" value={payload.company_sector_other || "-"} wide />
+      ) : null}
+
+      <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+        <h3 className="text-sm font-black text-[#1b274b]">Konfirmasi Apply ke Mitra</h3>
+        <p className="mt-1 text-xs text-[#5d6c91]">Status apply mahasiswa pada saat form dikirim.</p>
+        <div className="mt-3">
+          <ReadonlyMagangRadioGroup
+            label=""
+            name={`review-apply-status-${detail.id}`}
+            options={[
+              { value: "true", label: "Sudah apply ke mitra magang" },
+              { value: "false", label: "Belum apply ke mitra magang" },
+            ]}
+            value={applyStatusValue}
+          />
         </div>
-      `;
-    })
-    .join("");
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <ReadonlyMagangInput label="Tanggal apply" value={payload.tanggal_apply || "-"} />
+          <ReadonlyMagangInput label="Metode apply" value={payload.metode_apply || "-"} />
+          <ReadonlyMagangInput label="Bukti apply" value={payload.bukti_apply || "-"} />
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
+        <h3 className="text-sm font-black text-[#1b274b]">Dokumen Pendukung</h3>
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ReadonlyMagangFileField
+            label="Upload CV"
+            value={uploadedDocuments.cv?.original_name || payload.cv_file_name || "-"}
+            onOpen={makeDocumentOpenHandler("cv", payload.cv_file_name)}
+          />
+          <ReadonlyMagangFileField
+            label="Upload portfolios of Past Work"
+            value={uploadedDocuments.portfolio?.original_name || payload.portfolio_file_name || "-"}
+            onOpen={makeDocumentOpenHandler("portfolio", payload.portfolio_file_name)}
+          />
+          <ReadonlyMagangFileField
+            label="Upload Academic Transcript"
+            value={uploadedDocuments.transcript?.original_name || payload.transcript_file_name || "-"}
+            onOpen={makeDocumentOpenHandler("transcript", payload.transcript_file_name)}
+          />
+          <ReadonlyMagangFileField
+            label="Upload other supporting documents"
+            value={
+              uploadedDocuments.other_supporting_documents?.original_name ||
+              payload.other_supporting_documents_file_name ||
+              "-"
+            }
+            onOpen={makeDocumentOpenHandler(
+              "other_supporting_documents",
+              payload.other_supporting_documents_file_name
+            )}
+          />
+          <ReadonlyMagangInput
+            label="Internship Company website URL"
+            value={payload.internship_company_website_url || "-"}
+          />
+          <ReadonlyMagangInput label="Internship vacancy URL (opsional)" value={payload.internship_vacancy_url || "-"} />
+        </div>
+        <div className="mt-4">
+          <ReadonlyMagangFileField
+            label="Catatan dokumen pendukung (wajib jika internship vacancy URL kosong)"
+            value={uploadedDocuments.supporting_documents_note?.original_name || payload.supporting_documents_note || "-"}
+            onOpen={makeDocumentOpenHandler("supporting_documents_note", payload.supporting_documents_note)}
+          />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function getPengampuReviewStatus(row) {
@@ -548,6 +780,148 @@ function getPengampuReviewSummary(row) {
 
 function getPengampuReviewNote(row) {
   return formatMagangPayloadValue(getMagangPayload(row).catatan);
+}
+
+function getFinalResearchChosenTopic(row) {
+  const topics = Array.isArray(row?.topik) ? row.topik : [];
+  return topics.find((topic) => topic?.dipilih) || topics.find((topic) => topic?.status === "approved") || topics[0] || null;
+}
+
+function getFinalResearchTitle(row) {
+  const topic = getFinalResearchChosenTopic(row);
+  if (!topic) return "-";
+  const topicType = row?.tipe_pengajuan === "judul_mandiri" ? "Judul Mandiri" : "Topik Dosen";
+  const slotLabel = topic.slot ? `Pilihan ${topic.slot}` : topicType;
+  const codeLabel = topic.kode ? ` - ${topic.kode}` : "";
+  return `${slotLabel}${codeLabel}: ${topic.judul || "-"}`;
+}
+
+function getFinalResearchSummary(row) {
+  const topic = getFinalResearchChosenTopic(row);
+  const topicType = row?.tipe_pengajuan === "judul_mandiri" ? "Judul Mandiri" : "Topik Dosen";
+  return [
+    topicType,
+    topic?.dosen_nama ? `Dosen: ${topic.dosen_nama}` : null,
+    row?.ketua_cluster?.nama ? `Ketua Cluster: ${row.ketua_cluster.nama}` : null,
+  ]
+    .filter(Boolean)
+    .join(" | ") || "-";
+}
+
+function getFinalApprovalStageLabel(row, isResearch) {
+  if (isResearch) return "Menunggu Keputusan Final Sekprodi";
+  return row?.workflow_status_label || "Menunggu Keputusan Final Sekprodi";
+}
+
+function getFinalApprovalReviewerLabel(row, isResearch) {
+  if (isResearch) return "Sekretaris Prodi";
+  const status = String(row?.workflow_status || row?.form_lanjutan_status || "").trim().toLowerCase();
+  if (status === "review_sekprodi") return "Sekretaris Prodi";
+  const role = String(row?.reviewer_target?.role || "").trim().toLowerCase();
+  if (role === "pengawas_magang" || role === "dosen_pengawas_magang") return "Dosen Pengawas Magang";
+  if (role.includes("pengabdian")) return "Dosen Pengampu Pengabdian";
+  if (role.includes("perintisan")) return "Dosen Pengampu Perintisan";
+  return formatLabel(role || "-");
+}
+
+function getFinalDecisionTimelineStatusChip(status) {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized === "approved") {
+    return { label: "Approved", className: "bg-[#137748] text-white" };
+  }
+  if (normalized === "rejected") {
+    return { label: "Rejected", className: "bg-[#b73a3a] text-white" };
+  }
+  if (normalized === "review_sekprodi") {
+    return { label: "Menunggu Sekprodi", className: "bg-[#e8efff] text-[#2f63e3]" };
+  }
+  if (normalized === "submitted" || normalized === "review_dosen_magang") {
+    return { label: "Menunggu Review Dosen", className: "bg-[#fdf1d4] text-[#a06a00]" };
+  }
+  return { label: formatLabel(status || "-"), className: "bg-[#eef2fb] text-[#5c6d95]" };
+}
+
+function getFinalDecisionTimelineActorLabel(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "";
+  if (normalized === "mahasiswa") return "Mahasiswa";
+  if (normalized === "system") return "Sistem";
+  if (normalized === "dosen_pengawas_magang") return "Dosen Pengawas Magang";
+  if (normalized === "dosen_pengampu_pengabdian") return "Dosen Pengampu Pengabdian Masyarakat";
+  if (normalized === "dosen_pengampu_perintisan_bisnis") return "Dosen Pengampu Perintisan Bisnis";
+  if (normalized === "sekretaris_prodi") return "Sekretaris Prodi";
+  return formatLabel(value);
+}
+
+function getFinalDecisionTimelineNoteDisplay(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  const actor = String(item?.actor || "").trim().toLowerCase();
+  const note = String(item?.note || "").trim();
+
+  if (actor === "system" && status === "review_dosen_magang") {
+    return "Menunggu review dosen pengawas magang.";
+  }
+  if (actor === "system" && status === "review_sekprodi") {
+    return "Menunggu keputusan final sekretaris prodi.";
+  }
+  if (actor === "dosen_pengawas_magang" && note) {
+    return `Catatan Dosen Pengawas Magang: ${note}`;
+  }
+  if (actor === "dosen_pengampu_pengabdian" && note) {
+    return `Catatan Dosen Pengampu Pengabdian Masyarakat: ${note}`;
+  }
+  if (actor === "dosen_pengampu_perintisan_bisnis" && note) {
+    return `Catatan Dosen Pengampu Perintisan Bisnis: ${note}`;
+  }
+  if (actor === "sekretaris_prodi" && note) {
+    return `Catatan Sekretaris Prodi: ${note}`;
+  }
+  return note || "-";
+}
+
+function FinalDecisionDetailSection({ detail }) {
+  const timeline = getMagangPayload(detail).workflow_timeline;
+  const items = Array.isArray(timeline) ? timeline : [];
+
+  return (
+    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+      <div className="mb-3">
+        <h3 className="text-lg font-black text-[#1b274b]">Detail Keputusan</h3>
+        <p className="mt-1 text-sm text-[#5d6c91]">
+          Timeline progress dari submit form sampai keputusan terakhir.
+        </p>
+      </div>
+      {items.length > 0 ? (
+        <div className="space-y-3">
+          {items.map((item, index) => {
+            const chip = getFinalDecisionTimelineStatusChip(item?.status);
+            const actorLabel = getFinalDecisionTimelineActorLabel(item?.actor);
+            return (
+              <div
+                key={`sekprodi-final-decision-${index}-${item?.status || "item"}`}
+                className="rounded-lg border border-[#e8ecf6] bg-white p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}>
+                    {chip.label}
+                  </span>
+                  <span className="text-xs font-semibold text-[#68779e]">{formatDateTime(item?.at)}</span>
+                </div>
+                <p className="mt-2 text-sm font-semibold text-[#26355f]">
+                  {getFinalDecisionTimelineNoteDisplay(item)}
+                </p>
+                {actorLabel ? <p className="mt-1 text-xs text-[#68779e]">Aktor: {actorLabel}</p> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-[#e8ecf6] bg-white p-4 text-sm text-[#5f6b89]">
+          Belum ada detail keputusan.
+        </div>
+      )}
+    </div>
+  );
 }
 
 function getPengampuReviewStatusBadgeClass(status) {
@@ -899,13 +1273,6 @@ const DOSEN_PENGAMPU_REVIEW_CONFIG_BY_TAB = Object.values(DOSEN_PENGAMPU_REVIEW_
   },
   {}
 );
-const FINAL_APPROVAL_TABS = [
-  { key: "penelitian", label: "Penelitian" },
-  { key: "magang", label: "Magang" },
-  { key: "perintisan_bisnis", label: "Perintisan Bisnis" },
-  { key: "pengabdian", label: "Pengabdian Masyarakat" },
-];
-
 function buildNavSections(isSekretaris, responsibilityItems = []) {
   if (!isSekretaris) {
     const specialItems = [];
@@ -1167,7 +1534,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [finalResearchRows, setFinalResearchRows] = useState([]);
   const [finalResearchActionId, setFinalResearchActionId] = useState(null);
   const [finalResearchQuery, setFinalResearchQuery] = useState("");
-  const [finalApprovalTab, setFinalApprovalTab] = useState("penelitian");
+  const [finalNonPenelitianMode, setFinalNonPenelitianMode] = useState("list");
+  const [selectedFinalNonPenelitianId, setSelectedFinalNonPenelitianId] = useState(null);
+  const [finalNonPenelitianDetail, setFinalNonPenelitianDetail] = useState(null);
+  const [loadingFinalNonPenelitianDetail, setLoadingFinalNonPenelitianDetail] = useState(false);
+  const [finalNonPenelitianDecision, setFinalNonPenelitianDecision] = useState("");
+  const [finalNonPenelitianDecisionNote, setFinalNonPenelitianDecisionNote] = useState("");
+  const [finalNonPenelitianDosenPembimbingId, setFinalNonPenelitianDosenPembimbingId] = useState("");
+  const [finalNonPenelitianDosenQuery, setFinalNonPenelitianDosenQuery] = useState("");
+  const [finalNonPenelitianDosenComboOpen, setFinalNonPenelitianDosenComboOpen] = useState(false);
+  const [finalNonPenelitianDecisionErrors, setFinalNonPenelitianDecisionErrors] = useState({
+    note: "",
+    dosen: "",
+  });
   const [izinLanjutRows, setIzinLanjutRows] = useState([]);
   const [izinLanjutQuery, setIzinLanjutQuery] = useState("");
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
@@ -2878,10 +3257,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     return finalResearchRows.filter((item) => {
       const searchable = [
         item.id,
+        "penelitian",
+        item.tipe_pengajuan === "judul_mandiri" ? "judul mandiri" : "topik dosen",
         item.mahasiswa?.nim,
         item.mahasiswa?.nama,
         item.mahasiswa?.email,
         item.ketua_cluster?.nama,
+        getFinalResearchTitle(item),
+        getFinalResearchSummary(item),
         ...(Array.isArray(item.topik)
           ? item.topik.flatMap((topik) => [topik.kode, topik.judul, topik.dosen_nama, topik.status])
           : []),
@@ -2893,33 +3276,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   }, [finalResearchQuery, finalResearchRows]);
 
-  const finalApprovalTabCounts = useMemo(() => {
-    const counts = {
-      penelitian: finalResearchRows.length,
-      magang: 0,
-      perintisan_bisnis: 0,
-      pengabdian: 0,
-    };
-    for (const row of sekprodiNonPenelitianRows) {
-      const jalur = String(row?.jalur || "").trim().toLowerCase();
-      if (Object.prototype.hasOwnProperty.call(counts, jalur)) {
-        counts[jalur] += 1;
-      }
-    }
-    return counts;
-  }, [finalResearchRows.length, sekprodiNonPenelitianRows]);
-
   const filteredFinalNonPenelitianRows = useMemo(() => {
-    const currentJalur = String(finalApprovalTab || "").trim().toLowerCase();
     const keyword = finalResearchQuery.trim().toLowerCase();
     return sekprodiNonPenelitianRows.filter((row) => {
-      if (String(row?.jalur || "").trim().toLowerCase() !== currentJalur) return false;
       if (!keyword) return true;
-      const mitraGridData = currentJalur === "magang" ? getMagangMitraGridData(row) : {};
+      const jalur = String(row?.jalur || "").trim().toLowerCase();
+      const mitraGridData = jalur === "magang" ? getMagangMitraGridData(row) : {};
 
       const haystack = [
         row.id,
         row.jalur,
+        formatLabel(row.jalur),
         row.form_lanjutan_status,
         row.workflow_status,
         row.workflow_status_label,
@@ -2945,10 +3312,29 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         .toLowerCase();
       return haystack.includes(keyword);
     });
-  }, [finalApprovalTab, finalResearchQuery, sekprodiNonPenelitianRows]);
+  }, [finalResearchQuery, sekprodiNonPenelitianRows]);
 
-  const finalApprovalActiveTabLabel =
-    FINAL_APPROVAL_TABS.find((item) => item.key === finalApprovalTab)?.label || "Penelitian";
+  const isFinalNonPenelitianDetailMode = finalNonPenelitianMode === "review";
+  const finalApprovalGridRows = useMemo(() => {
+    return [
+      ...filteredFinalResearchRows.map((row) => ({
+        key: `final-penelitian-${row.id}`,
+        type: "penelitian",
+        row,
+      })),
+      ...filteredFinalNonPenelitianRows.map((row) => ({
+        key: `final-${row.jalur || "non-penelitian"}-${row.id}`,
+        type: "non_penelitian",
+        row,
+      })),
+    ].sort((left, right) => {
+      const leftRow = left.row || {};
+      const rightRow = right.row || {};
+      const leftTime = new Date(leftRow.submitted_at || leftRow.diperbarui_pada || leftRow.updatedAt || leftRow.createdAt || 0).getTime();
+      const rightTime = new Date(rightRow.submitted_at || rightRow.diperbarui_pada || rightRow.updatedAt || rightRow.createdAt || 0).getTime();
+      return (Number.isFinite(rightTime) ? rightTime : 0) - (Number.isFinite(leftTime) ? leftTime : 0);
+    });
+  }, [filteredFinalNonPenelitianRows, filteredFinalResearchRows]);
 
   const filteredMitraMagangRows = useMemo(() => {
     const keyword = mitraMagangQuery.trim().toLowerCase();
@@ -3091,6 +3477,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     () => new Map(periodeDosenOptions.map((item) => [Number(item.id), item])),
     [periodeDosenOptions]
   );
+  const selectedFinalNonPenelitianDosen = useMemo(
+    () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbingId || 0)) || null,
+    [finalNonPenelitianDosenPembimbingId, periodeDosenMap]
+  );
+  const filteredFinalNonPenelitianDosenOptions = useMemo(() => {
+    const keyword = finalNonPenelitianDosenQuery.trim().toLowerCase();
+    const source = periodeDosenOptions.map((dosen) => ({
+      ...dosen,
+      label: `${dosen.nama || "-"} - NIK: ${dosen.nik || "-"}`,
+    }));
+    if (!keyword) return [];
+    return source
+      .filter((dosen) =>
+        [dosen.nama, dosen.nik, dosen.email, dosen.label]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(keyword)
+      )
+      .slice(0, 8);
+  }, [finalNonPenelitianDosenQuery, periodeDosenOptions]);
   const totalPeriodePages = useMemo(
     () => Math.max(1, Math.ceil(periodeRows.length / DOSEN_GRID_PAGE_SIZE)),
     [periodeRows.length]
@@ -3697,6 +4104,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   }, [activeTab]);
 
   useEffect(() => {
+    if (activeTab !== "approval-penelitian") {
+      setFinalNonPenelitianMode("list");
+      setSelectedFinalNonPenelitianId(null);
+      setFinalNonPenelitianDetail(null);
+      setFinalNonPenelitianDecision("");
+      setFinalNonPenelitianDecisionNote("");
+      setFinalNonPenelitianDosenPembimbingId("");
+      setFinalNonPenelitianDosenQuery("");
+      setFinalNonPenelitianDosenComboOpen(false);
+      setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     handleBackToPengampuReviewList();
   }, [activePengampuReviewJalur]);
 
@@ -3923,6 +4344,62 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     }
   };
 
+  const handleOpenMagangReviewDocument = async (documentKey, fileName) => {
+    const id = selectedMagangReviewId || magangReviewDetail?.id;
+    if (!id || !documentKey) {
+      showErrorToast("Dokumen magang tidak valid.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/dosen/non-penelitian/magang/reviews/${id}/documents/${documentKey}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = String(payload?.message || "Gagal membuka dokumen magang.");
+        const lowerMessage = message.toLowerCase();
+        const isTokenError =
+          lowerMessage.includes("token tidak valid") ||
+          lowerMessage.includes("token tidak ditemukan") ||
+          lowerMessage.includes("kadaluarsa");
+
+        if (response.status === 401 || (response.status === 403 && isTokenError)) {
+          if (!sessionExpiredRef.current) {
+            sessionExpiredRef.current = true;
+            onSessionExpired?.();
+          }
+          throw new Error("__SESSION_EXPIRED__");
+        }
+
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const openedWindow = window.open(url, "_blank", "noopener,noreferrer");
+      if (!openedWindow) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName || "dokumen-magang";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (documentError) {
+      if (documentError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(documentError.message || "Gagal membuka dokumen magang.");
+      }
+    }
+  };
+
   const handleSubmitMagangReviewDecision = async (decision) => {
     const id = selectedMagangReviewId || magangReviewDetail?.id;
     if (!id) {
@@ -4058,110 +4535,139 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     const id = row?.id;
     if (!id) return;
 
+    setSelectedFinalNonPenelitianId(id);
+    setFinalNonPenelitianDecision("");
+    setFinalNonPenelitianDecisionNote("");
+    setFinalNonPenelitianDosenPembimbingId("");
+    setFinalNonPenelitianDosenQuery("");
+    setFinalNonPenelitianDosenComboOpen(false);
+    setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
+    setLoadingFinalNonPenelitianDetail(true);
+    setFinalNonPenelitianMode("review");
     setSekprodiNonPenelitianActionId(id);
     try {
       const detail = await fetchWithAuth(`/api/sekretaris/non-penelitian/reviews/${id}`);
-      const config = DOSEN_PENGAMPU_REVIEW_TABS[detail?.jalur] || null;
-      const detailFields =
-        detail?.jalur === "magang"
-          ? getMagangDetailFields(detail)
-          : getPengampuReviewDetailFields(
-              detail,
-              config || DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis
-            );
-      const fieldsHtml = detailFields
-        .map(
-          ([label, value]) => `
-            <tr>
-              <td style="width:220px;padding:8px 10px;border-bottom:1px solid #edf2fb;color:#52638d;font-weight:700;vertical-align:top;">${escapeHtml(label)}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #edf2fb;color:#203665;vertical-align:top;">${escapeHtml(
-                formatMagangPayloadValue(value)
-              )}</td>
-            </tr>
-          `
-        )
-        .join("");
-
-      await Swal.fire({
-        title: `Detail Proposal ${formatLabel(detail?.jalur)}`,
-        width: 860,
-        confirmButtonText: "Tutup",
-        html: `
-          <div style="text-align:left;font-size:14px;line-height:1.55;color:#24345e;">
-            <table style="width:100%;border-collapse:collapse;border:1px solid #e4e9f6;">
-              <tbody>${fieldsHtml}</tbody>
-            </table>
-            <h4 style="margin:16px 0 8px;color:#1b274b;font-size:15px;">Timeline Workflow</h4>
-            ${getMagangTimelineHtml(detail)}
-          </div>
-        `,
-      });
+      setFinalNonPenelitianDetail(detail || null);
     } catch (detailError) {
       if (detailError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(detailError.message || "Gagal memuat detail proposal.");
       }
+      setFinalNonPenelitianMode("list");
+      setSelectedFinalNonPenelitianId(null);
+      setFinalNonPenelitianDetail(null);
     } finally {
+      setLoadingFinalNonPenelitianDetail(false);
       setSekprodiNonPenelitianActionId(null);
     }
   };
 
-  const handleSekprodiNonPenelitianDecision = async (row, decision) => {
-    const id = row?.id;
-    if (!id) return;
+  const handleBackToFinalNonPenelitianList = () => {
+    setFinalNonPenelitianMode("list");
+    setSelectedFinalNonPenelitianId(null);
+    setFinalNonPenelitianDetail(null);
+    setFinalNonPenelitianDecision("");
+    setFinalNonPenelitianDecisionNote("");
+    setFinalNonPenelitianDosenPembimbingId("");
+    setFinalNonPenelitianDosenQuery("");
+    setFinalNonPenelitianDosenComboOpen(false);
+    setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
+  };
 
-    const isApprove = decision === "approve";
-    const isPerintisan = row?.jalur === "perintisan_bisnis";
-    const dosenOptionsHtml = periodeDosenOptions
-      .map(
-        (dosen) =>
-          `<option value="${dosen.id}">${escapeHtml(dosen.nama || "-")} - NIK: ${escapeHtml(
-            dosen.nik || "-"
-          )}</option>`
-      )
-      .join("");
-    const result = await Swal.fire({
-      title: isApprove ? "Setujui proposal?" : "Tolak proposal?",
-      width: 620,
-      showCancelButton: true,
-      confirmButtonText: isApprove ? "Setujui" : "Tolak",
-      cancelButtonText: "Batal",
-      confirmButtonColor: isApprove ? "#2f63e3" : "#b73a3a",
-      html: `
-        <div style="text-align:left;">
-          ${
-            isApprove && isPerintisan
-              ? `<label style="display:block;margin-bottom:12px;font-size:13px;font-weight:700;color:#324c86;">
-                  Dosen Pembimbing Kelompok
-                  <select id="sekprodi-dospem" class="swal2-select" style="display:block;width:100%;margin:6px 0 0;">
-                    <option value="">Pilih dosen pembimbing</option>
-                    ${dosenOptionsHtml}
-                  </select>
-                </label>`
-              : ""
+  const handleRefreshFinalNonPenelitianDetail = async () => {
+    if (!selectedFinalNonPenelitianId) return;
+    setLoadingFinalNonPenelitianDetail(true);
+    try {
+      const detail = await fetchWithAuth(`/api/sekretaris/non-penelitian/reviews/${selectedFinalNonPenelitianId}`);
+      setFinalNonPenelitianDetail(detail || null);
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(detailError.message || "Gagal memuat ulang detail proposal.");
+      }
+    } finally {
+      setLoadingFinalNonPenelitianDetail(false);
+    }
+  };
+
+  const handleOpenSekprodiNonPenelitianDocument = async (documentKey, fileName) => {
+    const id = selectedFinalNonPenelitianId || finalNonPenelitianDetail?.id;
+    if (!id || !documentKey) {
+      showErrorToast("Dokumen proposal tidak valid.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/sekretaris/non-penelitian/reviews/${id}/documents/${documentKey}`,
+        {
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = String(payload?.message || "Gagal membuka dokumen proposal.");
+        const lowerMessage = message.toLowerCase();
+        const isTokenError =
+          lowerMessage.includes("token tidak valid") ||
+          lowerMessage.includes("token tidak ditemukan") ||
+          lowerMessage.includes("kadaluarsa");
+
+        if (response.status === 401 || (response.status === 403 && isTokenError)) {
+          if (!sessionExpiredRef.current) {
+            sessionExpiredRef.current = true;
+            onSessionExpired?.();
           }
-          <label style="display:block;font-size:13px;font-weight:700;color:#324c86;">
-            ${isApprove ? "Catatan (opsional)" : "Alasan Penolakan"}
-            <textarea id="sekprodi-note" class="swal2-textarea" style="display:block;width:100%;margin:6px 0 0;"></textarea>
-          </label>
-        </div>
-      `,
-      preConfirm: () => {
-        const dosenPembimbingId = Number(
-          document.getElementById("sekprodi-dospem")?.value || 0
-        );
-        const note = String(document.getElementById("sekprodi-note")?.value || "").trim();
-        if (isApprove && isPerintisan && !dosenPembimbingId) {
-          Swal.showValidationMessage("Dosen pembimbing kelompok wajib dipilih.");
-          return false;
+          throw new Error("__SESSION_EXPIRED__");
         }
-        if (!isApprove && !note) {
-          Swal.showValidationMessage("Alasan penolakan wajib diisi.");
-          return false;
-        }
-        return { dosen_pembimbing_id: dosenPembimbingId || null, keterangan: note };
-      },
-    });
-    if (!result.isConfirmed) return;
+
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const openedWindow = window.open(url, "_blank", "noopener,noreferrer");
+      if (!openedWindow) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName || "dokumen-proposal";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (documentError) {
+      if (documentError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(documentError.message || "Gagal membuka dokumen proposal.");
+      }
+    }
+  };
+
+  const handleSekprodiNonPenelitianDecision = async (decision) => {
+    const id = selectedFinalNonPenelitianId || finalNonPenelitianDetail?.id;
+    if (!id) {
+      showErrorToast("Data proposal tidak valid.");
+      return;
+    }
+    if (!["approve", "reject"].includes(decision)) {
+      showErrorToast("Pilih keputusan terlebih dahulu.");
+      return;
+    }
+    const isApprove = decision === "approve";
+    const note = String(finalNonPenelitianDecisionNote || "").trim();
+    const dosenPembimbingId = Number(finalNonPenelitianDosenPembimbingId || 0);
+    const nextErrors = { note: "", dosen: "" };
+    if (isApprove && !dosenPembimbingId) {
+      nextErrors.dosen = "Pilih dosen pembimbing terlebih dahulu sebelum approve final.";
+    }
+    if (!note) {
+      nextErrors.note = isApprove ? "Catatan keputusan wajib diisi." : "Alasan penolakan wajib diisi.";
+    }
+    setFinalNonPenelitianDecisionErrors(nextErrors);
+    if (nextErrors.note || nextErrors.dosen) {
+      return;
+    }
 
     setSekprodiNonPenelitianActionId(id);
     try {
@@ -4169,17 +4675,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         `/api/sekretaris/non-penelitian/reviews/${id}/${isApprove ? "approve" : "reject"}`,
         {
           method: "POST",
-          body: JSON.stringify(result.value),
+          body: JSON.stringify({
+            dosen_pembimbing_id: isApprove ? dosenPembimbingId : null,
+            keterangan: note,
+          }),
         }
       );
       showSuccessToast(
         isApprove
-          ? isPerintisan
-            ? "Proposal disetujui dan dosen pembimbing berhasil ditetapkan."
-            : "Pengajuan Magang berhasil disetujui final."
+          ? "Proposal disetujui final dan dosen pembimbing berhasil ditetapkan."
           : "Proposal berhasil ditolak."
       );
       await loadAllData();
+      handleBackToFinalNonPenelitianList();
     } catch (decisionError) {
       if (decisionError?.message !== "__SESSION_EXPIRED__") {
         showErrorToast(decisionError.message || "Gagal memproses keputusan proposal.");
@@ -6630,16 +7138,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
             ) : null}
 
             {!loading && isSekretaris && activeTab === "approval-penelitian" ? (
-              <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+              <div
+                className={
+                  isFinalNonPenelitianDetailMode
+                    ? "flex min-h-0 flex-1 flex-col gap-4"
+                    : "flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm"
+                }
+              >
+                <div
+                  className={
+                    isFinalNonPenelitianDetailMode
+                      ? "rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm"
+                      : "contents"
+                  }
+                >
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
                     <h3 className="text-lg font-black text-[#1b274b]">
-                      Grid Keputusan Final {finalApprovalActiveTabLabel}
+                      Grid Keputusan Final
                     </h3>
                     <p className="mt-1 text-sm text-[#5d6c91]">
-                      {finalApprovalTab === "penelitian"
-                        ? "Data muncul setelah review dosen selesai dan ketua cluster menyetujui."
-                        : "Data muncul setelah pengajuan melewati review dosen pengampu sebelumnya."}
+                      Menampilkan semua pengajuan yang sudah masuk tahap keputusan final sekretaris prodi.
                     </p>
                   </div>
                   <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
@@ -6648,11 +7167,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                       <input
                         value={finalResearchQuery}
                         onChange={(event) => setFinalResearchQuery(event.target.value)}
-                        placeholder={
-                          finalApprovalTab === "penelitian"
-                            ? "Cari mahasiswa, topik, atau dosen..."
-                            : "Cari mahasiswa, jalur, atau ringkasan..."
-                        }
+                        placeholder="Cari mahasiswa, jalur, topik, dosen, atau ringkasan..."
                         className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
@@ -6666,359 +7181,397 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     </button>
                   </div>
                 </div>
-
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {FINAL_APPROVAL_TABS.map((tab) => {
-                    const isActive = finalApprovalTab === tab.key;
-                    const count = finalApprovalTabCounts[tab.key] || 0;
-                    return (
-                      <button
-                        key={`final-approval-tab-${tab.key}`}
-                        type="button"
-                        onClick={() => setFinalApprovalTab(tab.key)}
-                        className={`inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-bold transition ${
-                          isActive
-                            ? "border-[#2f63e3] bg-[#2f63e3] text-white"
-                            : "border-[#cfd8ee] bg-white text-[#284177] hover:bg-[#f4f7ff]"
-                        }`}
-                      >
-                        {tab.label}
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-xs ${
-                            isActive ? "bg-white/20 text-white" : "bg-[#edf3ff] text-[#2f63e3]"
-                          }`}
-                        >
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
                 </div>
 
-                {finalApprovalTab === "penelitian" ? (
+                {finalNonPenelitianMode === "review" ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleBackToFinalNonPenelitianList}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                          title="Kembali ke grid keputusan final"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleRefreshFinalNonPenelitianDetail}
+                          disabled={loadingFinalNonPenelitianDetail}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <RefreshCcw className="h-4 w-4" />
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+                      <h3 className="text-lg font-black text-[#1b274b]">
+                        Review Final {formatLabel(finalNonPenelitianDetail?.jalur || "Pengajuan")}
+                      </h3>
+                      <p className="text-sm text-[#5d6c91]">
+                        Tinjau detail pengajuan sebelum menetapkan keputusan final sekretaris prodi.
+                      </p>
+
+                      {loadingFinalNonPenelitianDetail ? (
+                        <div className="mt-4 rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-6 text-center text-sm font-semibold text-[#60709a]">
+                          Memuat detail keputusan final...
+                        </div>
+                      ) : null}
+
+                      {!loadingFinalNonPenelitianDetail && finalNonPenelitianDetail ? (
+                        <div className="mt-4">
+                          {String(finalNonPenelitianDetail.jalur || "").toLowerCase() === "magang" ? (
+                            <MagangReadonlyDetailForm
+                              detail={finalNonPenelitianDetail}
+                              onOpenDocument={handleOpenSekprodiNonPenelitianDocument}
+                            />
+                          ) : (
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                              {getPengampuReviewDetailFields(
+                                finalNonPenelitianDetail,
+                                DOSEN_PENGAMPU_REVIEW_TABS[finalNonPenelitianDetail.jalur] ||
+                                  DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis
+                              ).map(([label, value]) => (
+                                <div key={`sekprodi-final-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                                  <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
+                                  <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
+                                    {formatMagangPayloadValue(value)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {!loadingFinalNonPenelitianDetail && finalNonPenelitianDetail ? (
+                      <FinalDecisionDetailSection detail={finalNonPenelitianDetail} />
+                    ) : null}
+
+                    {!loadingFinalNonPenelitianDetail && finalNonPenelitianDetail ? (
+                      <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+                        <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan</h3>
+                        {String(getMagangReviewStatus(finalNonPenelitianDetail) || "").toLowerCase() === "review_sekprodi" ? (
+                          <>
+                            <p className="mt-1 text-sm text-[#5d6c91]">
+                              Approve akan menetapkan dosen pembimbing dan mengaktifkan akses bimbingan mahasiswa.
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFinalNonPenelitianDecision("reject");
+                                  setFinalNonPenelitianDosenPembimbingId("");
+                                  setFinalNonPenelitianDosenQuery("");
+                                  setFinalNonPenelitianDosenComboOpen(false);
+                                  setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
+                                }}
+                                className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
+                                  finalNonPenelitianDecision === "reject"
+                                    ? "bg-[#b73a3a] text-white"
+                                    : "border border-[#e2a2a2] bg-white text-[#a33737] hover:bg-[#fff3f3]"
+                                }`}
+                              >
+                                Tolak
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFinalNonPenelitianDecision("approve");
+                                  setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
+                                }}
+                                className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
+                                  finalNonPenelitianDecision === "approve"
+                                    ? "bg-[#137748] text-white"
+                                    : "border border-[#9bc9b2] bg-white text-[#137748] hover:bg-[#eefaf3]"
+                                }`}
+                              >
+                                Approve
+                              </button>
+                            </div>
+                            <div className="mt-3 space-y-4">
+                              {finalNonPenelitianDecision ? (
+                                <div>
+                                  <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                    {finalNonPenelitianDecision === "approve" ? "Catatan keputusan" : "Alasan penolakan"}
+                                    <span className="ml-1 text-[#b73a3a]">*</span>
+                                  </label>
+                                  <textarea
+                                    rows={4}
+                                    value={finalNonPenelitianDecisionNote}
+                                    onChange={(event) => {
+                                      setFinalNonPenelitianDecisionNote(event.target.value);
+                                      if (finalNonPenelitianDecisionErrors.note) {
+                                        setFinalNonPenelitianDecisionErrors((current) => ({ ...current, note: "" }));
+                                      }
+                                    }}
+                                    placeholder={
+                                      finalNonPenelitianDecision === "approve"
+                                        ? "Isi catatan persetujuan..."
+                                        : "Isi alasan penolakan..."
+                                    }
+                                    className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                                      finalNonPenelitianDecisionErrors.note
+                                        ? "border-[#d33b3b] bg-[#fffafa]"
+                                        : "border-[#d3dbef]"
+                                    }`}
+                                  />
+                                  {finalNonPenelitianDecisionErrors.note ? (
+                                    <p className="mt-1 text-xs font-semibold text-[#b73a3a]">
+                                      {finalNonPenelitianDecisionErrors.note}
+                                    </p>
+                                  ) : null}
+                                </div>
+                              ) : (
+                                <div className="rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                                  Pilih Approve atau Tolak untuk menampilkan field keputusan.
+                                </div>
+                              )}
+
+                              {finalNonPenelitianDecision === "approve" ? (
+                                <div className="relative">
+                                  <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                    Dosen Pembimbing Baru
+                                    <span className="ml-1 text-[#b73a3a]">*</span>
+                                  </label>
+                                  <div className="relative">
+                                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                                    <input
+                                      type="text"
+                                      role="combobox"
+                                      aria-expanded={finalNonPenelitianDosenComboOpen}
+                                      aria-controls="final-dosen-pembimbing-options"
+                                      value={
+                                        finalNonPenelitianDosenComboOpen
+                                          ? finalNonPenelitianDosenQuery
+                                          : finalNonPenelitianDosenQuery ||
+                                            (selectedFinalNonPenelitianDosen
+                                              ? `${selectedFinalNonPenelitianDosen.nama || "-"} - NIK: ${selectedFinalNonPenelitianDosen.nik || "-"}`
+                                              : "")
+                                      }
+                                      onFocus={() => {
+                                        const nextQuery = selectedFinalNonPenelitianDosen
+                                          ? `${selectedFinalNonPenelitianDosen.nama || "-"} - NIK: ${selectedFinalNonPenelitianDosen.nik || "-"}`
+                                          : finalNonPenelitianDosenQuery;
+                                        setFinalNonPenelitianDosenQuery(nextQuery);
+                                        setFinalNonPenelitianDosenComboOpen(Boolean(nextQuery.trim()));
+                                      }}
+                                      onBlur={() => {
+                                        window.setTimeout(() => setFinalNonPenelitianDosenComboOpen(false), 120);
+                                      }}
+                                      onChange={(event) => {
+                                        setFinalNonPenelitianDosenQuery(event.target.value);
+                                        setFinalNonPenelitianDosenPembimbingId("");
+                                        setFinalNonPenelitianDosenComboOpen(Boolean(event.target.value.trim()));
+                                        if (finalNonPenelitianDecisionErrors.dosen) {
+                                          setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
+                                        }
+                                      }}
+                                      placeholder="Cari nama, NIK, atau email dosen..."
+                                      className={`w-full rounded-lg border py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] ${
+                                        finalNonPenelitianDecisionErrors.dosen
+                                          ? "border-[#d33b3b] bg-[#fffafa]"
+                                          : "border-[#d3dbef]"
+                                      }`}
+                                    />
+                                  </div>
+                                  {finalNonPenelitianDecisionErrors.dosen ? (
+                                    <p className="mt-1 text-xs font-semibold text-[#b73a3a]">
+                                      {finalNonPenelitianDecisionErrors.dosen}
+                                    </p>
+                                  ) : null}
+                                  {finalNonPenelitianDosenComboOpen && finalNonPenelitianDosenQuery.trim() ? (
+                                    <div
+                                      id="final-dosen-pembimbing-options"
+                                      role="listbox"
+                                      className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-56 overflow-auto rounded-lg border border-[#d9e3fb] bg-white text-sm shadow-lg"
+                                    >
+                                      {filteredFinalNonPenelitianDosenOptions.length > 0 ? (
+                                        filteredFinalNonPenelitianDosenOptions.map((dosen) => (
+                                          <button
+                                            key={`final-dosen-combo-${dosen.id}`}
+                                            type="button"
+                                            role="option"
+                                            aria-selected={Number(finalNonPenelitianDosenPembimbingId) === Number(dosen.id)}
+                                            onMouseDown={(event) => event.preventDefault()}
+                                            onClick={() => {
+                                              setFinalNonPenelitianDosenPembimbingId(String(dosen.id));
+                                              setFinalNonPenelitianDosenQuery(dosen.label);
+                                              setFinalNonPenelitianDosenComboOpen(false);
+                                              setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
+                                            }}
+                                            className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] ${
+                                              Number(finalNonPenelitianDosenPembimbingId) === Number(dosen.id)
+                                                ? "bg-[#e8efff] font-bold text-[#2756b8]"
+                                                : "text-[#263a66]"
+                                            }`}
+                                          >
+                                            <span className="min-w-0 flex-1 font-semibold leading-5">
+                                              {dosen.nama || "-"}
+                                            </span>
+                                            <span className="shrink-0 text-right text-xs text-[#27407b]">
+                                              NIK:<br />
+                                              {dosen.nik || "-"}
+                                            </span>
+                                          </button>
+                                        ))
+                                      ) : (
+                                        <div className="px-3 py-2 text-[#6d7898]">Dosen tidak ditemukan.</div>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </div>
+                            <div className="mt-4 flex flex-wrap justify-end gap-2">
+                              <button
+                                type="button"
+                                disabled={
+                                  sekprodiNonPenelitianActionId === selectedFinalNonPenelitianId ||
+                                  !finalNonPenelitianDecision
+                                }
+                                onClick={() => handleSekprodiNonPenelitianDecision(finalNonPenelitianDecision)}
+                                className={`rounded-lg px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60 ${
+                                  finalNonPenelitianDecision === "reject" ? "bg-[#b73a3a]" : "bg-[#137748]"
+                                }`}
+                              >
+                                {finalNonPenelitianDecision === "reject"
+                                  ? "Tolak"
+                                  : finalNonPenelitianDecision === "approve"
+                                  ? "Approve"
+                                  : "Pilih Keputusan"}
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
+                            Pengajuan ini sudah tidak berada pada tahap keputusan final sekretaris prodi.
+                          </div>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
                   <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                    <table className="w-full min-w-[1465px] table-fixed text-left text-sm">
+                    <table className="w-full min-w-[1505px] table-fixed text-left text-sm">
                       <colgroup>
-                        <col style={{ width: "50px" }} />
-                        <col style={{ width: "200px" }} />
-                        <col style={{ width: "110px" }} />
-                        <col style={{ width: "430px" }} />
+                        <col style={{ width: "58px" }} />
+                        <col style={{ width: "230px" }} />
+                        <col style={{ width: "145px" }} />
+                        <col style={{ width: "260px" }} />
+                        <col style={{ width: "240px" }} />
+                        <col style={{ width: "250px" }} />
                         <col style={{ width: "190px" }} />
+                        <col style={{ width: "160px" }} />
                         <col style={{ width: "170px" }} />
-                        <col style={{ width: "135px" }} />
-                        <col style={{ width: "180px" }} />
                       </colgroup>
                       <thead className="sticky top-0 z-10">
-                        <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tipe</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Topik yang Diajukan</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ketua Cluster</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Detail</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Reviewer Saat Ini</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Diperbarui</th>
                           <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredFinalResearchRows.map((submission, index) => {
-                          const rowBusy = Number(finalResearchActionId) === Number(submission.id);
+                        {finalApprovalGridRows.map(({ key, type, row }, index) => {
+                          const isResearch = type === "penelitian";
+                          const rowBusy = isResearch
+                            ? Number(finalResearchActionId) === Number(row.id)
+                            : sekprodiNonPenelitianActionId === row.id;
+                          const jalurLabel = isResearch ? "Penelitian" : formatLabel(row.jalur);
+                          const title = isResearch ? getFinalResearchTitle(row) : getPengampuReviewSummary(row);
+                          const summary = isResearch
+                            ? getFinalResearchSummary(row)
+                            : getPengampuReviewNote(row) !== "-"
+                            ? getPengampuReviewNote(row)
+                            : row.periode?.label_periode || row.workflow_status_label || "-";
+                          const stage = getFinalApprovalStageLabel(row, isResearch);
+                          const reviewer = getFinalApprovalReviewerLabel(row, isResearch);
+                          const time = isResearch
+                            ? formatDateTime(row.diperbarui_pada || row.diajukan_pada)
+                            : formatDateTime(row.submitted_at || row.updatedAt || row.createdAt);
+
                           return (
-                            <tr key={`final-research-${submission.id}`} className="border-b border-[#eff3fb] align-top">
+                            <tr key={key} className="border-b border-[#eff3fb] align-top">
                               <td className="px-3 py-3 font-bold text-[#274181]">{index + 1}</td>
                               <td className="px-3 py-3">
-                                <p className="font-semibold text-[#1f2d53]">{submission.mahasiswa?.nama || "-"}</p>
-                                <p className="text-xs text-[#61709b]">
-                                  {submission.mahasiswa?.nim || "-"} | Angkatan {submission.mahasiswa?.angkatan || "-"}
+                                <p className="font-semibold text-[#1f2d53] break-words">{row.mahasiswa?.nama || "-"}</p>
+                                <p className="mt-1 text-xs leading-5 text-[#61709b] break-words">
+                                  {row.mahasiswa?.nim || "-"}
+                                  {row.mahasiswa?.email ? ` | ${row.mahasiswa.email}` : ""}
+                                  {row.mahasiswa?.angkatan ? ` | Angkatan ${row.mahasiswa.angkatan}` : ""}
                                 </p>
                               </td>
-                              <td className="px-3 py-3 font-semibold text-[#2f426f]">
-                                {submission.tipe_pengajuan === "judul_mandiri" ? "Judul Mandiri" : "Topik Dosen"}
-                              </td>
-                              <td className="space-y-3 px-3 py-3">
-                                {(submission.topik || []).map((topik, topikIndex) => {
-                                  const approved = topik.status === "approved";
-                                  const rejected = topik.status === "rejected";
-                                  return (
-                                    <div
-                                      key={`${submission.id}-${topik.slot || topikIndex}`}
-                                      className={`border-l-4 pl-3 ${
-                                        topik.dipilih
-                                          ? "border-[#1c8454]"
-                                          : approved
-                                          ? "border-[#7aa18e]"
-                                          : rejected
-                                          ? "border-[#d86868]"
-                                          : "border-[#d6dced]"
-                                      }`}
-                                    >
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <span className="font-bold text-[#243968]">
-                                          {topik.slot ? `Pilihan ${topik.slot}` : "Judul Mandiri"}
-                                          {topik.kode ? ` - ${topik.kode}` : ""}
-                                        </span>
-                                        <span
-                                          className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                                            approved
-                                              ? "bg-[#e5f5ec] text-[#176a45]"
-                                              : rejected
-                                              ? "bg-[#fdeaea] text-[#a33737]"
-                                              : "bg-[#fff3d8] text-[#8a5d00]"
-                                          }`}
-                                        >
-                                          {approved ? "Disetujui Dosen" : rejected ? "Ditolak Dosen" : "Menunggu Dosen"}
-                                        </span>
-                                        {topik.dipilih ? (
-                                          <span className="rounded-full bg-[#dce9ff] px-2 py-0.5 text-[11px] font-bold text-[#2454b8]">
-                                            Dipilih
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                      <p className="mt-1 break-words leading-5 text-[#2f426f]">{topik.judul || "-"}</p>
-                                      <p className="mt-0.5 text-xs text-[#69779d]">{topik.dosen_nama || "-"}</p>
-                                    </div>
-                                  );
-                                })}
-                              </td>
-                              <td className="break-words px-3 py-3">
-                                <p className="font-semibold text-[#243968]">{submission.ketua_cluster?.nama || "-"}</p>
-                                <p className="mt-1 text-xs text-[#61709b]">
-                                  {submission.keputusan_ketua_cluster?.catatan || "Disetujui ketua cluster"}
-                                </p>
-                              </td>
-                              <td className="px-3 py-3 align-middle">
-                                <span className="inline-flex rounded-full bg-[#e8efff] px-2.5 py-1 text-xs font-bold text-[#2454b8]">
-                                  Menunggu Keputusan Final Sekprodi
+                              <td className="px-3 py-3">
+                                <span className="inline-flex rounded-full bg-[#eef4ff] px-2.5 py-1 text-xs font-bold text-[#2756bd]">
+                                  {jalurLabel}
                                 </span>
                               </td>
-                              <td className="px-3 py-3 text-[#43537d]">{formatDateTime(submission.diperbarui_pada)}</td>
-                              <td className="px-3 py-3 align-middle">
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={rowBusy}
-                                    onClick={() => handleFinalResearchDecision(submission, "approve")}
-                                    className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
-                                  >
-                                    Approve
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={rowBusy}
-                                    onClick={() => handleFinalResearchDecision(submission, "reject")}
-                                    className="rounded-md border border-[#e2a2a2] px-3 py-1.5 text-xs font-bold text-[#a33737] hover:bg-[#fff3f3] disabled:opacity-50"
-                                  >
-                                    Reject
-                                  </button>
-                                </div>
+                              <td className="px-3 py-3">
+                                <p className="line-clamp-3 font-semibold leading-5 text-[#1f2d53] break-words">{title}</p>
                               </td>
-                            </tr>
-                          );
-                        })}
-                        {filteredFinalResearchRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={8} className="h-[340px] px-4 text-center align-middle">
-                              <div className="mx-auto max-w-md">
-                                <ListChecks className="mx-auto h-9 w-9 text-[#9aa8c7]" />
-                                <p className="mt-3 font-bold text-[#52638d]">
-                                  Belum ada pengajuan penelitian yang menunggu keputusan final
-                                </p>
-                                <p className="mt-1 text-xs leading-5 text-[#7b88ab]">
-                                  Pengajuan akan muncul setelah review dosen selesai dan ketua cluster menyetujuinya.
-                                </p>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : finalApprovalTab === "magang" ? (
-                  <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                    <table className="w-full min-w-[2450px] table-fixed text-left text-sm">
-                      <colgroup>
-                        <col style={{ width: "230px" }} />
-                        <col style={{ width: "130px" }} />
-                        <col style={{ width: "230px" }} />
-                        <col style={{ width: "190px" }} />
-                        <col style={{ width: "190px" }} />
-                        <col style={{ width: "220px" }} />
-                        <col style={{ width: "250px" }} />
-                        <col style={{ width: "190px" }} />
-                        <col style={{ width: "140px" }} />
-                        <col style={{ width: "260px" }} />
-                        <col style={{ width: "300px" }} />
-                        <col style={{ width: "170px" }} />
-                        <col style={{ width: "210px" }} />
-                      </colgroup>
-                      <thead className="sticky top-0 z-10">
-                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Mahasiswa</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">NIM</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Nama Mitra</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Bidang / Jenis</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Lokasi</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Email Kontak</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Website</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Posisi Magang</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Quota Magang</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Kriteria</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">
-                            Prosedur dari Perusahaan
-                          </th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Dikirim</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold whitespace-nowrap">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredFinalNonPenelitianRows.map((row) => {
-                          const mitraData = getMagangMitraGridData(row);
-                          return (
-                            <tr key={`sekprodi-final-magang-${row.id}`} className="border-b border-[#eff3fb] align-top">
-                              <td className="px-3 py-2">
-                                <p className="font-semibold text-[#1f2d53] break-words">
-                                  {row.mahasiswa?.nama || "-"}
-                                </p>
-                                <p className="mt-1 text-xs text-[#61709b]">
-                                  {row.mahasiswa?.email || "-"}
-                                </p>
+                              <td className="px-3 py-3">
+                                <p className="line-clamp-3 leading-5 text-[#43537d] break-words">{summary}</p>
                               </td>
-                              <td className="px-3 py-2 font-semibold text-[#27407b] whitespace-nowrap">
-                                {row.mahasiswa?.nim || "-"}
+                              <td className="px-3 py-3">
+                                <span className="inline-flex max-w-full rounded-full bg-[#e8efff] px-2.5 py-1 text-xs font-bold leading-4 text-[#2454b8]">
+                                  {stage}
+                                </span>
                               </td>
-                              <td className="px-3 py-2 font-semibold text-[#1f2d53] break-words">
-                                {mitraData.nama}
-                              </td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.bidang_jenis}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.lokasi}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.email_kontak}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">
-                                {mitraData.website !== "-" ? (
-                                  <a
-                                    href={mitraData.website}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="font-semibold text-[#2f63e3] hover:underline"
-                                  >
-                                    {mitraData.website}
-                                  </a>
+                              <td className="px-3 py-3 text-[#2f426f]">{reviewer}</td>
+                              <td className="px-3 py-3 text-[#43537d]">{time}</td>
+                              <td className="px-3 py-3">
+                                {isResearch ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={rowBusy}
+                                      onClick={() => handleFinalResearchDecision(row, "approve")}
+                                      className="rounded-md bg-[#147a4b] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
+                                    >
+                                      Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={rowBusy}
+                                      onClick={() => handleFinalResearchDecision(row, "reject")}
+                                      className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
+                                    >
+                                      Tolak
+                                    </button>
+                                  </div>
                                 ) : (
-                                  "-"
+                                  <button
+                                    type="button"
+                                    disabled={rowBusy}
+                                    onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Review
+                                  </button>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.posisi_magang}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.quota_magang}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.kriteria}</td>
-                              <td className="px-3 py-2 text-[#2f426f] break-words">{mitraData.prosedur_perusahaan}</td>
-                              <td className="px-3 py-2 text-[#43537d] whitespace-nowrap">{formatDateTime(row.submitted_at)}</td>
-                              <td className="px-3 py-2">
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    disabled={sekprodiNonPenelitianActionId === row.id}
-                                    onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
-                                    className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                  >
-                                    Detail
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={sekprodiNonPenelitianActionId === row.id}
-                                    onClick={() => handleSekprodiNonPenelitianDecision(row, "approve")}
-                                    className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                  >
-                                    Approve
-                                  </button>
-                                  <button
-                                    type="button"
-                                    disabled={sekprodiNonPenelitianActionId === row.id}
-                                    onClick={() => handleSekprodiNonPenelitianDecision(row, "reject")}
-                                    className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                  >
-                                    Tolak
-                                  </button>
-                                </div>
-                              </td>
                             </tr>
                           );
                         })}
-                        {filteredFinalNonPenelitianRows.length === 0 ? (
+                        {finalApprovalGridRows.length === 0 ? (
                           <tr>
-                            <td colSpan={13} className="h-[340px] px-4 text-center align-middle">
+                            <td colSpan={9} className="h-[340px] px-4 text-center align-middle">
                               <div className="mx-auto max-w-md">
                                 <ListChecks className="mx-auto h-9 w-9 text-[#9aa8c7]" />
                                 <p className="mt-3 font-bold text-[#52638d]">
-                                  Belum ada pengajuan magang yang menunggu keputusan final.
-                                </p>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                    <table className="w-full min-w-[1050px] text-left text-sm">
-                      <thead className="sticky top-0 z-10">
-                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa/Ketua</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">NIM</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dikirim</th>
-                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredFinalNonPenelitianRows.map((row) => (
-                          <tr key={`sekprodi-proposal-${row.id}`} className="border-b border-[#eff3fb]">
-                            <td className="px-3 py-2 font-semibold text-[#1f2d53]">
-                              {row.mahasiswa?.nama || "-"}
-                            </td>
-                            <td className="px-3 py-2 text-[#27407b]">{row.mahasiswa?.nim || "-"}</td>
-                            <td className="px-3 py-2">{formatLabel(row.jalur)}</td>
-                            <td className="max-w-[380px] px-3 py-2">
-                              <p className="line-clamp-2">{getPengampuReviewSummary(row)}</p>
-                            </td>
-                            <td className="px-3 py-2">{formatDateTime(row.submitted_at)}</td>
-                            <td className="px-3 py-2">
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleOpenSekprodiNonPenelitianDetail(row)}
-                                  className="rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Detail
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleSekprodiNonPenelitianDecision(row, "approve")}
-                                  className="rounded-md bg-[#137748] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Approve
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={sekprodiNonPenelitianActionId === row.id}
-                                  onClick={() => handleSekprodiNonPenelitianDecision(row, "reject")}
-                                  className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
-                                >
-                                  Tolak
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {filteredFinalNonPenelitianRows.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="h-[340px] px-4 text-center align-middle">
-                              <div className="mx-auto max-w-md">
-                                <ListChecks className="mx-auto h-9 w-9 text-[#9aa8c7]" />
-                                <p className="mt-3 font-bold text-[#52638d]">
-                                  Belum ada pengajuan {finalApprovalActiveTabLabel.toLowerCase()} yang menunggu keputusan final.
+                                  Belum ada pengajuan yang menunggu keputusan final.
                                 </p>
                               </div>
                             </td>
@@ -7032,10 +7585,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 <div className="mt-3 flex items-center justify-between border-t border-[#e8edf8] pt-3">
                   <p className="text-sm text-[#4f5e86]">
                     Menampilkan{" "}
-                    {finalApprovalTab === "penelitian"
-                      ? filteredFinalResearchRows.length
-                      : filteredFinalNonPenelitianRows.length}{" "}
-                    pengajuan {finalApprovalActiveTabLabel.toLowerCase()} yang menunggu keputusan final.
+                    {finalApprovalGridRows.length}{" "}
+                    pengajuan yang menunggu keputusan final.
                   </p>
                 </div>
               </div>
@@ -7780,43 +8331,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                     ) : null}
 
                     {!loadingMagangReviewDetail && magangReviewDetail ? (
-                      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                        {getMagangDetailFields(magangReviewDetail).map(([label, value]) => (
-                          <div key={`magang-review-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
-                            <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
-                            <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
-                              {formatMagangPayloadValue(value)}
-                            </p>
-                          </div>
-                        ))}
+                      <div className="mt-4">
+                        <MagangReadonlyDetailForm
+                          detail={magangReviewDetail}
+                          onOpenDocument={handleOpenMagangReviewDocument}
+                        />
                       </div>
                     ) : null}
                   </div>
-
-                  {!loadingMagangReviewDetail && magangReviewDetail ? (
-                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                      <h3 className="text-lg font-black text-[#1b274b]">Timeline Workflow</h3>
-                      <div className="mt-3 space-y-2">
-                        {Array.isArray(getMagangPayload(magangReviewDetail).workflow_timeline) &&
-                        getMagangPayload(magangReviewDetail).workflow_timeline.length > 0 ? (
-                          getMagangPayload(magangReviewDetail).workflow_timeline.map((item, index) => (
-                            <div key={`magang-review-timeline-${index}`} className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <p className="text-sm font-black text-[#27407b]">{formatLabel(item?.status || "-")}</p>
-                                <p className="text-xs font-semibold text-[#60709a]">{formatDateTime(item?.at)}</p>
-                              </div>
-                              <p className="mt-1 text-sm font-semibold text-[#42537d]">{formatLabel(item?.actor || "-")}</p>
-                              <p className="mt-1 text-sm text-[#2f426f]">{item?.note || "-"}</p>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3 text-sm font-semibold text-[#65749b]">
-                            Belum ada timeline workflow.
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
 
                   {!loadingMagangReviewDetail && magangReviewDetail ? (
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
@@ -7862,6 +8384,31 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           Pengajuan ini sudah tidak berada pada tahap review dosen pengawas magang.
                         </div>
                       )}
+                    </div>
+                  ) : null}
+
+                  {!loadingMagangReviewDetail && magangReviewDetail ? (
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#1b274b]">Timeline Workflow</h3>
+                      <div className="mt-3 space-y-2">
+                        {Array.isArray(getMagangPayload(magangReviewDetail).workflow_timeline) &&
+                        getMagangPayload(magangReviewDetail).workflow_timeline.length > 0 ? (
+                          getMagangPayload(magangReviewDetail).workflow_timeline.map((item, index) => (
+                            <div key={`magang-review-timeline-${index}`} className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-sm font-black text-[#27407b]">{formatLabel(item?.status || "-")}</p>
+                                <p className="text-xs font-semibold text-[#60709a]">{formatDateTime(item?.at)}</p>
+                              </div>
+                              <p className="mt-1 text-sm font-semibold text-[#42537d]">{formatLabel(item?.actor || "-")}</p>
+                              <p className="mt-1 text-sm text-[#2f426f]">{item?.note || "-"}</p>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3 text-sm font-semibold text-[#65749b]">
+                            Belum ada timeline workflow.
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : null}
                 </div>

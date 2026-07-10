@@ -6,6 +6,13 @@ const { authenticateToken, authorizeRole } = require("../middlewares/authMiddlew
 // Mahasiswa - Lihat list & detail pengajuan
 router.get("/", authenticateToken, authorizeRole("mahasiswa"), submissionController.getMySubmissions);
 
+router.get(
+  "/:id/documents/:documentKey",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  submissionController.downloadSubmissionDocumentById
+);
+
 // Bisa diakses mahasiswa dan dosen (dengan authorization check di controller)
 router.get("/:id", authenticateToken, authorizeRole("mahasiswa", "dosen"), submissionController.getSubmissionById);
 

@@ -52,6 +52,12 @@ router.get(
   authorizeRole("dosen"),
   jalurController.getMagangReviewDetailForDosen
 );
+router.get(
+  "/non-penelitian/magang/reviews/:id/documents/:documentKey",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.downloadMagangReviewDocumentForDosen
+);
 router.post(
   "/non-penelitian/magang/reviews/:id/approve",
   authenticateToken,
