@@ -449,10 +449,51 @@ async function loadNonPenelitianRegistrationById(id) {
   });
 }
 
-function buildNonPenelitianDetail(row) {
+async function enrichWorkflowTimelineActors(workflowTimeline) {
+  const timeline = Array.isArray(workflowTimeline) ? workflowTimeline : [];
+  const dosenIds = [
+    ...new Set(
+      timeline
+        .filter((item) => item?.actor_id && !["system", "mahasiswa", "sekretaris_prodi"].includes(String(item.actor || "").toLowerCase()))
+        .map((item) => Number(item.actor_id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+  const sekretarisIds = [
+    ...new Set(
+      timeline
+        .filter((item) => String(item?.actor || "").toLowerCase() === "sekretaris_prodi")
+        .map((item) => Number(item.actor_id))
+        .filter((id) => Number.isInteger(id) && id > 0)
+    ),
+  ];
+
+  const [dosenActors, sekretarisActors] = await Promise.all([
+    dosenIds.length > 0
+      ? Dosen.findAll({ where: { id: { [Op.in]: dosenIds } }, attributes: ["id", "nama"] })
+      : [],
+    sekretarisIds.length > 0
+      ? SekretarisProdi.findAll({ where: { id: { [Op.in]: sekretarisIds } }, attributes: ["id", "nama"] })
+      : [],
+  ]);
+  const dosenNameById = new Map(dosenActors.map((item) => [Number(item.id), item.nama]));
+  const sekretarisNameById = new Map(sekretarisActors.map((item) => [Number(item.id), item.nama]));
+
+  return timeline.map((item) => {
+    const actor = String(item?.actor || "").toLowerCase();
+    const actorId = Number(item?.actor_id);
+    const actorName =
+      actor === "sekretaris_prodi"
+        ? sekretarisNameById.get(actorId)
+        : dosenNameById.get(actorId);
+    return actorName ? { ...item, actor_name: actorName } : item;
+  });
+}
+
+async function buildNonPenelitianDetail(row) {
   const listRow = buildNonPenelitianStatusRow(row);
   const payload = toObjectPayload(row.form_lanjutan_payload);
-  const workflowTimeline = Array.isArray(payload.workflow_timeline) ? payload.workflow_timeline : [];
+  const workflowTimeline = await enrichWorkflowTimelineActors(payload.workflow_timeline);
   const dosenPembimbing =
     payload.dosen_pembimbing ||
     (row.dosenPembimbingTA
@@ -880,7 +921,7 @@ exports.getSubmissionById = async (req, res) => {
 
       return res.json({
         success: true,
-        data: buildNonPenelitianDetail(registration),
+        data: await buildNonPenelitianDetail(registration),
       });
     }
 

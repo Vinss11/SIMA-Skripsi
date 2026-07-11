@@ -1347,7 +1347,7 @@ exports.getDosenSubmissions = async (req, res) => {
       }
 
       return base;
-    });
+    }).filter((submission) => submission.can_review === true);
 
     res.json({
       success: true,

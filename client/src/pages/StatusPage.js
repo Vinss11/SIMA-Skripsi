@@ -215,15 +215,21 @@ function Timeline({ items = [] }) {
     <div className="space-y-3">
       {items.map((item, index) => {
         const chip = getStatusChip(item.status);
-        const actorLabel = getTimelineActorLabel(item.actor);
+        const actorLabel = item.role_label || getTimelineActorLabel(item.actor);
+        const actorName = item.actor_name || item.dosen?.nama || "";
+        const reviewerLabel = [actorLabel, actorName].filter(Boolean).join(" | ");
         return (
           <div key={`timeline-${index}-${item.status || "item"}`} className="rounded-lg border border-[#e8ecf6] bg-white p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}>{chip.label}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${chip.className}`}>{chip.label}</span>
+                {reviewerLabel ? (
+                  <span className="text-xs font-semibold text-[#5b688b]">{reviewerLabel}</span>
+                ) : null}
+              </div>
               <span className="text-xs font-semibold text-[#68779e]">{formatDateTime(item.at)}</span>
             </div>
             <p className="mt-2 text-sm font-semibold text-[#26355f]">{getTimelineNoteDisplay(item)}</p>
-            {actorLabel ? <p className="mt-1 text-xs text-[#68779e]">Aktor: {actorLabel}</p> : null}
           </div>
         );
       })}
@@ -1656,39 +1662,22 @@ function StatusPage({
               </section>
 
               <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
-                <h3 className="text-xl font-black text-[#1a2648]">Detail Keputusan</h3>
-                <div className="mt-3 space-y-3">
-                  {(selectedDetail.riwayat_persetujuan || []).length > 0 ? (
-                    selectedDetail.riwayat_persetujuan.map((item, index) => {
-                      const chip = getStatusChip(item.status);
-                      return (
-                        <div
-                          key={`riwayat-${selectedDetail.id}-${index}`}
-                          className="rounded-lg border border-[#e8ecf6] bg-white p-3"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-2">
-                              <span className={`rounded-full px-2 py-1 text-xs font-bold ${chip.className}`}>
-                                {chip.label}
-                              </span>
-                              <span className="text-xs font-semibold text-[#5b688b]">
-                                {getApprovalRoleLabel(item.tipe_approval)}
-                              </span>
-                            </div>
-                            <span className="text-xs font-semibold text-[#5b688b]">
-                              {item.dosen?.nama || "-"} | {formatDateTime(item.tanggal_keputusan)}
-                            </span>
-                          </div>
-                          <p className="mt-2 text-sm text-[#26355f]">{item.keterangan || "-"}</p>
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div className="rounded-lg border border-[#e8ecf6] bg-white p-4 text-sm text-[#5f6b89]">
-                      Belum ada keputusan reviewer untuk pengajuan ini.
-                    </div>
-                  )}
+                <div className="mb-3">
+                  <h3 className="text-xl font-black text-[#1a2648]">Detail Keputusan</h3>
+                  <p className="mt-1 text-sm text-[#5f6b89]">
+                    Timeline progress dari submit form sampai keputusan terakhir.
+                  </p>
                 </div>
+                <Timeline
+                  items={(selectedDetail.riwayat_persetujuan || []).map((item) => ({
+                    status: item.status,
+                    actor: item.tipe_approval,
+                    role_label: getApprovalRoleLabel(item.tipe_approval),
+                    actor_name: item.dosen?.nama || "",
+                    note: item.keterangan,
+                    at: item.tanggal_keputusan,
+                  }))}
+                />
               </section>
             </>
           ) : null}

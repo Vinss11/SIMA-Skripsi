@@ -268,6 +268,8 @@ function formatDateTime(value) {
 
 function getSubmissionTopikCount(row) {
   if (!row || row.tipe_pengajuan !== "topik_dosen") return 0;
+  const reviewerSlots = Array.isArray(row.reviewer_slot_decisions) ? row.reviewer_slot_decisions.length : 0;
+  if (reviewerSlots > 0 && !isKetuaClusterSubmissionReview(row)) return reviewerSlots;
   const fromDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail.length : 0;
   if (fromDetails > 0) return fromDetails;
   const fromCodes = Array.isArray(row.topik_dipilih) ? row.topik_dipilih.length : 0;
@@ -276,7 +278,13 @@ function getSubmissionTopikCount(row) {
 
 function hasSameDosenTopikBadge(row) {
   if (!row || row.tipe_pengajuan !== "topik_dosen") return false;
-  const topikDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail : [];
+  const reviewerSlots = Array.isArray(row.reviewer_slot_decisions) ? row.reviewer_slot_decisions : [];
+  const reviewerSlotSet = new Set(reviewerSlots.map((item) => Number(item?.slot)).filter(Boolean));
+  const allTopikDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail : [];
+  const topikDetails =
+    reviewerSlotSet.size > 0 && !isKetuaClusterSubmissionReview(row)
+      ? allTopikDetails.filter((item) => reviewerSlotSet.has(Number(item?.slot)))
+      : allTopikDetails;
   if (topikDetails.length <= 1) return false;
   const dosenSet = new Set(topikDetails.map((item) => Number(item?.dosen_id)).filter(Boolean));
   return dosenSet.size === 1;
@@ -326,6 +334,107 @@ function formatLabel(value) {
   return String(value)
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function ResearchReviewReadonlyInput({ label, value }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <input
+        type="text"
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#5c6888] outline-none disabled:cursor-default disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+      />
+    </div>
+  );
+}
+
+function ResearchReviewReadonlyTextarea({ label, value, rows = 4 }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <textarea
+        rows={rows}
+        readOnly
+        disabled
+        value={value || ""}
+        className="w-full cursor-default rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#5c6888] outline-none disabled:cursor-default disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+      />
+    </div>
+  );
+}
+
+function ResearchReviewDetailForm({ detail, topikRows = [] }) {
+  const isJudulMandiri = detail?.tipe_pengajuan === "judul_mandiri";
+
+  if (isJudulMandiri) {
+    return (
+      <section className="bg-white">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <ResearchReviewReadonlyInput label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri || "-"} />
+          <ResearchReviewReadonlyInput label="Keyword" value={detail.detail_pengajuan?.keyword_mandiri || "-"} />
+        </div>
+        <div className="mt-4">
+          <ResearchReviewReadonlyTextarea label="Deskripsi Singkat" value={detail.detail_pengajuan?.deskripsi_mandiri || "-"} />
+        </div>
+        <div className="mt-4">
+          <ResearchReviewReadonlyInput label="Cluster Penelitian" value={detail.detail_pengajuan?.cluster_mandiri || "-"} />
+          <p className="mt-1 text-xs text-[#60709a]">
+            Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
+          </p>
+        </div>
+        <div className="mt-4">
+          <ResearchReviewReadonlyInput
+            label="Calon Dosen Pembimbing"
+            value={detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+          />
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="bg-white">
+      <div className="space-y-5">
+        {topikRows.length > 0 ? (
+          topikRows.map((item, index) => (
+            <div key={`research-review-topic-${item.slot || index}-${item.kode || "none"}`}>
+              <h3 className="text-sm font-black text-[#1b274b]">Topik Pilihan {item.slot || index + 1}</h3>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ResearchReviewReadonlyInput label="Judul Penelitian" value={item.judul || "-"} />
+                <ResearchReviewReadonlyInput label="Keyword" value={item.keyword || "-"} />
+              </div>
+              <div className="mt-4">
+                <ResearchReviewReadonlyTextarea
+                  label="Deskripsi Singkat"
+                  value={item.deskripsi || item.description || item.ringkasan || "-"}
+                />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <div>
+                  <ResearchReviewReadonlyInput label="Cluster Penelitian" value={item.cluster || "-"} />
+                  <p className="mt-1 text-xs text-[#60709a]">
+                    Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
+                  </p>
+                </div>
+                <ResearchReviewReadonlyInput label="Calon Dosen Pembimbing" value={item.dosen || "-"} />
+              </div>
+              <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                <ResearchReviewReadonlyInput label="Kode Topik" value={item.kode || "-"} />
+                <ResearchReviewReadonlyInput label="Status Review" value={formatLabel(item.reviewer_status || "pending")} />
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-lg border border-[#e8ecf8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#5f6b89]">
+            Detail topik belum tersedia.
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function formatPeriodeMasterDosenInputLabel(dosen) {
@@ -1010,23 +1119,16 @@ function getSubmissionStatusBadgeClass(status) {
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
 
-function getSubmissionApprovalRoleKey(item) {
+function getSubmissionApprovalRoleLabel(item) {
   const approvalType = String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
   if (
     approvalType === "koordinator" ||
     approvalType === "ketua_klaster" ||
     approvalType === "ketua_cluster"
   ) {
-    return "ketua_cluster";
+    return "Ketua Cluster";
   }
-  return "dosen_pembimbing";
-}
-
-function getSubmissionDecisionNoteLabel(status) {
-  const normalized = String(status || "").toLowerCase();
-  if (normalized === "approved") return "Alasan approve";
-  if (normalized === "rejected") return "Alasan reject";
-  return "Catatan keputusan";
+  return "Dosen Pembimbing";
 }
 
 function getSubmissionGridStatus(row) {
@@ -1065,75 +1167,47 @@ function shouldShowTopikReviewCountdown(row) {
   );
 }
 
-function SubmissionDecisionHistoryGroup({
-  title,
-  description,
-  rows,
-  emptyMessage,
-  tone = "dosen",
-}) {
-  const accent =
-    tone === "ketua"
-      ? {
-          panel: "border-[#d7e5ff] bg-[#f6f9ff]",
-          count: "bg-[#eaf1ff] text-[#2854aa]",
-        }
-      : {
-          panel: "border-[#e4e9f6] bg-[#fbfcff]",
-          count: "bg-[#eef3ff] text-[#2f426f]",
-        };
-
+function SubmissionDecisionDetailSection({ items = [] }) {
   return (
-    <section className={`rounded-xl border p-3 ${accent.panel}`}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h5 className="text-sm font-black text-[#1b274b]">{title}</h5>
-          <p className="mt-1 text-xs font-semibold text-[#6a789d]">{description}</p>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${accent.count}`}>
-          {rows.length} keputusan
-        </span>
+    <section>
+      <div className="mb-3">
+        <h3 className="text-lg font-black text-[#1b274b]">Detail Keputusan</h3>
+        <p className="mt-1 text-sm text-[#5d6c91]">
+          Timeline progress dari submit form sampai keputusan terakhir.
+        </p>
       </div>
 
-      {rows.length > 0 ? (
-        <div className="mt-3 space-y-3">
-          {rows.map((item, index) => (
+      {items.length > 0 ? (
+        <div className="space-y-3">
+          {items.map((item, index) => (
             <article
-              key={`submission-decision-history-${tone}-${item?.tanggal_keputusan || index}`}
-              className="rounded-lg border border-[#dfe6f5] bg-white p-3 shadow-sm"
+              key={`submission-decision-detail-${item?.tanggal_keputusan || index}`}
+              className="rounded-lg border border-[#e8ecf6] bg-white p-3"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
-                        item?.status
-                      )}`}
-                    >
-                      {formatLabel(item?.status)}
-                    </span>
-                  </div>
-                  <p className="mt-2 text-sm font-bold text-[#253a70]">
-                    {item?.dosen?.nama || "Dosen"}
-                  </p>
-                  <p className="mt-1 text-xs font-semibold text-[#6a789d]">
-                    {formatDateTime(item?.tanggal_keputusan)}
-                  </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${getSubmissionStatusBadgeClass(
+                      item?.status
+                    )}`}
+                  >
+                    {formatLabel(item?.status)}
+                  </span>
+                  <span className="text-xs font-semibold text-[#5b688b]">
+                    {getSubmissionApprovalRoleLabel(item)} | {item?.dosen?.nama || "-"}
+                  </span>
                 </div>
+                <span className="text-xs font-semibold text-[#68779e]">
+                  {formatDateTime(item?.tanggal_keputusan)}
+                </span>
               </div>
-
-              <div className="mt-3 rounded-lg border border-[#d7e0f2] bg-[#fbfcff] px-3 py-2">
-                <p className="text-xs font-black uppercase tracking-wide text-[#52638e]">
-                  {getSubmissionDecisionNoteLabel(item?.status)}
-                </p>
-                <p className="mt-1 text-sm leading-relaxed text-[#243866]">{item?.keterangan || "-"}</p>
-              </div>
+              <p className="mt-2 text-sm font-semibold text-[#26355f]">{item?.keterangan || "-"}</p>
             </article>
           ))}
         </div>
       ) : (
-        <div className="mt-3 rounded-lg border border-dashed border-[#d5ddf0] bg-white/70 px-3 py-3 text-sm font-semibold text-[#68779f]">
-          {emptyMessage}
+        <div className="rounded-lg border border-[#e8ecf6] bg-white p-4 text-sm text-[#5f6b89]">
+          Belum ada detail keputusan.
         </div>
       )}
     </section>
@@ -1351,7 +1425,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         { id: "mahasiswa-dpa", label: "Mahasiswa DPA", icon: UserCircle2 },
         { id: "mahasiswa-bimbingan", label: "Riwayat Bimbingan", icon: ListChecks },
         { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
-        { id: "submissions", label: "Review Dosen Pembimbing", icon: ClipboardList },
+        { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
         { id: "approval-penelitian", label: "Keputusan Final Sekprodi", icon: ListChecks },
         { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
         { id: "pamit", label: "Pamit Mahasiswa", icon: Users },
@@ -3217,20 +3291,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
         ? submissionDetail.riwayat_persetujuan
         : [],
     [submissionDetail?.riwayat_persetujuan]
-  );
-  const submissionDosenDecisionHistory = useMemo(
-    () =>
-      submissionDecisionHistory.filter(
-        (item) => getSubmissionApprovalRoleKey(item) !== "ketua_cluster"
-      ),
-    [submissionDecisionHistory]
-  );
-  const submissionKetuaClusterDecisionHistory = useMemo(
-    () =>
-      submissionDecisionHistory.filter(
-        (item) => getSubmissionApprovalRoleKey(item) === "ketua_cluster"
-      ),
-    [submissionDecisionHistory]
   );
 
   const submissionNotificationItems = useMemo(() => {
@@ -7797,7 +7857,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   }
 
                                   const topikCount = getSubmissionTopikCount(row);
-                                  const hasSameDosenBadge = hasSameDosenTopikBadge(row);
                                   return (
                                     <tr key={`submission-${gridRow.id}`} className="border-b border-[#eff3fb] align-top">
                                       <td className="px-3 py-2 font-semibold text-[#254080] whitespace-nowrap align-top">{nomorUrut}</td>
@@ -7814,11 +7873,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                             <span className="inline-flex rounded-full bg-[#edf3ff] px-2.5 py-1 text-xs font-bold text-[#2f63e3]">
                                               {topikCount > 0 ? `${topikCount} Topik` : "0 Topik"}
                                             </span>
-                                            {hasSameDosenBadge ? (
-                                              <span className="inline-flex rounded-full bg-[#fff4d8] px-2 py-0.5 text-[11px] font-bold text-[#9b6b00]">
-                                                Dosen sama
-                                              </span>
-                                            ) : null}
                                           </div>
                                         ) : (
                                           <span className="text-xs font-semibold text-[#5e6c92]">Judul Mandiri</span>
@@ -8018,19 +8072,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                   </div>
                                 )}
 
-                                <div className="rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
-                                  <div className="grid grid-cols-1 gap-2 text-sm text-[#2f426f]">
-                                    <p><span className="font-semibold">Slot:</span> {submissionReviewTopikFocused?.slot || "-"}</p>
-                                    <p><span className="font-semibold">Kode Topik:</span> {submissionReviewTopikFocused?.kode || "-"}</p>
-                                    <p><span className="font-semibold">Judul Topik:</span> {submissionReviewTopikFocused?.judul || "-"}</p>
-                                    <p><span className="font-semibold">Cluster:</span> {submissionReviewTopikFocused?.cluster || "-"}</p>
-                                    <p><span className="font-semibold">Keyword:</span> {submissionReviewTopikFocused?.keyword || "-"}</p>
-                                    <p><span className="font-semibold">Dosen:</span> {submissionReviewTopikFocused?.dosen || "-"}</p>
-                                    <p>
-                                      <span className="font-semibold">Status Slot:</span>{" "}
-                                      {formatLabel(submissionReviewTopikFocused?.reviewer_status || "pending")}
-                                    </p>
-                                  </div>
+                                <div className="rounded-lg border border-[#e4e9f6] bg-white p-4">
+                                  <ResearchReviewDetailForm
+                                    detail={submissionDetail}
+                                    topikRows={submissionReviewTopikFocused ? [submissionReviewTopikFocused] : []}
+                                  />
                                   {shouldShowPembimbingApprovalNote ? (
                                     <div className="mt-3 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-3 text-sm text-[#2f426f]">
                                       <p className="font-black text-[#244279]">
@@ -8054,18 +8100,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 </div>
                               </div>
                         ) : (
-                          <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
-                            <div className="space-y-2 text-sm text-[#324c86]">
-                              {shouldShowTopikReviewCountdown(submissionDetail) ? (
-                                <p className="rounded-lg border border-[#dbe4fa] bg-white px-3 py-2 text-xs font-semibold text-[#355da8]">
-                                  Pengajuan tetap menunggu keputusan dosen tanpa batas waktu otomatis.
-                                </p>
-                              ) : null}
-                              <p><span className="font-semibold">Judul:</span> {submissionDetail.detail_pengajuan?.judul_mandiri || "-"}</p>
-                              <p><span className="font-semibold">Cluster:</span> {submissionDetail.detail_pengajuan?.cluster_mandiri || "-"}</p>
-                              <p><span className="font-semibold">Deskripsi:</span> {submissionDetail.detail_pengajuan?.deskripsi_mandiri || "-"}</p>
-                              <p><span className="font-semibold">Keyword:</span> {submissionDetail.detail_pengajuan?.keyword_mandiri || "-"}</p>
-                            </div>
+                          <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-white p-4">
+                            {shouldShowTopikReviewCountdown(submissionDetail) ? (
+                              <p className="mb-4 rounded-lg border border-[#dbe4fa] bg-[#f8fbff] px-3 py-2 text-xs font-semibold text-[#355da8]">
+                                Pengajuan tetap menunggu keputusan dosen tanpa batas waktu otomatis.
+                              </p>
+                            ) : null}
+                            <ResearchReviewDetailForm detail={submissionDetail} />
                           </div>
                         )}
                       </div>
@@ -8134,29 +8175,40 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             <>
                               <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan Topik</h3>
                               <p className="mt-1 text-sm text-[#5d6c91]">
-                                Anda sedang dalam mode{" "}
-                                <span className={submissionDecision === "approve" ? "font-bold text-[#137748]" : "font-bold text-[#b73a3a]"}>
-                                  {submissionDecision === "approve" ? "APPROVE" : "REJECT"}
-                                </span>
-                                {" "}sesuai tombol aksi yang dipilih di grid.
+                                Pilih keputusan untuk topik yang sedang direview.
                               </p>
 
                               <div className="mt-3 rounded-lg border border-[#e4e9f6] bg-[#f8fbff] p-3">
                                 <p className="text-sm font-semibold text-[#2f426f]">Keputusan</p>
-                                <div className="mt-2">
-                                  <span
-                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSubmissionDecision("approve");
+                                      setSubmissionKeterangan("");
+                                    }}
+                                    className={`rounded-md border px-4 py-2 text-sm font-bold transition ${
                                       submissionDecision === "approve"
-                                        ? "bg-[#e8f8ef] text-[#127947]"
-                                        : "bg-[#fff0f0] text-[#b73a3a]"
+                                        ? "border-[#137748] bg-[#137748] text-white"
+                                        : "border-[#9bcdb4] bg-white text-[#137748] hover:bg-[#eef9f3]"
                                     }`}
                                   >
-                                    {submissionDecision === "approve" ? "APPROVE" : "REJECT"}
-                                  </span>
-                                  <p className="mt-2 text-xs font-semibold text-[#5d6c91]">
-                                    Opsi lawan disembunyikan agar keputusan konsisten dengan tombol aksi awal.
-                                    Untuk mengganti mode, kembali ke grid lalu pilih tombol aksi lainnya.
-                                  </p>
+                                    Approve
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSubmissionDecision("reject");
+                                      setSubmissionKeterangan("");
+                                    }}
+                                    className={`rounded-md border px-4 py-2 text-sm font-bold transition ${
+                                      submissionDecision === "reject"
+                                        ? "border-[#b73a3a] bg-[#b73a3a] text-white"
+                                        : "border-[#e5abab] bg-white text-[#b73a3a] hover:bg-[#fff3f3]"
+                                    }`}
+                                  >
+                                    Reject
+                                  </button>
                                 </div>
                                 <div className="mt-3">
                                   <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
@@ -8204,11 +8256,38 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                           <>
                             <h4 className="text-sm font-black text-[#1b274b]">Form Keputusan</h4>
                             <p className="mt-1 text-sm text-[#5d6c91]">
-                              Mode keputusan aktif:{" "}
-                              <span className={submissionDecision === "approve" ? "font-bold text-[#137748]" : "font-bold text-[#b73a3a]"}>
-                                {submissionDecision === "approve" ? "Approve Pengajuan" : "Tolak Pengajuan"}
-                              </span>
+                              Pilih keputusan untuk pengajuan yang sedang direview.
                             </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSubmissionDecision("approve");
+                                  setSubmissionKeterangan("");
+                                }}
+                                className={`rounded-md border px-4 py-2 text-sm font-bold transition ${
+                                  submissionDecision === "approve"
+                                    ? "border-[#137748] bg-[#137748] text-white"
+                                    : "border-[#9bcdb4] bg-white text-[#137748] hover:bg-[#eef9f3]"
+                                }`}
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSubmissionDecision("reject");
+                                  setSubmissionKeterangan("");
+                                }}
+                                className={`rounded-md border px-4 py-2 text-sm font-bold transition ${
+                                  submissionDecision === "reject"
+                                    ? "border-[#b73a3a] bg-[#b73a3a] text-white"
+                                    : "border-[#e5abab] bg-white text-[#b73a3a] hover:bg-[#fff3f3]"
+                                }`}
+                              >
+                                Reject
+                              </button>
+                            </div>
                             <div className="mt-3">
                               <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
                                 {submissionDecision === "approve" ? "Catatan Persetujuan" : "Alasan Penolakan"}
@@ -8245,46 +8324,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             </div>
                           </>
                         ) : (
-                          <>
-                            <h3 className="text-lg font-black text-[#1b274b]">
-                              {submissionDetail.status === "pending" ? "Status Review" : "Riwayat Keputusan"}
-                            </h3>
-                            <p className="mt-1 text-sm text-[#5d6c91]">
-                              {submissionDetail.status === "pending"
-                                ? "Pantau status review untuk pengajuan ini."
-                                : "Lihat jejak keputusan dari dosen pembimbing hingga ketua cluster untuk pengajuan ini."}
-                            </p>
-                            {submissionDetail.status === "pending" ? (
-                              <div className="mt-3 rounded-lg border border-[#e7ecf8] bg-[#f9fbff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
-                                Anda belum bisa memberi keputusan untuk pengajuan ini.
-                                {submissionDetail.reviewer_status
-                                  ? ` Status reviewer Anda: ${formatLabel(submissionDetail.reviewer_status)}.`
-                                  : ""}
-                              </div>
-                            ) : null}
-                            {submissionDecisionHistory.length > 0 ? (
-                              <div className="mt-4 space-y-4">
-                                <SubmissionDecisionHistoryGroup
-                                  title="Keputusan Dosen Pembimbing"
-                                  description="Riwayat approve atau reject dari dosen pemilik topik/calon pembimbing."
-                                  rows={submissionDosenDecisionHistory}
-                                  emptyMessage="Belum ada keputusan dari dosen pembimbing."
-                                  tone="dosen"
-                                />
-                                <SubmissionDecisionHistoryGroup
-                                  title="Keputusan Ketua Cluster"
-                                  description="Riwayat keputusan final dari ketua cluster setelah tahap dosen pembimbing."
-                                  rows={submissionKetuaClusterDecisionHistory}
-                                  emptyMessage="Belum ada keputusan dari ketua cluster."
-                                  tone="ketua"
-                                />
-                              </div>
-                            ) : (
-                              <div className="mt-3 rounded-lg border border-[#e9edf8] bg-[#f7f9ff] px-3 py-2 text-sm font-semibold text-[#5e6d95]">
-                                Belum ada riwayat keputusan untuk pengajuan ini.
-                              </div>
-                            )}
-                          </>
+                          <SubmissionDecisionDetailSection items={submissionDecisionHistory} />
                         )}
                       </div>
                     ) : null}
