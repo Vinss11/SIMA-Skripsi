@@ -269,7 +269,8 @@ function formatDateTime(value) {
 function getSubmissionTopikCount(row) {
   if (!row || row.tipe_pengajuan !== "topik_dosen") return 0;
   const reviewerSlots = Array.isArray(row.reviewer_slot_decisions) ? row.reviewer_slot_decisions.length : 0;
-  if (reviewerSlots > 0 && !isKetuaClusterSubmissionReview(row)) return reviewerSlots;
+  if (reviewerSlots > 0) return reviewerSlots;
+  if (isKetuaClusterSubmissionReview(row)) return 1;
   const fromDetails = Array.isArray(row.topik_dipilih_detail) ? row.topik_dipilih_detail.length : 0;
   if (fromDetails > 0) return fromDetails;
   const fromCodes = Array.isArray(row.topik_dipilih) ? row.topik_dipilih.length : 0;
@@ -586,6 +587,7 @@ function getMagangStatusBadgeClass(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "approved") return "bg-[#137748] text-white";
   if (normalized === "rejected") return "bg-[#b73a3a] text-white";
+  if (normalized === "cancelled") return "bg-[#eef2f7] text-[#526078]";
   if (normalized === "review_dosen_magang") return "bg-[#eaf1ff] text-[#2756b8]";
   if (normalized === "review_sekprodi") return "bg-[#fff4d8] text-[#9b6b00]";
   if (normalized === "submitted") return "bg-[#fdf1d4] text-[#a06a00]";
@@ -896,6 +898,19 @@ function getFinalResearchChosenTopic(row) {
   return topics.find((topic) => topic?.dipilih) || topics.find((topic) => topic?.status === "approved") || topics[0] || null;
 }
 
+function getFinalResearchReadyTopics(row) {
+  const readyTopics = Array.isArray(row?.topik_lolos_cluster) ? row.topik_lolos_cluster : [];
+  if (readyTopics.length > 0) {
+    return [...readyTopics].sort((left, right) => Number(left?.slot || 0) - Number(right?.slot || 0));
+  }
+  const chosenTopic = getFinalResearchChosenTopic(row);
+  return chosenTopic ? [chosenTopic] : [];
+}
+
+function getFinalResearchTopicKey(topic) {
+  return topic?.slot != null ? String(topic.slot) : "judul-mandiri";
+}
+
 function getFinalResearchTitle(row) {
   const topic = getFinalResearchChosenTopic(row);
   if (!topic) return "-";
@@ -1119,8 +1134,14 @@ function getSubmissionStatusBadgeClass(status) {
   return "bg-[#eef2fb] text-[#5c6d95]";
 }
 
+function getSubmissionStatusLabel(status) {
+  return String(status || "").toLowerCase() === "cancelled" ? "Dibatalkan" : formatLabel(status);
+}
+
 function getSubmissionApprovalRoleLabel(item) {
   const approvalType = String(item?.tipe_approval || "calon_pembimbing").toLowerCase();
+  if (String(item?.status || "").toLowerCase() === "cancelled") return "Sistem";
+  if (approvalType === "sekprodi") return "Sekretaris Prodi";
   if (
     approvalType === "koordinator" ||
     approvalType === "ketua_klaster" ||
@@ -1191,10 +1212,12 @@ function SubmissionDecisionDetailSection({ items = [] }) {
                       item?.status
                     )}`}
                   >
-                    {formatLabel(item?.status)}
+                    {getSubmissionStatusLabel(item?.status)}
                   </span>
                   <span className="text-xs font-semibold text-[#5b688b]">
-                    {getSubmissionApprovalRoleLabel(item)} | {item?.dosen?.nama || "-"}
+                    {[getSubmissionApprovalRoleLabel(item), item?.dosen?.nama || item?.sekretaris_prodi?.nama]
+                      .filter(Boolean)
+                      .join(" | ")}
                   </span>
                 </div>
                 <span className="text-xs font-semibold text-[#68779e]">
@@ -1585,7 +1608,7 @@ function buildTabHeaders(isSekretaris) {
   };
 }
 
-function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, isSekretaris = false }) {
+function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile, isSekretaris = false }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
   const [topikMode, setTopikMode] = useState("list");
@@ -1608,6 +1631,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
   const [finalResearchRows, setFinalResearchRows] = useState([]);
   const [finalResearchActionId, setFinalResearchActionId] = useState(null);
   const [finalResearchQuery, setFinalResearchQuery] = useState("");
+  const [finalResearchMode, setFinalResearchMode] = useState("list");
+  const [finalResearchDetail, setFinalResearchDetail] = useState(null);
+  const [finalResearchFocusSlot, setFinalResearchFocusSlot] = useState("");
+  const [finalResearchViewedSlots, setFinalResearchViewedSlots] = useState([]);
+  const [finalResearchDecision, setFinalResearchDecision] = useState("");
+  const [finalResearchDecisionNote, setFinalResearchDecisionNote] = useState("");
+  const [finalResearchDecisionError, setFinalResearchDecisionError] = useState("");
   const [finalNonPenelitianMode, setFinalNonPenelitianMode] = useState("list");
   const [selectedFinalNonPenelitianId, setSelectedFinalNonPenelitianId] = useState(null);
   const [finalNonPenelitianDetail, setFinalNonPenelitianDetail] = useState(null);
@@ -2223,32 +2253,72 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     [apiBaseUrl, onSessionExpired, session.token]
   );
 
-  const handleFinalResearchDecision = async (submission, decision) => {
-    const isApprove = decision === "approve";
-    const result = await Swal.fire({
-      title: isApprove ? "Setujui Pengajuan Penelitian?" : "Tolak Pengajuan Penelitian?",
-      text: isApprove
-        ? "Topik terpilih dan dosen pembimbing akan ditetapkan secara final."
-        : "Mahasiswa dapat mengajukan kembali setelah penolakan diproses.",
-      input: "textarea",
-      inputLabel: isApprove ? "Catatan (opsional)" : "Alasan penolakan",
-      inputPlaceholder: isApprove ? "Tambahkan catatan bila diperlukan..." : "Tuliskan alasan penolakan...",
-      inputValidator: (value) => (!isApprove && !String(value || "").trim() ? "Alasan penolakan wajib diisi." : undefined),
-      icon: isApprove ? "question" : "warning",
-      showCancelButton: true,
-      confirmButtonText: isApprove ? "Setujui Final" : "Tolak",
-      cancelButtonText: "Batal",
-      confirmButtonColor: isApprove ? "#2f63e3" : "#b73a3a",
-    });
-    if (!result.isConfirmed) return;
+  const handleOpenFinalResearchDetail = (submission) => {
+    const approvedTopics = Array.isArray(submission?.topik_lolos_cluster)
+      ? [...submission.topik_lolos_cluster].sort((left, right) => Number(left.slot) - Number(right.slot))
+      : [];
+    const firstSlot = approvedTopics[0] ? getFinalResearchTopicKey(approvedTopics[0]) : "";
+    setFinalResearchDetail(submission);
+    setFinalResearchFocusSlot(firstSlot);
+    setFinalResearchViewedSlots(firstSlot ? [firstSlot] : []);
+    setFinalResearchDecision("");
+    setFinalResearchDecisionNote("");
+    setFinalResearchDecisionError("");
+    setFinalResearchMode("review");
+  };
 
-    setFinalResearchActionId(submission.id);
+  const handleBackToFinalResearchList = () => {
+    setFinalResearchMode("list");
+    setFinalResearchDetail(null);
+    setFinalResearchFocusSlot("");
+    setFinalResearchViewedSlots([]);
+    setFinalResearchDecision("");
+    setFinalResearchDecisionNote("");
+    setFinalResearchDecisionError("");
+  };
+
+  const handleSelectFinalResearchTopic = (slot) => {
+    const normalizedSlot = String(slot);
+    setFinalResearchFocusSlot(normalizedSlot);
+    setFinalResearchViewedSlots((current) =>
+      current.includes(normalizedSlot) ? current : [...current, normalizedSlot]
+    );
+  };
+
+  const handleSubmitFinalResearchDecision = async () => {
+    if (!finalResearchDetail?.id || !finalResearchDecision) return;
+    const note = String(finalResearchDecisionNote || "").trim();
+    if (finalResearchDecision === "approve" && !hasViewedAllFinalResearchTopics) {
+      setFinalResearchDecisionError("Tinjau seluruh pilihan topik sebelum memberikan keputusan final.");
+      return;
+    }
+    if (!note) {
+      setFinalResearchDecisionError(
+        finalResearchDecision === "approve" ? "Catatan keputusan wajib diisi." : "Alasan penolakan wajib diisi."
+      );
+      return;
+    }
+
+    setFinalResearchActionId(finalResearchDetail.id);
     try {
-      await fetchWithAuth(`/api/sekretaris/penelitian/final/${submission.id}/${decision}`, {
-        method: "POST",
-        body: JSON.stringify({ keterangan: String(result.value || "").trim() }),
-      });
-      showSuccessToast(isApprove ? "Pengajuan penelitian disetujui final." : "Pengajuan penelitian ditolak.");
+      await fetchWithAuth(
+        `/api/sekretaris/penelitian/final/${finalResearchDetail.id}/${finalResearchDecision}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            keterangan: note,
+            ...(finalResearchFocusedTopic?.slot != null
+              ? { topik_slot: Number(finalResearchFocusedTopic.slot) }
+              : {}),
+          }),
+        }
+      );
+      showSuccessToast(
+        finalResearchDecision === "approve"
+          ? "Topik penelitian ditetapkan sebagai topik final."
+          : "Topik ditolak. Proses topik lainnya tetap berjalan."
+      );
+      handleBackToFinalResearchList();
       await loadAllData();
     } catch (actionError) {
       if (actionError.message !== "__SESSION_EXPIRED__") showErrorToast(actionError.message);
@@ -3335,6 +3405,23 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
       return searchable.includes(keyword);
     });
   }, [finalResearchQuery, finalResearchRows]);
+  const finalResearchApprovedTopics = useMemo(
+    () =>
+      Array.isArray(finalResearchDetail?.topik_lolos_cluster)
+        ? [...finalResearchDetail.topik_lolos_cluster].sort((left, right) => Number(left.slot) - Number(right.slot))
+        : [],
+    [finalResearchDetail]
+  );
+  const finalResearchFocusedTopic = useMemo(
+    () =>
+      finalResearchApprovedTopics.find(
+        (item) => getFinalResearchTopicKey(item) === String(finalResearchFocusSlot)
+      ) || finalResearchApprovedTopics[0] || null,
+    [finalResearchApprovedTopics, finalResearchFocusSlot]
+  );
+  const hasViewedAllFinalResearchTopics =
+    finalResearchApprovedTopics.length > 0 &&
+    finalResearchApprovedTopics.every((item) => finalResearchViewedSlots.includes(getFinalResearchTopicKey(item)));
 
   const filteredFinalNonPenelitianRows = useMemo(() => {
     const keyword = finalResearchQuery.trim().toLowerCase();
@@ -3374,7 +3461,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
     });
   }, [finalResearchQuery, sekprodiNonPenelitianRows]);
 
-  const isFinalNonPenelitianDetailMode = finalNonPenelitianMode === "review";
+  const isFinalResearchDetailMode = finalResearchMode === "review";
+  const isFinalNonPenelitianDetailMode = finalNonPenelitianMode === "review" || isFinalResearchDetailMode;
   const finalApprovalGridRows = useMemo(() => {
     return [
       ...filteredFinalResearchRows.map((row) => ({
@@ -4165,6 +4253,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
 
   useEffect(() => {
     if (activeTab !== "approval-penelitian") {
+      setFinalResearchMode("list");
+      setFinalResearchDetail(null);
+      setFinalResearchFocusSlot("");
+      setFinalResearchViewedSlots([]);
+      setFinalResearchDecision("");
+      setFinalResearchDecisionNote("");
+      setFinalResearchDecisionError("");
       setFinalNonPenelitianMode("list");
       setSelectedFinalNonPenelitianId(null);
       setFinalNonPenelitianDetail(null);
@@ -6642,11 +6737,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 </div>
               ) : null}
             </div>
-            <UserCircle2 className="h-7 w-7 text-[#dde7ff]" />
-            <div className="text-right">
-              <p className="text-sm font-bold">{session.user?.nama}</p>
-              <p className="text-xs text-[#d4e1ff]">{session.user?.username}</p>
-            </div>
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              title="Edit profil"
+              className="flex items-center gap-2 rounded-lg px-2 py-1 text-right transition hover:bg-white/15"
+            >
+              <UserCircle2 className="h-7 w-7 text-[#dde7ff]" />
+              <span>
+                <span className="block text-sm font-bold">{session.user?.nama}</span>
+                <span className="block text-xs text-[#d4e1ff]">{session.user?.username}</span>
+              </span>
+            </button>
             <button
               type="button"
               onClick={onLogout}
@@ -7243,7 +7345,174 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                 </div>
                 </div>
 
-                {finalNonPenelitianMode === "review" ? (
+                {isFinalResearchDetailMode ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleBackToFinalResearchList}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                          title="Kembali ke grid keputusan final"
+                        >
+                          <ArrowLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={loadAllData}
+                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                        >
+                          <RefreshCcw className="h-4 w-4" />
+                          Refresh
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+                      <h3 className="text-lg font-black text-[#1b274b]">Review Final Penelitian</h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Tinjau topik yang telah disetujui Ketua Cluster. Tolak berlaku untuk topik aktif, sedangkan approve menetapkannya sebagai topik final.
+                      </p>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {finalResearchApprovedTopics.map((topik) => {
+                          const slot = getFinalResearchTopicKey(topik);
+                          const active = slot === getFinalResearchTopicKey(finalResearchFocusedTopic);
+                          const viewed = finalResearchViewedSlots.includes(slot);
+                          return (
+                            <button
+                              key={`final-research-topic-${topik.slot}-${topik.kode || "none"}`}
+                              type="button"
+                              onClick={() => handleSelectFinalResearchTopic(slot)}
+                              className={`min-w-[190px] rounded-lg border px-3 py-2 text-left text-xs transition ${
+                                active
+                                  ? "border-[#2f63e3] bg-[#edf3ff]"
+                                  : "border-[#dde5f8] bg-white hover:bg-[#f7f9ff]"
+                              }`}
+                            >
+                              <p className="font-black text-[#27407b]">
+                                {topik.slot != null ? `Pilihan ${topik.slot} - ${topik.kode || "-"}` : "Judul Mandiri"}
+                              </p>
+                              <p className={`mt-1 font-semibold ${viewed ? "text-[#137748]" : "text-[#6b789b]"}`}>
+                                {viewed ? "Sudah dilihat" : "Belum dilihat"}
+                              </p>
+                            </button>
+                          );
+                        })}
+                      </div>
+
+                      <div className="mt-4 rounded-lg border border-[#e4e9f6] bg-white p-4">
+                        <ResearchReviewDetailForm
+                          detail={{ tipe_pengajuan: "topik_dosen" }}
+                          topikRows={
+                            finalResearchFocusedTopic
+                              ? [
+                                  {
+                                    ...finalResearchFocusedTopic,
+                                    dosen: finalResearchFocusedTopic.dosen_nama,
+                                    reviewer_status: finalResearchFocusedTopic.status_ketua_cluster,
+                                  },
+                                ]
+                              : []
+                          }
+                        />
+                        {finalResearchFocusedTopic ? (
+                          <div className="mt-4 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-3 text-sm text-[#2f426f]">
+                            <p className="font-black text-[#244279]">Keputusan Ketua Cluster</p>
+                            <p className="mt-1">
+                              {finalResearchFocusedTopic.ketua_cluster?.nama || "Ketua Cluster"} | {finalResearchFocusedTopic.catatan_ketua_cluster || "-"}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+                      <SubmissionDecisionDetailSection items={finalResearchDetail?.riwayat_persetujuan || []} />
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
+                      <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan</h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Penolakan berlaku pada topik yang sedang dibuka. Approve menetapkan topik tersebut sebagai topik final dan membatalkan proses topik lainnya.
+                      </p>
+                      {!hasViewedAllFinalResearchTopics ? (
+                        <div className="mt-3 rounded-lg border border-[#f0d99d] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#8a6200]">
+                          Buka seluruh pilihan topik terlebih dahulu untuk mengaktifkan keputusan final.
+                        </div>
+                      ) : null}
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFinalResearchDecision("reject");
+                            setFinalResearchDecisionError("");
+                          }}
+                          className={`rounded-lg px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            finalResearchDecision === "reject"
+                              ? "bg-[#b73a3a] text-white"
+                              : "border border-[#e2a2a2] bg-white text-[#a33737]"
+                          }`}
+                        >
+                          Tolak
+                        </button>
+                        <button
+                          type="button"
+                          disabled={!hasViewedAllFinalResearchTopics}
+                          onClick={() => {
+                            setFinalResearchDecision("approve");
+                            setFinalResearchDecisionError("");
+                          }}
+                          className={`rounded-lg px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
+                            finalResearchDecision === "approve"
+                              ? "bg-[#137748] text-white"
+                              : "border border-[#9bc9b2] bg-white text-[#137748]"
+                          }`}
+                        >
+                          Approve
+                        </button>
+                      </div>
+                      {finalResearchDecision ? (
+                        <div className="mt-3">
+                          <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                            {finalResearchDecision === "approve" ? "Catatan keputusan" : "Alasan penolakan"}
+                            <span className="ml-1 text-[#b73a3a]">*</span>
+                          </label>
+                          <textarea
+                            rows={4}
+                            value={finalResearchDecisionNote}
+                            onChange={(event) => {
+                              setFinalResearchDecisionNote(event.target.value);
+                              setFinalResearchDecisionError("");
+                            }}
+                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                              finalResearchDecisionError ? "border-[#d33b3b] bg-[#fffafa]" : "border-[#d3dbef]"
+                            }`}
+                          />
+                          {finalResearchDecisionError ? (
+                            <p className="mt-1 text-xs font-semibold text-[#b73a3a]">{finalResearchDecisionError}</p>
+                          ) : null}
+                          <div className="mt-4 flex justify-end">
+                            <button
+                              type="button"
+                              disabled={Number(finalResearchActionId) === Number(finalResearchDetail?.id)}
+                              onClick={handleSubmitFinalResearchDecision}
+                              className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60 ${
+                                finalResearchDecision === "reject" ? "bg-[#b73a3a]" : "bg-[#137748]"
+                              }`}
+                            >
+                              {Number(finalResearchActionId) === Number(finalResearchDetail?.id)
+                                ? "Memproses..."
+                                : finalResearchDecision === "reject"
+                                ? "Tolak"
+                                : "Approve"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : finalNonPenelitianMode === "review" ? (
                   <div className="space-y-4">
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-3">
                       <div className="flex flex-wrap items-center gap-2">
@@ -7517,17 +7786,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                   </div>
                 ) : (
                   <div className="relative mt-1 min-h-0 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                    <table className="w-full min-w-[1505px] table-fixed text-left text-sm">
+                    <table className="w-full min-w-[1380px] table-fixed text-left text-sm">
                       <colgroup>
-                        <col style={{ width: "58px" }} />
+                        <col style={{ width: "50px" }} />
+                        <col style={{ width: "200px" }} />
+                        <col style={{ width: "105px" }} />
                         <col style={{ width: "230px" }} />
-                        <col style={{ width: "145px" }} />
-                        <col style={{ width: "260px" }} />
-                        <col style={{ width: "240px" }} />
                         <col style={{ width: "250px" }} />
                         <col style={{ width: "190px" }} />
-                        <col style={{ width: "160px" }} />
-                        <col style={{ width: "170px" }} />
+                        <col style={{ width: "150px" }} />
+                        <col style={{ width: "135px" }} />
+                        <col style={{ width: "128px" }} />
                       </colgroup>
                       <thead className="sticky top-0 z-10">
                         <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
@@ -7549,6 +7818,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             ? Number(finalResearchActionId) === Number(row.id)
                             : sekprodiNonPenelitianActionId === row.id;
                           const jalurLabel = isResearch ? "Penelitian" : formatLabel(row.jalur);
+                          const researchTopics = isResearch ? getFinalResearchReadyTopics(row) : [];
                           const title = isResearch ? getFinalResearchTitle(row) : getPengampuReviewSummary(row);
                           const summary = isResearch
                             ? getFinalResearchSummary(row)
@@ -7578,10 +7848,48 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                                 </span>
                               </td>
                               <td className="px-3 py-3">
-                                <p className="line-clamp-3 font-semibold leading-5 text-[#1f2d53] break-words">{title}</p>
+                                {isResearch ? (
+                                  <div className="space-y-1">
+                                    {researchTopics.map((topic) => (
+                                      <p
+                                        key={`final-grid-summary-${row.id}-${getFinalResearchTopicKey(topic)}`}
+                                        className="line-clamp-1 text-xs leading-5 text-[#1f2d53] break-words"
+                                        title={`${topic.slot != null ? `Pilihan ${topic.slot}` : "Judul Mandiri"}${
+                                          topic.kode ? ` - ${topic.kode}` : ""
+                                        }: ${topic.judul || "-"}`}
+                                      >
+                                        <span className="font-bold">
+                                          {topic.slot != null ? `Pilihan ${topic.slot}` : "Judul Mandiri"}
+                                          {topic.kode ? ` - ${topic.kode}` : ""}:
+                                        </span>{" "}
+                                        {topic.judul || "-"}
+                                      </p>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="line-clamp-3 font-semibold leading-5 text-[#1f2d53] break-words">{title}</p>
+                                )}
                               </td>
                               <td className="px-3 py-3">
-                                <p className="line-clamp-3 leading-5 text-[#43537d] break-words">{summary}</p>
+                                {isResearch ? (
+                                  <div className="space-y-1">
+                                    {researchTopics.map((topic) => (
+                                      <p
+                                        key={`final-grid-detail-${row.id}-${getFinalResearchTopicKey(topic)}`}
+                                        className="line-clamp-1 text-xs leading-5 text-[#43537d] break-words"
+                                        title={`Dosen: ${topic.dosen_nama || "-"} | Ketua Cluster: ${
+                                          topic.ketua_cluster?.nama || "-"
+                                        }`}
+                                      >
+                                        <span className="font-semibold">Dosen:</span> {topic.dosen_nama || "-"}
+                                        {" | "}
+                                        <span className="font-semibold">Ketua:</span> {topic.ketua_cluster?.nama || "-"}
+                                      </p>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="line-clamp-3 leading-5 text-[#43537d] break-words">{summary}</p>
+                                )}
                               </td>
                               <td className="px-3 py-3">
                                 <span className="inline-flex max-w-full rounded-full bg-[#e8efff] px-2.5 py-1 text-xs font-bold leading-4 text-[#2454b8]">
@@ -7592,24 +7900,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                               <td className="px-3 py-3 text-[#43537d]">{time}</td>
                               <td className="px-3 py-3">
                                 {isResearch ? (
-                                  <div className="flex flex-wrap gap-2">
-                                    <button
-                                      type="button"
-                                      disabled={rowBusy}
-                                      onClick={() => handleFinalResearchDecision(row, "approve")}
-                                      className="rounded-md bg-[#147a4b] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      disabled={rowBusy}
-                                      onClick={() => handleFinalResearchDecision(row, "reject")}
-                                      className="rounded-md bg-[#b73a3a] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110 disabled:opacity-50"
-                                    >
-                                      Tolak
-                                    </button>
-                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={rowBusy}
+                                    onClick={() => handleOpenFinalResearchDetail(row)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:opacity-50"
+                                  >
+                                    <Eye className="h-3.5 w-3.5" />
+                                    Review
+                                  </button>
                                 ) : (
                                   <button
                                     type="button"
@@ -8109,6 +8408,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, i
                             <ResearchReviewDetailForm detail={submissionDetail} />
                           </div>
                         )}
+                      </div>
+                    ) : null}
+
+                    {!loadingSubmissionDetail &&
+                    submissionDetail &&
+                    submissionDetail.can_review &&
+                    activeTab === "ketua-cluster-review" ? (
+                      <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                        <SubmissionDecisionDetailSection items={submissionDecisionHistory} />
                       </div>
                     ) : null}
 

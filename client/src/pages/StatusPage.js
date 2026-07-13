@@ -68,6 +68,12 @@ function getStatusChip(status) {
       className: "bg-[#b73a3a] text-white",
     };
   }
+  if (normalized === "cancelled") {
+    return {
+      label: "Dibatalkan",
+      className: "bg-[#eef2f7] text-[#526078]",
+    };
+  }
   if (normalized === "pending") {
     return {
       label: "Pending",
@@ -239,6 +245,7 @@ function Timeline({ items = [] }) {
 
 function getApprovalRoleLabel(value) {
   const normalized = String(value || "").toLowerCase();
+  if (normalized === "sekprodi") return "Sekretaris Prodi";
   if (normalized === "koordinator") return "Ketua Cluster";
   if (normalized === "ketua_klaster" || normalized === "ketua_cluster") return "Ketua Cluster";
   if (normalized === "calon_pembimbing") return "Dosen Pembimbing";
@@ -1672,8 +1679,11 @@ function StatusPage({
                   items={(selectedDetail.riwayat_persetujuan || []).map((item) => ({
                     status: item.status,
                     actor: item.tipe_approval,
-                    role_label: getApprovalRoleLabel(item.tipe_approval),
-                    actor_name: item.dosen?.nama || "",
+                    role_label:
+                      String(item.status || "").toLowerCase() === "cancelled"
+                        ? "Sistem"
+                        : getApprovalRoleLabel(item.tipe_approval),
+                    actor_name: item.dosen?.nama || item.sekretaris_prodi?.nama || "",
                     note: item.keterangan,
                     at: item.tanggal_keputusan,
                   }))}

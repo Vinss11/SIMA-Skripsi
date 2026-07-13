@@ -18,6 +18,7 @@ const {
   buildTopikListFromSubmission,
   getTopikParallelReviewDeadline,
   evaluateTopikParallelState,
+  evaluateTopikClusterReviewState,
   evaluateJudulMandiriReviewState,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
@@ -146,6 +147,10 @@ function getApprovedTopik(submission, topikList) {
 
   if (isTopikParallelSubmission(submission)) {
     const parallelState = evaluateTopikParallelState(submission);
+    const clusterState = evaluateTopikClusterReviewState(submission);
+    if (clusterState.final_winner?.slot && ["menunggu_approval_sekprodi", "approved"].includes(submission.status)) {
+      return topikList.find((item) => item.slot === clusterState.final_winner.slot) || null;
+    }
     if (parallelState.approved_topik?.slot && (submission.status !== "pending" || parallelState.can_finalize)) {
       return topikList.find((item) => item.slot === parallelState.approved_topik.slot) || null;
     }
@@ -177,12 +182,8 @@ function getTopikDosenApprovalStage(submission) {
   }
 
   const parallelState = evaluateTopikParallelState(submission);
-  const hasKetuaKlasterDecided = (submission.riwayat || []).some(
-    (item) =>
-      (item.status === "approved" || item.status === "rejected") &&
-      String(item?.tipe_approval || "calon_pembimbing").toLowerCase() === "koordinator"
-  );
-  if (parallelState.can_finalize && parallelState.approved_topik && !hasKetuaKlasterDecided) {
+  const clusterState = evaluateTopikClusterReviewState(submission);
+  if (clusterState.can_finalize && clusterState.next_cluster_topik) {
     return "pending_ketua_klaster";
   }
 
@@ -306,6 +307,12 @@ function getSubmissionDetailIncludes() {
           model: Dosen,
           as: "dosen",
           attributes: ["id", "nik", "nama"],
+        },
+        {
+          model: SekretarisProdi,
+          as: "sekretarisProdi",
+          attributes: ["id", "nik", "nama"],
+          required: false,
         },
       ],
       required: false,
@@ -954,7 +961,13 @@ exports.getSubmissionById = async (req, res) => {
         .filter(Boolean)
         .map((item) => Number(item));
 
-      if (!dosenPilihan.includes(accessorDosenId)) {
+      const hasPendingKetuaClusterAccess = (submission.riwayat || []).some(
+        (item) =>
+          Number(item.dosen_id) === Number(accessorDosenId) &&
+          getApprovalType(item) === "koordinator" &&
+          String(item.status || "").toLowerCase() === "pending"
+      );
+      if (!dosenPilihan.includes(accessorDosenId) && !hasPendingKetuaClusterAccess) {
         return res.status(403).json({
           success: false,
           message: "Anda tidak memiliki akses ke pengajuan ini",
@@ -1003,6 +1016,14 @@ exports.getSubmissionById = async (req, res) => {
             .filter((item) => Number(item.dosen_id) === Number(accessorDosenId))
             .sort((a, b) => a.slot - b.slot)
         : [];
+    const pendingKetuaClusterRows = (submission.riwayat || [])
+      .filter(
+        (item) =>
+          Number(item.dosen_id) === Number(accessorDosenId) &&
+          getApprovalType(item) === "koordinator" &&
+          String(item.status || "").toLowerCase() === "pending"
+      )
+      .sort((left, right) => Number(left.topik_slot || 0) - Number(right.topik_slot || 0));
     const pendingReviewerDecision =
       Array.isArray(reviewerSlotDecisions) && reviewerSlotDecisions.length > 0
         ? reviewerSlotDecisions.find((item) => item.reviewer_status === "pending") || null
@@ -1057,7 +1078,12 @@ exports.getSubmissionById = async (req, res) => {
             slotState?.reviewer_status === "approved" ? slotState?.reviewer_decided_at || null : null,
         };
       });
-      const approvedTopik = getApprovedTopik(submission, topikList);
+      const clusterReviewState = evaluateTopikClusterReviewState(submission);
+      const pendingClusterSlot = pendingKetuaClusterRows[0]?.topik_slot || clusterReviewState.next_cluster_topik?.slot;
+      const pendingClusterTopik = pendingClusterSlot
+        ? topikList.find((item) => Number(item.slot) === Number(pendingClusterSlot)) || null
+        : null;
+      const approvedTopik = pendingClusterTopik || getApprovedTopik(submission, topikList);
       approvedTopikForResponse = approvedTopik;
       const dosenApproved = approvedTopik ? dosenById[Number(approvedTopik.dosen_id)] || null : null;
 
@@ -1152,8 +1178,7 @@ exports.getSubmissionById = async (req, res) => {
       submission.tipe_pengajuan === "topik_dosen" &&
       submission.status === "pending" &&
       topikApprovalStage === "pending_ketua_klaster" &&
-      accessorDosenId &&
-      Number(submission.dosen_saat_ini) === Number(accessorDosenId);
+      pendingKetuaClusterRows.length > 0;
     const canReviewNonTopik =
       submission.tipe_pengajuan !== "topik_dosen" &&
       submission.status === "pending" &&
@@ -1184,19 +1209,22 @@ exports.getSubmissionById = async (req, res) => {
       review_context: canReviewKetuaClusterTopik ? "ketua_klaster" : "calon_pembimbing",
       can_review: Boolean(canReviewTopikParallel || canReviewKetuaClusterTopik || canReviewNonTopik),
       reviewer_slot_decisions:
-        canReviewKetuaClusterTopik && approvedTopikForResponse
-          ? [
-              {
-                slot: approvedTopikForResponse.slot,
-                kode: approvedTopikForResponse.kode,
+        canReviewKetuaClusterTopik
+          ? pendingKetuaClusterRows.map((ketuaRow) => {
+              const topik = detailPengajuan.topik_dipilih.find(
+                (item) => Number(item.slot) === Number(ketuaRow.topik_slot)
+              );
+              return {
+                slot: ketuaRow.topik_slot,
+                kode: ketuaRow.topik_kode || topik?.kode || null,
                 reviewer_status: "pending",
-                reviewer_note: "Menunggu keputusan ketua cluster.",
+                reviewer_note: ketuaRow.keterangan || "Menunggu keputusan ketua cluster.",
                 reviewer_decided_at: null,
-                pembimbing_approval_note: approvedTopikForResponse.reviewer_note || null,
-                pembimbing_approved_at: approvedTopikForResponse.reviewer_decided_at || null,
-                pembimbing_approved_by: approvedTopikForResponse.dosen_id
+                pembimbing_approval_note: topik?.reviewer_note || null,
+                pembimbing_approved_at: topik?.reviewer_decided_at || null,
+                pembimbing_approved_by: topik?.dosen_id
                   ? (() => {
-                      const dosen = dosenById[Number(approvedTopikForResponse.dosen_id)] || null;
+                      const dosen = dosenById[Number(topik.dosen_id)] || null;
                       return dosen
                         ? {
                             id: dosen.id,
@@ -1206,8 +1234,8 @@ exports.getSubmissionById = async (req, res) => {
                         : null;
                     })()
                   : null,
-              },
-            ]
+              };
+            })
           : submission.tipe_pengajuan === "topik_dosen" && Array.isArray(reviewerSlotDecisions)
           ? reviewerSlotDecisions.map((item) => ({
               slot: item.slot,
@@ -1257,6 +1285,13 @@ exports.getSubmissionById = async (req, res) => {
               id: item.dosen.id,
               nik: item.dosen.nik,
               nama: item.dosen.nama,
+            }
+          : null,
+        sekretaris_prodi: item.sekretarisProdi
+          ? {
+              id: item.sekretarisProdi.id,
+              nik: item.sekretarisProdi.nik,
+              nama: item.sekretarisProdi.nama,
             }
           : null,
       })),

@@ -1,0 +1,327 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  id="Definitions_PenjaluranPenelitian"
+  targetNamespace="https://simps.uii.ac.id/bpmn/penjaluran-penelitian">
+
+  <bpmn:collaboration id="Collaboration_PenjaluranPenelitian">
+    <bpmn:participant id="Participant_Penjaluran" name="Penjaluran Skripsi Jalur Penelitian" processRef="Process_PenjaluranPenelitian" />
+  </bpmn:collaboration>
+
+  <bpmn:process id="Process_PenjaluranPenelitian" name="Penjaluran Skripsi Jalur Penelitian" isExecutable="false">
+    <bpmn:property id="Property_SelectedTopics" name="selectedTopics" />
+    <bpmn:property id="Property_CurrentTopic" name="currentTopic" />
+
+    <bpmn:startEvent id="StartEvent_Penjaluran" name="Periode penjaluran penelitian dibuka">
+      <bpmn:outgoing>Flow_Main_1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:subProcess id="SubProcess_Pengajuan" name="Pengajuan Topik Penelitian">
+      <bpmn:incoming>Flow_Main_1</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_2</bpmn:outgoing>
+      <bpmn:laneSet id="LaneSet_Pengajuan">
+        <bpmn:lane id="Lane_Pengajuan_Mahasiswa" name="Mahasiswa">
+          <bpmn:flowNodeRef>StartEvent_Pengajuan</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_IsiInformasi</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_PilihTopik</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_KirimPengajuan</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_PerbaikiPengajuan</bpmn:flowNodeRef>
+        </bpmn:lane>
+        <bpmn:lane id="Lane_Pengajuan_Sistem" name="Sistem SIMPS">
+          <bpmn:flowNodeRef>Task_ValidasiPengajuan</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Gateway_PengajuanValid</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_BuatWorkflowTopik</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>EndEvent_Pengajuan</bpmn:flowNodeRef>
+        </bpmn:lane>
+      </bpmn:laneSet>
+
+      <bpmn:startEvent id="StartEvent_Pengajuan" name="Mulai pengajuan">
+        <bpmn:outgoing>Flow_Pengajuan_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="Task_IsiInformasi" name="Isi informasi pengajuan penelitian">
+        <bpmn:incoming>Flow_Pengajuan_1</bpmn:incoming>
+        <bpmn:incoming>Flow_Pengajuan_7</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="Task_PilihTopik" name="Pilih maksimal 3 topik penelitian">
+        <bpmn:incoming>Flow_Pengajuan_2</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_3</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:userTask id="Task_KirimPengajuan" name="Kirim pengajuan">
+        <bpmn:incoming>Flow_Pengajuan_3</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_4</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:serviceTask id="Task_ValidasiPengajuan" name="Validasi kelengkapan dan ketersediaan topik">
+        <bpmn:incoming>Flow_Pengajuan_4</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_5</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:exclusiveGateway id="Gateway_PengajuanValid" name="Pengajuan valid?" default="Flow_Pengajuan_6">
+        <bpmn:incoming>Flow_Pengajuan_5</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_6</bpmn:outgoing>
+        <bpmn:outgoing>Flow_Pengajuan_8</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:userTask id="Task_PerbaikiPengajuan" name="Perbaiki data pengajuan">
+        <bpmn:incoming>Flow_Pengajuan_6</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_7</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:serviceTask id="Task_BuatWorkflowTopik" name="Reservasi topik dan buat workflow setiap topik">
+        <bpmn:incoming>Flow_Pengajuan_8</bpmn:incoming>
+        <bpmn:outgoing>Flow_Pengajuan_9</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EndEvent_Pengajuan" name="Topik siap direview">
+        <bpmn:incoming>Flow_Pengajuan_9</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:sequenceFlow id="Flow_Pengajuan_1" sourceRef="StartEvent_Pengajuan" targetRef="Task_IsiInformasi" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_2" sourceRef="Task_IsiInformasi" targetRef="Task_PilihTopik" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_3" sourceRef="Task_PilihTopik" targetRef="Task_KirimPengajuan" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_4" sourceRef="Task_KirimPengajuan" targetRef="Task_ValidasiPengajuan" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_5" sourceRef="Task_ValidasiPengajuan" targetRef="Gateway_PengajuanValid" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_6" name="Tidak" sourceRef="Gateway_PengajuanValid" targetRef="Task_PerbaikiPengajuan" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_7" sourceRef="Task_PerbaikiPengajuan" targetRef="Task_IsiInformasi" />
+      <bpmn:sequenceFlow id="Flow_Pengajuan_8" name="Ya" sourceRef="Gateway_PengajuanValid" targetRef="Task_BuatWorkflowTopik">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${pengajuanValid}</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_Pengajuan_9" sourceRef="Task_BuatWorkflowTopik" targetRef="EndEvent_Pengajuan" />
+    </bpmn:subProcess>
+
+    <bpmn:subProcess id="SubProcess_ReviewTopik" name="Review Topik Secara Independen">
+      <bpmn:incoming>Flow_Main_2</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_3</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false">
+        <bpmn:loopDataInputRef>Property_SelectedTopics</bpmn:loopDataInputRef>
+        <bpmn:inputDataItem id="DataItem_CurrentTopic" name="topik" />
+        <bpmn:completionCondition xsi:type="bpmn:tFormalExpression">${topikFinalDipilih || seluruhTopikSelesai}</bpmn:completionCondition>
+      </bpmn:multiInstanceLoopCharacteristics>
+      <bpmn:laneSet id="LaneSet_ReviewTopik">
+        <bpmn:lane id="Lane_Review_Dosen" name="Dosen Pemilik Topik">
+          <bpmn:flowNodeRef>StartEvent_ReviewTopik</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_ReviewDosen</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Gateway_KeputusanDosen</bpmn:flowNodeRef>
+        </bpmn:lane>
+        <bpmn:lane id="Lane_Review_Sistem" name="Sistem SIMPS">
+          <bpmn:flowNodeRef>Task_TeruskanKetuaCluster</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_TutupTopik</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_TeruskanSekprodi</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Task_TandaiTopikFinal</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>EndEvent_TopikDitolak</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>EndEvent_TopikFinal</bpmn:flowNodeRef>
+        </bpmn:lane>
+        <bpmn:lane id="Lane_Review_KetuaCluster" name="Ketua Cluster">
+          <bpmn:flowNodeRef>Task_ReviewKetuaCluster</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Gateway_KeputusanKetuaCluster</bpmn:flowNodeRef>
+        </bpmn:lane>
+        <bpmn:lane id="Lane_Review_Sekprodi" name="Sekretaris Prodi">
+          <bpmn:flowNodeRef>Task_ReviewSekprodi</bpmn:flowNodeRef>
+          <bpmn:flowNodeRef>Gateway_KeputusanSekprodi</bpmn:flowNodeRef>
+        </bpmn:lane>
+      </bpmn:laneSet>
+
+      <bpmn:startEvent id="StartEvent_ReviewTopik" name="Topik siap direview">
+        <bpmn:outgoing>Flow_Review_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:userTask id="Task_ReviewDosen" name="Review topik dan berikan catatan">
+        <bpmn:incoming>Flow_Review_1</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_2</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:exclusiveGateway id="Gateway_KeputusanDosen" name="Disetujui dosen?" default="Flow_Review_3">
+        <bpmn:incoming>Flow_Review_2</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_3</bpmn:outgoing>
+        <bpmn:outgoing>Flow_Review_4</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:serviceTask id="Task_TeruskanKetuaCluster" name="Kirim topik ke ketua cluster terkait">
+        <bpmn:incoming>Flow_Review_4</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_5</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:userTask id="Task_ReviewKetuaCluster" name="Review kelayakan topik dan berikan catatan">
+        <bpmn:incoming>Flow_Review_5</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_6</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:exclusiveGateway id="Gateway_KeputusanKetuaCluster" name="Disetujui ketua cluster?" default="Flow_Review_7">
+        <bpmn:incoming>Flow_Review_6</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_7</bpmn:outgoing>
+        <bpmn:outgoing>Flow_Review_8</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:serviceTask id="Task_TeruskanSekprodi" name="Kirim topik ke Sekprodi">
+        <bpmn:incoming>Flow_Review_8</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_9</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:userTask id="Task_ReviewSekprodi" name="Tinjau topik dan berikan keputusan final">
+        <bpmn:incoming>Flow_Review_9</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_10</bpmn:outgoing>
+      </bpmn:userTask>
+      <bpmn:exclusiveGateway id="Gateway_KeputusanSekprodi" name="Disetujui sebagai topik final?" default="Flow_Review_11">
+        <bpmn:incoming>Flow_Review_10</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_11</bpmn:outgoing>
+        <bpmn:outgoing>Flow_Review_12</bpmn:outgoing>
+      </bpmn:exclusiveGateway>
+      <bpmn:serviceTask id="Task_TutupTopik" name="Tutup topik dan lepaskan reservasi">
+        <bpmn:incoming>Flow_Review_3</bpmn:incoming>
+        <bpmn:incoming>Flow_Review_7</bpmn:incoming>
+        <bpmn:incoming>Flow_Review_11</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_13</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EndEvent_TopikDitolak" name="Topik ditolak">
+        <bpmn:incoming>Flow_Review_13</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:serviceTask id="Task_TandaiTopikFinal" name="Tandai topik sebagai pemenang final">
+        <bpmn:incoming>Flow_Review_12</bpmn:incoming>
+        <bpmn:outgoing>Flow_Review_14</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EndEvent_TopikFinal" name="Topik final dipilih">
+        <bpmn:incoming>Flow_Review_14</bpmn:incoming>
+      </bpmn:endEvent>
+
+      <bpmn:sequenceFlow id="Flow_Review_1" sourceRef="StartEvent_ReviewTopik" targetRef="Task_ReviewDosen" />
+      <bpmn:sequenceFlow id="Flow_Review_2" sourceRef="Task_ReviewDosen" targetRef="Gateway_KeputusanDosen" />
+      <bpmn:sequenceFlow id="Flow_Review_3" name="Reject" sourceRef="Gateway_KeputusanDosen" targetRef="Task_TutupTopik" />
+      <bpmn:sequenceFlow id="Flow_Review_4" name="Approve" sourceRef="Gateway_KeputusanDosen" targetRef="Task_TeruskanKetuaCluster">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${dosenApprove}</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_Review_5" sourceRef="Task_TeruskanKetuaCluster" targetRef="Task_ReviewKetuaCluster" />
+      <bpmn:sequenceFlow id="Flow_Review_6" sourceRef="Task_ReviewKetuaCluster" targetRef="Gateway_KeputusanKetuaCluster" />
+      <bpmn:sequenceFlow id="Flow_Review_7" name="Reject" sourceRef="Gateway_KeputusanKetuaCluster" targetRef="Task_TutupTopik" />
+      <bpmn:sequenceFlow id="Flow_Review_8" name="Approve" sourceRef="Gateway_KeputusanKetuaCluster" targetRef="Task_TeruskanSekprodi">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${ketuaClusterApprove}</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_Review_9" sourceRef="Task_TeruskanSekprodi" targetRef="Task_ReviewSekprodi" />
+      <bpmn:sequenceFlow id="Flow_Review_10" sourceRef="Task_ReviewSekprodi" targetRef="Gateway_KeputusanSekprodi" />
+      <bpmn:sequenceFlow id="Flow_Review_11" name="Reject" sourceRef="Gateway_KeputusanSekprodi" targetRef="Task_TutupTopik" />
+      <bpmn:sequenceFlow id="Flow_Review_12" name="Approve" sourceRef="Gateway_KeputusanSekprodi" targetRef="Task_TandaiTopikFinal">
+        <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${sekprodiApprove}</bpmn:conditionExpression>
+      </bpmn:sequenceFlow>
+      <bpmn:sequenceFlow id="Flow_Review_13" sourceRef="Task_TutupTopik" targetRef="EndEvent_TopikDitolak" />
+      <bpmn:sequenceFlow id="Flow_Review_14" sourceRef="Task_TandaiTopikFinal" targetRef="EndEvent_TopikFinal" />
+    </bpmn:subProcess>
+
+    <bpmn:exclusiveGateway id="Gateway_AdaTopikFinal" name="Ada topik yang disetujui Sekprodi?" default="Flow_Main_5">
+      <bpmn:incoming>Flow_Main_3</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_4</bpmn:outgoing>
+      <bpmn:outgoing>Flow_Main_5</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:subProcess id="SubProcess_FinalisasiDisetujui" name="Finalisasi Penjaluran Disetujui">
+      <bpmn:incoming>Flow_Main_4</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_6</bpmn:outgoing>
+      <bpmn:startEvent id="StartEvent_FinalApprove">
+        <bpmn:outgoing>Flow_FinalApprove_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Task_TetapkanTopikFinal" name="Tetapkan topik final">
+        <bpmn:incoming>Flow_FinalApprove_1</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalApprove_2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Task_BatalkanTopikLain" name="Batalkan workflow topik lainnya">
+        <bpmn:incoming>Flow_FinalApprove_2</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalApprove_3</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Task_LepaskanTopikLain" name="Kembalikan topik lain menjadi available">
+        <bpmn:incoming>Flow_FinalApprove_3</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalApprove_4</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Task_TetapkanPembimbing" name="Tetapkan dosen pemilik topik sebagai pembimbing">
+        <bpmn:incoming>Flow_FinalApprove_4</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalApprove_5</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Task_AktifkanBimbingan" name="Setujui penjaluran dan aktifkan bimbingan">
+        <bpmn:incoming>Flow_FinalApprove_5</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalApprove_6</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:endEvent id="EndEvent_FinalApprove">
+        <bpmn:incoming>Flow_FinalApprove_6</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_FinalApprove_1" sourceRef="StartEvent_FinalApprove" targetRef="Task_TetapkanTopikFinal" />
+      <bpmn:sequenceFlow id="Flow_FinalApprove_2" sourceRef="Task_TetapkanTopikFinal" targetRef="Task_BatalkanTopikLain" />
+      <bpmn:sequenceFlow id="Flow_FinalApprove_3" sourceRef="Task_BatalkanTopikLain" targetRef="Task_LepaskanTopikLain" />
+      <bpmn:sequenceFlow id="Flow_FinalApprove_4" sourceRef="Task_LepaskanTopikLain" targetRef="Task_TetapkanPembimbing" />
+      <bpmn:sequenceFlow id="Flow_FinalApprove_5" sourceRef="Task_TetapkanPembimbing" targetRef="Task_AktifkanBimbingan" />
+      <bpmn:sequenceFlow id="Flow_FinalApprove_6" sourceRef="Task_AktifkanBimbingan" targetRef="EndEvent_FinalApprove" />
+    </bpmn:subProcess>
+
+    <bpmn:subProcess id="SubProcess_FinalisasiDitolak" name="Finalisasi Penjaluran Ditolak">
+      <bpmn:incoming>Flow_Main_5</bpmn:incoming>
+      <bpmn:outgoing>Flow_Main_7</bpmn:outgoing>
+      <bpmn:startEvent id="StartEvent_FinalReject">
+        <bpmn:outgoing>Flow_FinalReject_1</bpmn:outgoing>
+      </bpmn:startEvent>
+      <bpmn:serviceTask id="Task_LepaskanSemuaTopik" name="Lepaskan reservasi seluruh topik">
+        <bpmn:incoming>Flow_FinalReject_1</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalReject_2</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:serviceTask id="Task_TolakPenjaluran" name="Tetapkan status penjaluran ditolak">
+        <bpmn:incoming>Flow_FinalReject_2</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalReject_3</bpmn:outgoing>
+      </bpmn:serviceTask>
+      <bpmn:sendTask id="Task_NotifikasiPenolakan" name="Kirim hasil penolakan kepada mahasiswa">
+        <bpmn:incoming>Flow_FinalReject_3</bpmn:incoming>
+        <bpmn:outgoing>Flow_FinalReject_4</bpmn:outgoing>
+      </bpmn:sendTask>
+      <bpmn:endEvent id="EndEvent_FinalReject">
+        <bpmn:incoming>Flow_FinalReject_4</bpmn:incoming>
+      </bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_FinalReject_1" sourceRef="StartEvent_FinalReject" targetRef="Task_LepaskanSemuaTopik" />
+      <bpmn:sequenceFlow id="Flow_FinalReject_2" sourceRef="Task_LepaskanSemuaTopik" targetRef="Task_TolakPenjaluran" />
+      <bpmn:sequenceFlow id="Flow_FinalReject_3" sourceRef="Task_TolakPenjaluran" targetRef="Task_NotifikasiPenolakan" />
+      <bpmn:sequenceFlow id="Flow_FinalReject_4" sourceRef="Task_NotifikasiPenolakan" targetRef="EndEvent_FinalReject" />
+    </bpmn:subProcess>
+
+    <bpmn:endEvent id="EndEvent_PenjaluranDisetujui" name="Penjaluran disetujui dan bimbingan aktif">
+      <bpmn:incoming>Flow_Main_6</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="EndEvent_PenjaluranDitolak" name="Penjaluran penelitian ditolak">
+      <bpmn:incoming>Flow_Main_7</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_Main_1" sourceRef="StartEvent_Penjaluran" targetRef="SubProcess_Pengajuan" />
+    <bpmn:sequenceFlow id="Flow_Main_2" sourceRef="SubProcess_Pengajuan" targetRef="SubProcess_ReviewTopik" />
+    <bpmn:sequenceFlow id="Flow_Main_3" sourceRef="SubProcess_ReviewTopik" targetRef="Gateway_AdaTopikFinal" />
+    <bpmn:sequenceFlow id="Flow_Main_4" name="Ya" sourceRef="Gateway_AdaTopikFinal" targetRef="SubProcess_FinalisasiDisetujui">
+      <bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${topikFinalDipilih}</bpmn:conditionExpression>
+    </bpmn:sequenceFlow>
+    <bpmn:sequenceFlow id="Flow_Main_5" name="Tidak" sourceRef="Gateway_AdaTopikFinal" targetRef="SubProcess_FinalisasiDitolak" />
+    <bpmn:sequenceFlow id="Flow_Main_6" sourceRef="SubProcess_FinalisasiDisetujui" targetRef="EndEvent_PenjaluranDisetujui" />
+    <bpmn:sequenceFlow id="Flow_Main_7" sourceRef="SubProcess_FinalisasiDitolak" targetRef="EndEvent_PenjaluranDitolak" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_PenjaluranPenelitian">
+    <bpmndi:BPMNPlane id="BPMNPlane_PenjaluranPenelitian" bpmnElement="Collaboration_PenjaluranPenelitian">
+      <bpmndi:BPMNShape id="Participant_Penjaluran_di" bpmnElement="Participant_Penjaluran" isHorizontal="true">
+        <dc:Bounds x="80" y="80" width="1720" height="620" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="StartEvent_Penjaluran_di" bpmnElement="StartEvent_Penjaluran">
+        <dc:Bounds x="130" y="360" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_Pengajuan_di" bpmnElement="SubProcess_Pengajuan" isExpanded="false">
+        <dc:Bounds x="220" y="328" width="210" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_ReviewTopik_di" bpmnElement="SubProcess_ReviewTopik" isExpanded="false">
+        <dc:Bounds x="500" y="328" width="230" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_AdaTopikFinal_di" bpmnElement="Gateway_AdaTopikFinal" isMarkerVisible="true">
+        <dc:Bounds x="800" y="353" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_FinalisasiDisetujui_di" bpmnElement="SubProcess_FinalisasiDisetujui" isExpanded="false">
+        <dc:Bounds x="940" y="220" width="240" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SubProcess_FinalisasiDitolak_di" bpmnElement="SubProcess_FinalisasiDitolak" isExpanded="false">
+        <dc:Bounds x="940" y="465" width="240" height="100" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_PenjaluranDisetujui_di" bpmnElement="EndEvent_PenjaluranDisetujui">
+        <dc:Bounds x="1270" y="252" width="36" height="36" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_PenjaluranDitolak_di" bpmnElement="EndEvent_PenjaluranDitolak">
+        <dc:Bounds x="1270" y="497" width="36" height="36" />
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge id="Flow_Main_1_di" bpmnElement="Flow_Main_1"><di:waypoint x="166" y="378" /><di:waypoint x="220" y="378" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_2_di" bpmnElement="Flow_Main_2"><di:waypoint x="430" y="378" /><di:waypoint x="500" y="378" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_3_di" bpmnElement="Flow_Main_3"><di:waypoint x="730" y="378" /><di:waypoint x="800" y="378" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_4_di" bpmnElement="Flow_Main_4"><di:waypoint x="825" y="353" /><di:waypoint x="825" y="270" /><di:waypoint x="940" y="270" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_5_di" bpmnElement="Flow_Main_5"><di:waypoint x="825" y="403" /><di:waypoint x="825" y="515" /><di:waypoint x="940" y="515" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_6_di" bpmnElement="Flow_Main_6"><di:waypoint x="1180" y="270" /><di:waypoint x="1270" y="270" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_Main_7_di" bpmnElement="Flow_Main_7"><di:waypoint x="1180" y="515" /><di:waypoint x="1270" y="515" /></bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

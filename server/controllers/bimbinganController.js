@@ -442,27 +442,30 @@ exports.createMahasiswaBimbingan = async (req, res) => {
       });
     }
 
-    const pengajuanApproved = await Pengajuan.findOne({
-      where: {
-        mahasiswa_id,
-        status: "approved",
-        tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
-      },
-      attributes: ["id"],
-      order: [["updatedAt", "DESC"]],
-      transaction,
-    });
-
-    if (!pengajuanApproved) {
-      await transaction.rollback();
-      return res.status(409).json({
-        success: false,
-        message: "Bimbingan hanya bisa diajukan setelah pengajuan penelitian berstatus disetujui.",
-        detail: {
-          field: "status_pengajuan",
-          selected_jalur: selectedJalur || null,
+    let pengajuanApproved = null;
+    if (!selectedJalurIsNonPenelitian) {
+      pengajuanApproved = await Pengajuan.findOne({
+        where: {
+          mahasiswa_id,
+          status: "approved",
+          tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
         },
+        attributes: ["id"],
+        order: [["updatedAt", "DESC"]],
+        transaction,
       });
+
+      if (!pengajuanApproved) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Bimbingan hanya bisa diajukan setelah pengajuan penelitian berstatus disetujui.",
+          detail: {
+            field: "status_pengajuan",
+            selected_jalur: selectedJalur || null,
+          },
+        });
+      }
     }
 
     const newRow = await BimbinganSkripsi.create(

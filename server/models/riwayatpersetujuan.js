@@ -15,6 +15,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "dosen_id",
         as: "dosen",
       });
+
+      RiwayatPersetujuan.belongsTo(models.SekretarisProdi, {
+        foreignKey: "sekretaris_prodi_id",
+        as: "sekretarisProdi",
+      });
     }
   }
 
@@ -35,19 +40,27 @@ module.exports = (sequelize, DataTypes) => {
       },
       dosen_id: {
         type: DataTypes.INTEGER,
-        allowNull: false,
+        allowNull: true,
         references: {
           model: "Dosens",
           key: "id",
         },
       },
+      sekretaris_prodi_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        references: {
+          model: "SekretarisProdis",
+          key: "id",
+        },
+      },
       tipe_approval: {
-        type: DataTypes.ENUM("dospem_akademik", "calon_pembimbing", "koordinator"),
+        type: DataTypes.ENUM("dospem_akademik", "calon_pembimbing", "koordinator", "sekprodi"),
         allowNull: false,
         defaultValue: "calon_pembimbing",
       },
       status: {
-        type: DataTypes.ENUM("approved", "rejected", "pending"),
+        type: DataTypes.ENUM("approved", "rejected", "pending", "cancelled"),
         allowNull: false,
       },
       keterangan: {

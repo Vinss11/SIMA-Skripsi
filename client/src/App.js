@@ -7,6 +7,7 @@ import DashboardPage from "./pages/DashboardPage";
 import AdminDashboardPage from "./pages/AdminDashboardPage";
 import SekretarisDashboardPage from "./pages/SekretarisDashboardPage";
 import DosenDashboardPage from "./pages/DosenDashboardPage";
+import ProfilePage from "./pages/ProfilePage";
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 
@@ -133,6 +134,7 @@ function App() {
   const [registrationData, setRegistrationData] = useState(null);
   const [registrationLoginLoading, setRegistrationLoginLoading] = useState(false);
   const [registrationLoginError, setRegistrationLoginError] = useState("");
+  const [showProfile, setShowProfile] = useState(false);
   const defaultPasswordToastTokenRef = useRef("");
 
   const session = useMemo(
@@ -149,12 +151,14 @@ function App() {
     saveAuth(payload, rememberMe);
     setAuth(payload);
     setAuthScreen("login");
+    setShowProfile(false);
   }, []);
 
   const handleLogout = useCallback(() => {
     clearAuthStorage();
     defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
+    setShowProfile(false);
     setAuth(null);
   }, []);
 
@@ -162,6 +166,7 @@ function App() {
     clearAuthStorage();
     defaultPasswordToastTokenRef.current = "";
     setShowDefaultPasswordToast(false);
+    setShowProfile(false);
     setAuth(null);
     setAuthScreen("login");
   }, []);
@@ -350,6 +355,7 @@ function App() {
         onLogout={handleLogout}
         onSessionExpired={handleSessionExpired}
         onPasswordChanged={handlePasswordChanged}
+        onOpenProfile={() => setShowProfile(true)}
       />
     );
   }
@@ -360,6 +366,7 @@ function App() {
         apiBaseUrl={API_BASE_URL}
         onLogout={handleLogout}
         onSessionExpired={handleSessionExpired}
+        onOpenProfile={() => setShowProfile(true)}
       />
     );
   }
@@ -372,6 +379,7 @@ function App() {
         onLogout={handleLogout}
         onSessionExpired={handleSessionExpired}
         isSekretaris={capabilities.includes("sekretaris_prodi")}
+        onOpenProfile={() => setShowProfile(true)}
       />
     );
   }
@@ -382,6 +390,20 @@ function App() {
         apiBaseUrl={API_BASE_URL}
         onLogout={handleLogout}
         onSessionExpired={handleSessionExpired}
+        onOpenProfile={() => setShowProfile(true)}
+      />
+    );
+  }
+
+  if (showProfile) {
+    return (
+      <ProfilePage
+        session={session}
+        apiBaseUrl={API_BASE_URL}
+        onBack={() => setShowProfile(false)}
+        onLogout={handleLogout}
+        onSessionExpired={handleSessionExpired}
+        onPasswordChanged={handlePasswordChanged}
       />
     );
   }

@@ -344,7 +344,7 @@ function UploadPanel({
   );
 }
 
-function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired }) {
+function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1369,11 +1369,18 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired })
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <UserCircle2 className="h-7 w-7 text-[#dde7ff]" />
-            <div className="text-right">
-              <p className="text-sm font-bold">{session.user?.nama}</p>
-              <p className="text-xs text-[#d4e1ff]">{session.user?.username}</p>
-            </div>
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              title="Edit profil"
+              className="flex items-center gap-2 rounded-lg px-2 py-1 text-right transition hover:bg-white/15"
+            >
+              <UserCircle2 className="h-7 w-7 text-[#dde7ff]" />
+              <span>
+                <span className="block text-sm font-bold">{session.user?.nama}</span>
+                <span className="block text-xs text-[#d4e1ff]">{session.user?.username}</span>
+              </span>
+            </button>
             <button
               type="button"
               onClick={onLogout}

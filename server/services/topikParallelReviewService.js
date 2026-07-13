@@ -21,6 +21,7 @@ const REVIEW_REMINDER_INTERVAL_MS = REVIEW_REMINDER_INTERVAL_HOURS * 60 * 60 * 1
 const RIWAYAT_TOPIK_PARALLEL_ATTRIBUTES = [
   "id",
   "dosen_id",
+  "sekretaris_prodi_id",
   "tipe_approval",
   "topik_slot",
   "topik_kode",
@@ -42,7 +43,7 @@ function normalizeRiwayatStatus(value) {
   const normalized = String(value || "")
     .trim()
     .toLowerCase();
-  if (["approved", "rejected", "pending", "expired"].includes(normalized)) {
+  if (["approved", "rejected", "pending", "expired", "cancelled"].includes(normalized)) {
     return normalized;
   }
   return "pending";
@@ -380,6 +381,7 @@ async function createClusterSkipApprovalHistory(submission, winner, ketuaResolut
     where: {
       pengajuan_id: submission.id,
       tipe_approval: "koordinator",
+      topik_slot: normalizeTopikSlot(winner.slot),
       status: { [Op.in]: ["approved", "rejected"] },
     },
     attributes: ["id"],
@@ -447,15 +449,6 @@ function getCalonPembimbingDecisionLookup(riwayat = []) {
   };
 }
 
-function hasKoordinatorDecision(submission) {
-  const riwayat = getSubmissionRiwayatRows(submission);
-  return riwayat.some(
-    (item) =>
-      normalizeApprovalType(item?.tipe_approval) === "koordinator" &&
-      ["approved", "rejected"].includes(normalizeRiwayatStatus(item?.status))
-  );
-}
-
 function evaluateTopikParallelState(submission, options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
   const topikList = buildTopikListFromSubmission(submission);
@@ -504,6 +497,101 @@ function evaluateTopikParallelState(submission, options = {}) {
     pending_count: pendingSlots.length,
     can_finalize: topikList.length > 0 && pendingSlots.length === 0,
     rejection_notes: rejectionNotes,
+  };
+}
+
+function evaluateTopikClusterReviewState(submission) {
+  const parallelState = evaluateTopikParallelState(submission);
+  const approvedSlots = parallelState.approved_slots || [];
+  const approvedSlotSet = new Set(approvedSlots.map((item) => Number(item.slot)));
+  const decisionsBySlot = new Map();
+  const legacyDecisions = [];
+
+  for (const item of getSubmissionRiwayatRows(submission)) {
+    if (normalizeApprovalType(item?.tipe_approval) !== "koordinator") continue;
+    const status = normalizeRiwayatStatus(item?.status);
+    if (!["approved", "rejected"].includes(status)) continue;
+    const slot = normalizeTopikSlot(item?.topik_slot);
+    const decision = {
+      row: item,
+      status,
+      topik_slot: slot,
+      decided_at: toDecisionDate(item?.tanggal_keputusan || item?.updatedAt || item?.createdAt, new Date(0)),
+    };
+    if (!slot || !approvedSlotSet.has(slot)) {
+      legacyDecisions.push(decision);
+      continue;
+    }
+    const current = decisionsBySlot.get(slot);
+    if (!current || decision.decided_at >= current.decided_at) {
+      decisionsBySlot.set(slot, decision);
+    }
+  }
+
+  // Riwayat lama belum menyimpan topik_slot karena sebelumnya hanya satu topik
+  // yang diteruskan ke ketua cluster.
+  if (legacyDecisions.length > 0 && approvedSlots.length > 0 && !decisionsBySlot.has(Number(approvedSlots[0].slot))) {
+    const latestLegacy = legacyDecisions.sort((left, right) => right.decided_at - left.decided_at)[0];
+    decisionsBySlot.set(Number(approvedSlots[0].slot), latestLegacy);
+  }
+
+  const pendingSlots = approvedSlots.filter((item) => !decisionsBySlot.has(Number(item.slot)));
+  const clusterApprovedSlots = approvedSlots.filter(
+    (item) => decisionsBySlot.get(Number(item.slot))?.status === "approved"
+  );
+  const clusterRejectedSlots = approvedSlots.filter(
+    (item) => decisionsBySlot.get(Number(item.slot))?.status === "rejected"
+  );
+
+  return {
+    ...parallelState,
+    cluster_decisions_by_slot: decisionsBySlot,
+    cluster_pending_slots: pendingSlots,
+    cluster_approved_slots: clusterApprovedSlots,
+    cluster_rejected_slots: clusterRejectedSlots,
+    next_cluster_topik: pendingSlots[0] || null,
+    final_winner: clusterApprovedSlots[0] || null,
+    cluster_review_complete: approvedSlots.length > 0 && pendingSlots.length === 0,
+  };
+}
+
+function evaluateTopikSekprodiReviewState(submission) {
+  const clusterState = evaluateTopikClusterReviewState(submission);
+  const clusterApprovedSlots = clusterState.cluster_approved_slots || [];
+  const clusterApprovedSlotSet = new Set(clusterApprovedSlots.map((item) => Number(item.slot)));
+  const decisionsBySlot = new Map();
+
+  for (const item of getSubmissionRiwayatRows(submission)) {
+    if (normalizeApprovalType(item?.tipe_approval) !== "sekprodi") continue;
+    const slot = normalizeTopikSlot(item?.topik_slot);
+    if (!slot || !clusterApprovedSlotSet.has(slot)) continue;
+    const decision = {
+      row: item,
+      status: normalizeRiwayatStatus(item?.status),
+      topik_slot: slot,
+      decided_at: toDecisionDate(item?.tanggal_keputusan || item?.updatedAt || item?.createdAt, new Date(0)),
+    };
+    const current = decisionsBySlot.get(slot);
+    if (!current || decision.decided_at >= current.decided_at) decisionsBySlot.set(slot, decision);
+  }
+
+  const pendingSlots = clusterApprovedSlots.filter(
+    (item) => !decisionsBySlot.has(Number(item.slot)) || decisionsBySlot.get(Number(item.slot))?.status === "pending"
+  );
+  const approvedSlots = clusterApprovedSlots.filter(
+    (item) => decisionsBySlot.get(Number(item.slot))?.status === "approved"
+  );
+  const rejectedSlots = clusterApprovedSlots.filter(
+    (item) => decisionsBySlot.get(Number(item.slot))?.status === "rejected"
+  );
+
+  return {
+    ...clusterState,
+    sekprodi_decisions_by_slot: decisionsBySlot,
+    sekprodi_pending_slots: pendingSlots,
+    sekprodi_approved_slots: approvedSlots,
+    sekprodi_rejected_slots: rejectedSlots,
+    sekprodi_final_winner: approvedSlots[0] || null,
   };
 }
 
@@ -674,7 +762,36 @@ async function finalizeApprovedTopikSubmission(submission, parallelState, transa
 
     if (isKetuaClusterOwnTopicConflict(winner, ketuaResolution)) {
       await createClusterSkipApprovalHistory(submission, winner, ketuaResolution, transaction);
-      const result = await routeTopikWinnerToSekprodi(submission, winner, transaction, {
+      const refreshedSubmission = await loadSubmissionWithRiwayat(submission.id, { transaction });
+      const clusterState = evaluateTopikClusterReviewState(refreshedSubmission);
+      const nextTopik = clusterState.next_cluster_topik;
+
+      if (nextTopik) {
+        const nextResolution = await resolveKetuaKlasterByTopikKode(nextTopik.kode, transaction);
+        if (nextResolution.ok) {
+          await submission.update(
+            {
+              status: "pending",
+              dosen_saat_ini: nextResolution.ketuaKlaster.dosen_id,
+              alasan_persetujuan: `Validasi cluster ${ketuaResolution.klaster.kode} dilewati otomatis. Menunggu review ketua cluster ${nextResolution.klaster.kode} untuk topik slot ${nextTopik.slot}.`,
+              alasan_penolakan: null,
+            },
+            { transaction }
+          );
+          return {
+            success: true,
+            final_status: "pending",
+            winner: nextTopik,
+            routed_to_ketua_cluster: true,
+            waiting_ketua_cluster: false,
+            cluster_validation_skipped: true,
+            ketua_resolution: nextResolution,
+          };
+        }
+      }
+
+      const finalWinner = clusterState.final_winner || winner;
+      const result = await routeTopikWinnerToSekprodi(submission, finalWinner, transaction, {
         alasanPersetujuan: `Disetujui dosen pembimbing dan validasi cluster ${ketuaResolution.klaster.kode} dilewati otomatis karena pemilik topik adalah ketua cluster. Menunggu persetujuan final sekretaris prodi.`,
       });
 
@@ -698,22 +815,6 @@ async function finalizeApprovedTopikSubmission(submission, parallelState, transa
       },
       { transaction }
     );
-
-    const releaseCodes = buildTopikListFromSubmission(submission)
-      .map((item) => item.kode)
-      .filter((kode) => kode && kode !== winner.kode);
-    if (releaseCodes.length > 0) {
-      await Topik.update(
-        { status: "available" },
-        {
-          where: {
-            kode: releaseCodes,
-            status: "reserved",
-          },
-          transaction,
-        }
-      );
-    }
 
     return {
       success: true,
@@ -881,53 +982,7 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
     }
 
     const parallelState = evaluateTopikParallelState(submission);
-
-    const alreadyWaitingKetuaCluster =
-      submission.status === "pending" &&
-      parallelState.can_finalize &&
-      parallelState.approved_topik &&
-      submission.dosen_saat_ini &&
-      !hasKoordinatorDecision(submission);
-    if (alreadyWaitingKetuaCluster) {
-      const ketuaResolution = await resolveKetuaKlasterByTopikKode(parallelState.approved_topik.kode, transaction);
-      if (ketuaResolution.ok && isKetuaClusterOwnTopicConflict(parallelState.approved_topik, ketuaResolution)) {
-        const finalizationResult = await finalizeApprovedTopikSubmission(submission, parallelState, transaction);
-        const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, {
-          transaction,
-        });
-
-        if (!externalTransaction) await transaction.commit();
-
-        return {
-          success: true,
-          changed: true,
-          finalized: true,
-          final_status: finalizationResult.final_status,
-          winner: finalizationResult.winner || null,
-          routed_to_ketua_cluster: Boolean(finalizationResult.routed_to_ketua_cluster),
-          waiting_ketua_cluster: Boolean(finalizationResult.waiting_ketua_cluster),
-          cluster_validation_skipped: Boolean(finalizationResult.cluster_validation_skipped),
-          ketua_resolution: finalizationResult.ketua_resolution || null,
-          submission: refreshedSubmission,
-          parallel_state: evaluateTopikParallelState(refreshedSubmission),
-        };
-      }
-
-      if (!externalTransaction) await transaction.commit();
-      return {
-        success: true,
-        changed: ensureResult.created > 0,
-        finalized: false,
-        final_status: submission.status,
-        winner: parallelState.approved_topik,
-        routed_to_ketua_cluster: true,
-        waiting_ketua_cluster: false,
-        submission,
-        parallel_state: parallelState,
-      };
-    }
-
-    if (submission.status !== "pending" || !parallelState.can_finalize) {
+    if (!["pending", "menunggu_set_ketua_cluster", "menunggu_approval_sekprodi"].includes(submission.status)) {
       if (!externalTransaction) await transaction.commit();
       return {
         success: true,
@@ -938,9 +993,22 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
       };
     }
 
-    const finalizationResult = parallelState.approved_topik
-      ? await finalizeApprovedTopikSubmission(submission, parallelState, transaction)
-      : await finalizeRejectedTopikSubmission(submission, parallelState, transaction);
+    if (parallelState.can_finalize && parallelState.approved_slots.length === 0) {
+      const finalizationResult = await finalizeRejectedTopikSubmission(submission, parallelState, transaction);
+      const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, { transaction });
+      if (!externalTransaction) await transaction.commit();
+      return {
+        success: true,
+        changed: true,
+        finalized: true,
+        final_status: finalizationResult.final_status,
+        winner: null,
+        submission: refreshedSubmission,
+        parallel_state: evaluateTopikParallelState(refreshedSubmission),
+      };
+    }
+
+    const progressiveResult = await syncProgressiveTopikReviewRows(submission, transaction);
 
     const refreshedSubmission = await loadSubmissionWithRiwayat(submissionId, {
       transaction,
@@ -951,13 +1019,13 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
     return {
       success: true,
       changed: true,
-      finalized: true,
-      final_status: finalizationResult.final_status,
-      winner: finalizationResult.winner || null,
-      routed_to_ketua_cluster: Boolean(finalizationResult.routed_to_ketua_cluster),
-      waiting_ketua_cluster: Boolean(finalizationResult.waiting_ketua_cluster),
-      cluster_validation_skipped: Boolean(finalizationResult.cluster_validation_skipped),
-      ketua_resolution: finalizationResult.ketua_resolution || null,
+      finalized: false,
+      final_status: refreshedSubmission.status,
+      winner: progressiveResult.routed_topik || null,
+      routed_to_ketua_cluster: progressiveResult.created_cluster_rows > 0,
+      waiting_ketua_cluster: Boolean(progressiveResult.missing_ketua_topik),
+      cluster_validation_skipped: progressiveResult.skipped_cluster_rows > 0,
+      ketua_resolution: progressiveResult.ketua_resolution || null,
       submission: refreshedSubmission,
       parallel_state: evaluateTopikParallelState(refreshedSubmission),
     };
@@ -967,11 +1035,175 @@ async function finalizeTopikParallelSubmission(submissionId, options = {}) {
   }
 }
 
+async function syncProgressiveTopikReviewRows(submission, transaction) {
+  let currentSubmission = await loadSubmissionWithRiwayat(submission.id, { transaction, lockSubmission: true });
+  let clusterState = evaluateTopikClusterReviewState(currentSubmission);
+  let createdClusterRows = 0;
+  let skippedClusterRows = 0;
+  let createdSekprodiRows = 0;
+  let missingKetuaTopik = null;
+  let ketuaResolution = null;
+  let routedTopik = null;
+
+  for (const topik of clusterState.cluster_pending_slots) {
+    const existingRow = getSubmissionRiwayatRows(currentSubmission).find(
+      (item) => normalizeApprovalType(item?.tipe_approval) === "koordinator" && Number(item?.topik_slot) === Number(topik.slot)
+    );
+    if (existingRow) continue;
+
+    const resolution = await resolveKetuaKlasterByTopikKode(topik.kode, transaction);
+    if (!resolution.ok) {
+      missingKetuaTopik = missingKetuaTopik || topik;
+      continue;
+    }
+    ketuaResolution = ketuaResolution || resolution;
+    routedTopik = routedTopik || topik;
+    if (isKetuaClusterOwnTopicConflict(topik, resolution)) {
+      await createClusterSkipApprovalHistory(currentSubmission, topik, resolution, transaction);
+      skippedClusterRows += 1;
+    } else {
+      await RiwayatPersetujuan.create(
+        {
+          pengajuan_id: currentSubmission.id,
+          dosen_id: resolution.ketuaKlaster.dosen_id,
+          tipe_approval: "koordinator",
+          topik_slot: topik.slot,
+          topik_kode: topik.kode,
+          status: "pending",
+          keterangan: `Menunggu keputusan ketua cluster ${resolution.klaster.kode}.`,
+          tanggal_keputusan: new Date(),
+        },
+        { transaction }
+      );
+      createdClusterRows += 1;
+    }
+    await Topik.update({ status: "reserved" }, { where: { kode: topik.kode, status: "available" }, transaction });
+  }
+
+  currentSubmission = await loadSubmissionWithRiwayat(currentSubmission.id, { transaction });
+  clusterState = evaluateTopikClusterReviewState(currentSubmission);
+  for (const topik of clusterState.cluster_approved_slots) {
+    const existingRow = getSubmissionRiwayatRows(currentSubmission).find(
+      (item) => normalizeApprovalType(item?.tipe_approval) === "sekprodi" && Number(item?.topik_slot) === Number(topik.slot)
+    );
+    if (existingRow) continue;
+    await RiwayatPersetujuan.create(
+      {
+        pengajuan_id: currentSubmission.id,
+        dosen_id: null,
+        sekretaris_prodi_id: null,
+        tipe_approval: "sekprodi",
+        topik_slot: topik.slot,
+        topik_kode: topik.kode,
+        status: "pending",
+        keterangan: `Menunggu keputusan final sekretaris prodi untuk topik slot ${topik.slot}.`,
+        tanggal_keputusan: new Date(),
+      },
+      { transaction }
+    );
+    createdSekprodiRows += 1;
+  }
+
+  currentSubmission = await loadSubmissionWithRiwayat(currentSubmission.id, { transaction });
+  const sekprodiState = evaluateTopikSekprodiReviewState(currentSubmission);
+  const pendingSupervisorCount = sekprodiState.pending_slots.length;
+  const pendingClusterRows = getSubmissionRiwayatRows(currentSubmission).filter(
+    (item) => normalizeApprovalType(item?.tipe_approval) === "koordinator" && normalizeRiwayatStatus(item?.status) === "pending"
+  );
+  const pendingSekprodiCount = sekprodiState.sekprodi_pending_slots.length;
+  const upstreamPending = pendingSupervisorCount > 0 || pendingClusterRows.length > 0 || Boolean(missingKetuaTopik);
+  const noRemainingCandidate =
+    sekprodiState.can_finalize &&
+    !upstreamPending &&
+    pendingSekprodiCount === 0 &&
+    sekprodiState.sekprodi_approved_slots.length === 0;
+
+  if (noRemainingCandidate) {
+    const rejectionNotes = getSubmissionRiwayatRows(currentSubmission)
+      .filter((item) =>
+        ["calon_pembimbing", "koordinator", "sekprodi"].includes(normalizeApprovalType(item?.tipe_approval)) &&
+        normalizeRiwayatStatus(item?.status) === "rejected"
+      )
+      .map((item) => String(item?.keterangan || "").trim())
+      .filter(Boolean);
+    await finalizeRejectedTopikSubmission(
+      currentSubmission,
+      { ...sekprodiState, rejection_notes: rejectionNotes },
+      transaction
+    );
+    return {
+      created_cluster_rows: createdClusterRows,
+      skipped_cluster_rows: skippedClusterRows,
+      created_sekprodi_rows: createdSekprodiRows,
+      missing_ketua_topik: missingKetuaTopik,
+      ketua_resolution: ketuaResolution,
+      routed_topik: routedTopik,
+      finalized_rejected: true,
+    };
+  }
+
+  const nextStatus = pendingSekprodiCount > 0 && !upstreamPending ? "menunggu_approval_sekprodi" : "pending";
+  const nextReviewer = pendingClusterRows[0]?.dosen_id || null;
+
+  await currentSubmission.update(
+    {
+      status: nextStatus,
+      dosen_saat_ini: nextReviewer,
+      alasan_persetujuan:
+        pendingSekprodiCount > 0
+          ? `${pendingSekprodiCount} topik siap direview Sekprodi${upstreamPending ? ", sementara topik lainnya masih diproses" : ""}.`
+          : missingKetuaTopik
+          ? `Topik slot ${missingKetuaTopik.slot} menunggu penetapan ketua cluster.`
+          : "Menunggu proses review topik berikutnya.",
+    },
+    { transaction }
+  );
+
+  return {
+    created_cluster_rows: createdClusterRows,
+    skipped_cluster_rows: skippedClusterRows,
+    created_sekprodi_rows: createdSekprodiRows,
+    missing_ketua_topik: missingKetuaTopik,
+    ketua_resolution: ketuaResolution,
+    routed_topik: routedTopik,
+  };
+}
+
 async function finalizeTopikParallelSubmissionsByIds(submissionIds = []) {
   const uniqueIds = [...new Set((submissionIds || []).map((id) => toNumber(id)).filter(Boolean))];
   for (const id of uniqueIds) {
     await finalizeTopikParallelSubmission(id);
   }
+}
+
+async function reconcilePendingTopikClusterReviews() {
+  const candidates = await Pengajuan.findAll({
+    where: {
+      tipe_pengajuan: "topik_dosen",
+      status: { [Op.in]: ["pending", "menunggu_set_ketua_cluster", "menunggu_approval_sekprodi"] },
+    },
+    attributes: ["id"],
+  });
+  let rerouted = 0;
+
+  for (const candidate of candidates) {
+    const transaction = await sequelize.transaction();
+    try {
+      const submission = await loadSubmissionWithRiwayat(candidate.id, {
+        transaction,
+        lockSubmission: true,
+      });
+      await syncProgressiveTopikReviewRows(submission, transaction);
+
+      await transaction.commit();
+      rerouted += 1;
+    } catch (error) {
+      if (!transaction.finished) await transaction.rollback();
+      throw error;
+    }
+  }
+
+  return { rerouted };
 }
 
 async function finalizeJudulMandiriDeadlineSubmission(submissionId, options = {}) {
@@ -1027,11 +1259,14 @@ module.exports = {
   buildTopikListFromSubmission,
   getTopikParallelReviewDeadline,
   evaluateTopikParallelState,
+  evaluateTopikClusterReviewState,
+  evaluateTopikSekprodiReviewState,
   evaluateJudulMandiriReviewState,
   ensureParallelReviewerRows,
   syncPendingReviewReminders,
   finalizeTopikParallelSubmission,
   finalizeTopikParallelSubmissionsByIds,
+  reconcilePendingTopikClusterReviews,
   finalizeJudulMandiriDeadlineSubmission,
   finalizeJudulMandiriDeadlineSubmissionsByIds,
 };
