@@ -1,6 +1,6 @@
 "use strict";
 const bcrypt = require("bcrypt");
-const { Model } = require("sequelize");
+const { Model, Op } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class Dosen extends Model {
@@ -121,6 +121,10 @@ module.exports = (sequelize, DataTypes) => {
         as: "jadwalSidangSebagaiPembimbing",
       });
 
+      Dosen.hasMany(models.RiwayatStatusDosen, { foreignKey: "dosen_id", as: "riwayatStatus" });
+      Dosen.hasMany(models.DosenKetersediaanPeriode, { foreignKey: "dosen_id", as: "ketersediaanPeriodes" });
+      Dosen.hasMany(models.TindakLanjutStatusDosen, { foreignKey: "dosen_id", as: "tindakLanjutStatus" });
+
       Dosen.hasMany(models.JadwalSidangPenguji, {
         foreignKey: "penguji1_dosen_id",
         as: "jadwalSidangSebagaiPenguji1",
@@ -141,7 +145,13 @@ module.exports = (sequelize, DataTypes) => {
     async checkKuotaAvailable() {
       const Mahasiswa = sequelize.models.Mahasiswa;
       const count = await Mahasiswa.count({
-        where: { dosen_pembimbing_skripsi_id: this.id },
+        where: {
+          dosen_pembimbing_skripsi_id: this.id,
+          [Op.or]: [
+            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
+            { status_jalur_saat_ini: null },
+          ],
+        },
       });
       return count < this.kuota_bimbingan;
     }
@@ -150,7 +160,13 @@ module.exports = (sequelize, DataTypes) => {
     async getSisaKuota() {
       const Mahasiswa = sequelize.models.Mahasiswa;
       const count = await Mahasiswa.count({
-        where: { dosen_pembimbing_skripsi_id: this.id },
+        where: {
+          dosen_pembimbing_skripsi_id: this.id,
+          [Op.or]: [
+            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
+            { status_jalur_saat_ini: null },
+          ],
+        },
       });
       return this.kuota_bimbingan - count;
     }
@@ -159,7 +175,13 @@ module.exports = (sequelize, DataTypes) => {
     async getJumlahMahasiswaDibimbing() {
       const Mahasiswa = sequelize.models.Mahasiswa;
       return await Mahasiswa.count({
-        where: { dosen_pembimbing_skripsi_id: this.id },
+        where: {
+          dosen_pembimbing_skripsi_id: this.id,
+          [Op.or]: [
+            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
+            { status_jalur_saat_ini: null },
+          ],
+        },
       });
     }
 
@@ -221,6 +243,17 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 5,
       },
+      status_keaktifan: {
+        type: DataTypes.ENUM("active", "inactive", "study_leave", "retired"),
+        allowNull: false,
+        defaultValue: "active",
+      },
+      account_is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      continue_existing_supervision: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+      status_effective_at: { type: DataTypes.DATEONLY, allowNull: true },
+      status_reason: { type: DataTypes.TEXT, allowNull: true },
+      status_updated_by: { type: DataTypes.INTEGER, allowNull: true },
+      status_updated_at: { type: DataTypes.DATE, allowNull: true },
     },
     {
       sequelize,

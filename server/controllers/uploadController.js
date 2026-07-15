@@ -3,6 +3,7 @@ const CFB = require("cfb");
 const fs = require("fs");
 const { Op } = require("sequelize");
 const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
+const { assertDosenCanReceiveNewAssignment, DOSEN_STATUSES } = require("../services/dosenStatusService");
 const {
   STRUKTURAL_POSITIONS,
   normalizeJabatanStrukturalInput,
@@ -25,6 +26,11 @@ const TEMPLATE_HEADERS = {
     { key: "jabatan struktural", label: "Jabatan Struktural" },
     { key: "klaster", label: "Klaster" },
     { key: "kuota bimbingan", label: "Kuota Bimbingan" },
+    { key: "status dosen", label: "Status Dosen" },
+    { key: "status akun", label: "Status Akun" },
+    { key: "melanjutkan mahasiswa lama", label: "Melanjutkan Mahasiswa Lama" },
+    { key: "tanggal efektif status", label: "Tanggal Efektif Status" },
+    { key: "alasan status", label: "Alasan Status" },
   ],
   mahasiswa: [
     { key: "nim", label: "NIM" },
@@ -410,6 +416,11 @@ function extractDosenUploadValues(row = {}) {
       row["cluster"] ||
       row["CLUSTER"],
     rawKuotaBimbingan: row["Kuota Bimbingan"] ?? row["kuota_bimbingan"] ?? row["KUOTA_BIMBINGAN"],
+    rawStatusKeaktifan: row["Status Dosen"] ?? row.status_keaktifan ?? row["STATUS_DOSEN"],
+    rawAccountIsActive: row["Status Akun"] ?? row.account_is_active ?? row["STATUS_AKUN"],
+    rawContinueExisting: row["Melanjutkan Mahasiswa Lama"] ?? row.continue_existing_supervision,
+    rawStatusEffectiveAt: row["Tanggal Efektif Status"] ?? row.status_effective_at,
+    rawStatusReason: row["Alasan Status"] ?? row.status_reason,
   };
 }
 
@@ -426,7 +437,21 @@ function isEmptyDosenUploadRow(values) {
     values.rawJabatanStruktural,
     values.klasterRaw,
     values.rawKuotaBimbingan,
+    values.rawStatusKeaktifan,
+    values.rawAccountIsActive,
+    values.rawContinueExisting,
+    values.rawStatusEffectiveAt,
+    values.rawStatusReason,
   ].every(isBlankUploadValue);
+}
+
+async function getTopikUploadDosenEligibility(dosen, transaction) {
+  if (!dosen?.id) return { allowed: false, message: "Data dosen tidak ditemukan." };
+  const currentDosen = await Dosen.findByPk(dosen.id, {
+    attributes: ["id", "nama", "status_keaktifan"],
+    transaction,
+  });
+  return assertDosenCanReceiveNewAssignment(currentDosen, "topik baru");
 }
 
 function validateKuotaBimbinganValue(value) {
@@ -447,6 +472,23 @@ function validateKuotaBimbinganValue(value) {
   }
 
   return { isValid: true, value: kuota };
+}
+
+function parseDosenImportBoolean(value, defaultValue) {
+  if (isBlankUploadValue(value)) return { valid: true, value: defaultValue };
+  const normalized = String(value).trim().toLowerCase();
+  if (["ya", "aktif", "true", "1"].includes(normalized)) return { valid: true, value: true };
+  if (["tidak", "nonaktif", "false", "0"].includes(normalized)) return { valid: true, value: false };
+  return { valid: false, value: defaultValue };
+}
+
+function isRealDateOnly(value) {
+  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  return parsed.getUTCFullYear() === Number(match[1])
+    && parsed.getUTCMonth() === Number(match[2]) - 1
+    && parsed.getUTCDate() === Number(match[3]);
 }
 
 async function getNextDosenSequence(transaction) {
@@ -508,7 +550,11 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
     const { row, rowNumber, values } = uploadRow;
 
     try {
-      const { nik, nama, gelar, email, rawJabatanStruktural, klasterRaw, rawKuotaBimbingan } = values;
+      const {
+        nik, nama, gelar, email, rawJabatanStruktural, klasterRaw, rawKuotaBimbingan,
+        rawStatusKeaktifan, rawAccountIsActive, rawContinueExisting,
+        rawStatusEffectiveAt, rawStatusReason,
+      } = values;
       const jabatanStruktural = normalizeJabatanStrukturalInput(rawJabatanStruktural);
       const kuotaBimbingan =
         rawKuotaBimbingan === undefined || rawKuotaBimbingan === null || String(rawKuotaBimbingan).trim() === ""
@@ -612,6 +658,34 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         continue;
       }
       const kuota = kuotaValidation.value;
+      const statusKeaktifan = String(rawStatusKeaktifan || "active").trim().toLowerCase();
+      const accountParsed = parseDosenImportBoolean(rawAccountIsActive, statusKeaktifan !== "retired");
+      const continueParsed = parseDosenImportBoolean(rawContinueExisting, statusKeaktifan === "active" || statusKeaktifan === "study_leave");
+      const statusEffectiveAt = isBlankUploadValue(rawStatusEffectiveAt)
+        ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
+        : String(rawStatusEffectiveAt).trim();
+      const statusReason = String(rawStatusReason || "").trim();
+      if (!DOSEN_STATUSES.includes(statusKeaktifan)) {
+        results.failed.push({ row: rowNumber, data: row, error: "Status dosen harus active, inactive, study_leave, atau retired." });
+        continue;
+      }
+      if (!accountParsed.valid || !continueParsed.valid) {
+        results.failed.push({ row: rowNumber, data: row, error: "Status akun dan izin melanjutkan harus diisi ya/tidak atau aktif/nonaktif." });
+        continue;
+      }
+      if (!isRealDateOnly(statusEffectiveAt)) {
+        results.failed.push({ row: rowNumber, data: row, error: "Tanggal efektif status harus tanggal riil berformat YYYY-MM-DD." });
+        continue;
+      }
+      const todayJakarta = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+      if (statusEffectiveAt > todayJakarta) {
+        results.failed.push({ row: rowNumber, data: row, error: "Tanggal efektif status tidak boleh di masa depan." });
+        continue;
+      }
+      if (statusKeaktifan !== "active" && statusReason.length < 5) {
+        results.failed.push({ row: rowNumber, data: row, error: "Alasan status minimal 5 karakter untuk dosen yang tidak aktif." });
+        continue;
+      }
 
       if (normalizedNik) {
         const existingDosenNik = await Dosen.findOne({
@@ -700,6 +774,12 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
             is_default_password: true,
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
+            status_keaktifan: statusKeaktifan,
+            account_is_active: statusKeaktifan === "retired" ? false : accountParsed.value,
+            continue_existing_supervision: statusKeaktifan === "active" ? true : statusKeaktifan === "retired" ? false : continueParsed.value,
+            status_effective_at: statusEffectiveAt,
+            status_reason: statusReason || null,
+            status_updated_at: new Date(),
           },
           { transaction }
         );
@@ -721,6 +801,11 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         jabatan_struktural: savedDosen?.jabatan_struktural ?? jabatanStruktural,
         klaster: klasterLabel,
         kuota_bimbingan: savedDosen?.kuota_bimbingan ?? kuota,
+        status_keaktifan: savedDosen?.status_keaktifan ?? statusKeaktifan,
+        account_is_active: savedDosen?.account_is_active ?? (statusKeaktifan !== "retired" && accountParsed.value),
+        continue_existing_supervision: savedDosen?.continue_existing_supervision ?? continueParsed.value,
+        status_effective_at: savedDosen?.status_effective_at ?? statusEffectiveAt,
+        status_reason: savedDosen?.status_reason ?? statusReason,
       });
 
       if (normalizedNik) {
@@ -952,6 +1037,11 @@ exports.uploadTopics = async (req, res) => {
           continue;
         }
 
+        const eligibility = await getTopikUploadDosenEligibility(dosen, t);
+        if (!eligibility.allowed) {
+          results.failed.push({ row: rowNumber, data: row, error: eligibility.message });
+          continue;
+        }
         const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, t, allowedClusterCache);
         if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
           results.failed.push({
@@ -1191,6 +1281,11 @@ exports.previewUploadTopics = async (req, res) => {
           continue;
         }
 
+        const eligibility = await getTopikUploadDosenEligibility(dosen, null);
+        if (!eligibility.allowed) {
+          results.failed.push({ row: rowNumber, data: row, error: eligibility.message });
+          continue;
+        }
         const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, null, allowedClusterCache);
         if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
           failedRows.push({
@@ -1376,6 +1471,11 @@ exports.commitUploadTopics = async (req, res) => {
           continue;
         }
 
+        const eligibility = await getTopikUploadDosenEligibility(dosen, t);
+        if (!eligibility.allowed) {
+          results.failed.push({ row: rowNumber, data: payloadRow, error: eligibility.message });
+          continue;
+        }
         const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, t, allowedClusterCache);
         if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
           results.failed.push({
@@ -2394,7 +2494,10 @@ exports.commitUploadDosen = async (req, res) => {
 // GET /api/upload/dosen-template - Download template Excel Dosen
 exports.downloadDosenTemplate = (req, res) => {
   try {
-    const templateHeaders = ["NIK", "Nama", "Gelar", "Email", "Jabatan Struktural", "Klaster", "Kuota Bimbingan"];
+    const templateHeaders = [
+      "NIK", "Nama", "Gelar", "Email", "Jabatan Struktural", "Klaster", "Kuota Bimbingan",
+      "Status Dosen", "Status Akun", "Melanjutkan Mahasiswa Lama", "Tanggal Efektif Status", "Alasan Status",
+    ];
     const exampleRows = [
       {
         NIK: "900000001",
@@ -2404,6 +2507,11 @@ exports.downloadDosenTemplate = (req, res) => {
         "Jabatan Struktural": "",
         Klaster: "MEDIS, ITSC",
         "Kuota Bimbingan": 10,
+        "Status Dosen": "active",
+        "Status Akun": "aktif",
+        "Melanjutkan Mahasiswa Lama": "ya",
+        "Tanggal Efektif Status": "2026-07-15",
+        "Alasan Status": "Dosen aktif",
       },
       {
         NIK: "900000002",
@@ -2413,6 +2521,11 @@ exports.downloadDosenTemplate = (req, res) => {
         "Jabatan Struktural": "",
         Klaster: "MEDIS, ITSC, SDATA",
         "Kuota Bimbingan": 8,
+        "Status Dosen": "study_leave",
+        "Status Akun": "aktif",
+        "Melanjutkan Mahasiswa Lama": "ya",
+        "Tanggal Efektif Status": "2026-07-15",
+        "Alasan Status": "Tugas belajar",
       },
     ];
     const referenceRows = [
@@ -2454,6 +2567,16 @@ exports.downloadDosenTemplate = (req, res) => {
         "Nilai yang Diizinkan": "Bilangan bulat 1-99",
         Keterangan: "Jika dikosongkan saat upload, sistem memakai default 5.",
       },
+      {
+        "Tipe Referensi": "Status Dosen",
+        "Nilai yang Diizinkan": "active | inactive | study_leave | retired",
+        Keterangan: "Default active. Status selain active wajib memiliki alasan.",
+      },
+      {
+        "Tipe Referensi": "Status Akun / Melanjutkan Mahasiswa Lama",
+        "Nilai yang Diizinkan": "aktif/nonaktif atau ya/tidak",
+        Keterangan: "Akun retired selalu nonaktif. Izin melanjutkan retired selalu tidak.",
+      },
     ];
 
     const wb = XLSX.utils.book_new();
@@ -2470,6 +2593,11 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 36 }, // Jabatan Struktural
       { wch: 28 }, // Klaster
       { wch: 18 }, // Kuota Bimbingan
+      { wch: 20 }, // Status Dosen
+      { wch: 16 }, // Status Akun
+      { wch: 30 }, // Melanjutkan
+      { wch: 24 }, // Tanggal efektif
+      { wch: 40 }, // Alasan
     ];
     exampleSheet["!cols"] = ws["!cols"];
     const jabatanStrukturalHeaderNote = [

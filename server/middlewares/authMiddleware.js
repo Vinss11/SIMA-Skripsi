@@ -22,12 +22,27 @@ exports.authenticateToken = (req, res, next) => {
     }
 
     // Verifikasi token
-    jwt.verify(token, JWT_SECRET, (err, user) => {
+    jwt.verify(token, JWT_SECRET, async (err, user) => {
       if (err) {
         return res.status(403).json({
           success: false,
           message: "Token tidak valid atau sudah kadaluarsa",
         });
+      }
+
+      try {
+        if (user.role === "dosen") {
+          const dosen = await Dosen.findByPk(user.id, { attributes: ["id", "account_is_active"] });
+          if (!dosen || dosen.account_is_active === false) {
+            return res.status(403).json({
+              success: false,
+              message: "Token tidak valid karena akun dosen dinonaktifkan. Silakan hubungi Admin Prodi.",
+            });
+          }
+        }
+      } catch (lookupError) {
+        console.error("Error saat memvalidasi status akun dosen:", lookupError);
+        return res.status(500).json({ success: false, message: "Terjadi kesalahan saat memvalidasi akun." });
       }
 
       // Simpan data user ke request

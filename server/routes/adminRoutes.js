@@ -97,6 +97,9 @@ router.get("/dosen/export", authenticateToken, authorizeRole("admin"), adminCont
 router.post("/dosen", authenticateToken, authorizeRole("admin"), adminController.createDosen);
 router.put("/dosen/jabatan-struktural", authenticateToken, authorizeRole("admin"), adminController.updateJabatanStrukturalAssignments);
 router.put("/dosen/:id/profil", authenticateToken, authorizeRole("admin"), adminController.updateDosenProfil);
+router.get("/dosen/:id/status-impact", authenticateToken, authorizeRole("admin"), adminController.getDosenStatusImpact);
+router.get("/dosen/:id/status-history", authenticateToken, authorizeRole("admin"), adminController.getDosenStatusHistory);
+router.put("/dosen/:id/status", authenticateToken, authorizeRole("admin"), adminController.updateDosenStatus);
 router.get("/dosen/kuota-overview", authenticateToken, authorizeRole("admin"), adminController.getKuotaOverview);
 router.get("/dosen/:id/kuota", authenticateToken, authorizeRole("admin"), adminController.getKuotaDosenDetail);
 router.put("/dosen/:id/kuota", authenticateToken, authorizeRole("admin"), adminController.setKuotaDosen);

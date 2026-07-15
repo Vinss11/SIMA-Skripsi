@@ -79,6 +79,22 @@ const DOSEN_MANAGEMENT_TABS = [
   { key: "data-dosen", label: "Data Dosen" },
   { key: "jabatan-struktural", label: "Jabatan Struktural" },
 ];
+const DOSEN_STATUS_OPTIONS = [
+  { value: "active", label: "Aktif" },
+  { value: "inactive", label: "Nonaktif Sementara" },
+  { value: "study_leave", label: "Tugas Belajar" },
+  { value: "retired", label: "Pensiun" },
+];
+const DOSEN_STATUS_LABELS = Object.fromEntries(DOSEN_STATUS_OPTIONS.map((item) => [item.value, item.label]));
+
+function todayJakarta() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
 
 function showSuccessToast(message) {
   Swal.fire({
@@ -385,7 +401,14 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     gelar: "",
     jabatan_struktural: "",
     klaster_ids: [],
+    status_keaktifan: "active",
+    account_is_active: true,
+    continue_existing_supervision: true,
+    status_effective_at: todayJakarta(),
+    status_reason: "",
   });
+  const [savingDosenStatus, setSavingDosenStatus] = useState(false);
+  const [dosenStatusHistory, setDosenStatusHistory] = useState([]);
   const [savingDosenEdit, setSavingDosenEdit] = useState(false);
   const [dosenActionMessage, setDosenActionMessage] = useState("");
   const [dosenActionError, setDosenActionError] = useState("");
@@ -783,6 +806,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       nik: item?.nik || "-",
       klaster: item?.klaster || "-",
       kuota: item?.kuota_bimbingan ?? "-",
+      status_dosen: DOSEN_STATUS_LABELS[item?.status_keaktifan] || item?.status_keaktifan || "Aktif",
+      status_akun: item?.account_is_active === false ? "Nonaktif" : "Aktif",
+      lanjut_bimbingan: item?.continue_existing_supervision === false ? "Tidak" : "Ya",
       status: "valid",
       pesan_error: "-",
     }));
@@ -798,6 +824,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         nik: pickField(raw, ["NIK", "Nik", "nik", "Nip"]),
         klaster: pickField(raw, ["Klaster", "klaster", "KLASTER", "Cluster", "cluster", "CLUSTER"]),
         kuota: pickField(raw, ["Kuota Bimbingan", "kuota_bimbingan", "KUOTA_BIMBINGAN"]),
+        status_dosen: pickField(raw, ["Status Dosen", "status_keaktifan", "STATUS_DOSEN"]),
+        status_akun: pickField(raw, ["Status Akun", "account_is_active", "STATUS_AKUN"]),
+        lanjut_bimbingan: pickField(raw, ["Melanjutkan Mahasiswa Lama", "continue_existing_supervision"]),
         status: "error",
         pesan_error: String(item?.error || "Data tidak valid."),
       };
@@ -1047,9 +1076,85 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       gelar: dosen?.gelar || "",
       jabatan_struktural: jabatanValue,
       klaster_ids: Array.isArray(dosen?.klasters) ? dosen.klasters.map((item) => item.id) : [],
+      status_keaktifan: dosen?.status_keaktifan || "active",
+      account_is_active: dosen?.account_is_active !== false,
+      continue_existing_supervision: dosen?.continue_existing_supervision !== false,
+      status_effective_at: dosen?.status_effective_at || todayJakarta(),
+      status_reason: "",
     });
+    fetchWithAuth(`/api/admin/dosen/${dosen.id}/status-history`)
+      .then((rows) => setDosenStatusHistory(Array.isArray(rows) ? rows : []))
+      .catch(() => setDosenStatusHistory([]));
     setDosenActionError("");
     setDosenActionMessage("");
+  };
+
+  const handleSaveDosenStatus = async () => {
+    if (!selectedDosen?.id || savingDosenStatus) return;
+    if (String(dosenEditForm.status_reason || "").trim().length < 5) {
+      setDosenActionError("Alasan perubahan status minimal 5 karakter.");
+      return;
+    }
+    setDosenActionError("");
+    setSavingDosenStatus(true);
+    try {
+      const impactPayload = await fetchWithAuth(
+        `/api/admin/dosen/${selectedDosen.id}/status-impact?status=${encodeURIComponent(dosenEditForm.status_keaktifan)}`
+      );
+      const impact = impactPayload?.impact || {};
+      const confirmation = await Swal.fire({
+        icon: "warning",
+        title: `Ubah status menjadi ${DOSEN_STATUS_LABELS[dosenEditForm.status_keaktifan] || dosenEditForm.status_keaktifan}?`,
+        html: `<div style="text-align:left;line-height:1.7"><b>Analisis dampak</b><br/>• ${Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa bimbingan aktif<br/>• ${Number(impact.topik_tersedia || 0)} topik masih tersedia<br/>• ${Number(impact.tugas_ketua_cluster_aktif || 0)} tugas Ketua Cluster aktif<br/>• ${Number(impact.review_pending || 0)} review tertunda<br/>• ${Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang mendatang<br/><br/><small>Histori dan penugasan lama tidak akan dihapus atau diganti otomatis.</small></div>`,
+        showCancelButton: true,
+        confirmButtonText: "Konfirmasi perubahan",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#c2413b",
+      });
+      if (!confirmation.isConfirmed) return;
+
+      let confirmRetiredCorrection = false;
+      if (selectedDosen.status_keaktifan === "retired" && dosenEditForm.status_keaktifan !== "retired") {
+        const correction = await Swal.fire({
+          icon: "warning",
+          title: "Koreksi status pensiun",
+          input: "checkbox",
+          inputValue: 0,
+          inputPlaceholder: "Saya memastikan perubahan ini adalah koreksi data resmi",
+          confirmButtonText: "Lanjutkan koreksi",
+          showCancelButton: true,
+          preConfirm: (value) => value ? true : Swal.showValidationMessage("Konfirmasi khusus wajib dicentang."),
+        });
+        if (!correction.isConfirmed) return;
+        confirmRetiredCorrection = true;
+      }
+
+      const response = await fetch(`${apiBaseUrl}/api/admin/dosen/${selectedDosen.id}/status`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status_keaktifan: dosenEditForm.status_keaktifan,
+          account_is_active: dosenEditForm.account_is_active,
+          continue_existing_supervision: dosenEditForm.continue_existing_supervision,
+          status_effective_at: dosenEditForm.status_effective_at,
+          status_reason: dosenEditForm.status_reason.trim(),
+          confirm_retired_correction: confirmRetiredCorrection,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.success) throw new Error(payload?.message || "Gagal mengubah status dosen.");
+      const updated = payload.data || {};
+      setDosenRows((prev) => prev.map((row) => row.id === selectedDosen.id ? { ...row, ...updated } : row));
+      setSelectedDosen((prev) => prev ? { ...prev, ...updated } : prev);
+      const history = await fetchWithAuth(`/api/admin/dosen/${selectedDosen.id}/status-history`);
+      setDosenStatusHistory(Array.isArray(history) ? history : []);
+      setDosenEditForm((prev) => ({ ...prev, status_reason: "" }));
+      showSuccessToast(payload.message || "Status dosen berhasil diperbarui.");
+    } catch (statusError) {
+      setDosenActionError(statusError.message || "Gagal mengubah status dosen.");
+    } finally {
+      setSavingDosenStatus(false);
+    }
   };
 
   const handleBackToDosenGrid = () => {
@@ -1638,7 +1743,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 >
                   <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[1200px] table-auto">
+                      <table className="w-full min-w-[1550px] table-auto">
                         <thead className="bg-[#f4f7ff] text-left text-sm font-bold text-[#2f4473]">
                           <tr>
                           <th className="px-3 py-2 font-semibold">No</th>
@@ -1648,7 +1753,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           <th className="px-3 py-2 font-semibold">NIK</th>
                           <th className="px-3 py-2 font-semibold">Klaster</th>
                           <th className="px-3 py-2 font-semibold">Kuota</th>
-                          <th className="px-3 py-2 font-semibold">Status</th>
+                          <th className="px-3 py-2 font-semibold">Status Dosen</th>
+                          <th className="px-3 py-2 font-semibold">Status Akun</th>
+                          <th className="px-3 py-2 font-semibold">Lanjut Bimbingan Lama</th>
+                          <th className="px-3 py-2 font-semibold">Validasi</th>
                           <th className="px-3 py-2 font-semibold">Pesan Error</th>
                         </tr>
                       </thead>
@@ -1668,6 +1776,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <td className="px-3 py-2">{row.nik}</td>
                               <td className="px-3 py-2">{row.klaster}</td>
                               <td className="px-3 py-2">{row.kuota}</td>
+                              <td className="px-3 py-2">{row.status_dosen}</td>
+                              <td className="px-3 py-2">{row.status_akun}</td>
+                              <td className="px-3 py-2">{row.lanjut_bimbingan}</td>
                               <td className="px-3 py-2">
                                 <span
                                   className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
@@ -1686,7 +1797,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           ))
                         ) : (
                           <tr className="border-t border-[#ecf1fb] text-sm text-[#5d6c91]">
-                            <td className="px-3 py-4 text-center" colSpan={9}>
+                            <td className="px-3 py-4 text-center" colSpan={12}>
                               Belum ada data preview.
                             </td>
                           </tr>
@@ -2004,6 +2115,79 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         )}
                       </div>
 
+                      <div className="md:col-span-2 rounded-xl border border-[#dce4f7] bg-[#f8fbff] p-4">
+                        <div className="mb-3">
+                          <h4 className="font-black text-[#1b274b]">Status Akademik dan Akun</h4>
+                          <p className="text-xs text-[#5d6c91]">Status akademik mengatur penugasan; status akun hanya mengatur akses login.</p>
+                        </div>
+                        {selectedDosen.status_keaktifan !== "active" && dosenEditForm.status_keaktifan === "active" ? (
+                          <div className="mb-3 rounded-lg border border-[#f0d3a5] bg-[#fff8ec] px-3 py-2 text-xs font-semibold text-[#8a5a14]">
+                            Reaktivasi tidak mengaktifkan kembali topik atau penugasan lama secara otomatis. Sekprodi akan menerima tindak lanjut untuk memeriksa topik, kapasitas, ketersediaan periode, dan peran dosen.
+                          </div>
+                        ) : null}
+                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Status Dosen</label>
+                            <select
+                              value={dosenEditForm.status_keaktifan}
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setDosenEditForm((prev) => ({
+                                  ...prev,
+                                  status_keaktifan: value,
+                                  account_is_active: value === "retired" ? false : prev.account_is_active,
+                                  continue_existing_supervision:
+                                    value === "active" || value === "study_leave"
+                                      ? true
+                                      : false,
+                                }));
+                              }}
+                              className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                            >
+                              {DOSEN_STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Tanggal Efektif</label>
+                            <input type="date" max={todayJakarta()} value={dosenEditForm.status_effective_at} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, status_effective_at: event.target.value }))} className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]" />
+                          </div>
+                          <label className="flex items-center gap-2 rounded-lg border border-[#d8e0f3] bg-white px-3 py-2 text-sm text-[#2d3f6f]">
+                            <input type="checkbox" checked={dosenEditForm.account_is_active} disabled={dosenEditForm.status_keaktifan === "retired"} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, account_is_active: event.target.checked }))} />
+                            Akun dapat login
+                          </label>
+                          <label className="flex items-center gap-2 rounded-lg border border-[#d8e0f3] bg-white px-3 py-2 text-sm text-[#2d3f6f]">
+                            <input type="checkbox" checked={dosenEditForm.continue_existing_supervision} disabled={dosenEditForm.status_keaktifan === "retired"} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, continue_existing_supervision: event.target.checked }))} />
+                            Boleh melanjutkan mahasiswa lama
+                          </label>
+                          <div className="md:col-span-2">
+                            <label className="mb-1 block text-sm font-semibold text-[#324c86]">Alasan Perubahan</label>
+                            <textarea value={dosenEditForm.status_reason} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, status_reason: event.target.value }))} rows={3} placeholder="Contoh: Tugas belajar di luar negeri" className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]" />
+                          </div>
+                        </div>
+                        <button type="button" onClick={handleSaveDosenStatus} disabled={savingDosenStatus} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#b8473f] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-60">
+                          {savingDosenStatus ? "Menganalisis..." : "Analisis Dampak & Simpan Status"}
+                        </button>
+                      </div>
+
+                      <div className="md:col-span-2 rounded-xl border border-[#e4e9f6] p-4">
+                        <h4 className="font-black text-[#1b274b]">Riwayat Status</h4>
+                        <div className="mt-2 max-h-44 space-y-2 overflow-auto">
+                          {dosenStatusHistory.length > 0 ? dosenStatusHistory.map((item) => (
+                            <div key={item.id} className="rounded-lg bg-[#f7f9ff] px-3 py-2 text-sm text-[#40527d]">
+                              <span className="font-bold">{Array.isArray(item.changed_fields) && !item.changed_fields.includes("status_keaktifan") ? "Pengaturan dosen diperbarui" : `${DOSEN_STATUS_LABELS[item.status_sebelumnya] || item.status_sebelumnya} → ${DOSEN_STATUS_LABELS[item.status_baru] || item.status_baru}`}</span>
+                              <span> · efektif {item.effective_at}</span>
+                              <p className="text-xs text-[#6c7898]">{item.reason} · {item.changedByAdmin?.nama || "Admin"}{Array.isArray(item.changed_fields) ? ` · ${item.changed_fields.join(", ")}` : ""}</p>
+                              {Array.isArray(item.changed_fields) && item.changed_fields.includes("account_is_active") ? (
+                                <p className="text-xs text-[#6c7898]">Login: {item.account_is_active_sebelumnya ? "aktif" : "nonaktif"} → {item.account_is_active_baru ? "aktif" : "nonaktif"}</p>
+                              ) : null}
+                              {Array.isArray(item.changed_fields) && item.changed_fields.includes("continue_existing_supervision") ? (
+                                <p className="text-xs text-[#6c7898]">Lanjut bimbingan lama: {item.continue_existing_supervision_sebelumnya ? "ya" : "tidak"} → {item.continue_existing_supervision_baru ? "ya" : "tidak"}</p>
+                              ) : null}
+                            </div>
+                          )) : <p className="text-sm text-[#7180a3]">Belum ada perubahan status.</p>}
+                        </div>
+                      </div>
+
                       <div className="md:col-span-2">
                         <button
                           type="submit"
@@ -2282,6 +2466,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bimbingan</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Sisa</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Dosen</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Login</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Updated</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                           </tr>
@@ -2305,6 +2491,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <td className="px-3 py-2">{row.kuota_bimbingan ?? "-"}</td>
                                 <td className="px-3 py-2">{row.jumlah_bimbingan ?? 0}</td>
                                 <td className="px-3 py-2">{row.sisa_kuota ?? 0}</td>
+                                <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${row.status_keaktifan === "active" ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan || "Aktif"}</span></td>
+                                <td className="px-3 py-2">{row.account_is_active === false ? "Nonaktif" : "Aktif"}</td>
                                 <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
                                 <td className="px-3 py-2">
                                   <button

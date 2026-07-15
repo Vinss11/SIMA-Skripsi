@@ -1,5 +1,6 @@
-const { Topik, Dosen, Mahasiswa, SekretarisProdi, DosenKlaster, Klaster } = require("../models");
+const { Topik, Dosen, Mahasiswa, SekretarisProdi, DosenKlaster, Klaster, PeriodePenjaluran, DosenKetersediaanPeriode } = require("../models");
 const { Op } = require("sequelize");
+const { assertDosenCanReceiveNewAssignment, isDosenAcademicallyActive } = require("../services/dosenStatusService");
 
 const CLUSTER_NORMALIZATION_MAP = {
   sirkel: "Sirkel",
@@ -158,13 +159,19 @@ exports.getTopics = async (req, res) => {
       ];
     }
 
+    const activePeriode = await PeriodePenjaluran.findOne({ where: { status: "active", is_active: true }, order: [["updatedAt", "DESC"]] });
+    const availabilityRows = activePeriode
+      ? await DosenKetersediaanPeriode.findAll({ where: { periode_penjaluran_id: activePeriode.id } })
+      : [];
+    const availabilityByDosen = new Map(availabilityRows.map((item) => [Number(item.dosen_id), item]));
+
     const topics = await Topik.findAll({
       where,
       include: [
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -182,12 +189,16 @@ exports.getTopics = async (req, res) => {
         // Tentukan apakah topik available berdasarkan:
         // 1. Status topik itu sendiri (available/taken/unavailable)
         // 2. Kuota dosen masih tersedia
-        const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh;
+        const periodAvailability = availabilityByDosen.get(Number(topic.dosen_id));
+        const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh
+          && isDosenAcademicallyActive(topic.dosen)
+          && periodAvailability?.tersedia_membimbing !== false;
 
         return {
           ...topicData,
           kuota_dosen: kuotaInfo,
           is_available: isAvailable,
+          ketersediaan_periode: periodAvailability || null,
         };
       })
     );
@@ -217,7 +228,7 @@ exports.getTopicById = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
     });
@@ -231,7 +242,7 @@ exports.getTopicById = async (req, res) => {
 
     const topicData = topic.toJSON();
     const kuotaInfo = await topic.dosen.getKuotaInfo();
-    const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh;
+    const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh && isDosenAcademicallyActive(topic.dosen);
 
     res.json({
       success: true,
@@ -325,6 +336,22 @@ exports.createTopic = async (req, res) => {
       });
     }
     const kuotaInfo = await dosen.getKuotaInfo();
+    const eligibility = assertDosenCanReceiveNewAssignment(dosen, "topik baru");
+    if (!eligibility.allowed) {
+      return res.status(409).json({ success: false, message: eligibility.message });
+    }
+    const activePeriode = await PeriodePenjaluran.findOne({ where: { status: "active", is_active: true }, order: [["updatedAt", "DESC"]] });
+    if (activePeriode) {
+      const availability = await DosenKetersediaanPeriode.findOne({
+        where: { dosen_id: dosen.id, periode_penjaluran_id: activePeriode.id },
+      });
+      if (availability && availability.tersedia_membimbing === false) {
+        return res.status(409).json({
+          success: false,
+          message: `Anda sedang tidak tersedia menerima mahasiswa/topik pada ${activePeriode.label_periode}.`,
+        });
+      }
+    }
 
     const topic = await Topik.create({
       kode: normalizedKode,
@@ -342,7 +369,7 @@ exports.createTopic = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
     });
@@ -461,6 +488,11 @@ exports.updateTopic = async (req, res) => {
       });
     }
 
+    if (status === "available") {
+      const owner = await Dosen.findByPk(topic.dosen_id);
+      const eligibility = assertDosenCanReceiveNewAssignment(owner, "topik aktif baru");
+      if (!eligibility.allowed) return res.status(409).json({ success: false, message: eligibility.message });
+    }
     if (status) topic.status = status;
 
     await topic.save();
@@ -471,13 +503,13 @@ exports.updateTopic = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
     });
 
     const kuotaInfo = await updatedTopic.dosen.getKuotaInfo();
-    const isAvailable = updatedTopic.status === "available" && !kuotaInfo.is_penuh;
+    const isAvailable = updatedTopic.status === "available" && !kuotaInfo.is_penuh && isDosenAcademicallyActive(updatedTopic.dosen);
 
     res.json({
       success: true,

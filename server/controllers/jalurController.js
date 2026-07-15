@@ -13,11 +13,13 @@ const {
   MitraMagang,
   KelompokPerintisanBisnis,
   AnggotaKelompokPerintisan,
+  DosenKetersediaanPeriode,
   sequelize,
 } = require("../models");
 const fs = require("fs");
 const path = require("path");
 const { Op } = require("sequelize");
+const { assertDosenCanReceiveNewAssignment, validateDosenForNewAssignment } = require("../services/dosenStatusService");
 const {
   buildSemesterLanjutanGate,
   getReferencePeriode,
@@ -180,6 +182,39 @@ async function validateDosenKuota(dosen_id, transaction) {
   }
 
   const kuotaInfo = await dosen.getKuotaInfo();
+
+  const eligibility = assertDosenCanReceiveNewAssignment(dosen, "penugasan pembimbing baru");
+  if (!eligibility.allowed) {
+    return { isAvailable: false, kuotaInfo, message: eligibility.message, dosen };
+  }
+
+  const activePeriode = await PeriodePenjaluran.findOne({
+    where: { status: "active", is_active: true },
+    attributes: ["id", "label_periode"],
+    order: [["updatedAt", "DESC"]],
+    transaction,
+  });
+  if (activePeriode) {
+    const availability = await DosenKetersediaanPeriode.findOne({
+      where: { dosen_id, periode_penjaluran_id: activePeriode.id },
+      transaction,
+    });
+    if (availability) {
+      const periodTotal = Number(availability.kuota_bimbingan_periode || 0);
+      const periodInfo = {
+        ...kuotaInfo,
+        total: periodTotal,
+        sisa: Math.max(periodTotal - Number(kuotaInfo.terpakai || 0), 0),
+        is_penuh: periodTotal <= Number(kuotaInfo.terpakai || 0),
+      };
+      if (!availability.tersedia_membimbing) {
+        return { isAvailable: false, kuotaInfo: periodInfo, message: `${dosen.nama} tidak tersedia membimbing pada ${activePeriode.label_periode}.`, dosen };
+      }
+      if (periodInfo.is_penuh) {
+        return { isAvailable: false, kuotaInfo: periodInfo, message: `Kuota periode ${dosen.nama} sudah penuh (${periodInfo.terpakai}/${periodInfo.total}).`, dosen };
+      }
+    }
+  }
 
   if (kuotaInfo.is_penuh) {
     return {
@@ -2206,7 +2241,17 @@ async function getNonPenelitianReviewQueueForDosenByJalur(req, res, targetJalur)
       order: [["form_lanjutan_submitted_at", "DESC"], ["createdAt", "DESC"]],
     });
 
-    const filtered = rows
+    const eligibleRows = [];
+    for (const item of rows) {
+      const field = targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu";
+      const validation = await validateDosenForNewAssignment(dosenId, item.periode?.id, {
+        availabilityField: field,
+        activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
+        checkQuota: false,
+      });
+      if (validation.allowed) eligibleRows.push(item);
+    }
+    const filtered = eligibleRows
       .filter(
         (item) =>
           resolveSelectedJalurFromPendaftaran(item) === targetJalur &&
@@ -2265,6 +2310,12 @@ async function getNonPenelitianReviewDetailForDosenByJalur(req, res, targetJalur
         message: config.assignedError,
       });
     }
+    const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
+      availabilityField: targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu",
+      activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
+      checkQuota: false,
+    });
+    if (!roleValidation.allowed) return res.status(403).json({ success: false, message: roleValidation.message });
 
     return res.json({
       success: true,
@@ -2337,6 +2388,16 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
         success: false,
         message: config.assignedError,
       });
+    }
+    const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
+      transaction: t,
+      availabilityField: targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu",
+      activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
+      checkQuota: false,
+    });
+    if (!roleValidation.allowed) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: roleValidation.message });
     }
 
     const now = new Date();
@@ -2452,6 +2513,12 @@ exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
         message: config.assignedError,
       });
     }
+    const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
+      availabilityField: "tersedia_pengawas_jalur",
+      activityLabel: "menjadi pengawas jalur",
+      checkQuota: false,
+    });
+    if (!roleValidation.allowed) return res.status(403).json({ success: false, message: roleValidation.message });
 
     const payload = toObjectPayload(row.form_lanjutan_payload);
     const documentMetadata = payload.uploaded_documents?.[documentKey] || null;
@@ -2742,7 +2809,7 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     const dosenPembimbing =
       dosenPembimbingId > 0
         ? await Dosen.findByPk(dosenPembimbingId, {
-            attributes: ["id", "nik", "nama", "email"],
+            attributes: ["id", "nik", "nama", "email", "status_keaktifan", "kuota_bimbingan"],
             transaction: t,
           })
         : null;
@@ -2752,6 +2819,34 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
         success: false,
         message: "Dosen pembimbing yang dipilih tidak ditemukan.",
       });
+    }
+
+    if (decision === "approved") {
+      const currentPayload = toObjectPayload(row.form_lanjutan_payload);
+      const currentTeamMembers = Array.isArray(currentPayload?.kelompok?.anggota)
+        ? currentPayload.kelompok.anggota
+        : [];
+      const requiredSlots = reviewable.selectedJalur === "perintisan_bisnis"
+        ? Math.max(1, Number(currentTeamMembers.length || 1))
+        : 1;
+      const assignmentValidation = await validateDosenForNewAssignment(
+        dosenPembimbingId,
+        row.periode_penjaluran_id,
+        {
+          transaction: t,
+          availabilityField: "tersedia_membimbing",
+          activityLabel: "menjadi pembimbing final",
+          requiredSlots,
+        }
+      );
+      if (!assignmentValidation.allowed) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          message: assignmentValidation.message,
+          detail: { capacity: assignmentValidation.capacity || null },
+        });
+      }
     }
 
     const now = new Date();
@@ -3024,15 +3119,13 @@ exports.submitBaruTopikDosen = async (req, res) => {
     const dosen_pilihan_2 = topik_2_kode ? topikMap[topik_2_kode].dosen_id : null;
     const dosen_pilihan_3 = topik_3_kode ? topikMap[topik_3_kode].dosen_id : null;
 
-    // VALIDASI KUOTA DOSEN PILIHAN 1
-    const kuotaValidation = await validateDosenKuota(dosen_pilihan_1, t);
-    if (!kuotaValidation.isAvailable) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: kuotaValidation.message,
-        kuota_info: kuotaValidation.kuotaInfo,
-      });
+    // Semua calon pembimbing harus aktif dan tersedia pada periode berjalan.
+    for (const selectedDosenId of [...new Set([dosen_pilihan_1, dosen_pilihan_2, dosen_pilihan_3].filter(Boolean))]) {
+      const kuotaValidation = await validateDosenKuota(selectedDosenId, t);
+      if (!kuotaValidation.isAvailable) {
+        await t.rollback();
+        return res.status(409).json({ success: false, message: kuotaValidation.message, kuota_info: kuotaValidation.kuotaInfo });
+      }
     }
 
     // Buat pengajuan
@@ -3193,6 +3286,11 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         success: false,
         message: "Dosen pembimbing tidak ditemukan",
       });
+    }
+    const eligibility = assertDosenCanReceiveNewAssignment(dosen, "penugasan pembimbing baru");
+    if (!eligibility.allowed) {
+      await t.rollback();
+      return res.status(409).json({ success: false, message: eligibility.message });
     }
 
     const pendaftaranUlang = await getUlangPenelitianPendaftaran(mahasiswa_id, t);
@@ -3496,6 +3594,11 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         success: false,
         message: "Dosen pembimbing yang dipilih tidak ditemukan",
       });
+    }
+    const eligibility = assertDosenCanReceiveNewAssignment(dosen, "penugasan pembimbing baru");
+    if (!eligibility.allowed) {
+      await t.rollback();
+      return res.status(409).json({ success: false, message: eligibility.message });
     }
 
     const clusterValidation = await validateDosenPenelitianCluster(prospective_supervisor_id, cluster_mandiri, t);
@@ -3999,15 +4102,13 @@ exports.submitUlangTopikDosen = async (req, res) => {
     const dosen_pilihan_2 = topik_2_kode ? topikMap[topik_2_kode].dosen_id : null;
     const dosen_pilihan_3 = topik_3_kode ? topikMap[topik_3_kode].dosen_id : null;
 
-    // ⭐ VALIDASI KUOTA DOSEN PILIHAN 1 ⭐
-    const kuotaValidation = await validateDosenKuota(dosen_pilihan_1, t);
-    if (!kuotaValidation.isAvailable) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: kuotaValidation.message,
-        kuota_info: kuotaValidation.kuotaInfo,
-      });
+    // Semua calon pembimbing harus aktif dan tersedia pada periode berjalan.
+    for (const selectedDosenId of [...new Set([dosen_pilihan_1, dosen_pilihan_2, dosen_pilihan_3].filter(Boolean))]) {
+      const kuotaValidation = await validateDosenKuota(selectedDosenId, t);
+      if (!kuotaValidation.isAvailable) {
+        await t.rollback();
+        return res.status(409).json({ success: false, message: kuotaValidation.message, kuota_info: kuotaValidation.kuotaInfo });
+      }
     }
 
     const previousSubmission = await Pengajuan.findByPk(pamit.pengajuan_sebelumnya_id, { transaction: t });

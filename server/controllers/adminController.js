@@ -1,4 +1,7 @@
-const { Mahasiswa, Dosen, Klaster, Pengajuan, Topik, sequelize } = require("../models");
+const {
+  Mahasiswa, Dosen, Klaster, Pengajuan, Topik, RiwayatStatusDosen,
+  TindakLanjutStatusDosen, Admin, sequelize,
+} = require("../models");
 const { Op } = require("sequelize");
 const XLSX = require("xlsx");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
@@ -7,6 +10,7 @@ const {
   normalizeJabatanStrukturalInput,
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
+const { DOSEN_STATUSES, analyzeDosenStatusImpact } = require("../services/dosenStatusService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -16,6 +20,25 @@ const DEFAULT_KLASTER_MASTER = [
   { kode: "SIRKEL", nama: "Sistem Informasi & Rekayasa Perangkat Lunak" },
   { kode: "SIBER", nama: "Sistem Siber" },
 ];
+
+function getJakartaDateOnly() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function isValidDateOnly(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
 
 function normalizeNameKey(name) {
   return String(name || "")
@@ -202,6 +225,12 @@ async function getMappedDosens(keyword = "") {
       "email",
       "jabatan_struktural",
       "kuota_bimbingan",
+      "status_keaktifan",
+      "account_is_active",
+      "continue_existing_supervision",
+      "status_effective_at",
+      "status_reason",
+      "status_updated_at",
       "createdAt",
       "updatedAt",
     ],
@@ -224,6 +253,10 @@ async function getMappedDosens(keyword = "") {
     ],
     where: {
       dosen_pembimbing_skripsi_id: { [Op.ne]: null },
+      [Op.or]: [
+        { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
+        { status_jalur_saat_ini: null },
+      ],
     },
     group: ["dosen_pembimbing_skripsi_id"],
     raw: true,
@@ -250,6 +283,12 @@ async function getMappedDosens(keyword = "") {
       email: dosen.email,
       jabatan_struktural: dosen.jabatan_struktural,
       kuota_bimbingan: kuota,
+      status_keaktifan: dosen.status_keaktifan,
+      account_is_active: dosen.account_is_active,
+      continue_existing_supervision: dosen.continue_existing_supervision,
+      status_effective_at: dosen.status_effective_at,
+      status_reason: dosen.status_reason,
+      status_updated_at: dosen.status_updated_at,
       jumlah_bimbingan: jumlahBimbingan,
       sisa_kuota: sisaKuota,
       klasters: Array.isArray(dosen.klasters)
@@ -285,6 +324,176 @@ exports.getAllMahasiswa = async (req, res) => {
       message: "Terjadi kesalahan pada server",
       error: error.message,
     });
+  }
+};
+
+// GET /api/admin/dosen/:id/status-impact?status=study_leave
+exports.getDosenStatusImpact = async (req, res) => {
+  try {
+    const dosen = await Dosen.findByPk(req.params.id, {
+      attributes: ["id", "kode_dosen", "nik", "nama", "status_keaktifan", "account_is_active", "continue_existing_supervision"],
+    });
+    if (!dosen) return res.status(404).json({ success: false, message: "Dosen tidak ditemukan." });
+
+    const requestedStatus = String(req.query.status || dosen.status_keaktifan).trim().toLowerCase();
+    if (!DOSEN_STATUSES.includes(requestedStatus)) {
+      return res.status(400).json({ success: false, message: "Status keaktifan tidak valid." });
+    }
+    const impact = await analyzeDosenStatusImpact(dosen.id);
+    return res.json({ success: true, data: { dosen, status_baru: requestedStatus, impact } });
+  } catch (error) {
+    console.error("Error di getDosenStatusImpact:", error);
+    return res.status(500).json({ success: false, message: "Gagal menganalisis dampak status.", error: error.message });
+  }
+};
+
+// GET /api/admin/dosen/:id/status-history
+exports.getDosenStatusHistory = async (req, res) => {
+  try {
+    const rows = await RiwayatStatusDosen.findAll({
+      where: { dosen_id: req.params.id },
+      include: [{ model: require("../models").Admin, as: "changedByAdmin", attributes: ["id", "nama", "nip"], required: false }],
+      order: [["createdAt", "DESC"]],
+    });
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Error di getDosenStatusHistory:", error);
+    return res.status(500).json({ success: false, message: "Gagal memuat histori status.", error: error.message });
+  }
+};
+
+// PUT /api/admin/dosen/:id/status
+exports.updateDosenStatus = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const statusBaru = String(req.body?.status_keaktifan || "").trim().toLowerCase();
+    const reason = String(req.body?.status_reason || "").trim();
+    const effectiveAt = String(req.body?.status_effective_at || "").trim();
+    if (!DOSEN_STATUSES.includes(statusBaru)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "status_keaktifan tidak valid." });
+    }
+    if (!isValidDateOnly(effectiveAt)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Tanggal efektif tidak valid." });
+    }
+    if (effectiveAt > getJakartaDateOnly()) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Tanggal efektif tidak boleh berada di masa depan. Status berlaku saat disimpan." });
+    }
+    if (reason.length < 5) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Alasan perubahan status minimal 5 karakter." });
+    }
+
+    const dosen = await Dosen.findByPk(req.params.id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!dosen) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Dosen tidak ditemukan." });
+    }
+
+    const oldStatus = dosen.status_keaktifan || "active";
+    const oldAccount = dosen.account_is_active !== false;
+    const oldContinueExisting = dosen.continue_existing_supervision !== false;
+    const requestedAccount = req.body?.account_is_active;
+    const newAccount = statusBaru === "retired" ? false : requestedAccount !== false;
+    const continueExisting = statusBaru === "active"
+      ? true
+      : statusBaru === "retired"
+      ? false
+      : req.body?.continue_existing_supervision === true;
+
+    if (oldStatus === "retired" && statusBaru !== "retired") {
+      const actor = await Admin.findByPk(req.user.id, { attributes: ["id", "role"], transaction });
+      if (actor?.role !== "koordinator" || req.body?.confirm_retired_correction !== true || reason.length < 20) {
+        await transaction.rollback();
+        return res.status(403).json({
+          success: false,
+          message: "Koreksi status pensiun hanya dapat dilakukan Admin Koordinator, harus dikonfirmasi khusus, dan memerlukan alasan minimal 20 karakter.",
+        });
+      }
+    }
+
+    const changedFields = [];
+    if (oldStatus !== statusBaru) changedFields.push("status_keaktifan");
+    if (oldAccount !== newAccount) changedFields.push("account_is_active");
+    if (oldContinueExisting !== continueExisting) changedFields.push("continue_existing_supervision");
+    if (changedFields.length === 0) {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Tidak ada perubahan status, akun, atau izin melanjutkan bimbingan." });
+    }
+    const impact = await analyzeDosenStatusImpact(dosen.id, transaction);
+    const now = new Date();
+
+    await dosen.update({
+      status_keaktifan: statusBaru,
+      account_is_active: newAccount,
+      continue_existing_supervision: continueExisting,
+      status_effective_at: effectiveAt,
+      status_reason: reason,
+      status_updated_by: req.user.id,
+      status_updated_at: now,
+    }, { transaction });
+
+    const history = await RiwayatStatusDosen.create({
+      dosen_id: dosen.id,
+      status_sebelumnya: oldStatus,
+      status_baru: statusBaru,
+      account_is_active_sebelumnya: oldAccount,
+      account_is_active_baru: newAccount,
+      continue_existing_supervision_sebelumnya: oldContinueExisting,
+      continue_existing_supervision_baru: continueExisting,
+      changed_fields: changedFields,
+      effective_at: effectiveAt,
+      reason,
+      changed_by: req.user.id,
+      impact_snapshot: impact,
+    }, { transaction });
+
+    let topicsDisabled = 0;
+    if (statusBaru !== "active") {
+      const [, affected] = await Topik.update(
+        { status: "unavailable" },
+        { where: { dosen_id: dosen.id, status: "available" }, transaction, returning: true }
+      );
+      topicsDisabled = Array.isArray(affected) ? affected.length : Number(affected || impact.topik_tersedia || 0);
+    }
+
+    const isReactivation = statusBaru === "active" && oldStatus !== "active";
+    const needsFollowUp = isReactivation || (statusBaru !== "active" && [
+      impact.mahasiswa_bimbingan_aktif,
+      impact.review_pending,
+      impact.tugas_ketua_cluster_aktif,
+      impact.tugas_periode_aktif,
+      impact.tugas_master_penanggung_jawab,
+      impact.jadwal_sidang_mendatang,
+    ].some((value) => Number(value) > 0));
+    if (needsFollowUp) {
+      const followUpImpact = {
+        ...impact,
+        reactivation_required: isReactivation,
+        reactivation_note: isReactivation
+          ? "Periksa topik lama, ketersediaan periode, kapasitas, dan penetapan kembali peran. Topik tidak diaktifkan otomatis."
+          : null,
+      };
+      await TindakLanjutStatusDosen.create({
+        dosen_id: dosen.id,
+        riwayat_status_dosen_id: history.id,
+        status: "open",
+        impact_snapshot: followUpImpact,
+      }, { transaction });
+    }
+
+    await transaction.commit();
+    return res.json({
+      success: true,
+      message: `Status ${dosen.nama} berhasil diubah menjadi ${statusBaru}.`,
+      data: { ...dosen.toJSON(), impact, topik_dinonaktifkan: topicsDisabled, tindak_lanjut_dibuat: needsFollowUp },
+    });
+  } catch (error) {
+    await transaction.rollback();
+    console.error("Error di updateDosenStatus:", error);
+    return res.status(500).json({ success: false, message: "Gagal memperbarui status dosen.", error: error.message });
   }
 };
 
@@ -590,6 +799,11 @@ exports.exportDosensExcel = async (req, res) => {
       "Kuota Bimbingan": row.kuota_bimbingan ?? 0,
       "Jumlah Bimbingan": row.jumlah_bimbingan ?? 0,
       "Sisa Kuota": row.sisa_kuota ?? 0,
+      "Status Dosen": row.status_keaktifan || "active",
+      "Status Akun": row.account_is_active === false ? "nonaktif" : "aktif",
+      "Melanjutkan Mahasiswa Lama": row.continue_existing_supervision === false ? "tidak" : "ya",
+      "Tanggal Efektif Status": row.status_effective_at || "",
+      "Alasan Status": row.status_reason || "",
       "Terakhir Diubah": formatDateTimeForExport(row.updatedAt),
     }));
 
@@ -608,6 +822,11 @@ exports.exportDosensExcel = async (req, res) => {
       { wch: 16 },
       { wch: 18 },
       { wch: 12 },
+      { wch: 22 },
+      { wch: 16 },
+      { wch: 28 },
+      { wch: 22 },
+      { wch: 42 },
       { wch: 20 },
     ];
 

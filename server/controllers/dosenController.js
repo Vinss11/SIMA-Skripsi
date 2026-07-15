@@ -20,6 +20,7 @@ const {
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
+const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -2604,6 +2605,8 @@ exports.getIzinLanjutSubmissions = async (req, res) => {
       });
     }
 
+    const permission = await getExistingSupervisionPermission(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const status = String(req.query?.status || "").trim().toLowerCase();
     const where = { dosen_pembimbing_skripsi_id: dosen_id };
     if (status && ["pending", "approved", "rejected"].includes(status)) {
@@ -2664,6 +2667,8 @@ exports.getIzinLanjutDetail = async (req, res) => {
       });
     }
 
+    const permission = await getExistingSupervisionPermission(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const id = Number(req.params.id);
     if (!id) {
       return res.status(400).json({
@@ -2737,6 +2742,11 @@ exports.approveIzinLanjut = async (req, res) => {
       });
     }
 
+    const permission = await getExistingSupervisionPermission(dosen_id, t);
+    if (!permission.allowed) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
+    }
     const id = Number(req.params.id);
     if (!id) {
       await t.rollback();
@@ -2856,6 +2866,11 @@ exports.rejectIzinLanjut = async (req, res) => {
       });
     }
 
+    const permission = await getExistingSupervisionPermission(dosen_id, t);
+    if (!permission.allowed) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
+    }
     const id = Number(req.params.id);
     if (!id) {
       await t.rollback();
@@ -2981,6 +2996,8 @@ exports.getPamitMahasiswa = async (req, res) => {
         message: "Akun ini tidak terhubung ke data dosen.",
       });
     }
+    const permission = await getExistingSupervisionPermission(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const { status } = req.query;
 
     // Cari mahasiswa yang dosen pembimbing skripsinya adalah dosen ini
@@ -3062,6 +3079,8 @@ exports.getPamitMahasiswaDetail = async (req, res) => {
       });
     }
 
+    const permission = await getExistingSupervisionPermission(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const pamit = await PamitUlang.findByPk(id, {
       include: [
         {
@@ -3127,6 +3146,11 @@ exports.approvePamitMahasiswa = async (req, res) => {
         success: false,
         message: "Akun ini tidak terhubung ke data dosen.",
       });
+    }
+    const permission = await getExistingSupervisionPermission(dosen_id, t);
+    if (!permission.allowed) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
     }
     const { keterangan_dospem } = req.body || {};
 
@@ -3285,6 +3309,11 @@ exports.rejectPamitMahasiswa = async (req, res) => {
         success: false,
         message: "Akun ini tidak terhubung ke data dosen.",
       });
+    }
+    const permission = await getExistingSupervisionPermission(dosen_id, t);
+    if (!permission.allowed) {
+      await t.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
     }
     const { keterangan_dospem } = req.body || {};
 
@@ -4011,6 +4040,8 @@ exports.getMonitoringMahasiswa = async (req, res) => {
         message: "Akun ini tidak terhubung ke data dosen.",
       });
     }
+    const permission = await getExistingSupervisionPermission(dosenId);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const mahasiswas = await Mahasiswa.findAll({
       where: { dosen_pembimbing_skripsi_id: dosenId },

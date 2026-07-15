@@ -151,6 +151,9 @@ exports.login = async (req, res) => {
         "password",
         "is_default_password",
         "jabatan_struktural",
+        "status_keaktifan",
+        "account_is_active",
+        "continue_existing_supervision",
       ]);
       const dosenWhere = [
         { kode_dosen: normalizedUsername.toUpperCase() },
@@ -201,6 +204,13 @@ exports.login = async (req, res) => {
         success: false,
         message:
           "Akses sekretaris prodi ditolak. Akun ini tidak termasuk 2 akun sekretaris yang diizinkan.",
+      });
+    }
+
+    if (role === "dosen" && user.account_is_active === false) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun dosen dinonaktifkan. Hubungi Admin Prodi untuk informasi lebih lanjut.",
       });
     }
 

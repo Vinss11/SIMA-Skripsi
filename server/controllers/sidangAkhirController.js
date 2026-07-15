@@ -14,7 +14,9 @@ const {
   PendaftaranSidang,
   KetersediaanPengujiSidang,
   JadwalSidangPenguji,
+  DosenKetersediaanPeriode,
 } = require("../models");
+const { canContinueExistingSupervision } = require("../services/dosenStatusService");
 
 const TARGET_MINIMUM_BIMBINGAN = 8;
 const DOKUMEN_APPROVAL_FIELDS = [
@@ -1549,7 +1551,46 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       where: { periode_sidang_id: periode.id },
       transaction,
     });
-    if (availabilityRows.length === 0) {
+    const academicPeriode = await PeriodePenjaluran.findOne({
+      where: { tahun_akademik: periode.tahun_akademik, semester: periode.semester },
+      order: [["updatedAt", "DESC"]],
+      transaction,
+    });
+    const eligibleDosens = await Dosen.findAll({
+      where: { status_keaktifan: "active" },
+      attributes: ["id"],
+      transaction,
+    });
+    const eligibleIds = new Set(eligibleDosens.map((item) => Number(item.id)));
+    const supervisorIds = [...new Set(pendingRegistrations.map((item) => Number(
+      item.dosen_pembimbing_id || item.mahasiswa?.dosen_pembimbing_skripsi_id || 0
+    )).filter(Boolean))];
+    const supervisorRows = supervisorIds.length > 0
+      ? await Dosen.findAll({
+          where: { id: { [Op.in]: supervisorIds } },
+          attributes: ["id", "nama", "status_keaktifan", "continue_existing_supervision"],
+          transaction,
+        })
+      : [];
+    const supervisorCanAttend = new Map(
+      supervisorRows.map((item) => [Number(item.id), canContinueExistingSupervision(item)])
+    );
+    if (academicPeriode) {
+      const periodRestrictions = await DosenKetersediaanPeriode.findAll({
+        where: { periode_penjaluran_id: academicPeriode.id, tersedia_menguji: false },
+        attributes: ["dosen_id"],
+        transaction,
+      });
+      periodRestrictions.forEach((item) => eligibleIds.delete(Number(item.dosen_id)));
+      const accompanimentRestrictions = await DosenKetersediaanPeriode.findAll({
+        where: { periode_penjaluran_id: academicPeriode.id, tersedia_sidang: false },
+        attributes: ["dosen_id"],
+        transaction,
+      });
+      accompanimentRestrictions.forEach((item) => supervisorCanAttend.set(Number(item.dosen_id), false));
+    }
+    const filteredAvailabilityRows = availabilityRows.filter((item) => eligibleIds.has(Number(item.dosen_id)));
+    if (filteredAvailabilityRows.length === 0) {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
@@ -1557,7 +1598,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       });
     }
 
-    const availabilityBySlot = mapAvailabilityRows(availabilityRows);
+    const availabilityBySlot = mapAvailabilityRows(filteredAvailabilityRows);
     const assignedRows = await JadwalSidangPenguji.findAll({
       where: {
         periode_sidang_id: periode.id,
@@ -1590,6 +1631,14 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       const pembimbingId = Number(
         reg.dosen_pembimbing_id || reg.mahasiswa?.dosen_pembimbing_skripsi_id || 0
       );
+      if (pembimbingId && supervisorCanAttend.get(pembimbingId) === false) {
+        unassigned.push({
+          pendaftaran_sidang_id: reg.id,
+          mahasiswa_id: reg.mahasiswa_id,
+          reason: "Dosen pembimbing tidak tersedia mendampingi sidang pada periode ini.",
+        });
+        continue;
+      }
       let foundSchedule = null;
 
       for (const slot of slots) {

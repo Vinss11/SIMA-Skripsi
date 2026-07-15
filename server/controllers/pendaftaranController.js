@@ -1,4 +1,5 @@
 const { Op } = require("sequelize");
+const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment } = require("../services/dosenStatusService");
 const {
   Mahasiswa,
   Dosen,
@@ -9,6 +10,7 @@ const {
   PeriodePenjaluran,
   KelompokPerintisanBisnis,
   AnggotaKelompokPerintisan,
+  DosenKetersediaanPeriode,
   sequelize,
 } = require("../models");
 const {
@@ -300,7 +302,13 @@ exports.getPeriodeAktif = async (req, res) => {
 // GET /api/pendaftaran/dosen
 exports.getDosenDropdown = async (req, res) => {
   try {
+    const activePeriode = await PeriodePenjaluran.findOne({
+      where: { status: "active", is_active: true },
+      attributes: ["id"],
+      order: [["updatedAt", "DESC"]],
+    });
     const dosens = await Dosen.findAll({
+      where: ACTIVE_DOSEN_WHERE,
       attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
       include: [
         {
@@ -313,11 +321,22 @@ exports.getDosenDropdown = async (req, res) => {
       ],
       order: [["nama", "ASC"]],
     });
+    const availabilityRows = activePeriode
+      ? await DosenKetersediaanPeriode.findAll({
+          where: { periode_penjaluran_id: activePeriode.id },
+          attributes: ["dosen_id", "tersedia_membimbing", "kuota_bimbingan_periode", "alasan_tidak_tersedia"],
+        })
+      : [];
+    const availabilityByDosen = new Map(availabilityRows.map((item) => [Number(item.dosen_id), item]));
 
     const pembagianBimbingan = await Mahasiswa.findAll({
       attributes: ["dosen_pembimbing_skripsi_id", [sequelize.fn("COUNT", sequelize.col("id")), "jumlah_bimbingan"]],
       where: {
         dosen_pembimbing_skripsi_id: { [Op.ne]: null },
+        [Op.or]: [
+          { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
+          { status_jalur_saat_ini: null },
+        ],
       },
       group: ["dosen_pembimbing_skripsi_id"],
       raw: true,
@@ -328,8 +347,10 @@ exports.getDosenDropdown = async (req, res) => {
     );
 
     const mappedDosens = dosens
+      .filter((dosen) => availabilityByDosen.get(dosen.id)?.tersedia_membimbing !== false)
       .map((dosen) => {
-        const kuotaBimbingan = Number(dosen.kuota_bimbingan || 0);
+        const availability = availabilityByDosen.get(dosen.id);
+        const kuotaBimbingan = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);
         const jumlahBimbingan = jumlahByDosenId.get(dosen.id) || 0;
         const sisaKuota = Math.max(kuotaBimbingan - jumlahBimbingan, 0);
 
@@ -344,7 +365,9 @@ exports.getDosenDropdown = async (req, res) => {
           jumlah_bimbingan: jumlahBimbingan,
           sisa_kuota: sisaKuota,
           is_no_bimbingan: jumlahBimbingan === 0,
-          is_kuota_penuh: kuotaBimbingan > 0 ? sisaKuota <= 0 : false,
+          is_kuota_penuh: sisaKuota <= 0,
+          periode_penjaluran_id: activePeriode?.id || null,
+          alasan_tidak_tersedia: availability?.alasan_tidak_tersedia || null,
           klasters: Array.isArray(dosen.klasters)
             ? dosen.klasters.map((item) => ({
                 id: item.id,
@@ -967,6 +990,19 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         success: false,
         message: "Dosen Pembimbing Akademik tidak ditemukan.",
       });
+    }
+
+    for (const [label, targetDosen] of [
+      ["Dosen Pembimbing Akademik", dosenPembimbingAkademik],
+      ["Dosen Pembimbing TA", dosenPembimbingTA],
+      ["Dosen Pembimbing TA baru", dosenTABaru],
+    ]) {
+      if (!targetDosen) continue;
+      const eligibility = assertDosenCanReceiveNewAssignment(targetDosen, "penugasan baru");
+      if (!eligibility.allowed) {
+        await t.rollback();
+        return res.status(409).json({ success: false, message: `${label}: ${eligibility.message}` });
+      }
     }
 
     if (pendaftaran === "baru" && dosenPembimbingTAId && !dosenPembimbingTA) {

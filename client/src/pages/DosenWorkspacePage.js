@@ -63,7 +63,14 @@ const PENDAFTARAN_FILTER_INITIAL = {
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
+  { key: "ketersediaan-periode", label: "Ketersediaan per Periode" },
 ];
+const DOSEN_MASTER_STATUS_LABELS = {
+  active: "Aktif",
+  inactive: "Nonaktif Sementara",
+  study_leave: "Tugas Belajar",
+  retired: "Pensiun",
+};
 const MITRA_MAGANG_FORM_INITIAL = {
   nama: "",
   bidang_jenis: "",
@@ -1725,6 +1732,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [masterDosenKuotaValue, setMasterDosenKuotaValue] = useState("5");
   const [masterDosenSelectedDosenIds, setMasterDosenSelectedDosenIds] = useState([]);
   const [savingMasterDosenKuota, setSavingMasterDosenKuota] = useState(false);
+  const [dosenPeriodAvailability, setDosenPeriodAvailability] = useState({ periodes: [], periode: null, dosens: [] });
+  const [dosenStatusFollowUps, setDosenStatusFollowUps] = useState([]);
+  const [savingAvailabilityDosenId, setSavingAvailabilityDosenId] = useState(null);
 
   const [topikForm, setTopikForm] = useState({
     kode: "",
@@ -2370,6 +2380,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       promises.push(fetchWithAuth("/api/sekretaris/master-dosen/kuota-overview"));
       promises.push(fetchWithAuth("/api/topics"));
       promises.push(fetchWithAuth(`/api/sekretaris/mitra-magang?status=${mitraMagangStatusFilter}`));
+      promises.push(fetchWithAuth("/api/sekretaris/master-dosen/ketersediaan"));
+      promises.push(fetchWithAuth("/api/sekretaris/master-dosen/tindak-lanjut-status"));
     }
 
     const results = await Promise.allSettled(promises);
@@ -2392,6 +2404,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       masterDosenKuotaResult,
       masterTopikResult,
       mitraMagangResult,
+      dosenAvailabilityResult,
+      dosenFollowUpResult,
     ] = results;
 
     if (submissionsResult?.status === "fulfilled") {
@@ -2557,6 +2571,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       } else {
         setMitraMagangRows([]);
         issues.push(mitraMagangResult?.reason?.message || "Gagal memuat data mitra magang.");
+      }
+      if (dosenAvailabilityResult?.status === "fulfilled") {
+        const payload = dosenAvailabilityResult.value || {};
+        setDosenPeriodAvailability({
+          periodes: Array.isArray(payload.periodes) ? payload.periodes : [],
+          periode: payload.periode || null,
+          dosens: Array.isArray(payload.dosens) ? payload.dosens : [],
+        });
+      } else {
+        setDosenPeriodAvailability({ periodes: [], periode: null, dosens: [] });
+        issues.push(dosenAvailabilityResult?.reason?.message || "Gagal memuat ketersediaan dosen per periode.");
+      }
+      if (dosenFollowUpResult?.status === "fulfilled") {
+        setDosenStatusFollowUps(Array.isArray(dosenFollowUpResult.value) ? dosenFollowUpResult.value : []);
+      } else {
+        setDosenStatusFollowUps([]);
       }
       setKetuaKlasterOverview({
         active_periode: null,
@@ -5765,6 +5795,112 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
       return [...set];
     });
+  };
+
+  const loadDosenPeriodAvailability = async (periodeId) => {
+    try {
+      const suffix = periodeId ? `?periode_penjaluran_id=${encodeURIComponent(periodeId)}` : "";
+      const payload = await fetchWithAuth(`/api/sekretaris/master-dosen/ketersediaan${suffix}`);
+      setDosenPeriodAvailability({
+        periodes: Array.isArray(payload?.periodes) ? payload.periodes : [],
+        periode: payload?.periode || null,
+        dosens: Array.isArray(payload?.dosens) ? payload.dosens : [],
+      });
+    } catch (availabilityError) {
+      showErrorToast(availabilityError.message || "Gagal memuat ketersediaan dosen.");
+    }
+  };
+
+  const updateDosenAvailabilityDraft = (dosenId, field, value) => {
+    setDosenPeriodAvailability((prev) => ({
+      ...prev,
+      dosens: prev.dosens.map((row) => Number(row.id) === Number(dosenId) ? { ...row, [field]: value } : row),
+    }));
+  };
+
+  const handleSaveDosenAvailability = async (row) => {
+    const periodeId = Number(dosenPeriodAvailability.periode?.id);
+    if (!periodeId || !row?.id) return;
+    setSavingAvailabilityDosenId(row.id);
+    try {
+      await fetchWithAuth("/api/sekretaris/master-dosen/ketersediaan", {
+        method: "PUT",
+        body: JSON.stringify({
+          periode_penjaluran_id: periodeId,
+          rows: [{
+            dosen_id: row.id,
+            tersedia_membimbing: row.tersedia_membimbing,
+            tersedia_menguji: row.tersedia_menguji,
+            tersedia_ketua_cluster: row.tersedia_ketua_cluster,
+            tersedia_pengampu: row.tersedia_pengampu,
+            tersedia_pengawas_jalur: row.tersedia_pengawas_jalur,
+            tersedia_sidang: row.tersedia_sidang,
+            kuota_bimbingan_periode: Number(row.kuota_bimbingan_periode),
+            alasan_tidak_tersedia: row.alasan_tidak_tersedia,
+          }],
+        }),
+      });
+      await loadDosenPeriodAvailability(periodeId);
+      showSuccessToast(`Ketersediaan ${row.nama} berhasil disimpan.`);
+    } catch (availabilityError) {
+      showErrorToast(availabilityError.message || "Gagal menyimpan ketersediaan dosen.");
+    } finally {
+      setSavingAvailabilityDosenId(null);
+    }
+  };
+
+  const handleResolveDosenStatusFollowUp = async (row) => {
+    const impact = row?.impact_snapshot || {};
+    const categories = [
+      Number(impact.mahasiswa_bimbingan_aktif || 0) > 0 ? ["mahasiswa_bimbingan", "Keputusan mahasiswa bimbingan aktif"] : null,
+      Number(impact.review_pending || 0) > 0 ? ["review_pending", "Keputusan review yang masih tertunda"] : null,
+      Number(impact.tugas_ketua_cluster_aktif || 0) + Number(impact.tugas_periode_aktif || 0) + Number(impact.tugas_master_penanggung_jawab || 0) > 0
+        ? ["penugasan_periode", "Keputusan penugasan periode/master"] : null,
+      Number(impact.jadwal_sidang_mendatang || 0) > 0 ? ["jadwal_sidang", "Keputusan jadwal sidang"] : null,
+      impact.reactivation_required ? ["reaktivasi", "Checklist reaktivasi topik, kapasitas, ketersediaan, dan peran"] : null,
+    ].filter(Boolean);
+    const decisionFields = categories.map(([key, label]) => `
+      <label style="display:block;text-align:left;font-size:12px;font-weight:700;margin-top:10px">${label}</label>
+      <textarea id="follow-up-${key}" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Tuliskan keputusan konkret (minimal 10 karakter)"></textarea>
+    `).join("");
+    const result = await Swal.fire({
+      title: `Selesaikan tindak lanjut ${row?.dosen?.nama || "dosen"}`,
+      html: `
+        <label style="display:block;text-align:left;font-size:12px;font-weight:700">Catatan penyelesaian</label>
+        <textarea id="follow-up-note" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Ringkasan keputusan Sekprodi"></textarea>
+        ${decisionFields}
+        ${categories.length > 0 ? '<label style="display:flex;gap:8px;text-align:left;margin-top:12px;font-size:12px"><input id="follow-up-exception" type="checkbox" /> Dampak yang masih tercatat telah memiliki keputusan dan ditutup dengan pengecualian.</label>' : ""}
+      `,
+      showCancelButton: true,
+      confirmButtonText: "Tandai selesai",
+      cancelButtonText: "Batal",
+      preConfirm: () => {
+        const popup = Swal.getPopup();
+        const note = String(popup?.querySelector("#follow-up-note")?.value || "").trim();
+        const decisions = Object.fromEntries(categories.map(([key]) => [key, String(popup?.querySelector(`#follow-up-${key}`)?.value || "").trim()]));
+        const missing = categories.filter(([key]) => decisions[key].length < 10);
+        const exception = Boolean(popup?.querySelector("#follow-up-exception")?.checked);
+        if (note.length < 5) return Swal.showValidationMessage("Catatan penyelesaian minimal 5 karakter.");
+        if (missing.length > 0) return Swal.showValidationMessage("Setiap kategori dampak wajib memiliki keputusan minimal 10 karakter.");
+        if (categories.length > 0 && !exception) return Swal.showValidationMessage("Konfirmasi penyelesaian dengan pengecualian wajib dicentang.");
+        return { note, decisions, exception };
+      },
+    });
+    if (!result.isConfirmed) return;
+    try {
+      await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${row.id}/resolve`, {
+        method: "PUT",
+        body: JSON.stringify({
+          catatan_penyelesaian: result.value.note,
+          resolution_decisions: result.value.decisions,
+          resolve_with_exception: result.value.exception,
+        }),
+      });
+      setDosenStatusFollowUps((prev) => prev.filter((item) => item.id !== row.id));
+      showSuccessToast("Tindak lanjut status dosen ditandai selesai.");
+    } catch (followUpError) {
+      showErrorToast(followUpError.message || "Gagal menyelesaikan tindak lanjut.");
+    }
   };
 
   const handleSaveMasterDosenKuota = async () => {
@@ -10497,6 +10633,91 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
                     </div>
                   </>
+                ) : null}
+
+                {masterDosenTab === "ketersediaan-periode" ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-end justify-between gap-3">
+                        <div>
+                          <h3 className="text-lg font-black text-[#1b274b]">Ketersediaan Dosen per Periode</h3>
+                          <p className="text-sm text-[#5d6c91]">Status master tetap ditetapkan Admin. Pengaturan ini hanya berlaku pada periode yang dipilih.</p>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs font-bold text-[#526184]">Periode penjaluran</label>
+                          <select
+                            value={dosenPeriodAvailability.periode?.id || ""}
+                            onChange={(event) => loadDosenPeriodAvailability(event.target.value)}
+                            className="min-w-[260px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                          >
+                            {dosenPeriodAvailability.periodes.map((periode) => (
+                              <option key={periode.id} value={periode.id}>{periode.label_periode} · {formatLabel(periode.status)}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                        <table className="w-full min-w-[1800px] text-left text-sm">
+                          <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                            <th className="bg-[#f8fbff] px-3 py-2">Dosen</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Status Master</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Membimbing</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Menguji</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Ketua Cluster</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengampu</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengawas</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Mendampingi Sidang</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Kuota Periode</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Alasan</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Aksi</th>
+                          </tr></thead>
+                          <tbody>
+                            {dosenPeriodAvailability.dosens.map((row) => {
+                              const isActive = row.status_keaktifan === "active";
+                              const availabilityFields = [
+                                "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
+                                "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
+                              ];
+                              return (
+                                <tr key={`availability-${row.id}`} className="border-b border-[#eff3fb]">
+                                  <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{row.nama}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td>
+                                  <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${isActive ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan}</span></td>
+                                  {availabilityFields.map((field) => (
+                                    <td key={`${row.id}-${field}`} className="px-3 py-2 text-center">
+                                      <input type="checkbox" checked={Boolean(row[field])} disabled={!isActive} onChange={(event) => updateDosenAvailabilityDraft(row.id, field, event.target.checked)} className="h-4 w-4 accent-[#2f63e3]" />
+                                    </td>
+                                  ))}
+                                  <td className="px-3 py-2"><input type="number" min="0" max="99" value={row.kuota_bimbingan_periode} disabled={!isActive} onChange={(event) => updateDosenAvailabilityDraft(row.id, "kuota_bimbingan_periode", event.target.value)} className="w-24 rounded-lg border border-[#d3dbef] px-2 py-1.5" /></td>
+                                  <td className="px-3 py-2"><input type="text" value={row.alasan_tidak_tersedia || ""} onChange={(event) => updateDosenAvailabilityDraft(row.id, "alasan_tidak_tersedia", event.target.value)} placeholder={isActive ? "Wajib jika ada yang tidak tersedia" : "Status master oleh Admin"} className="w-72 rounded-lg border border-[#d3dbef] px-2 py-1.5" /></td>
+                                  <td className="px-3 py-2"><button type="button" disabled={savingAvailabilityDosenId === row.id} onClick={() => handleSaveDosenAvailability(row)} className="rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : "Simpan"}</button></td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        {dosenPeriodAvailability.dosens.length === 0 ? <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">Belum ada periode atau data dosen.</p> : null}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#f0d3a5] bg-[#fffaf1] p-4 shadow-sm">
+                      <h3 className="text-lg font-black text-[#68400f]">Tindak Lanjut Perubahan Status</h3>
+                      <p className="text-sm text-[#805c2d]">Keputusan penggantian pembimbing dan penyesuaian tugas dilakukan manual oleh Sekprodi.</p>
+                      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                        {dosenStatusFollowUps.map((row) => {
+                          const impact = row.impact_snapshot || {};
+                          return <div key={row.id} className="rounded-lg border border-[#efd8b5] bg-white p-3 text-sm">
+                            <div className="flex items-start justify-between gap-3"><div><p className="font-black text-[#29385f]">{row.dosen?.nama || "Dosen"}</p><p className="text-xs text-[#6d7896]">Status: {DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan] || row.dosen?.status_keaktifan}</p></div><button type="button" onClick={() => handleResolveDosenStatusFollowUp(row)} className="rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white">Selesaikan</button></div>
+                            <p className="mt-2 text-[#596887]">{Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa aktif · {Number(impact.review_pending || 0)} review · {Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang</p>
+                            {impact.reactivation_required ? <p className="mt-2 rounded-md bg-[#eef3ff] px-2 py-1 text-xs font-semibold text-[#34549b]">Reaktivasi: periksa topik lama, ketersediaan periode, kapasitas, dan penetapan kembali peran.</p> : null}
+                          </div>;
+                        })}
+                        {dosenStatusFollowUps.length === 0 ? <p className="text-sm font-semibold text-[#6f7c9c]">Tidak ada tindak lanjut terbuka.</p> : null}
+                      </div>
+                    </div>
+                  </div>
                 ) : null}
               </div>
             ) : null}

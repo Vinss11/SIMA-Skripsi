@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { Op } = require("sequelize");
 const { DokumenSidang, Mahasiswa, Dosen, BimbinganSkripsi, sequelize } = require("../models");
+const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
 
 const TARGET_SESI_MINIMAL = 8;
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
@@ -419,6 +420,8 @@ exports.getDosenDokumenSidangList = async (req, res) => {
         message: "Akses ditolak. Hanya dosen yang diizinkan.",
       });
     }
+    const permission = await getExistingSupervisionPermission(dosenId);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const mahasiswaRows = await Mahasiswa.findAll({
       where: { dosen_pembimbing_skripsi_id: dosenId },
@@ -487,6 +490,8 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
         message: "Akses ditolak. Hanya dosen yang diizinkan.",
       });
     }
+    const permission = await getExistingSupervisionPermission(dosenId);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const mahasiswaId = Number(req.params.mahasiswaId);
     if (!mahasiswaId) {
@@ -568,6 +573,11 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
         success: false,
         message: "Akses ditolak. Hanya dosen yang diizinkan.",
       });
+    }
+    const permission = await getExistingSupervisionPermission(dosenId, transaction);
+    if (!permission.allowed) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
     }
 
     const mahasiswaId = Number(req.params.mahasiswaId);
@@ -695,6 +705,8 @@ exports.downloadDosenDokumenSidang = async (req, res) => {
         message: "Akses ditolak. Hanya dosen yang diizinkan.",
       });
     }
+    const permission = await getExistingSupervisionPermission(dosenId);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const mahasiswaId = Number(req.params.mahasiswaId);
     const dokumenKey = resolveDokumenKey(req.params.jenis);

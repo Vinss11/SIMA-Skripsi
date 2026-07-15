@@ -19,6 +19,11 @@ module.exports = (sequelize, DataTypes) => {
         as: "ketuaKlasters",
       });
 
+      PeriodePenjaluran.hasMany(models.DosenKetersediaanPeriode, {
+        foreignKey: "periode_penjaluran_id",
+        as: "ketersediaanDosens",
+      });
+
       PeriodePenjaluran.belongsTo(models.Dosen, {
         foreignKey: "ketua_penelitian_dosen_id",
         as: "ketuaPenelitianDosen",

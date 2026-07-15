@@ -9,6 +9,11 @@ const {
   PeriodePenjaluran,
   sequelize,
 } = require("../models");
+const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
+
+async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
+  return getExistingSupervisionPermission(dosenId, transaction);
+}
 
 const TARGET_SESI_MINIMAL = 8;
 const NON_PENELITIAN_JALUR_SET = new Set(["magang", "pengabdian", "perintisan_bisnis"]);
@@ -597,6 +602,8 @@ exports.getDosenBimbingan = async (req, res) => {
         message: "Akses dosen tidak valid",
       });
     }
+    const permission = await ensureExistingSupervisionAccess(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const view = String(req.query?.view || "").trim().toLowerCase();
     const where = { dosen_id };
@@ -655,6 +662,8 @@ exports.getDosenBimbinganDetail = async (req, res) => {
         message: "Akses dosen tidak valid",
       });
     }
+    const permission = await ensureExistingSupervisionAccess(dosen_id);
+    if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const row = await BimbinganSkripsi.findOne({
       where: { id: req.params.id, dosen_id },
@@ -703,6 +712,11 @@ exports.approveDosenBimbingan = async (req, res) => {
         success: false,
         message: "Akses dosen tidak valid",
       });
+    }
+    const permission = await ensureExistingSupervisionAccess(dosen_id, transaction);
+    if (!permission.allowed) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
     }
 
     const catatan = String(req.body?.catatan_dosen || "").trim();
@@ -826,6 +840,11 @@ exports.rejectDosenBimbingan = async (req, res) => {
         message: "Akses dosen tidak valid",
       });
     }
+    const permission = await ensureExistingSupervisionAccess(dosen_id, transaction);
+    if (!permission.allowed) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
+    }
 
     const catatan = String(req.body?.catatan_dosen || "").trim();
     if (!catatan || catatan.length < 5) {
@@ -899,6 +918,11 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
         success: false,
         message: "Akses dosen tidak valid",
       });
+    }
+    const permission = await ensureExistingSupervisionAccess(dosen_id, transaction);
+    if (!permission.allowed) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: permission.message });
     }
 
     const action = String(req.body?.action || "").trim().toLowerCase();
