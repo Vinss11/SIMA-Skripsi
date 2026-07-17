@@ -13,6 +13,7 @@ const {
   IzinLanjutSkripsi,
   DokumenSidang,
   MasterPenanggungJawabPenjaluran,
+  PendaftaranPenjaluran,
 } = require("../models");
 
 const DOSEN_STATUSES = ["active", "inactive", "study_leave", "retired"];
@@ -113,6 +114,63 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   }
 
   return { allowed: true, dosen, availability, capacity };
+}
+
+function getRegistrationSelectedTrack(registration) {
+  const raw = registration?.jalur === "alih"
+    ? registration?.penjaluran_baru
+    : registration?.jenis_jalur_diambil || registration?.penjaluran_baru || registration?.penjaluran_sebelumnya;
+  return String(raw || "").trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+async function resolveResearchSubmissionRegistration(submission, transaction = null) {
+  if (submission?.pendaftaran_penjaluran_id) {
+    const linkedPendaftaran = await PendaftaranPenjaluran.findByPk(
+      submission.pendaftaran_penjaluran_id,
+      {
+        attributes: [
+          "id", "periode_penjaluran_id", "jalur", "jenis_jalur_diambil",
+          "penjaluran_baru", "penjaluran_sebelumnya", "createdAt",
+        ],
+        transaction,
+      }
+    );
+    if (linkedPendaftaran?.periode_penjaluran_id) return linkedPendaftaran;
+  }
+
+  if (!submission?.mahasiswa_id || !submission?.createdAt) return null;
+  const historicalRows = await PendaftaranPenjaluran.findAll({
+    where: {
+      mahasiswa_id: submission.mahasiswa_id,
+      createdAt: { [Op.lte]: submission.createdAt },
+      status: { [Op.in]: ["approved", "processed", "submitted"] },
+    },
+    attributes: [
+      "id", "periode_penjaluran_id", "jalur", "jenis_jalur_diambil",
+      "penjaluran_baru", "penjaluran_sebelumnya", "createdAt",
+    ],
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+  return historicalRows.find((row) => getRegistrationSelectedTrack(row) === "penelitian") || null;
+}
+
+async function resolveResearchSubmissionPeriodId(submission, transaction = null) {
+  const registration = await resolveResearchSubmissionRegistration(submission, transaction);
+  return registration?.periode_penjaluran_id || null;
+}
+
+async function validateResearchSubmissionReviewer(submission, dosenId, role, transaction = null) {
+  const periodeId = await resolveResearchSubmissionPeriodId(submission, transaction);
+  const validation = await validateDosenForNewAssignment(dosenId, periodeId, {
+    transaction,
+    availabilityField: role === "ketua_cluster" ? "tersedia_ketua_cluster" : "tersedia_membimbing",
+    activityLabel: role === "ketua_cluster"
+      ? "memproses pengajuan sebagai Ketua Cluster"
+      : "memproses pengajuan sebagai calon pembimbing",
+    checkQuota: false,
+  });
+  return { ...validation, periode_id: periodeId, legacy_period_unresolved: !periodeId };
 }
 
 async function getAvailability(dosenId, periodeId, transaction = null) {
@@ -282,6 +340,9 @@ module.exports = {
   assertDosenCanContinueExistingSupervision,
   getExistingSupervisionPermission,
   validateDosenForNewAssignment,
+  resolveResearchSubmissionRegistration,
+  resolveResearchSubmissionPeriodId,
+  validateResearchSubmissionReviewer,
   getAvailability,
   analyzeDosenStatusImpact,
 };

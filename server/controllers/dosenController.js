@@ -20,7 +20,11 @@ const {
   sequelize,
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
-const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
+const {
+  getExistingSupervisionPermission,
+  validateResearchSubmissionReviewer,
+  resolveResearchSubmissionRegistration,
+} = require("../services/dosenStatusService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -142,15 +146,16 @@ async function isSubmissionPenelitianTrack(submission, transaction) {
     return submission?.tipe_pengajuan === "topik_dosen" || submission?.tipe_pengajuan === "judul_mandiri";
   }
 
-  const latestPendaftaran = await PendaftaranPenjaluran.findOne({
-    where: {
-      mahasiswa_id: submission.mahasiswa_id,
-      status: { [Op.in]: ["approved", "processed", "submitted"] },
-    },
-    attributes: ["jalur", "jenis_jalur_diambil", "penjaluran_baru", "penjaluran_sebelumnya"],
-    order: [["createdAt", "DESC"]],
-    transaction,
-  });
+  const pendaftaranAttributes = ["jalur", "jenis_jalur_diambil", "penjaluran_baru", "penjaluran_sebelumnya"];
+  let latestPendaftaran = submission.pendaftaran_penjaluran_id
+    ? await PendaftaranPenjaluran.findByPk(submission.pendaftaran_penjaluran_id, {
+        attributes: pendaftaranAttributes,
+        transaction,
+      })
+    : null;
+  if (!latestPendaftaran) {
+    latestPendaftaran = await resolveResearchSubmissionRegistration(submission, transaction);
+  }
 
   if (!latestPendaftaran) {
     return submission.tipe_pengajuan === "topik_dosen" || submission.tipe_pengajuan === "judul_mandiri";
@@ -168,6 +173,10 @@ async function isSubmissionPenelitianTrack(submission, transaction) {
   }
 
   return jenis === "penelitian";
+}
+
+async function validatePenelitianReviewer({ submission, dosenId, role, transaction }) {
+  return validateResearchSubmissionReviewer(submission, dosenId, role, transaction);
 }
 
 function getClusterApprovalStage(submission) {
@@ -890,6 +899,23 @@ async function autoFinalizeSameReviewerKetuaClusterSubmissions(submissions = [])
         continue;
       }
 
+      const supervisorValidation = await validatePenelitianReviewer({
+        submission: lockedSubmission,
+        dosenId: lockedSupervisorId,
+        role: "calon_pembimbing",
+        transaction: t,
+      });
+      const ketuaValidation = await validatePenelitianReviewer({
+        submission: lockedSubmission,
+        dosenId: lockedSupervisorId,
+        role: "ketua_cluster",
+        transaction: t,
+      });
+      if (!supervisorValidation.allowed || !ketuaValidation.allowed) {
+        await t.rollback();
+        continue;
+      }
+
       await routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
         submission: lockedSubmission,
         dosenId: lockedSupervisorId,
@@ -1259,7 +1285,7 @@ exports.getDosenSubmissions = async (req, res) => {
       ? submissions.filter((submission) => submission.status !== "menunggu_approval_sekprodi")
       : submissions;
 
-    const compactData = visibleSubmissions.map((submission) => {
+    const compactData = (await Promise.all(visibleSubmissions.map(async (submission) => {
       const approvalStage =
         submission.tipe_pengajuan === "judul_mandiri"
           ? getClusterApprovalStage(submission)
@@ -1409,13 +1435,31 @@ exports.getDosenSubmissions = async (req, res) => {
         base.deadline_terlewati = Boolean(reviewState.deadline_passed && reviewState.supervisor_status === "expired");
         base.reviewer_status = reviewState.supervisor_status;
         base.status_dosen = reviewState.supervisor_status;
+        base.review_context = approvalStage === "pending_ketua_klaster" ? "ketua_klaster" : "calon_pembimbing";
         base.reminder_count = Number(reviewState.reminder_count || 0);
         base.last_reminded_at = reviewState.last_reminded_at || null;
         base.can_review = submission.status === "pending";
       }
 
+      base.has_pending_review = base.can_review === true;
+      base.review_eligible = true;
+      base.review_block_reason = null;
+      base.legacy_period_unresolved = false;
+      if (base.has_pending_review && await isSubmissionPenelitianTrack(submission)) {
+        const reviewerValidation = await validatePenelitianReviewer({
+          submission,
+          dosenId: dosen_id,
+          role: base.review_context === "ketua_klaster" ? "ketua_cluster" : "calon_pembimbing",
+          transaction: null,
+        });
+        base.review_eligible = reviewerValidation.allowed;
+        base.review_block_reason = reviewerValidation.allowed ? null : reviewerValidation.message;
+        base.legacy_period_unresolved = reviewerValidation.legacy_period_unresolved === true;
+        base.can_review = base.has_pending_review && reviewerValidation.allowed;
+      }
+
       return base;
-    }).filter((submission) => submission.can_review === true);
+    }))).filter((submission) => submission.has_pending_review === true);
 
     res.json({
       success: true,
@@ -1467,10 +1511,25 @@ exports.approveSubmission = async (req, res) => {
       });
     }
 
+    const isPenelitianTrackAtDecision = await isSubmissionPenelitianTrack(submission, t);
+
     let isKetuaClusterReviewTurn = false;
     if (isTopikParallelSubmission(submission)) {
       await attachSubmissionRiwayat(submission, t);
       isKetuaClusterReviewTurn = isKetuaClusterReviewTurnForDosen(submission, dosen_id);
+    }
+
+    if (isPenelitianTrackAtDecision && isTopikParallelSubmission(submission)) {
+      const reviewerValidation = await validatePenelitianReviewer({
+        submission,
+        dosenId: dosen_id,
+        role: isKetuaClusterReviewTurn ? "ketua_cluster" : "calon_pembimbing",
+        transaction: t,
+      });
+      if (!reviewerValidation.allowed) {
+        await t.rollback();
+        return res.status(403).json({ success: false, message: reviewerValidation.message });
+      }
     }
 
     if (isTopikParallelSubmission(submission) && !isKetuaClusterReviewTurn) {
@@ -1658,7 +1717,7 @@ exports.approveSubmission = async (req, res) => {
 
     const isTopikDosen = submission.tipe_pengajuan === "topik_dosen";
     const isJudulMandiri = submission.tipe_pengajuan === "judul_mandiri";
-    const isPenelitianTrack = await isSubmissionPenelitianTrack(submission, t);
+    const isPenelitianTrack = isPenelitianTrackAtDecision;
     const requiresKetuaCluster = isPenelitianTrack && (isTopikDosen || isJudulMandiri);
     const approvalStage = isTopikDosen ? getTopikDosenApprovalStage(submission) : getClusterApprovalStage(submission);
     const effectiveApprovalStage = await resolveEffectiveApprovalStage({
@@ -1670,6 +1729,19 @@ exports.approveSubmission = async (req, res) => {
       approvalStage,
       transaction: t,
     });
+
+    if (isPenelitianTrack && !isTopikParallelSubmission(submission)) {
+      const reviewerValidation = await validatePenelitianReviewer({
+        submission,
+        dosenId: dosen_id,
+        role: effectiveApprovalStage === "pending_ketua_klaster" ? "ketua_cluster" : "calon_pembimbing",
+        transaction: t,
+      });
+      if (!reviewerValidation.allowed) {
+        await t.rollback();
+        return res.status(403).json({ success: false, message: reviewerValidation.message });
+      }
+    }
 
     if (requiresKetuaCluster && effectiveApprovalStage === "pending_dosen_pembimbing") {
       const approvedTopikByDosen = isTopikDosen ? getTopikByReviewerDosen(submission, dosen_id) : null;
@@ -1779,6 +1851,17 @@ exports.approveSubmission = async (req, res) => {
         isSamePositiveId(ketuaResolution.ketuaKlaster.dosen_id, calonPembimbingId)
       ) {
         const finalTopikForAutoApproval = isTopikDosen ? approvedTopikByDosen : null;
+
+        const ketuaValidation = await validatePenelitianReviewer({
+          submission,
+          dosenId: ketuaResolution.ketuaKlaster.dosen_id,
+          role: "ketua_cluster",
+          transaction: t,
+        });
+        if (!ketuaValidation.allowed) {
+          await t.rollback();
+          return res.status(403).json({ success: false, message: ketuaValidation.message });
+        }
 
         await routeSubmissionToSekprodiWithAutoKetuaClusterApproval({
           submission,
@@ -2146,10 +2229,25 @@ exports.rejectSubmission = async (req, res) => {
       });
     }
 
+    const isPenelitianTrackAtDecision = await isSubmissionPenelitianTrack(submission, t);
+
     let isKetuaClusterReviewTurn = false;
     if (isTopikParallelSubmission(submission)) {
       await attachSubmissionRiwayat(submission, t);
       isKetuaClusterReviewTurn = isKetuaClusterReviewTurnForDosen(submission, dosen_id);
+    }
+
+    if (isPenelitianTrackAtDecision && isTopikParallelSubmission(submission)) {
+      const reviewerValidation = await validatePenelitianReviewer({
+        submission,
+        dosenId: dosen_id,
+        role: isKetuaClusterReviewTurn ? "ketua_cluster" : "calon_pembimbing",
+        transaction: t,
+      });
+      if (!reviewerValidation.allowed) {
+        await t.rollback();
+        return res.status(403).json({ success: false, message: reviewerValidation.message });
+      }
     }
 
     if (isTopikParallelSubmission(submission) && !isKetuaClusterReviewTurn) {
@@ -2346,7 +2444,7 @@ exports.rejectSubmission = async (req, res) => {
 
     const isTopikDosen = submission.tipe_pengajuan === "topik_dosen";
     const isJudulMandiri = submission.tipe_pengajuan === "judul_mandiri";
-    const isPenelitianTrack = await isSubmissionPenelitianTrack(submission, t);
+    const isPenelitianTrack = isPenelitianTrackAtDecision;
     const requiresKetuaCluster = isPenelitianTrack && (isTopikDosen || isJudulMandiri);
     const approvalStage = isTopikDosen ? getTopikDosenApprovalStage(submission) : getClusterApprovalStage(submission);
     const effectiveApprovalStage = await resolveEffectiveApprovalStage({
@@ -2358,6 +2456,19 @@ exports.rejectSubmission = async (req, res) => {
       approvalStage,
       transaction: t,
     });
+
+    if (isPenelitianTrack && !isTopikParallelSubmission(submission)) {
+      const reviewerValidation = await validatePenelitianReviewer({
+        submission,
+        dosenId: dosen_id,
+        role: effectiveApprovalStage === "pending_ketua_klaster" ? "ketua_cluster" : "calon_pembimbing",
+        transaction: t,
+      });
+      if (!reviewerValidation.allowed) {
+        await t.rollback();
+        return res.status(403).json({ success: false, message: reviewerValidation.message });
+      }
+    }
 
     let nextDosen = null;
     let finalStatus = "rejected";

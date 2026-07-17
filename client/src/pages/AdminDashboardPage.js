@@ -2157,7 +2157,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           </label>
                           <label className="flex items-center gap-2 rounded-lg border border-[#d8e0f3] bg-white px-3 py-2 text-sm text-[#2d3f6f]">
                             <input type="checkbox" checked={dosenEditForm.continue_existing_supervision} disabled={dosenEditForm.status_keaktifan === "retired"} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, continue_existing_supervision: event.target.checked }))} />
-                            Boleh melanjutkan mahasiswa lama
+                            Boleh melanjutkan bimbingan mahasiswa lama
                           </label>
                           <div className="md:col-span-2">
                             <label className="mb-1 block text-sm font-semibold text-[#324c86]">Alasan Perubahan</label>

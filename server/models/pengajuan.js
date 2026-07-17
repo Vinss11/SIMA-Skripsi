@@ -247,6 +247,16 @@ module.exports = (sequelize, DataTypes) => {
       modelName: "Pengajuan",
       tableName: "Pengajuans",
       timestamps: true,
+      hooks: {
+        beforeCreate: (submission) => {
+          if (
+            ["topik_dosen", "judul_mandiri"].includes(String(submission.tipe_pengajuan || ""))
+            && !submission.pendaftaran_penjaluran_id
+          ) {
+            throw new Error("Pengajuan penelitian wajib terhubung ke pendaftaran penjaluran.");
+          }
+        },
+      },
     }
   );
 

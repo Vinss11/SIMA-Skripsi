@@ -4415,7 +4415,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
 
     if (submissionDetail?.can_review !== true) {
-      showErrorToast("Anda tidak memiliki akses keputusan untuk pengajuan ini.");
+      showErrorToast(submissionDetail?.review_block_reason || "Anda tidak memiliki akses keputusan untuk pengajuan ini.");
       return;
     }
 
@@ -5850,15 +5850,34 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   };
 
   const handleResolveDosenStatusFollowUp = async (row) => {
-    const impact = row?.impact_snapshot || {};
-    const categories = [
-      Number(impact.mahasiswa_bimbingan_aktif || 0) > 0 ? ["mahasiswa_bimbingan", "Keputusan mahasiswa bimbingan aktif"] : null,
-      Number(impact.review_pending || 0) > 0 ? ["review_pending", "Keputusan review yang masih tertunda"] : null,
-      Number(impact.tugas_ketua_cluster_aktif || 0) + Number(impact.tugas_periode_aktif || 0) + Number(impact.tugas_master_penanggung_jawab || 0) > 0
-        ? ["penugasan_periode", "Keputusan penugasan periode/master"] : null,
-      Number(impact.jadwal_sidang_mendatang || 0) > 0 ? ["jadwal_sidang", "Keputusan jadwal sidang"] : null,
-      impact.reactivation_required ? ["reaktivasi", "Checklist reaktivasi topik, kapasitas, ketersediaan, dan peran"] : null,
-    ].filter(Boolean);
+    let latestContext;
+    Swal.fire({
+      title: "Menganalisis dampak terbaru...",
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      didOpen: () => Swal.showLoading(),
+    });
+    try {
+      latestContext = await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${row.id}/current-impact`);
+      Swal.close();
+    } catch (impactError) {
+      Swal.close();
+      showErrorToast(impactError.message || "Gagal memuat dampak terbaru.");
+      return;
+    }
+
+    const impact = latestContext?.current_impact || {};
+    const categoryLabels = {
+      mahasiswa_bimbingan: "Keputusan mahasiswa bimbingan aktif",
+      review_pending: "Keputusan review yang masih tertunda",
+      penugasan_periode: "Keputusan penugasan periode/master",
+      jadwal_sidang: "Keputusan jadwal sidang",
+      reaktivasi: "Checklist reaktivasi topik, kapasitas, ketersediaan, dan peran",
+    };
+    const categories = (Array.isArray(latestContext?.required_categories) ? latestContext.required_categories : [])
+      .filter((key) => categoryLabels[key])
+      .map((key) => [key, categoryLabels[key]]);
+    const latestImpactSummary = `${Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa aktif · ${Number(impact.review_pending || 0)} review · ${Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang`;
     const decisionFields = categories.map(([key, label]) => `
       <label style="display:block;text-align:left;font-size:12px;font-weight:700;margin-top:10px">${label}</label>
       <textarea id="follow-up-${key}" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Tuliskan keputusan konkret (minimal 10 karakter)"></textarea>
@@ -5866,6 +5885,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const result = await Swal.fire({
       title: `Selesaikan tindak lanjut ${row?.dosen?.nama || "dosen"}`,
       html: `
+        <p style="text-align:left;font-size:12px;margin:0 0 10px;color:#596887"><strong>Dampak terbaru:</strong> ${latestImpactSummary}</p>
         <label style="display:block;text-align:left;font-size:12px;font-weight:700">Catatan penyelesaian</label>
         <textarea id="follow-up-note" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Ringkasan keputusan Sekprodi"></textarea>
         ${decisionFields}
@@ -6865,6 +6885,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   : ""}
                               </p>
                             ) : null}
+                            {item?.review_eligible === false ? (
+                              <p className="mt-1 text-[11px] font-semibold text-[#b36a16]">
+                                Keputusan dinonaktifkan: {item.review_block_reason || "dosen sedang tidak tersedia"}
+                              </p>
+                            ) : null}
                           </button>
                         );
                       })}
@@ -6873,7 +6898,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 </div>
               ) : null}
             </div>
-            <button
+                                       <button
               type="button"
               onClick={onOpenProfile}
               title="Edit profil"
@@ -8166,10 +8191,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                         type="button"
                                         disabled={loadingSubmissionDetail}
                                         onClick={() => handleOpenSubmissionReview(row.id)}
-                                        className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                        title={row.review_eligible === false ? row.review_block_reason || "Keputusan sedang dinonaktifkan" : "Buka review"}
+                                        className={`inline-flex items-center gap-1 rounded-md px-3 py-1.5 text-xs font-bold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${row.review_eligible === false ? "bg-[#7b88a8] hover:bg-[#6d7997]" : "bg-[#2f63e3] hover:brightness-110"}`}
                                       >
                                         <Eye className="h-3.5 w-3.5" />
-                                        Review
+                                        {row.review_eligible === false ? "Lihat" : "Review"}
                                       </button>
                                     ) : source === "magang" ? (
                                       <button
@@ -8324,6 +8350,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       </td>
                                       <td className="px-3 py-2 align-top break-words">
                                         <p className="font-semibold text-[#2a3f74]">{getDosenSubmissionTahapLabel(row)}</p>
+                                        {row.review_eligible === false ? (
+                                          <p className="mt-1 text-xs font-semibold text-[#b36a16]">Keputusan dinonaktifkan · perlu dialihkan Sekprodi</p>
+                                        ) : null}
                                       </td>
                                       <td className="px-3 py-2 whitespace-nowrap align-top">{formatDateTime(row.diperbarui_pada || row.diajukan_pada)}</td>
                                       <td className="px-3 py-2 whitespace-nowrap align-top">{actionButtons}</td>
@@ -8766,6 +8795,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   : "Simpan Tolak"}
                               </button>
                             </div>
+                          </>
+                        ) : submissionDetail.status === "pending" && submissionDetail.has_pending_review && submissionDetail.review_eligible === false ? (
+                          <>
+                            <div className="rounded-lg border border-[#f1d4a8] bg-[#fff8e8] px-4 py-3">
+                              <p className="text-sm font-black text-[#8a5514]">Keputusan sementara dinonaktifkan</p>
+                              <p className="mt-1 text-sm text-[#805f32]">
+                                {submissionDetail.review_block_reason || "Dosen sedang tidak aktif atau tidak tersedia pada periode pengajuan."}
+                              </p>
+                              <p className="mt-1 text-xs font-semibold text-[#9b7137]">Pengajuan tetap ditampilkan agar dapat diketahui dan dialihkan oleh Sekretaris Prodi.</p>
+                            </div>
+                            <div className="mt-3"><SubmissionDecisionDetailSection items={submissionDecisionHistory} /></div>
                           </>
                         ) : (
                           <SubmissionDecisionDetailSection items={submissionDecisionHistory} />

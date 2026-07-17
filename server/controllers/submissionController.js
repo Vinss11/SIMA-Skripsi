@@ -25,6 +25,7 @@ const {
   finalizeJudulMandiriDeadlineSubmission,
   finalizeJudulMandiriDeadlineSubmissionsByIds,
 } = require("../services/topikParallelReviewService");
+const { validateResearchSubmissionReviewer } = require("../services/dosenStatusService");
 
 const NON_PENELITIAN_UPLOAD_ROOT = process.env.VERCEL
   ? path.join("/tmp", "sima-uploads", "non-penelitian")
@@ -1183,6 +1184,14 @@ exports.getSubmissionById = async (req, res) => {
       submission.tipe_pengajuan !== "topik_dosen" &&
       submission.status === "pending" &&
       (userRole === "dosen" || userRole === "sekretaris_prodi");
+    const hasPendingReview = Boolean(canReviewTopikParallel || canReviewKetuaClusterTopik || canReviewNonTopik);
+    const reviewerValidation = hasPendingReview && accessorDosenId
+      ? await validateResearchSubmissionReviewer(
+          submission,
+          accessorDosenId,
+          canReviewKetuaClusterTopik ? "ketua_cluster" : "calon_pembimbing"
+        )
+      : { allowed: true, message: null, legacy_period_unresolved: false };
 
     const responseData = {
       id: submission.id,
@@ -1207,7 +1216,11 @@ exports.getSubmissionById = async (req, res) => {
         ? judulMandiriReviewState?.supervisor_decision?.keterangan || null
         : currentReviewerDecision?.reviewer_note || null,
       review_context: canReviewKetuaClusterTopik ? "ketua_klaster" : "calon_pembimbing",
-      can_review: Boolean(canReviewTopikParallel || canReviewKetuaClusterTopik || canReviewNonTopik),
+      has_pending_review: hasPendingReview,
+      can_review: hasPendingReview && reviewerValidation.allowed,
+      review_eligible: reviewerValidation.allowed,
+      review_block_reason: reviewerValidation.allowed ? null : reviewerValidation.message,
+      legacy_period_unresolved: reviewerValidation.legacy_period_unresolved === true,
       reviewer_slot_decisions:
         canReviewKetuaClusterTopik
           ? pendingKetuaClusterRows.map((ketuaRow) => {

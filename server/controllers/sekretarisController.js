@@ -26,6 +26,7 @@ const {
   assertDosenCanReceiveNewAssignment,
   validateDosenForNewAssignment,
   analyzeDosenStatusImpact,
+  resolveResearchSubmissionRegistration,
 } = require("../services/dosenStatusService");
 const {
   buildTopikListFromSubmission,
@@ -2432,6 +2433,46 @@ exports.getTindakLanjutStatusDosen = async (req, res) => {
   }
 };
 
+function buildFollowUpResolutionContext(row, remainingImpact) {
+  const originalImpact = row?.impact_snapshot || {};
+  const requiredCategories = [];
+  if (Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0) requiredCategories.push("mahasiswa_bimbingan");
+  if (Number(remainingImpact.review_pending || 0) > 0) requiredCategories.push("review_pending");
+  if (
+    Number(remainingImpact.tugas_ketua_cluster_aktif || 0) > 0
+    || Number(remainingImpact.tugas_periode_aktif || 0) > 0
+    || Number(remainingImpact.tugas_master_penanggung_jawab || 0) > 0
+  ) requiredCategories.push("penugasan_periode");
+  if (Number(remainingImpact.jadwal_sidang_mendatang || 0) > 0) requiredCategories.push("jadwal_sidang");
+  if (originalImpact.reactivation_required) requiredCategories.push("reaktivasi");
+  return { remainingImpact, requiredCategories };
+}
+
+exports.getTindakLanjutStatusDosenCurrentImpact = async (req, res) => {
+  try {
+    const row = await TindakLanjutStatusDosen.findByPk(req.params.id, {
+      include: [{ model: Dosen, as: "dosen", attributes: ["id", "kode_dosen", "nik", "nama", "status_keaktifan"] }],
+    });
+    if (!row) return res.status(404).json({ success: false, message: "Tindak lanjut tidak ditemukan." });
+    if (row.status !== "open") return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
+
+    const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id);
+    const context = buildFollowUpResolutionContext(row, remainingImpact);
+    return res.json({
+      success: true,
+      data: {
+        id: row.id,
+        dosen: row.dosen || null,
+        current_impact: context.remainingImpact,
+        required_categories: context.requiredCategories,
+        reactivation_required: Boolean(row.impact_snapshot?.reactivation_required),
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Gagal menganalisis dampak terbaru.", error: error.message });
+  }
+};
+
 exports.resolveTindakLanjutStatusDosen = async (req, res) => {
   try {
     const note = String(req.body?.catatan_penyelesaian || "").trim();
@@ -2441,17 +2482,7 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
     if (row.status !== "open") return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
 
     const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id);
-    const originalImpact = row.impact_snapshot || {};
-    const requiredCategories = [];
-    if (Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0) requiredCategories.push("mahasiswa_bimbingan");
-    if (Number(remainingImpact.review_pending || 0) > 0) requiredCategories.push("review_pending");
-    if (
-      Number(remainingImpact.tugas_ketua_cluster_aktif || 0) > 0
-      || Number(remainingImpact.tugas_periode_aktif || 0) > 0
-      || Number(remainingImpact.tugas_master_penanggung_jawab || 0) > 0
-    ) requiredCategories.push("penugasan_periode");
-    if (Number(remainingImpact.jadwal_sidang_mendatang || 0) > 0) requiredCategories.push("jadwal_sidang");
-    if (originalImpact.reactivation_required) requiredCategories.push("reaktivasi");
+    const { requiredCategories } = buildFollowUpResolutionContext(row, remainingImpact);
 
     const decisions = req.body?.resolution_decisions && typeof req.body.resolution_decisions === "object"
       ? req.body.resolution_decisions
@@ -3372,36 +3403,8 @@ async function linkOrphanResearchSubmissionsToRegistration(transaction = null) {
 
   let linkedCount = 0;
   for (const submission of orphanRows) {
-    let pendaftaran = await PendaftaranPenjaluran.findOne({
-      where: {
-        mahasiswa_id: submission.mahasiswa_id,
-        createdAt: { [Op.lte]: submission.createdAt },
-        status: { [Op.in]: ["approved", "processed", "submitted"] },
-      },
-      order: [["createdAt", "DESC"]],
-      transaction: transaction || undefined,
-    });
-
-    if (!pendaftaran) {
-      pendaftaran = await PendaftaranPenjaluran.findOne({
-        where: {
-          mahasiswa_id: submission.mahasiswa_id,
-          status: { [Op.in]: ["approved", "processed", "submitted"] },
-        },
-        order: [["createdAt", "DESC"]],
-        transaction: transaction || undefined,
-      });
-    }
-
-    const selectedJalur =
-      pendaftaran?.jalur === "alih"
-        ? pendaftaran.penjaluran_baru
-        : pendaftaran?.jenis_jalur_diambil ||
-          pendaftaran?.penjaluran_baru ||
-          pendaftaran?.penjaluran_sebelumnya;
-    if (!pendaftaran || String(selectedJalur || "").toLowerCase() !== "penelitian") {
-      continue;
-    }
+    const pendaftaran = await resolveResearchSubmissionRegistration(submission, transaction);
+    if (!pendaftaran) continue;
 
     await submission.update(
       { pendaftaran_penjaluran_id: pendaftaran.id },

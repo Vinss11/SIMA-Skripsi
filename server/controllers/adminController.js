@@ -10,7 +10,11 @@ const {
   normalizeJabatanStrukturalInput,
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
-const { DOSEN_STATUSES, analyzeDosenStatusImpact } = require("../services/dosenStatusService");
+const {
+  DOSEN_STATUSES,
+  analyzeDosenStatusImpact,
+  assertDosenCanReceiveNewAssignment,
+} = require("../services/dosenStatusService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -530,6 +534,25 @@ exports.assignDosenPembimbingAkademik = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Dosen tidak ditemukan",
+      });
+    }
+
+    if (Number(mahasiswa.dosen_pembimbing_akademik_id) === Number(dosen.id)) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${dosen.nama} sudah menjadi dosen pembimbing akademik mahasiswa ini. Tidak ada perubahan penugasan.`,
+      });
+    }
+
+    const assignmentValidation = assertDosenCanReceiveNewAssignment(dosen, "penugasan baru sebagai DPA");
+    if (!assignmentValidation.allowed || dosen.account_is_active === false) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: !assignmentValidation.allowed
+          ? assignmentValidation.message
+          : `${dosen.nama} memiliki akun nonaktif dan tidak dapat menerima penugasan baru sebagai DPA.`,
       });
     }
 

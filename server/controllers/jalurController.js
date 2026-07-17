@@ -494,21 +494,11 @@ async function validateSubmissionTargetJalur({
 
   const pendaftaranAktif = await getLatestPendaftaranForPeriode(mahasiswa.id, periodeAktif.id, transaction);
 
-  // Backward compatibility untuk akun lama yang belum melalui alur pendaftaran baru.
   if (!pendaftaranAktif) {
-    if (targetJalur === "penelitian") {
-      return {
-        allowed: true,
-        periodeAktif,
-        pendaftaranAktif: null,
-        selectedJalur: null,
-      };
-    }
-
     return {
       allowed: false,
       statusCode: 409,
-      message: "Data pendaftaran jalur untuk periode aktif belum ditemukan.",
+      message: "Data pendaftaran jalur untuk periode aktif belum ditemukan. Pengajuan harus terhubung ke pendaftaran penjaluran.",
       code: "PENDAFTARAN_NOT_FOUND",
     };
   }
@@ -3134,7 +3124,7 @@ exports.submitBaruTopikDosen = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "baru",
         tipe_pengajuan: "topik_dosen",
-        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif?.id || null,
+        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif.id,
         topik_1_kode,
         topik_1_judul: topik_1_judul_final,
         topik_2_kode,
@@ -3451,6 +3441,15 @@ exports.pengajuanEkstensi = async (req, res) => {
       });
     }
 
+    if (!previousSubmission.pendaftaran_penjaluran_id) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Pengajuan sebelumnya belum terhubung ke pendaftaran penjaluran. Hubungi Sekretaris Prodi untuk rekonsiliasi data sebelum mengajukan ekstensi.",
+        code: "PENDAFTARAN_RELATION_REQUIRED",
+      });
+    }
+
     // TODO: Tambahkan validasi syarat ekstensi (misal: sudah 1 semester, dll)
     // Untuk sekarang, kita asumsikan syarat terpenuhi
 
@@ -3460,6 +3459,7 @@ exports.pengajuanEkstensi = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "ekstensi",
         tipe_pengajuan: previousSubmission.tipe_pengajuan,
+        pendaftaran_penjaluran_id: previousSubmission.pendaftaran_penjaluran_id,
 
         // Copy data dari pengajuan sebelumnya
         topik_1_kode: previousSubmission.topik_1_kode,
@@ -3627,7 +3627,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         mahasiswa_id,
         jenis_jalur: "baru",
         tipe_pengajuan: "judul_mandiri",
-        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif?.id || null,
+        pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif.id,
         judul_mandiri,
         deskripsi_mandiri,
         keyword_mandiri: normalizedKeywordMandiri,
