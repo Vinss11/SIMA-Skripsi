@@ -10,6 +10,7 @@ const {
   sequelize,
 } = require("../models");
 const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
+const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("../services/supervisorAccessService");
 
 async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
   return getExistingSupervisionPermission(dosenId, transaction);
@@ -606,7 +607,13 @@ exports.getDosenBimbingan = async (req, res) => {
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const view = String(req.query?.view || "").trim().toLowerCase();
-    const where = { dosen_id };
+    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const where = {
+      [Op.or]: [
+        { dosen_id },
+        { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
+      ],
+    };
 
     if (view === "permohonan_sesi") {
       where.status_permohonan = { [Op.in]: ["pending", "expired"] };
@@ -640,7 +647,11 @@ exports.getDosenBimbingan = async (req, res) => {
       data: {
         view: view || "all",
         stats,
-        rows: serializedRows,
+        rows: serializedRows.map((item) => ({
+          ...item,
+          can_review: Number(item.dosen_id) === Number(dosen_id),
+          access_mode: Number(item.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+        })),
       },
     });
   } catch (error) {
@@ -665,8 +676,15 @@ exports.getDosenBimbinganDetail = async (req, res) => {
     const permission = await ensureExistingSupervisionAccess(dosen_id);
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
+    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
     const row = await BimbinganSkripsi.findOne({
-      where: { id: req.params.id, dosen_id },
+      where: {
+        id: req.params.id,
+        [Op.or]: [
+          { dosen_id },
+          { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
+        ],
+      },
       include: [
         {
           model: Mahasiswa,
@@ -690,7 +708,11 @@ exports.getDosenBimbinganDetail = async (req, res) => {
 
     return res.json({
       success: true,
-      data: serializeRow(row),
+      data: {
+        ...serializeRow(row),
+        can_review: Number(row.dosen_id) === Number(dosen_id),
+        access_mode: Number(row.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+      },
     });
   } catch (error) {
     console.error("Error di getDosenBimbinganDetail:", error);

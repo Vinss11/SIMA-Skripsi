@@ -48,6 +48,11 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pendaftaran_penjaluran_id",
         as: "keanggotaanPerintisanBisnis",
       });
+
+      PendaftaranPenjaluran.hasMany(models.PenetapanPembimbing, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "penetapanPembimbings",
+      });
     }
   }
 

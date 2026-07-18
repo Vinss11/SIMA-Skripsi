@@ -435,6 +435,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
   };
 
   const canReviewResume =
+    selectedRow?.can_review !== false &&
     ["approved", "rescheduled"].includes(selectedRow?.status_permohonan) && selectedRow?.status_resume === "submitted";
   const permohonanDecisionTitle =
     decision === "approve" ? "Approve Permohonan Bimbingan" : "Reject Permohonan Bimbingan";
@@ -598,7 +599,15 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                             <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
-                                {activeReviewTab === "permohonan_sesi" ? (
+                                {row.can_review === false ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openActionPage(row, activeReviewTab === "permohonan_sesi" ? "permohonan_approve" : "resume_approve").catch(() => {})}
+                                    className="rounded-md border border-[#9db2df] bg-white px-3 py-1 text-xs font-bold text-[#34549b]"
+                                  >
+                                    Lihat (read-only)
+                                  </button>
+                                ) : activeReviewTab === "permohonan_sesi" ? (
                                   row.status_permohonan === "pending" ? (
                                     <>
                                       <button
@@ -810,6 +819,12 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                 </div>
               ) : null}
 
+              {selectedRow.can_review === false ? (
+                <div className="rounded-lg border border-[#cfdcf6] bg-[#f3f7ff] p-4 text-sm font-semibold text-[#34549b]">
+                  Anda tercatat sebagai Pembimbing 2. Detail tetap dapat dilihat, tetapi keputusan saat ini hanya dapat diproses Pembimbing 1.
+                </div>
+              ) : null}
+
               {activeReviewTab === "resume_bimbingan" ? (
                 <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                   <h4 className="text-sm font-black text-[#1b274b]">Resume Mahasiswa</h4>
@@ -817,7 +832,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                 </div>
               ) : null}
 
-              {selectedRow.status_permohonan === "pending" ? (
+              {selectedRow.status_permohonan === "pending" && selectedRow.can_review !== false ? (
                 <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                   <h4 className="text-sm font-black text-[#1b274b]">{permohonanDecisionTitle}</h4>
 

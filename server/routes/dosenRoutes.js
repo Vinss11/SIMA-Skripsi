@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
 const dosenController = require("../controllers/dosenController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
@@ -143,6 +144,7 @@ router.post("/pamit-mahasiswa/:id/reject", authenticateToken, authorizeRole("dos
 // ========== DOSEN KUOTA ==========
 router.get("/kuota", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getKuotaSendiri);
 router.get("/mahasiswa-master", authenticateToken, authorizeRole("dosen"), dosenController.getMahasiswaMasterReadOnly);
+router.get("/mahasiswa/:id/penetapan-pembimbing", authenticateToken, authorizeRole("dosen"), penetapanPembimbingController.getSupervisorAssignmentHistoryForDosen);
 router.get(
   "/monitoring-mahasiswa",
   authenticateToken,

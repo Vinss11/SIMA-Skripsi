@@ -189,16 +189,12 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   let capacity = null;
   if (checkQuota) {
     const requiredSlots = Math.max(1, Number(options.requiredSlots || 1));
-    const activeSupervisionCount = await Mahasiswa.count({
-      where: {
-        dosen_pembimbing_skripsi_id: dosenId,
-        [Op.or]: [
-          { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-          { status_jalur_saat_ini: null },
-        ],
-      },
+    const { countActiveSupervisions } = require("./supervisorAccessService");
+    const activeSupervisionCount = await countActiveSupervisions(
+      dosenId,
       transaction,
-    });
+      options.excludeMahasiswaId || null
+    );
     const total = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);
     capacity = {
       total,
@@ -376,8 +372,10 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+  const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("./supervisorAccessService");
+  const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId, transaction);
   const activeStudentWhere = {
-    dosen_pembimbing_skripsi_id: dosenId,
+    id: { [Op.in]: supervisedMahasiswaIds },
     [Op.or]: [
       { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
       { status_jalur_saat_ini: null },

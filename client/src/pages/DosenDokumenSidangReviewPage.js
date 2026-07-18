@@ -317,7 +317,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                         }}
                         className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110"
                       >
-                        Detail
+                        {row.can_review === false ? "Detail (read-only)" : "Detail"}
                       </button>
                     </td>
                   </tr>
@@ -390,6 +390,12 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                 </p>
               </div>
 
+              {detail?.can_review === false ? (
+                <div className="rounded-lg border border-[#cfdcf6] bg-[#f3f7ff] p-4 text-sm font-semibold text-[#34549b]">
+                  Anda tercatat sebagai Pembimbing 2. Dokumen dapat dilihat dan diunduh, tetapi keputusan dokumen saat ini hanya diproses Pembimbing 1.
+                </div>
+              ) : null}
+
               {DOC_ORDER.map((docKey) => {
                 const doc = detail?.dokumen?.[docKey];
                 if (!doc) return null;
@@ -427,6 +433,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                         }
                         className="w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm text-[#1f2d53] outline-none focus:border-[#2f63e3]"
                         placeholder="Isi catatan jika dokumen perlu revisi..."
+                        disabled={detail?.can_review === false}
                       />
                     </div>
 
@@ -444,7 +451,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                       </button>
                       <button
                         type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey}
+                        disabled={!doc.has_file || savingDocKey === docKey || detail?.can_review === false}
                         onClick={() => {
                           handleReview(docKey, "approve").catch(() => {});
                         }}
@@ -455,7 +462,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                       </button>
                       <button
                         type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey}
+                        disabled={!doc.has_file || savingDocKey === docKey || detail?.can_review === false}
                         onClick={() => {
                           handleReview(docKey, "revisi").catch(() => {});
                         }}

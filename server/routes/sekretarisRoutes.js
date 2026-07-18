@@ -4,6 +4,8 @@ const sekretarisController = require("../controllers/sekretarisController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const jalurController = require("../controllers/jalurController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
+const suratTugasPembimbingController = require("../controllers/suratTugasPembimbingController");
 const { authenticateToken, authorizeRole, authorizeSekretarisAccess } = require("../middlewares/authMiddleware");
 
 router.get("/pendaftaran", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPendaftaranList);
@@ -13,6 +15,11 @@ router.post("/pendaftaran/:id/approve", authenticateToken, authorizeRole("sekret
 router.post("/pendaftaran/:id/reject", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.rejectPendaftaran);
 router.get("/mahasiswa/master", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMahasiswaMasterData);
 router.get("/mahasiswa/master/export", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.exportMahasiswaMasterData);
+router.get("/mahasiswa/:id/penetapan-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.getSupervisorAssignmentHistoryForSekretaris);
+router.get("/surat-tugas-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, suratTugasPembimbingController.list);
+router.post("/surat-tugas-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, suratTugasPembimbingController.create);
+router.post("/surat-tugas-pembimbing/:id/issue", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, suratTugasPembimbingController.issue);
+router.post("/surat-tugas-pembimbing/:id/cancel", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, suratTugasPembimbingController.cancel);
 router.get("/periode", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeOverview);
 router.post("/periode/master-penanggung-jawab", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterPenanggungJawabPeriode);
 router.post("/periode/open", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.openPeriodePendaftaran);

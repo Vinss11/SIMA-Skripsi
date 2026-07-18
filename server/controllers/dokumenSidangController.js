@@ -3,6 +3,10 @@ const path = require("path");
 const { Op } = require("sequelize");
 const { DokumenSidang, Mahasiswa, Dosen, BimbinganSkripsi, sequelize } = require("../models");
 const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
+const {
+  getSupervisedMahasiswaIdsWithLegacyFallback,
+  isActiveSupervisor,
+} = require("../services/supervisorAccessService");
 
 const TARGET_SESI_MINIMAL = 8;
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
@@ -423,9 +427,10 @@ exports.getDosenDokumenSidangList = async (req, res) => {
     const permission = await getExistingSupervisionPermission(dosenId);
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
+    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId);
     const mahasiswaRows = await Mahasiswa.findAll({
-      where: { dosen_pembimbing_skripsi_id: dosenId },
-      attributes: ["id", "nim", "nama", "angkatan"],
+      where: { id: { [Op.in]: supervisedMahasiswaIds } },
+      attributes: ["id", "nim", "nama", "angkatan", "dosen_pembimbing_skripsi_id"],
       include: [
         {
           model: DokumenSidang,
@@ -459,6 +464,8 @@ exports.getDosenDokumenSidangList = async (req, res) => {
           status_pendaftaran_sidang: buildStatusPendaftaranSidang(gate, summary),
           summary,
           dokumen,
+          can_review: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId),
+          access_mode: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId) ? "primary" : "secondary_read_only",
         };
       })
     );
@@ -501,11 +508,9 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
       });
     }
 
-    const mahasiswa = await Mahasiswa.findOne({
-      where: {
-        id: mahasiswaId,
-        dosen_pembimbing_skripsi_id: dosenId,
-      },
+    const hasAccess = await isActiveSupervisor(dosenId, mahasiswaId);
+    const mahasiswa = hasAccess ? await Mahasiswa.findOne({
+      where: { id: mahasiswaId },
       attributes: ["id", "nim", "nama", "email", "angkatan", "dosen_pembimbing_skripsi_id"],
       include: [
         {
@@ -514,7 +519,7 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
           attributes: ["id", "nik", "nama", "email"],
         },
       ],
-    });
+    }) : null;
 
     if (!mahasiswa) {
       return res.status(404).json({
@@ -551,6 +556,8 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
             }
           : null,
         dokumen,
+        can_review: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId),
+        access_mode: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId) ? "primary" : "secondary_read_only",
       },
     });
   } catch (error) {
@@ -717,13 +724,11 @@ exports.downloadDosenDokumenSidang = async (req, res) => {
       });
     }
 
-    const mahasiswa = await Mahasiswa.findOne({
-      where: {
-        id: mahasiswaId,
-        dosen_pembimbing_skripsi_id: dosenId,
-      },
+    const hasAccess = await isActiveSupervisor(dosenId, mahasiswaId);
+    const mahasiswa = hasAccess ? await Mahasiswa.findOne({
+      where: { id: mahasiswaId },
       attributes: ["id"],
-    });
+    }) : null;
 
     if (!mahasiswa) {
       return res.status(404).json({

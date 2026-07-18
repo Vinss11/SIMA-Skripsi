@@ -1,6 +1,6 @@
 "use strict";
 const bcrypt = require("bcrypt");
-const { Model, Op } = require("sequelize");
+const { Model } = require("sequelize");
 
 module.exports = (sequelize, DataTypes) => {
   class Dosen extends Model {
@@ -124,6 +124,7 @@ module.exports = (sequelize, DataTypes) => {
       Dosen.hasMany(models.RiwayatStatusDosen, { foreignKey: "dosen_id", as: "riwayatStatus" });
       Dosen.hasMany(models.DosenKetersediaanPeriode, { foreignKey: "dosen_id", as: "ketersediaanPeriodes" });
       Dosen.hasMany(models.TindakLanjutStatusDosen, { foreignKey: "dosen_id", as: "tindakLanjutStatus" });
+      Dosen.hasMany(models.PenetapanPembimbingDosen, { foreignKey: "dosen_id", as: "keanggotaanPenetapanPembimbing" });
 
       Dosen.hasMany(models.JadwalSidangPenguji, {
         foreignKey: "penguji1_dosen_id",
@@ -143,46 +144,22 @@ module.exports = (sequelize, DataTypes) => {
 
     // Method untuk cek apakah kuota masih tersedia
     async checkKuotaAvailable() {
-      const Mahasiswa = sequelize.models.Mahasiswa;
-      const count = await Mahasiswa.count({
-        where: {
-          dosen_pembimbing_skripsi_id: this.id,
-          [Op.or]: [
-            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-            { status_jalur_saat_ini: null },
-          ],
-        },
-      });
+      const { countActiveSupervisions } = require("../services/supervisorAccessService");
+      const count = await countActiveSupervisions(this.id);
       return count < this.kuota_bimbingan;
     }
 
     // Method untuk mendapatkan sisa kuota
     async getSisaKuota() {
-      const Mahasiswa = sequelize.models.Mahasiswa;
-      const count = await Mahasiswa.count({
-        where: {
-          dosen_pembimbing_skripsi_id: this.id,
-          [Op.or]: [
-            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-            { status_jalur_saat_ini: null },
-          ],
-        },
-      });
+      const { countActiveSupervisions } = require("../services/supervisorAccessService");
+      const count = await countActiveSupervisions(this.id);
       return this.kuota_bimbingan - count;
     }
 
     // Method untuk mendapatkan jumlah mahasiswa yang dibimbing
     async getJumlahMahasiswaDibimbing() {
-      const Mahasiswa = sequelize.models.Mahasiswa;
-      return await Mahasiswa.count({
-        where: {
-          dosen_pembimbing_skripsi_id: this.id,
-          [Op.or]: [
-            { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-            { status_jalur_saat_ini: null },
-          ],
-        },
-      });
+      const { countActiveSupervisions } = require("../services/supervisorAccessService");
+      return countActiveSupervisions(this.id);
     }
 
     // Method untuk mendapatkan info kuota lengkap

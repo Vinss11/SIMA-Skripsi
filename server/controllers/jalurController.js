@@ -20,6 +20,7 @@ const fs = require("fs");
 const path = require("path");
 const { Op } = require("sequelize");
 const { assertDosenCanReceiveNewAssignment, validateDosenForNewAssignment } = require("../services/dosenStatusService");
+const { replaceSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const {
   buildSemesterLanjutanGate,
   getReferencePeriode,
@@ -2746,6 +2747,7 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     const id = Number(req.params?.id || 0);
     const note = String(req.body?.keterangan || req.body?.alasan || "").trim();
     const dosenPembimbingId = Number(req.body?.dosen_pembimbing_id || 0);
+    const dosenPembimbing2Id = Number(req.body?.dosen_pembimbing_2_id || 0);
 
     if (!sekretarisId || !id) {
       await t.rollback();
@@ -2803,6 +2805,17 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
         message: "Dosen pembimbing wajib dipilih sebelum menyetujui final.",
       });
     }
+    if (req.body?.dosen_pembimbing_2_id && (!Number.isInteger(dosenPembimbing2Id) || dosenPembimbing2Id <= 0)) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
+    }
+    if (dosenPembimbing2Id > 0 && dosenPembimbing2Id === dosenPembimbingId) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pembimbing 1 dan Pembimbing 2 harus merupakan dosen yang berbeda.",
+      });
+    }
 
     const dosenPembimbing =
       dosenPembimbingId > 0
@@ -2816,6 +2829,20 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       return res.status(404).json({
         success: false,
         message: "Dosen pembimbing yang dipilih tidak ditemukan.",
+      });
+    }
+    const dosenPembimbing2 =
+      dosenPembimbing2Id > 0
+        ? await Dosen.findByPk(dosenPembimbing2Id, {
+            attributes: ["id", "nik", "nama", "email", "status_keaktifan", "kuota_bimbingan"],
+            transaction: t,
+          })
+        : null;
+    if (dosenPembimbing2Id > 0 && !dosenPembimbing2) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Dosen Pembimbing 2 yang dipilih tidak ditemukan.",
       });
     }
 
@@ -2833,8 +2860,9 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
         {
           transaction: t,
           availabilityField: "tersedia_membimbing",
-          activityLabel: "menjadi pembimbing final",
-          requiredSlots,
+           activityLabel: "menjadi pembimbing final",
+           requiredSlots,
+           excludeMahasiswaId: row.mahasiswa_id,
         }
       );
       if (!assignmentValidation.allowed) {
@@ -2844,6 +2872,27 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
           message: assignmentValidation.message,
           detail: { capacity: assignmentValidation.capacity || null },
         });
+      }
+      if (dosenPembimbing2Id > 0) {
+        const secondaryValidation = await validateDosenForNewAssignment(
+          dosenPembimbing2Id,
+          row.periode_penjaluran_id,
+          {
+            transaction: t,
+            availabilityField: "tersedia_membimbing",
+            activityLabel: "menjadi Pembimbing 2 final",
+            requiredSlots,
+            excludeMahasiswaId: row.mahasiswa_id,
+          }
+        );
+        if (!secondaryValidation.allowed) {
+          await t.rollback();
+          return res.status(409).json({
+            success: false,
+            message: secondaryValidation.message,
+            detail: { capacity: secondaryValidation.capacity || null },
+          });
+        }
       }
     }
 
@@ -2882,6 +2931,16 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
             ditetapkan_oleh_sekretaris_id: sekretarisId,
           }
         : null,
+      dosen_pembimbing_2: dosenPembimbing2
+        ? {
+            id: dosenPembimbing2.id,
+            nik: dosenPembimbing2.nik,
+            nama: dosenPembimbing2.nama,
+            email: dosenPembimbing2.email,
+            ditetapkan_at: now,
+            ditetapkan_oleh_sekretaris_id: sekretarisId,
+          }
+        : null,
     };
 
     await updatePerintisanGroupWorkflow({
@@ -2905,11 +2964,19 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
         reviewable.selectedJalur === "perintisan_bisnis"
           ? teamMembers.map((item) => Number(item.pendaftaran_id)).filter(Boolean)
           : [Number(row.id)].filter(Boolean);
-      if (mahasiswaIds.length > 0) {
-        await Mahasiswa.update(
-          { dosen_pembimbing_skripsi_id: dosenPembimbing.id },
-          { where: { id: { [Op.in]: mahasiswaIds } }, transaction: t }
-        );
+      for (let index = 0; index < mahasiswaIds.length; index += 1) {
+        const mahasiswaId = mahasiswaIds[index];
+        const pendaftaranId = pendaftaranIds[index] || (mahasiswaId === Number(row.mahasiswa_id) ? row.id : null);
+        await replaceSupervisorAssignment({
+          mahasiswaId,
+          pendaftaranPenjaluranId: pendaftaranId,
+          periodeMulaiId: row.periode_penjaluran_id,
+          dosenPembimbingIds: [dosenPembimbing.id, dosenPembimbing2?.id].filter(Boolean),
+          sumberData: row.jalur === "baru" ? "penjaluran" : "pergantian",
+          createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
+          tanggalMulai: new Date(),
+          transaction: t,
+        });
       }
       if (pendaftaranIds.length > 0) {
         await PendaftaranPenjaluran.update(
@@ -2934,10 +3001,11 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di decideNonPenelitianReviewBySekretaris:", error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 }

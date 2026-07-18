@@ -25,6 +25,7 @@ import StatusPage from "./StatusPage";
 import BimbinganPage from "./BimbinganPage";
 import MahasiswaDokumenSidangPage from "./MahasiswaDokumenSidangPage";
 import MenuSectionHeader from "../components/MenuSectionHeader";
+import SupervisorAssignmentTimeline from "../components/SupervisorAssignmentTimeline";
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
@@ -869,6 +870,7 @@ function DashboardHome({
   data,
   onGoToPengajuan,
   onGoToStatus,
+  supervisorHistory,
 }) {
   const { profile, jalurStatus, submissions, sessionUser, bimbinganSummary } = data;
   const studentName = profile?.nama || sessionUser?.nama || "Mahasiswa";
@@ -1054,6 +1056,12 @@ function DashboardHome({
             </button>
           </div>
         </div>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-[#f8fbff] p-5 shadow-sm">
+        <h3 className="text-xl font-black text-[#1b274b]">Riwayat Penetapan Pembimbing</h3>
+        <p className="mt-1 text-sm text-[#5d6c91]">Pembimbing aktif dan histori penetapan Anda pada setiap periode penjaluran.</p>
+        <SupervisorAssignmentTimeline data={supervisorHistory?.data} error={supervisorHistory?.error} />
       </section>
     </main>
   );
@@ -1322,6 +1330,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [submissions, setSubmissions] = useState([]);
   const [bimbinganSummary, setBimbinganSummary] = useState(null);
   const [dosenOptions, setDosenOptions] = useState([]);
+  const [supervisorHistory, setSupervisorHistory] = useState({ data: null, error: "" });
   const [izinLanjutReason, setIzinLanjutReason] = useState("");
   const [izinLanjutSubmitting, setIzinLanjutSubmitting] = useState(false);
   const [izinLanjutError, setIzinLanjutError] = useState("");
@@ -1411,7 +1420,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       setLoading(true);
       setError("");
 
-      const [profileResult, jalurResult, jalurEligibilityResult, submissionsResult, bimbinganResult, dosenResult] =
+      const [profileResult, jalurResult, jalurEligibilityResult, submissionsResult, bimbinganResult, dosenResult, supervisorHistoryResult] =
         await Promise.allSettled([
         fetchWithAuth("/api/mahasiswa/profile"),
         fetchWithAuth("/api/jalur/status"),
@@ -1419,6 +1428,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         fetchWithAuth("/api/submissions"),
         fetchWithAuth("/api/mahasiswa/bimbingan?summary_only=1"),
         fetchWithAuth("/api/pendaftaran/dosen"),
+        fetchWithAuth("/api/mahasiswa/penetapan-pembimbing"),
       ]);
 
       if (!isMounted) return;
@@ -1466,6 +1476,12 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       } else {
         setDosenOptions([]);
         issues.push(dosenResult.reason?.message || "Gagal memuat daftar dosen.");
+      }
+
+      if (supervisorHistoryResult.status === "fulfilled") {
+        setSupervisorHistory({ data: supervisorHistoryResult.value || null, error: "" });
+      } else {
+        setSupervisorHistory({ data: null, error: supervisorHistoryResult.reason?.message || "Gagal memuat histori pembimbing." });
       }
 
       setError(issues.join(" "));
@@ -1957,6 +1973,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 data={pageData}
                 onGoToPengajuan={() => setActiveTab("pengajuan")}
                 onGoToStatus={() => setActiveTab("status")}
+                supervisorHistory={supervisorHistory}
               />
             ) : null}
 

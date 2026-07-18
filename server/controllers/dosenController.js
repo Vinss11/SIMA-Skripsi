@@ -21,6 +21,13 @@ const {
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
 const {
+  getSupervisedMahasiswaIdsWithLegacyFallback,
+  isActiveSupervisor,
+} = require("../services/supervisorAccessService");
+const {
+  endActiveSupervisorAssignment,
+} = require("../services/penetapanPembimbingService");
+const {
   getExistingSupervisionPermission,
   validateResearchSubmissionReviewer,
   resolveResearchSubmissionRegistration,
@@ -2045,65 +2052,15 @@ exports.approveSubmission = async (req, res) => {
     } else {
       await submission.update(
         {
-          status: isKetuaClusterApproval ? "menunggu_approval_sekprodi" : "approved",
+          status: "menunggu_approval_sekprodi",
           alasan_persetujuan: isKetuaClusterApproval
             ? `${approvalNote || "Disetujui ketua cluster"}. Menunggu persetujuan final sekretaris prodi.`
-            : approvalNote || "Pengajuan disetujui",
+            : `${approvalNote || "Pengajuan disetujui calon pembimbing"}. Menunggu persetujuan final sekretaris prodi.`,
           alasan_penolakan: null,
           dosen_saat_ini: dosenPembimbingFinalId,
         },
         { transaction: t }
       );
-
-      if (isTopikDosen && finalTopik?.kode) {
-        const reservedReleaseKodes = [submission.topik_1_kode, submission.topik_2_kode, submission.topik_3_kode]
-          .filter(Boolean)
-          .filter((kode) => kode !== finalTopik.kode);
-        if (reservedReleaseKodes.length > 0) {
-          await Topik.update(
-            { status: "available" },
-            {
-              where: {
-                kode: reservedReleaseKodes,
-                status: "reserved",
-              },
-              transaction: t,
-            }
-          );
-        }
-
-        if (!isKetuaClusterApproval) {
-          await Topik.update({ status: "taken" }, { where: { kode: finalTopik.kode }, transaction: t });
-        }
-      }
-
-      if (!isKetuaClusterApproval) {
-        const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, { transaction: t });
-        await mahasiswa.update(
-          {
-            dosen_pembimbing_skripsi_id: dosenPembimbingFinalId,
-            status_jalur_saat_ini: submission.jenis_jalur,
-            pengajuan_aktif_id: null,
-          },
-          { transaction: t }
-        );
-
-        const dosenPembimbingFinal = await Dosen.findByPk(dosenPembimbingFinalId, { transaction: t });
-        const kuotaInfo = dosenPembimbingFinal ? await dosenPembimbingFinal.getKuotaInfo() : null;
-
-        if (kuotaInfo?.is_penuh) {
-          await Topik.update(
-            { status: "unavailable" },
-            {
-              where: {
-                dosen_id: dosenPembimbingFinalId,
-                status: "available",
-              },
-              transaction: t,
-            }
-          );
-        }
-      }
 
       await RiwayatPersetujuan.create(
         {
@@ -2170,10 +2127,11 @@ exports.approveSubmission = async (req, res) => {
       await t.rollback();
     }
     console.error("Error di approveSubmission:", error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 };
@@ -2719,7 +2677,8 @@ exports.getIzinLanjutSubmissions = async (req, res) => {
     const permission = await getExistingSupervisionPermission(dosen_id);
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const status = String(req.query?.status || "").trim().toLowerCase();
-    const where = { dosen_pembimbing_skripsi_id: dosen_id };
+    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const where = { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } };
     if (status && ["pending", "approved", "rejected"].includes(status)) {
       where.status = status;
     }
@@ -2754,7 +2713,11 @@ exports.getIzinLanjutSubmissions = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows.map((item) => formatIzinLanjutItem(item)),
+      data: rows.map((item) => ({
+        ...formatIzinLanjutItem(item),
+        can_review: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id),
+        access_mode: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+      })),
       total: rows.length,
     });
   } catch (error) {
@@ -2818,7 +2781,7 @@ exports.getIzinLanjutDetail = async (req, res) => {
       });
     }
 
-    if (item.dosen_pembimbing_skripsi_id !== dosen_id) {
+    if (!(await isActiveSupervisor(dosen_id, item.mahasiswa_id))) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses ke data izin lanjut ini.",
@@ -2827,7 +2790,11 @@ exports.getIzinLanjutDetail = async (req, res) => {
 
     return res.json({
       success: true,
-      data: formatIzinLanjutItem(item),
+      data: {
+        ...formatIzinLanjutItem(item),
+        can_review: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id),
+        access_mode: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+      },
     });
   } catch (error) {
     console.error("Error di getIzinLanjutDetail:", error);
@@ -3112,14 +3079,7 @@ exports.getPamitMahasiswa = async (req, res) => {
     const { status } = req.query;
 
     // Cari mahasiswa yang dosen pembimbing skripsinya adalah dosen ini
-    const mahasiswas = await Mahasiswa.findAll({
-      where: {
-        dosen_pembimbing_skripsi_id: dosen_id,
-      },
-      attributes: ["id"],
-    });
-
-    const mahasiswaIds = mahasiswas.map((m) => m.id);
+    const mahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
 
     if (mahasiswaIds.length === 0) {
       return res.json({
@@ -3284,7 +3244,7 @@ exports.approvePamitMahasiswa = async (req, res) => {
       });
     }
 
-    if (pamit.mahasiswa.dosen_pembimbing_skripsi_id !== dosen_id) {
+    if (!(await isActiveSupervisor(dosen_id, pamit.mahasiswa.id))) {
       await t.rollback();
       return res.status(403).json({
         success: false,
@@ -3344,9 +3304,14 @@ exports.approvePamitMahasiswa = async (req, res) => {
     const mahasiswa = await Mahasiswa.findByPk(pamit.mahasiswa_id, { transaction: t });
     const previous_dosen_id = mahasiswa.dosen_pembimbing_skripsi_id;
 
+    await endActiveSupervisorAssignment({
+      mahasiswaId: mahasiswa.id,
+      tanggalSelesai: new Date(),
+      alasanBerakhir: keterangan_dospem || "Mahasiswa pamit dan melepas pembimbing skripsi",
+      transaction: t,
+    });
     await mahasiswa.update(
       {
-        dosen_pembimbing_skripsi_id: null,
         status_jalur_saat_ini: "sedang_mengajukan",
         pengajuan_aktif_id: null,
       },
@@ -3399,10 +3364,11 @@ exports.approvePamitMahasiswa = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di approvePamitMahasiswa:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 };
@@ -3509,10 +3475,11 @@ exports.rejectPamitMahasiswa = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di rejectPamitMahasiswa:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 };
@@ -3739,9 +3706,14 @@ exports.approvePamitDPA = async (req, res) => {
     // Simpan dosen_id sebelum di-clear untuk re-enable topiknya
     const previous_dosen_id = mahasiswa.dosen_pembimbing_skripsi_id;
 
+    await endActiveSupervisorAssignment({
+      mahasiswaId: mahasiswa.id,
+      tanggalSelesai: new Date(),
+      alasanBerakhir: keterangan_dpa || "Mahasiswa pamit atau mengganti jalur dan pembimbing",
+      transaction: t,
+    });
     await mahasiswa.update(
       {
-        dosen_pembimbing_skripsi_id: null, // Clear dosen pembimbing skripsi
         status_jalur_saat_ini: "sedang_mengajukan", // Siap mengajukan topik baru
         pengajuan_aktif_id: null, // Clear pengajuan aktif
       },
@@ -3799,10 +3771,11 @@ exports.approvePamitDPA = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di approvePamitDPA:", error);
-    res.status(500).json({
+    res.status(error.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 };
@@ -4104,8 +4077,9 @@ exports.getKuotaSendiri = async (req, res) => {
     const tanggungJawabPenjaluran = await getDosenPenjaluranResponsibilities(dosen_id);
 
     // Dapatkan list mahasiswa bimbingan
+    const mahasiswaBimbinganIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
     const mahasiswas = await Mahasiswa.findAll({
-      where: { dosen_pembimbing_skripsi_id: dosen_id },
+      where: { id: { [Op.in]: mahasiswaBimbinganIds } },
       attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
       order: [["nim", "ASC"]],
     });
@@ -4154,8 +4128,9 @@ exports.getMonitoringMahasiswa = async (req, res) => {
     const permission = await getExistingSupervisionPermission(dosenId);
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
+    const mahasiswaBimbinganIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId);
     const mahasiswas = await Mahasiswa.findAll({
-      where: { dosen_pembimbing_skripsi_id: dosenId },
+      where: { id: { [Op.in]: mahasiswaBimbinganIds } },
       attributes: [
         "id",
         "nim",
@@ -4413,10 +4388,11 @@ exports.getMahasiswaMasterReadOnly = async (req, res) => {
       status_jalur: req.query.status_jalur,
       angkatan: req.query.angkatan,
     });
+    const mahasiswaBimbinganIds = new Set(await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId));
     const scopedData = data.filter(
       (mahasiswa) =>
         Number(mahasiswa.dosen_pembimbing_akademik_id) === Number(dosenId) ||
-        Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId)
+        mahasiswaBimbinganIds.has(Number(mahasiswa.id))
     );
 
     return res.json({

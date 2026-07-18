@@ -24,6 +24,16 @@ module.exports = (sequelize, DataTypes) => {
         as: "ketersediaanDosens",
       });
 
+      PeriodePenjaluran.hasMany(models.PenetapanPembimbing, {
+        foreignKey: "periode_mulai_id",
+        as: "penetapanPembimbingDimulai",
+      });
+
+      PeriodePenjaluran.hasMany(models.SuratTugasPembimbing, {
+        foreignKey: "periode_penjaluran_id",
+        as: "suratTugasPembimbing",
+      });
+
       PeriodePenjaluran.belongsTo(models.Dosen, {
         foreignKey: "ketua_penelitian_dosen_id",
         as: "ketuaPenelitianDosen",

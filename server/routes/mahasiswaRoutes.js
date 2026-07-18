@@ -4,6 +4,7 @@ const mahasiswaController = require("../controllers/mahasiswaController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
 const sidangDokumenUpload = require("../middlewares/sidangDokumenUploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
@@ -37,6 +38,7 @@ router.put("/update-profile", authenticateToken, authorizeRole("mahasiswa"), mah
 
 // Get current Dosen Pembimbing Akademik
 router.get("/dpa/current", authenticateToken, authorizeRole("mahasiswa"), mahasiswaController.getCurrentDPA);
+router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("mahasiswa"), penetapanPembimbingController.getMySupervisorAssignmentHistory);
 
 // Change password mahasiswa
 router.put("/change-password", authenticateToken, authorizeRole("mahasiswa"), mahasiswaController.changePassword);

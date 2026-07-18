@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
+import SupervisorAssignmentTimeline from "../components/SupervisorAssignmentTimeline";
 import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
 import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
 import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
@@ -1645,6 +1646,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [finalResearchDecision, setFinalResearchDecision] = useState("");
   const [finalResearchDecisionNote, setFinalResearchDecisionNote] = useState("");
   const [finalResearchDecisionError, setFinalResearchDecisionError] = useState("");
+  const [finalResearchSecondarySupervisorId, setFinalResearchSecondarySupervisorId] = useState("");
   const [finalNonPenelitianMode, setFinalNonPenelitianMode] = useState("list");
   const [selectedFinalNonPenelitianId, setSelectedFinalNonPenelitianId] = useState(null);
   const [finalNonPenelitianDetail, setFinalNonPenelitianDetail] = useState(null);
@@ -1652,6 +1654,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [finalNonPenelitianDecision, setFinalNonPenelitianDecision] = useState("");
   const [finalNonPenelitianDecisionNote, setFinalNonPenelitianDecisionNote] = useState("");
   const [finalNonPenelitianDosenPembimbingId, setFinalNonPenelitianDosenPembimbingId] = useState("");
+  const [finalNonPenelitianDosenPembimbing2Id, setFinalNonPenelitianDosenPembimbing2Id] = useState("");
   const [finalNonPenelitianDosenQuery, setFinalNonPenelitianDosenQuery] = useState("");
   const [finalNonPenelitianDosenComboOpen, setFinalNonPenelitianDosenComboOpen] = useState(false);
   const [finalNonPenelitianDecisionErrors, setFinalNonPenelitianDecisionErrors] = useState({
@@ -1858,6 +1861,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     maxHeight: 520,
   });
   const [mahasiswaMasterPage, setMahasiswaMasterPage] = useState(1);
+  const [supervisorHistoryPanel, setSupervisorHistoryPanel] = useState({
+    mahasiswaId: null, mahasiswaName: "", loading: false, data: null, error: "",
+  });
   const [periodeOverview, setPeriodeOverview] = useState({
     active_periode: null,
     draft_periode: null,
@@ -2279,6 +2285,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalResearchDecision("");
     setFinalResearchDecisionNote("");
     setFinalResearchDecisionError("");
+    setFinalResearchSecondarySupervisorId("");
     setFinalResearchMode("review");
   };
 
@@ -2290,6 +2297,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalResearchDecision("");
     setFinalResearchDecisionNote("");
     setFinalResearchDecisionError("");
+    setFinalResearchSecondarySupervisorId("");
   };
 
   const handleSelectFinalResearchTopic = (slot) => {
@@ -2324,6 +2332,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
             keterangan: note,
             ...(finalResearchFocusedTopic?.slot != null
               ? { topik_slot: Number(finalResearchFocusedTopic.slot) }
+              : {}),
+            ...(finalResearchDecision === "approve" && finalResearchSecondarySupervisorId
+              ? { dosen_pembimbing_2_id: Number(finalResearchSecondarySupervisorId) }
               : {}),
           }),
         }
@@ -4172,6 +4183,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setShowMahasiswaMasterFilterPanel(false);
   }, []);
 
+  const loadSupervisorHistoryPanel = async (row) => {
+    const mahasiswaId = Number(row?.mahasiswa_id);
+    if (!mahasiswaId) return;
+    setSupervisorHistoryPanel({ mahasiswaId, mahasiswaName: row?.nama || "Mahasiswa", loading: true, data: null, error: "" });
+    try {
+      const path = isSekretaris
+        ? `/api/sekretaris/mahasiswa/${mahasiswaId}/penetapan-pembimbing`
+        : `/api/dosen/mahasiswa/${mahasiswaId}/penetapan-pembimbing`;
+      const payload = await fetchWithAuth(path);
+      setSupervisorHistoryPanel({ mahasiswaId, mahasiswaName: row?.nama || payload?.mahasiswa?.nama || "Mahasiswa", loading: false, data: payload, error: "" });
+    } catch (historyError) {
+      setSupervisorHistoryPanel({ mahasiswaId, mahasiswaName: row?.nama || "Mahasiswa", loading: false, data: null, error: historyError.message || "Gagal memuat histori pembimbing." });
+    }
+  };
+
   useEffect(() => {
     setMahasiswaMasterPage(1);
   }, [activeTab, mahasiswaMasterFilters, mahasiswaMasterQuery]);
@@ -4733,6 +4759,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalNonPenelitianDecision("");
     setFinalNonPenelitianDecisionNote("");
     setFinalNonPenelitianDosenPembimbingId("");
+    setFinalNonPenelitianDosenPembimbing2Id("");
     setFinalNonPenelitianDosenQuery("");
     setFinalNonPenelitianDosenComboOpen(false);
     setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
@@ -4762,6 +4789,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalNonPenelitianDecision("");
     setFinalNonPenelitianDecisionNote("");
     setFinalNonPenelitianDosenPembimbingId("");
+    setFinalNonPenelitianDosenPembimbing2Id("");
     setFinalNonPenelitianDosenQuery("");
     setFinalNonPenelitianDosenComboOpen(false);
     setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
@@ -4851,6 +4879,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const isApprove = decision === "approve";
     const note = String(finalNonPenelitianDecisionNote || "").trim();
     const dosenPembimbingId = Number(finalNonPenelitianDosenPembimbingId || 0);
+    const dosenPembimbing2Id = Number(finalNonPenelitianDosenPembimbing2Id || 0);
     const nextErrors = { note: "", dosen: "" };
     if (isApprove && !dosenPembimbingId) {
       nextErrors.dosen = "Pilih dosen pembimbing terlebih dahulu sebelum approve final.";
@@ -4871,6 +4900,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           method: "POST",
           body: JSON.stringify({
             dosen_pembimbing_id: isApprove ? dosenPembimbingId : null,
+            dosen_pembimbing_2_id: isApprove && dosenPembimbing2Id ? dosenPembimbing2Id : null,
             keterangan: note,
           }),
         }
@@ -7475,7 +7505,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   </div>
 
                   <div className="relative mt-1 overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
-                  <table className="w-full min-w-[3000px] text-left text-sm">
+                  <table className="w-full min-w-[3120px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
@@ -7502,6 +7532,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Pendaftaran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal Penjaluran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Updated</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Histori Pembimbing</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -7553,6 +7584,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               </td>
                               <td className="px-3 py-2">{formatDateTime(row.tanggal_penjaluran)}</td>
                               <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
+                              <td className="px-3 py-2">
+                                <button type="button" onClick={() => loadSupervisorHistoryPanel(row)} className="whitespace-nowrap rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white">Lihat Histori</button>
+                              </td>
                             </tr>
                           ))
                         : null}
@@ -7564,6 +7598,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
                   ) : null}
                 </div>
+
+                  {supervisorHistoryPanel.mahasiswaId ? (
+                    <div className="mt-4 rounded-xl border border-[#dbe4f6] bg-[#f8fbff] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <h4 className="font-black text-[#1b274b]">Riwayat Pembimbing - {supervisorHistoryPanel.mahasiswaName}</h4>
+                          <p className="text-sm text-[#5d6c91]">Penetapan aktif dan histori setiap periode.</p>
+                        </div>
+                        <button type="button" onClick={() => setSupervisorHistoryPanel({ mahasiswaId: null, mahasiswaName: "", loading: false, data: null, error: "" })} className="rounded-lg border border-[#d3dbef] p-2 text-[#596887]" aria-label="Tutup histori"><X className="h-4 w-4" /></button>
+                      </div>
+                      <SupervisorAssignmentTimeline data={supervisorHistoryPanel.data} loading={supervisorHistoryPanel.loading} error={supervisorHistoryPanel.error} compact />
+                    </div>
+                  ) : null}
 
                   <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
                   <p className="text-sm text-[#4f5e86]">
@@ -7781,6 +7828,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           type="button"
                           onClick={() => {
                             setFinalResearchDecision("reject");
+                            setFinalResearchSecondarySupervisorId("");
                             setFinalResearchDecisionError("");
                           }}
                           className={`rounded-lg px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -7809,6 +7857,40 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
                       {finalResearchDecision ? (
                         <div className="mt-3">
+                          {finalResearchDecision === "approve" ? (
+                            <div className="mb-3 grid gap-3 md:grid-cols-2">
+                              <div>
+                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                  Pembimbing 1
+                                </label>
+                                <input
+                                  type="text"
+                                  readOnly
+                                  value={finalResearchFocusedTopic?.dosen_nama || "-"}
+                                  className="w-full rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2 text-sm text-[#445477]"
+                                />
+                              </div>
+                              <div>
+                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                  Pembimbing 2 <span className="font-normal text-[#7582a2]">(opsional)</span>
+                                </label>
+                                <select
+                                  value={finalResearchSecondarySupervisorId}
+                                  onChange={(event) => setFinalResearchSecondarySupervisorId(event.target.value)}
+                                  className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                                >
+                                  <option value="">Tanpa Pembimbing 2</option>
+                                  {periodeDosenOptions
+                                    .filter((dosen) => Number(dosen.id) !== Number(finalResearchFocusedTopic?.dosen_id))
+                                    .map((dosen) => (
+                                      <option key={`research-secondary-${dosen.id}`} value={dosen.id}>
+                                        {dosen.nama || "-"} - NIK: {dosen.nik || "-"}
+                                      </option>
+                                    ))}
+                                </select>
+                              </div>
+                            </div>
+                          ) : null}
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
                             {finalResearchDecision === "approve" ? "Catatan keputusan" : "Alasan penolakan"}
                             <span className="ml-1 text-[#b73a3a]">*</span>
@@ -7930,6 +8012,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 onClick={() => {
                                   setFinalNonPenelitianDecision("reject");
                                   setFinalNonPenelitianDosenPembimbingId("");
+                                  setFinalNonPenelitianDosenPembimbing2Id("");
                                   setFinalNonPenelitianDosenQuery("");
                                   setFinalNonPenelitianDosenComboOpen(false);
                                   setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
@@ -8064,6 +8147,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                             onMouseDown={(event) => event.preventDefault()}
                                             onClick={() => {
                                               setFinalNonPenelitianDosenPembimbingId(String(dosen.id));
+                                              if (Number(finalNonPenelitianDosenPembimbing2Id) === Number(dosen.id)) {
+                                                setFinalNonPenelitianDosenPembimbing2Id("");
+                                              }
                                               setFinalNonPenelitianDosenQuery(dosen.label);
                                               setFinalNonPenelitianDosenComboOpen(false);
                                               setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
@@ -8088,6 +8174,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       )}
                                     </div>
                                   ) : null}
+                                  <div className="mt-3">
+                                    <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
+                                      Pembimbing 2 <span className="font-normal text-[#7582a2]">(opsional)</span>
+                                    </label>
+                                    <select
+                                      value={finalNonPenelitianDosenPembimbing2Id}
+                                      onChange={(event) => setFinalNonPenelitianDosenPembimbing2Id(event.target.value)}
+                                      className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                                    >
+                                      <option value="">Tanpa Pembimbing 2</option>
+                                      {periodeDosenOptions
+                                        .filter(
+                                          (dosen) => Number(dosen.id) !== Number(finalNonPenelitianDosenPembimbingId || 0)
+                                        )
+                                        .map((dosen) => (
+                                          <option key={`nonresearch-secondary-${dosen.id}`} value={dosen.id}>
+                                            {dosen.nama || "-"} - NIK: {dosen.nik || "-"}
+                                          </option>
+                                        ))}
+                                    </select>
+                                  </div>
                                 </div>
                               ) : null}
                             </div>
@@ -9682,7 +9789,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               </td>
                               <td className="px-3 py-2">{formatDateTime(row.tanggal_pengajuan)}</td>
                               <td className="px-3 py-2">
-                                {row.status === "pending" ? (
+                                {row.status === "pending" && row.can_review !== false ? (
                                   <div className="flex items-center gap-2">
                                     <button
                                       type="button"
@@ -9707,7 +9814,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                       <Eye className="h-3.5 w-3.5" />
-                                      Detail
+                                      {row.can_review === false ? "Detail (read-only)" : "Detail"}
                                     </button>
                                   </div>
                                 ) : (

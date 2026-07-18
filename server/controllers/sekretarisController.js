@@ -21,6 +21,7 @@ const {
 } = require("../models");
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
 const { evaluatePeriodeWindow, parseInputDateForJakarta } = require("../services/periodePenjaluranService");
+const { replaceSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const {
   ACTIVE_DOSEN_WHERE,
   assertDosenCanReceiveNewAssignment,
@@ -3869,29 +3870,14 @@ exports.approvePenelitianFinal = async (req, res) => {
       });
     }
 
-    const assignmentPeriodeId = submission.pendaftaran_penjaluran_id
-      ? (await PendaftaranPenjaluran.findByPk(submission.pendaftaran_penjaluran_id, {
-          attributes: ["periode_penjaluran_id"],
-          transaction: t,
-        }))?.periode_penjaluran_id
-      : null;
-    const assignmentValidation = await validateDosenForNewAssignment(
-      winner.dosen_id,
-      assignmentPeriodeId,
-      {
-        transaction: t,
-        availabilityField: "tersedia_membimbing",
-        activityLabel: "menjadi pembimbing final penelitian",
-      }
-    );
-    if (!assignmentValidation.allowed) {
+    const assignmentRegistration = await resolveResearchSubmissionRegistration(submission, t);
+    const secondarySupervisorRaw = req.body?.dosen_pembimbing_2_id;
+    const secondarySupervisorId = secondarySupervisorRaw ? Number(secondarySupervisorRaw) : null;
+    if (secondarySupervisorRaw && (!Number.isInteger(secondarySupervisorId) || secondarySupervisorId <= 0)) {
       await t.rollback();
-      return res.status(409).json({
-        success: false,
-        message: assignmentValidation.message,
-        detail: { capacity: assignmentValidation.capacity || null },
-      });
+      return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
     }
+    const supervisorIds = [Number(winner.dosen_id), secondarySupervisorId].filter(Boolean);
 
     await submission.update(
       {
@@ -3924,9 +3910,18 @@ exports.approvePenelitianFinal = async (req, res) => {
       lock: t.LOCK.UPDATE,
     });
     if (mahasiswa) {
+      await replaceSupervisorAssignment({
+        mahasiswaId: mahasiswa.id,
+        pendaftaranPenjaluranId: assignmentRegistration?.id || null,
+        periodeMulaiId: assignmentRegistration?.periode_penjaluran_id || null,
+        dosenPembimbingIds: supervisorIds,
+        sumberData: assignmentRegistration?.jalur === "baru" ? "penjaluran" : "pergantian",
+        createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
+        tanggalMulai: new Date(),
+        transaction: t,
+      });
       await mahasiswa.update(
         {
-          dosen_pembimbing_skripsi_id: winner.dosen_id,
           status_jalur_saat_ini: submission.jenis_jalur,
           pengajuan_aktif_id: null,
         },
@@ -3958,10 +3953,11 @@ exports.approvePenelitianFinal = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di approvePenelitianFinal:", error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: "Gagal menyetujui pengajuan penelitian.",
+      message: error.statusCode ? error.message : "Gagal menyetujui pengajuan penelitian.",
       error: error.message,
+      detail: error.detail || null,
     });
   }
 };

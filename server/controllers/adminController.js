@@ -17,6 +17,7 @@ const {
   initializeAvailabilityForDosen,
 } = require("../services/dosenStatusService");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
+const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("../services/supervisorAccessService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -1377,8 +1378,9 @@ exports.getKuotaOverview = async (req, res) => {
         const kuotaInfo = await dosen.getKuotaInfo();
 
         // Dapatkan list mahasiswa bimbingan
+        const supervisedIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen.id);
         const mahasiswas = await Mahasiswa.findAll({
-          where: { dosen_pembimbing_skripsi_id: dosen.id },
+          where: { id: { [Op.in]: supervisedIds } },
           attributes: ["id", "nim", "nama", "angkatan"],
         });
 
@@ -1528,8 +1530,9 @@ exports.getKuotaDosenDetail = async (req, res) => {
     const kuotaInfo = await dosen.getKuotaInfo();
 
     // Dapatkan mahasiswa bimbingan
+    const supervisedIds = await getSupervisedMahasiswaIdsWithLegacyFallback(id);
     const mahasiswas = await Mahasiswa.findAll({
-      where: { dosen_pembimbing_skripsi_id: id },
+      where: { id: { [Op.in]: supervisedIds } },
       attributes: ["id", "nim", "nama", "email", "angkatan", "status_jalur_saat_ini"],
       include: [
         {

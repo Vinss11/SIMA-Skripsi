@@ -826,80 +826,11 @@ async function finalizeApprovedTopikSubmission(submission, parallelState, transa
     };
   }
 
-  await submission.update(
-    {
-      status: "approved",
-      alasan_persetujuan:
-        submission.alasan_persetujuan ||
-        `Disetujui berdasarkan prioritas pilihan mahasiswa (slot ${winner.slot}).`,
-      alasan_penolakan: null,
-      dosen_saat_ini: winner.dosen_id,
-    },
-    { transaction }
-  );
-
-  await Topik.update(
-    { status: "taken" },
-    {
-      where: { kode: winner.kode },
-      transaction,
-    }
-  );
-
-  const releaseCodes = buildTopikListFromSubmission(submission)
-    .map((item) => item.kode)
-    .filter((kode) => kode && kode !== winner.kode);
-  if (releaseCodes.length > 0) {
-    await Topik.update(
-      { status: "available" },
-      {
-        where: {
-          kode: releaseCodes,
-          status: "reserved",
-        },
-        transaction,
-      }
-    );
-  }
-
-  const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
-    transaction,
-    lock: transaction.LOCK.UPDATE,
+  return routeTopikWinnerToSekprodi(submission, winner, transaction, {
+    alasanPersetujuan:
+      submission.alasan_persetujuan ||
+      `Disetujui berdasarkan prioritas pilihan mahasiswa (slot ${winner.slot}). Menunggu persetujuan final sekretaris prodi.`,
   });
-
-  if (mahasiswa) {
-    await mahasiswa.update(
-      {
-        dosen_pembimbing_skripsi_id: winner.dosen_id,
-        status_jalur_saat_ini: submission.jenis_jalur,
-        pengajuan_aktif_id: null,
-      },
-      { transaction }
-    );
-  }
-
-  const dosenPembimbing = await Dosen.findByPk(winner.dosen_id, { transaction });
-  if (dosenPembimbing && typeof dosenPembimbing.getKuotaInfo === "function") {
-    const kuotaInfo = await dosenPembimbing.getKuotaInfo();
-    if (kuotaInfo?.is_penuh) {
-      await Topik.update(
-        { status: "unavailable" },
-        {
-          where: {
-            dosen_id: winner.dosen_id,
-            status: "available",
-          },
-          transaction,
-        }
-      );
-    }
-  }
-
-  return {
-    success: true,
-    final_status: "approved",
-    winner,
-  };
 }
 
 async function finalizeRejectedTopikSubmission(submission, parallelState, transaction) {

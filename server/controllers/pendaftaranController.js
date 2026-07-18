@@ -1,5 +1,6 @@
 const { Op } = require("sequelize");
 const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment } = require("../services/dosenStatusService");
+const { countActiveSupervisions } = require("../services/supervisorAccessService");
 const {
   Mahasiswa,
   Dosen,
@@ -335,34 +336,16 @@ exports.getDosenDropdown = async (req, res) => {
       : [];
     const availabilityByDosen = new Map(availabilityRows.map((item) => [Number(item.dosen_id), item]));
 
-    const pembagianBimbingan = await Mahasiswa.findAll({
-      attributes: ["dosen_pembimbing_skripsi_id", [sequelize.fn("COUNT", sequelize.col("id")), "jumlah_bimbingan"]],
-      where: {
-        dosen_pembimbing_skripsi_id: { [Op.ne]: null },
-        [Op.or]: [
-          { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-          { status_jalur_saat_ini: null },
-        ],
-      },
-      group: ["dosen_pembimbing_skripsi_id"],
-      raw: true,
-    });
-
-    const jumlahByDosenId = new Map(
-      pembagianBimbingan.map((item) => [Number(item.dosen_pembimbing_skripsi_id), Number(item.jumlah_bimbingan || 0)])
-    );
-
-    const mappedDosens = dosens
-      .filter((dosen) => {
+    const eligibleDosens = dosens.filter((dosen) => {
         if (!activePeriode) return false;
         const availability = availabilityByDosen.get(dosen.id);
         return availability?.configuration_status === "ready"
           && availability?.tersedia_membimbing === true;
-      })
-      .map((dosen) => {
+      });
+    const mappedDosens = (await Promise.all(eligibleDosens.map(async (dosen) => {
         const availability = availabilityByDosen.get(dosen.id);
         const kuotaBimbingan = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);
-        const jumlahBimbingan = jumlahByDosenId.get(dosen.id) || 0;
+        const jumlahBimbingan = await countActiveSupervisions(dosen.id);
         const sisaKuota = Math.max(kuotaBimbingan - jumlahBimbingan, 0);
 
         return {
@@ -387,8 +370,7 @@ exports.getDosenDropdown = async (req, res) => {
               }))
             : [],
         };
-      })
-      .sort((a, b) => {
+      }))).sort((a, b) => {
         // Prioritas: dosen tanpa mahasiswa bimbingan, lalu yang kuotanya masih tersedia
         if (a.is_no_bimbingan !== b.is_no_bimbingan) return a.is_no_bimbingan ? -1 : 1;
         if (a.is_kuota_penuh !== b.is_kuota_penuh) return a.is_kuota_penuh ? 1 : -1;
