@@ -34,6 +34,104 @@ function assertDosenCanReceiveNewAssignment(dosen, activityLabel = "penugasan ba
   return { allowed: true };
 }
 
+function getJakartaDateOnly() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function buildInitialAvailabilityValues(dosen, periodeId) {
+  return {
+    dosen_id: dosen.id,
+    periode_penjaluran_id: periodeId,
+    tersedia_membimbing: false,
+    tersedia_menguji: false,
+    tersedia_ketua_cluster: false,
+    tersedia_pengampu: false,
+    tersedia_pengawas_jalur: false,
+    tersedia_sidang: false,
+    kuota_bimbingan_periode: Number(dosen.kuota_bimbingan || 0),
+    alasan_tidak_tersedia: dosen.status_keaktifan === "active" ? null : "Dikunci oleh status master dosen",
+    configuration_status: dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status",
+    reviewed_at: null,
+    reviewed_by_sekretaris_id: null,
+    review_note: null,
+  };
+}
+
+async function initializeAvailabilityForDosen(dosen, transaction = null) {
+  const periods = await PeriodePenjaluran.findAll({
+    where: { status: { [Op.in]: ["draft", "active"] } },
+    attributes: ["id"],
+    transaction,
+  });
+  if (periods.length === 0) return [];
+  const existing = await DosenKetersediaanPeriode.findAll({
+    where: { dosen_id: dosen.id, periode_penjaluran_id: { [Op.in]: periods.map((item) => item.id) } },
+    attributes: ["periode_penjaluran_id"],
+    transaction,
+  });
+  const existingIds = new Set(existing.map((item) => Number(item.periode_penjaluran_id)));
+  const values = periods
+    .filter((item) => !existingIds.has(Number(item.id)))
+    .map((item) => buildInitialAvailabilityValues(dosen, item.id));
+  return values.length > 0
+    ? DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true })
+    : [];
+}
+
+async function initializeAvailabilityForPeriod(periodeId, transaction = null) {
+  const [period, dosens] = await Promise.all([
+    PeriodePenjaluran.findByPk(periodeId, { attributes: ["id", "status"], transaction }),
+    Dosen.findAll({
+      attributes: ["id", "status_keaktifan", "kuota_bimbingan", "createdAt", "status_updated_at"],
+      transaction,
+    }),
+  ]);
+  if (!period || period.status === "closed") return [];
+  const existing = await DosenKetersediaanPeriode.findAll({
+    where: { periode_penjaluran_id: periodeId },
+    attributes: ["dosen_id"],
+    transaction,
+  });
+  const existingIds = new Set(existing.map((item) => Number(item.dosen_id)));
+  const values = dosens
+    .filter((dosen) => !existingIds.has(Number(dosen.id)))
+    .map((dosen) => buildInitialAvailabilityValues(dosen, periodeId));
+  return values.length > 0
+    ? DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true })
+    : [];
+}
+
+async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) {
+  const rows = await DosenKetersediaanPeriode.findAll({
+    where: { dosen_id: dosen.id },
+    include: [{
+      model: PeriodePenjaluran,
+      as: "periode",
+      where: { status: { [Op.in]: ["draft", "active"] } },
+      attributes: [],
+      required: true,
+    }],
+    transaction,
+  });
+  const configurationStatus = dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status";
+  for (const row of rows) {
+    await row.update({
+      configuration_status: configurationStatus,
+      reviewed_at: null,
+      reviewed_by_sekretaris_id: null,
+      review_note: dosen.status_keaktifan === "active"
+        ? "Status master kembali aktif dan perlu ditinjau ulang"
+        : "Dikunci oleh perubahan status master dosen",
+    }, { transaction });
+  }
+  return rows.length;
+}
+
 function canContinueExistingSupervision(dosen) {
   if (!dosen) return false;
   const status = String(dosen.status_keaktifan || "active");
@@ -71,7 +169,15 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   if (!eligibility.allowed) return { ...eligibility, dosen };
 
   const availability = periodeId ? await getAvailability(dosenId, periodeId, transaction) : null;
-  if (availability && availability[availabilityField] === false) {
+  if (periodeId && (!availability || availability.configuration_status !== "ready")) {
+    return {
+      allowed: false,
+      dosen,
+      availability,
+      message: "Ketersediaan dosen belum dikonfirmasi oleh Sekretaris Prodi untuk periode ini.",
+    };
+  }
+  if (periodeId && availability?.[availabilityField] !== true) {
     return {
       allowed: false,
       dosen,
@@ -114,6 +220,88 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   }
 
   return { allowed: true, dosen, availability, capacity };
+}
+
+function toEffectiveAvailability(dosen, saved, periodeStatus) {
+  const isClosed = periodeStatus === "closed";
+  const masterActive = dosen.status_keaktifan === "active";
+  const configurationReady = saved?.configuration_status === "ready";
+  const effectiveAllowed = masterActive && configurationReady;
+  const effective = {};
+  for (const field of [
+    "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
+    "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
+  ]) {
+    effective[`efektif_${field.replace("tersedia_", "")}`] = isClosed
+      ? Boolean(saved?.[field])
+      : Boolean(effectiveAllowed && saved?.[field]);
+  }
+  return effective;
+}
+
+async function copyAvailabilityFromPreviousPeriod(periodeId, sekretarisId, transaction = null) {
+  const current = await PeriodePenjaluran.findByPk(periodeId, { transaction });
+  if (!current || current.status === "closed") {
+    return { copied: 0, needs_review: 0, locked: 0, previous_period: null };
+  }
+  await initializeAvailabilityForPeriod(periodeId, transaction);
+  const previous = await PeriodePenjaluran.findOne({
+    where: { id: { [Op.ne]: current.id }, createdAt: { [Op.lt]: current.createdAt } },
+    order: [["createdAt", "DESC"]],
+    transaction,
+  });
+  if (!previous) return { copied: 0, needs_review: 0, locked: 0, previous_period: null };
+
+  const [dosens, currentRows, previousRows] = await Promise.all([
+    Dosen.findAll({ transaction }),
+    DosenKetersediaanPeriode.findAll({ where: { periode_penjaluran_id: current.id }, transaction }),
+    DosenKetersediaanPeriode.findAll({ where: { periode_penjaluran_id: previous.id }, transaction }),
+  ]);
+  const currentByDosen = new Map(currentRows.map((row) => [Number(row.dosen_id), row]));
+  const previousByDosen = new Map(previousRows.map((row) => [Number(row.dosen_id), row]));
+  const summary = { copied: 0, needs_review: 0, locked: 0, previous_period: previous };
+  const now = new Date();
+  for (const dosen of dosens) {
+    const target = currentByDosen.get(Number(dosen.id));
+    if (!target) continue;
+    if (dosen.status_keaktifan !== "active") {
+      await target.update({
+        configuration_status: "locked_by_master_status",
+        reviewed_at: null,
+        reviewed_by_sekretaris_id: null,
+        review_note: "Dikunci oleh status master dosen",
+      }, { transaction });
+      summary.locked += 1;
+      continue;
+    }
+    const source = previousByDosen.get(Number(dosen.id));
+    const comparisonDate = source?.reviewed_at || source?.updatedAt || null;
+    const statusChangedAfterReview = Boolean(
+      dosen.status_updated_at && comparisonDate
+      && new Date(dosen.status_updated_at).getTime() > new Date(comparisonDate).getTime()
+    );
+    if (!source || source.configuration_status !== "ready" || statusChangedAfterReview) {
+      await target.update({ configuration_status: "needs_review", reviewed_at: null, reviewed_by_sekretaris_id: null }, { transaction });
+      summary.needs_review += 1;
+      continue;
+    }
+    await target.update({
+      tersedia_membimbing: source.tersedia_membimbing,
+      tersedia_menguji: source.tersedia_menguji,
+      tersedia_ketua_cluster: source.tersedia_ketua_cluster,
+      tersedia_pengampu: source.tersedia_pengampu,
+      tersedia_pengawas_jalur: source.tersedia_pengawas_jalur,
+      tersedia_sidang: source.tersedia_sidang,
+      kuota_bimbingan_periode: source.kuota_bimbingan_periode,
+      alasan_tidak_tersedia: source.alasan_tidak_tersedia,
+      configuration_status: "ready",
+      reviewed_at: now,
+      reviewed_by_sekretaris_id: sekretarisId || null,
+      review_note: `Disalin dari periode ${previous.label_periode}`,
+    }, { transaction });
+    summary.copied += 1;
+  }
+  return summary;
 }
 
 function getRegistrationSelectedTrack(registration) {
@@ -340,6 +528,12 @@ module.exports = {
   assertDosenCanContinueExistingSupervision,
   getExistingSupervisionPermission,
   validateDosenForNewAssignment,
+  initializeAvailabilityForDosen,
+  initializeAvailabilityForPeriod,
+  syncAvailabilityForMasterStatusChange,
+  toEffectiveAvailability,
+  copyAvailabilityFromPreviousPeriod,
+  getJakartaDateOnly,
   resolveResearchSubmissionRegistration,
   resolveResearchSubmissionPeriodId,
   validateResearchSubmissionReviewer,

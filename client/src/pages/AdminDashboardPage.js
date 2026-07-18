@@ -86,6 +86,111 @@ const DOSEN_STATUS_OPTIONS = [
   { value: "retired", label: "Pensiun" },
 ];
 const DOSEN_STATUS_LABELS = Object.fromEntries(DOSEN_STATUS_OPTIONS.map((item) => [item.value, item.label]));
+const DOSEN_IDENTITY_MAX_LENGTH = 150;
+const DOSEN_PREFIX_TITLE_WORDS = new Set(["prof", "dr", "ir", "drs", "dra", "h", "hj"]);
+
+function normalizeDosenNameInput(value) {
+  return String(value || "").trim().replace(/\s+/g, " ");
+}
+
+function normalizeDosenTitleInput(value) {
+  return normalizeDosenNameInput(value).replace(/\s*,\s*/g, ", ");
+}
+
+function validateDosenNameInput(value) {
+  const normalized = normalizeDosenNameInput(value);
+  if (!normalized) return "Nama wajib diisi.";
+  if (normalized.length > DOSEN_IDENTITY_MAX_LENGTH) return `Nama maksimal ${DOSEN_IDENTITY_MAX_LENGTH} karakter.`;
+  if (!/^[\p{L}\s]+$/u.test(normalized)) return "Nama hanya boleh berisi huruf dan spasi, tanpa angka atau karakter khusus.";
+  return "";
+}
+
+function validateDosenTitleInput(value) {
+  const normalized = normalizeDosenTitleInput(value);
+  if (!normalized) return "Gelar wajib diisi.";
+  if (normalized.length > DOSEN_IDENTITY_MAX_LENGTH) return `Gelar maksimal ${DOSEN_IDENTITY_MAX_LENGTH} karakter.`;
+  const invalidCharacters = [...new Set(normalized.match(/[^\p{L}.,()'\s-]/gu) || [])];
+  if (invalidCharacters.length > 0) return `Gelar mengandung karakter yang tidak diizinkan: ${invalidCharacters.join(" ")}.`;
+  if (!/\p{L}/u.test(normalized)) return "Gelar tidak boleh hanya berisi simbol.";
+  if (/([.,()'-])(?:\s*\1)+/.test(normalized)) return "Gelar tidak boleh mengandung simbol berulang seperti ..., ,,, atau --.";
+  if ((normalized.match(/\(/g) || []).length !== (normalized.match(/\)/g) || []).length) return "Tanda kurung pada gelar harus berpasangan.";
+  return "";
+}
+
+function isDosenPrefixTitle(titlePart) {
+  const words = normalizeDosenNameInput(titlePart).split(" ").filter(Boolean);
+  return words.length > 0 && words.every((word) => DOSEN_PREFIX_TITLE_WORDS.has(word.replace(/\./g, "").toLowerCase()));
+}
+
+function formatDosenFullName(namaValue, gelarValue) {
+  const nama = normalizeDosenNameInput(namaValue);
+  const gelar = normalizeDosenTitleInput(gelarValue);
+  if (!nama) return gelar;
+  if (!gelar) return nama;
+  const titleParts = gelar.split(",").map((item) => item.trim()).filter(Boolean);
+  const prefixParts = [];
+  while (titleParts.length > 0 && isDosenPrefixTitle(titleParts[0])) prefixParts.push(titleParts.shift());
+  return `${prefixParts.length ? `${prefixParts.join(" ")} ` : ""}${nama}${titleParts.length ? `, ${titleParts.join(", ")}` : ""}`;
+}
+
+function validateDosenImportPreviewRow(row) {
+  const errors = [];
+  const nik = String(row?.nik || "").trim();
+  const email = String(row?.email || "").trim().toLowerCase();
+  const kuota = Number(row?.kuota_bimbingan);
+  const namaError = validateDosenNameInput(row?.nama);
+  const gelarError = validateDosenTitleInput(row?.gelar);
+  if (!nik) errors.push("NIK wajib diisi.");
+  else if (!/^\d{1,9}$/.test(nik)) errors.push("NIK harus berupa angka dengan panjang maksimal 9 digit.");
+  if (namaError) errors.push(namaError);
+  if (gelarError) errors.push(gelarError);
+  if (!email) errors.push("Email wajib diisi.");
+  else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push("Format email tidak valid.");
+  if (!String(row?.klaster || "").trim()) errors.push("Klaster wajib diisi.");
+  if (!Number.isInteger(kuota) || kuota < 1 || kuota > 99) errors.push("Kuota bimbingan wajib berupa angka 1-99.");
+  if (!DOSEN_STATUS_OPTIONS.some((option) => option.value === row?.status_keaktifan)) errors.push("Status Dosen tidak valid.");
+  return errors.join(" ");
+}
+
+function applyClientDosenImportValidation(payload) {
+  if (!payload?.data) return payload;
+  const successRows = Array.isArray(payload.data.detail_valid)
+    ? payload.data.detail_valid
+    : Array.isArray(payload.data.detail_berhasil)
+      ? payload.data.detail_berhasil
+      : [];
+  const serverFailedRows = Array.isArray(payload.data.detail_invalid)
+    ? payload.data.detail_invalid
+    : Array.isArray(payload.data.detail_gagal)
+      ? payload.data.detail_gagal
+      : [];
+  const validRows = [];
+  const clientFailedRows = [];
+  successRows.forEach((row, index) => {
+    const error = validateDosenImportPreviewRow(row);
+    if (!error) {
+      validRows.push(row);
+      return;
+    }
+    clientFailedRows.push({ row: row?.row ?? index + 2, data: row, error });
+  });
+  const failedRows = [...serverFailedRows, ...clientFailedRows];
+  return {
+    ...payload,
+    message: `Preview selesai. Valid: ${validRows.length}, Tidak valid: ${failedRows.length}. Klik Simpan untuk memasukkan data valid ke database.`,
+    data: {
+      ...payload.data,
+      valid: validRows.length,
+      invalid: failedRows.length,
+      berhasil: validRows.length,
+      gagal: failedRows.length,
+      detail_valid: validRows,
+      detail_invalid: failedRows,
+      detail_berhasil: validRows,
+      detail_gagal: failedRows,
+    },
+  };
+}
 
 function todayJakarta() {
   return new Intl.DateTimeFormat("en-CA", {
@@ -110,7 +215,7 @@ function showSuccessToast(message) {
 
 function formatAdminDosenOptionLabel(dosen) {
   if (!dosen) return "";
-  const nama = String(dosen.nama || "").trim();
+  const nama = formatDosenFullName(dosen.nama, dosen.gelar);
   const nik = String(dosen.nik || "").trim();
   if (nama && nik) return `${nama} - NIK: ${nik}`;
   if (nama) return nama;
@@ -391,11 +496,13 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     email: "",
     jabatan_struktural: "",
     kuota_bimbingan: "5",
+    status_keaktifan: "active",
     klaster_ids: [],
   });
   const [creatingDosen, setCreatingDosen] = useState(false);
   const [createDosenMessage, setCreateDosenMessage] = useState("");
   const [createDosenError, setCreateDosenError] = useState("");
+  const [createDosenFieldErrors, setCreateDosenFieldErrors] = useState({});
   const [selectedDosen, setSelectedDosen] = useState(null);
   const [dosenEditForm, setDosenEditForm] = useState({
     gelar: "",
@@ -407,6 +514,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     status_effective_at: todayJakarta(),
     status_reason: "",
   });
+  const [dosenEditGelarError, setDosenEditGelarError] = useState("");
   const [savingDosenStatus, setSavingDosenStatus] = useState(false);
   const [dosenStatusHistory, setDosenStatusHistory] = useState([]);
   const [savingDosenEdit, setSavingDosenEdit] = useState(false);
@@ -541,7 +649,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
   const summary = useMemo(() => aggregateStatistics(statistics), [statistics]);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
-  const templateDosenUrl = `${apiBaseUrl}/api/admin/upload/dosen-template`;
+  const templateDosenUrl = `${apiBaseUrl}/api/admin/upload/dosen-template?v=status-dosen-v2`;
   const templateMahasiswaUrl = `${apiBaseUrl}/api/admin/upload/mahasiswa-template`;
 
   const jabatanAssignments = useMemo(
@@ -772,12 +880,13 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   };
 
   const dosenUploadValidRows = useMemo(() => {
+    let rows = [];
     if (Array.isArray(uploadDosenResult?.data?.detail_valid)) {
-      return uploadDosenResult.data.detail_valid;
+      rows = uploadDosenResult.data.detail_valid;
+    } else if (Array.isArray(uploadDosenResult?.data?.detail_berhasil)) {
+      rows = uploadDosenResult.data.detail_berhasil;
     }
-    return Array.isArray(uploadDosenResult?.data?.detail_berhasil)
-      ? uploadDosenResult.data.detail_berhasil
-      : [];
+    return rows.filter((row) => !validateDosenImportPreviewRow(row));
   }, [uploadDosenResult]);
 
   const dosenUploadPreviewRows = useMemo(() => {
@@ -801,14 +910,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       key: `dosen-upload-ok-${item?.row ?? index}-${item?.kode_dosen ?? index}`,
       nomor: index + 1,
       baris: item?.row ?? "-",
-      nama: item?.nama || "-",
+      nama: formatDosenFullName(item?.nama, item?.gelar) || "-",
       email: item?.email || "-",
       nik: item?.nik || "-",
       klaster: item?.klaster || "-",
       kuota: item?.kuota_bimbingan ?? "-",
       status_dosen: DOSEN_STATUS_LABELS[item?.status_keaktifan] || item?.status_keaktifan || "Aktif",
-      status_akun: item?.account_is_active === false ? "Nonaktif" : "Aktif",
-      lanjut_bimbingan: item?.continue_existing_supervision === false ? "Tidak" : "Ya",
       status: "valid",
       pesan_error: "-",
     }));
@@ -825,8 +932,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         klaster: pickField(raw, ["Klaster", "klaster", "KLASTER", "Cluster", "cluster", "CLUSTER"]),
         kuota: pickField(raw, ["Kuota Bimbingan", "kuota_bimbingan", "KUOTA_BIMBINGAN"]),
         status_dosen: pickField(raw, ["Status Dosen", "status_keaktifan", "STATUS_DOSEN"]),
-        status_akun: pickField(raw, ["Status Akun", "account_is_active", "STATUS_AKUN"]),
-        lanjut_bimbingan: pickField(raw, ["Melanjutkan Mahasiswa Lama", "continue_existing_supervision"]),
         status: "error",
         pesan_error: String(item?.error || "Data tidak valid."),
       };
@@ -1087,6 +1192,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       .catch(() => setDosenStatusHistory([]));
     setDosenActionError("");
     setDosenActionMessage("");
+    setDosenEditGelarError("");
   };
 
   const handleSaveDosenStatus = async () => {
@@ -1188,6 +1294,11 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           : [...prev.klaster_ids, klasterId],
       };
     });
+    setCreateDosenFieldErrors((prev) => ({ ...prev, klaster_ids: "" }));
+  };
+
+  const clearCreateDosenFieldError = (fieldName) => {
+    setCreateDosenFieldErrors((prev) => (prev[fieldName] ? { ...prev, [fieldName]: "" } : prev));
   };
 
   const resetCreateDosenForm = () => {
@@ -1198,14 +1309,50 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       email: "",
       jabatan_struktural: "",
       kuota_bimbingan: "5",
+      status_keaktifan: "active",
       klaster_ids: [],
     });
+    setCreateDosenFieldErrors({});
   };
 
   const handleCreateDosen = async (event) => {
     event.preventDefault();
     setCreateDosenError("");
     setCreateDosenMessage("");
+
+    const validationErrors = {};
+    const normalizedNik = createDosenForm.nik.trim();
+    const normalizedEmail = createDosenForm.email.trim().toLowerCase();
+    if (!normalizedNik) {
+      validationErrors.nik = "NIK wajib diisi.";
+    } else if (!/^\d{1,9}$/.test(normalizedNik)) {
+      validationErrors.nik = "NIK harus berupa angka dengan panjang maksimal 9 digit.";
+    }
+    const namaError = validateDosenNameInput(createDosenForm.nama);
+    const gelarError = validateDosenTitleInput(createDosenForm.gelar);
+    if (namaError) validationErrors.nama = namaError;
+    if (gelarError) validationErrors.gelar = gelarError;
+    if (!normalizedEmail) {
+      validationErrors.email = "Email wajib diisi.";
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      validationErrors.email = "Format email tidak valid.";
+    }
+    const parsedKuota = Number(createDosenForm.kuota_bimbingan);
+    if (!/^\d{1,2}$/.test(String(createDosenForm.kuota_bimbingan || "")) || parsedKuota < 1 || parsedKuota > 99) {
+      validationErrors.kuota_bimbingan = "Kuota bimbingan wajib berupa angka 1-99.";
+    }
+    if (!DOSEN_STATUS_OPTIONS.some((option) => option.value === createDosenForm.status_keaktifan)) {
+      validationErrors.status_keaktifan = "Status Dosen wajib dipilih.";
+    }
+    if (!Array.isArray(createDosenForm.klaster_ids) || createDosenForm.klaster_ids.length === 0) {
+      validationErrors.klaster_ids = "Pilih minimal satu Klaster Riset.";
+    }
+
+    setCreateDosenFieldErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      return;
+    }
+
     setCreatingDosen(true);
 
     try {
@@ -1216,19 +1363,36 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          nik: createDosenForm.nik.trim() || null,
-          nama: createDosenForm.nama.trim(),
-          gelar: createDosenForm.gelar.trim() || null,
-          email: createDosenForm.email.trim().toLowerCase(),
+          nik: normalizedNik,
+          nama: normalizeDosenNameInput(createDosenForm.nama),
+          gelar: normalizeDosenTitleInput(createDosenForm.gelar),
+          email: normalizedEmail,
           jabatan_struktural: createDosenForm.jabatan_struktural.trim() || null,
           kuota_bimbingan: createDosenForm.kuota_bimbingan,
+          status_keaktifan: createDosenForm.status_keaktifan,
           klaster_ids: createDosenForm.klaster_ids,
         }),
       });
 
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        throw new Error(payload?.message || "Gagal menambahkan dosen.");
+        const message = payload?.message || "Gagal menambahkan dosen.";
+        const normalizedMessage = message.toLowerCase();
+        const backendField = [
+          ["nik", "nik"],
+          ["nama", "nama"],
+          ["gelar", "gelar"],
+          ["email", "email"],
+          ["kuota", "kuota_bimbingan"],
+          ["status dosen", "status_keaktifan"],
+          ["status_keaktifan", "status_keaktifan"],
+          ["klaster", "klaster_ids"],
+        ].find(([keyword]) => normalizedMessage.includes(keyword));
+        if (backendField) {
+          setCreateDosenFieldErrors((prev) => ({ ...prev, [backendField[1]]: message }));
+          return;
+        }
+        throw new Error(message);
       }
 
       const row = payload.data;
@@ -1242,6 +1406,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         email: row?.email || "-",
         jabatan_struktural: row?.jabatan_struktural || null,
         kuota_bimbingan: kuota,
+        status_keaktifan: row?.status_keaktifan || "active",
+        account_is_active: row?.account_is_active !== false,
+        continue_existing_supervision: row?.continue_existing_supervision !== false,
         jumlah_bimbingan: 0,
         sisa_kuota: kuota,
         klasters: Array.isArray(row?.klasters) ? row.klasters : [],
@@ -1270,6 +1437,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
     setDosenActionError("");
     setDosenActionMessage("");
+    const gelarError = validateDosenTitleInput(dosenEditForm.gelar);
+    setDosenEditGelarError(gelarError);
+    if (gelarError) return;
     setSavingDosenEdit(true);
 
     try {
@@ -1280,7 +1450,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          gelar: dosenEditForm.gelar,
+          gelar: normalizeDosenTitleInput(dosenEditForm.gelar),
           jabatan_struktural: dosenEditForm.jabatan_struktural,
           klaster_ids: dosenEditForm.klaster_ids,
         }),
@@ -1288,7 +1458,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.success) {
-        throw new Error(payload?.message || "Gagal memperbarui profil dosen.");
+        const message = payload?.message || "Gagal memperbarui profil dosen.";
+        if (message.toLowerCase().includes("gelar")) {
+          setDosenEditGelarError(message);
+          return;
+        }
+        throw new Error(message);
       }
 
       setDosenRows((prev) =>
@@ -1671,6 +1846,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       setDosenMode("add");
                       setDosenActionError("");
                       setDosenActionMessage("");
+                      setCreateDosenError("");
+                      setCreateDosenFieldErrors({});
                       setUploadDosenResult(null);
                     }}
                     className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
@@ -1720,7 +1897,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               <div className="space-y-4">
                 <UploadPanel
                   title="Upload Dosen via Excel"
-                  description="Gunakan template dosen. Isi sheet Template Dosen minimal 1 baris data."
+                  description="Gunakan template status dosen terbaru. Status wajib dipilih: Aktif, Nonaktif Sementara, Tugas Belajar, atau Pensiun."
                   templateUrl={templateDosenUrl}
                   endpoint="/api/admin/upload/dosen"
                   token={session.token}
@@ -1731,7 +1908,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   setUploadResult={setUploadDosenResult}
                   isUploading={isUploadingDosen}
                   setIsUploading={setIsUploadingDosen}
-                  onUploadSuccess={() => setDosenUploadPreviewPage(1)}
+                  onUploadSuccess={(data) => {
+                    setDosenUploadPreviewPage(1);
+                    setUploadDosenResult(applyClientDosenImportValidation(data));
+                  }}
                   uploadButtonLabel="Preview Data"
                   previewMessage="Preview dosen akan tampil di sini setelah upload template."
                   previewHelpText={`Preview menampilkan maksimal ${DOSEN_UPLOAD_PREVIEW_MAX_ROWS} data (5 data per halaman).`}
@@ -1743,20 +1923,16 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 >
                   <div className="mt-4 overflow-hidden rounded-lg border border-[#d6e0f5] bg-white">
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[1550px] table-auto">
+                      <table className="w-full min-w-[1020px] table-auto">
                         <thead className="bg-[#f4f7ff] text-left text-sm font-bold text-[#2f4473]">
                           <tr>
                           <th className="px-3 py-2 font-semibold">No</th>
-                          <th className="px-3 py-2 font-semibold">Baris</th>
                           <th className="px-3 py-2 font-semibold">Nama</th>
                           <th className="px-3 py-2 font-semibold">Email</th>
                           <th className="px-3 py-2 font-semibold">NIK</th>
                           <th className="px-3 py-2 font-semibold">Klaster</th>
                           <th className="px-3 py-2 font-semibold">Kuota</th>
                           <th className="px-3 py-2 font-semibold">Status Dosen</th>
-                          <th className="px-3 py-2 font-semibold">Status Akun</th>
-                          <th className="px-3 py-2 font-semibold">Lanjut Bimbingan Lama</th>
-                          <th className="px-3 py-2 font-semibold">Validasi</th>
                           <th className="px-3 py-2 font-semibold">Pesan Error</th>
                         </tr>
                       </thead>
@@ -1770,26 +1946,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               }`}
                             >
                               <td className="px-3 py-2">{row.nomor}</td>
-                              <td className="px-3 py-2">{row.baris}</td>
                               <td className="px-3 py-2">{row.nama}</td>
                               <td className="px-3 py-2">{row.email}</td>
                               <td className="px-3 py-2">{row.nik}</td>
                               <td className="px-3 py-2">{row.klaster}</td>
                               <td className="px-3 py-2">{row.kuota}</td>
                               <td className="px-3 py-2">{row.status_dosen}</td>
-                              <td className="px-3 py-2">{row.status_akun}</td>
-                              <td className="px-3 py-2">{row.lanjut_bimbingan}</td>
-                              <td className="px-3 py-2">
-                                <span
-                                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
-                                    row.status === "error"
-                                      ? "bg-[#ffe3e3] text-[#a93d3d]"
-                                      : "bg-[#def4e8] text-[#117246]"
-                                  }`}
-                                >
-                                  {row.status === "error" ? "Tidak Valid" : "Valid"}
-                                </span>
-                              </td>
                               <td className={`px-3 py-2 ${row.status === "error" ? "text-[#a93d3d]" : ""}`}>
                                 {row.pesan_error}
                               </td>
@@ -1797,7 +1959,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           ))
                         ) : (
                           <tr className="border-t border-[#ecf1fb] text-sm text-[#5d6c91]">
-                            <td className="px-3 py-4 text-center" colSpan={12}>
+                            <td className="px-3 py-4 text-center" colSpan={8}>
                               Belum ada data preview.
                             </td>
                           </tr>
@@ -1867,91 +2029,120 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     Alternatif selain upload Excel. Isi satu per satu, lalu data akan langsung masuk ke grid manajemen dosen.
                   </p>
 
-                  <form onSubmit={handleCreateDosen} className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <form noValidate onSubmit={handleCreateDosen} className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">NIK (opsional)</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">NIK <span className="text-[#c33]">*</span></label>
                       <input
+                        required
                         type="text"
                         value={createDosenForm.nik}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
                             nik: event.target.value.replace(/\D/g, "").slice(0, 9),
-                          }))
-                        }
+                          }));
+                          clearCreateDosenFieldError("nik");
+                        }}
                         placeholder="Contoh: 900000001"
-                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                        aria-invalid={Boolean(createDosenFieldErrors.nik)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.nik ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
+                      {createDosenFieldErrors.nik ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.nik}</p> : null}
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Kuota Bimbingan</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Kuota Bimbingan <span className="text-[#c33]">*</span></label>
                       <input
+                        required
                         type="text"
                         inputMode="numeric"
                         maxLength={2}
                         value={createDosenForm.kuota_bimbingan}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
                             kuota_bimbingan: sanitizeTwoDigitPositiveNumber(event.target.value),
-                          }))
-                        }
+                          }));
+                          clearCreateDosenFieldError("kuota_bimbingan");
+                        }}
                         placeholder="Masukkan kuota bimbingan"
-                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                        aria-invalid={Boolean(createDosenFieldErrors.kuota_bimbingan)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.kuota_bimbingan ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
+                      {createDosenFieldErrors.kuota_bimbingan ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.kuota_bimbingan}</p> : null}
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Nama</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Nama <span className="text-[#c33]">*</span></label>
                       <input
+                        required
                         type="text"
                         value={createDosenForm.nama}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
                             nama: event.target.value,
-                          }))
+                          }));
+                          clearCreateDosenFieldError("nama");
+                        }}
+                        onBlur={() =>
+                          setCreateDosenForm((prev) => ({ ...prev, nama: normalizeDosenNameInput(prev.nama) }))
                         }
                         placeholder="Nama dosen"
-                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                        aria-invalid={Boolean(createDosenFieldErrors.nama)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.nama ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
+                      {createDosenFieldErrors.nama ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.nama}</p> : null}
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Gelar</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Gelar <span className="text-[#c33]">*</span></label>
                       <input
+                        required
                         type="text"
                         value={createDosenForm.gelar}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
                             gelar: event.target.value,
-                          }))
+                          }));
+                          clearCreateDosenFieldError("gelar");
+                        }}
+                        onBlur={() =>
+                          setCreateDosenForm((prev) => ({ ...prev, gelar: normalizeDosenTitleInput(prev.gelar) }))
                         }
                         placeholder="Contoh: S.T., M.Kom."
-                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                        aria-invalid={Boolean(createDosenFieldErrors.gelar)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.gelar ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
+                      {createDosenFieldErrors.gelar ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.gelar}</p> : null}
+                      {!validateDosenNameInput(createDosenForm.nama) && !validateDosenTitleInput(createDosenForm.gelar) ? (
+                        <p className="mt-1 text-xs text-[#5d6c91]">Nama lengkap: <span className="font-semibold text-[#324c86]">{formatDosenFullName(createDosenForm.nama, createDosenForm.gelar)}</span></p>
+                      ) : null}
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email <span className="text-[#c33]">*</span></label>
                       <input
+                        required
                         type="email"
                         value={createDosenForm.email}
-                        onChange={(event) =>
+                        onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
                             email: event.target.value,
-                          }))
-                        }
+                          }));
+                          clearCreateDosenFieldError("email");
+                        }}
                         placeholder="nama@uii.ac.id"
-                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                        aria-invalid={Boolean(createDosenFieldErrors.email)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.email ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
+                      {createDosenFieldErrors.email ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.email}</p> : null}
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Jabatan Struktural</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Jabatan Struktural (opsional)</label>
                       <select
                         value={createDosenForm.jabatan_struktural}
                         onChange={(event) =>
@@ -1971,8 +2162,37 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </select>
                     </div>
 
+                    <div>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+                        Status Dosen <span className="text-[#c33]">*</span>
+                      </label>
+                      <select
+                        required
+                        value={createDosenForm.status_keaktifan}
+                        onChange={(event) => {
+                          setCreateDosenForm((prev) => ({
+                            ...prev,
+                            status_keaktifan: event.target.value,
+                          }));
+                          clearCreateDosenFieldError("status_keaktifan");
+                        }}
+                        aria-invalid={Boolean(createDosenFieldErrors.status_keaktifan)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.status_keaktifan ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
+                      >
+                        {Object.entries(DOSEN_STATUS_LABELS).map(([value, label]) => (
+                          <option key={`status-create-${value}`} value={value}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                      {createDosenFieldErrors.status_keaktifan ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.status_keaktifan}</p> : null}
+                      <p className="mt-1 text-xs text-[#6b7898]">
+                        Ketersediaan per periode akan dikonfigurasi terpisah oleh Sekretaris Prodi.
+                      </p>
+                    </div>
+
                     <div className="md:col-span-2">
-                      <p className="mb-2 text-sm font-semibold text-[#324c86]">Klaster Riset (boleh lebih dari satu)</p>
+                      <p className="mb-2 text-sm font-semibold text-[#324c86]">Klaster Riset <span className="text-[#c33]">*</span> (pilih minimal satu)</p>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                         {klasterOptions.map((klaster) => {
                           const isChecked = createDosenForm.klaster_ids.includes(klaster.id);
@@ -1996,6 +2216,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           );
                         })}
                       </div>
+                      {createDosenFieldErrors.klaster_ids ? <p className="mt-2 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.klaster_ids}</p> : null}
                     </div>
 
                     <div className="md:col-span-2">
@@ -2028,7 +2249,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       <div>
                         <h3 className="text-xl font-black text-[#1b274b]">Edit Dosen</h3>
                         <p className="text-sm text-[#5d6c91]">
-                          {selectedDosen.nama} ({selectedDosen.kode_dosen || selectedDosen.nik || "-"})
+                          {formatDosenFullName(selectedDosen.nama, selectedDosen.gelar)} ({selectedDosen.kode_dosen || selectedDosen.nik || "-"})
                         </p>
                       </div>
                       <button
@@ -2043,20 +2264,24 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                     <form onSubmit={handleSaveDosenEdit} className="grid grid-cols-1 gap-4 md:grid-cols-2">
                       <div>
-                        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Gelar</label>
+                        <label className="mb-1 block text-sm font-semibold text-[#324c86]">Gelar <span className="text-[#c33]">*</span></label>
                         <input
                           type="text"
                           value={dosenEditForm.gelar}
-                          onChange={(event) =>
+                          onChange={(event) => {
                             setDosenEditForm((prev) => ({
                               ...prev,
                               gelar: event.target.value,
-                            }))
-                          }
-                          maxLength={120}
+                            }));
+                            setDosenEditGelarError("");
+                          }}
+                          onBlur={() => setDosenEditForm((prev) => ({ ...prev, gelar: normalizeDosenTitleInput(prev.gelar) }))}
                           placeholder="Contoh: S.T., M.Kom."
-                          className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                          aria-invalid={Boolean(dosenEditGelarError)}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${dosenEditGelarError ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                         />
+                        {dosenEditGelarError ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{dosenEditGelarError}</p> : null}
+                        {!validateDosenTitleInput(dosenEditForm.gelar) ? <p className="mt-1 text-xs text-[#5d6c91]">Nama lengkap: <span className="font-semibold text-[#324c86]">{formatDosenFullName(selectedDosen.nama, dosenEditForm.gelar)}</span></p> : null}
                       </div>
 
                       <div>
@@ -2458,7 +2683,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode Dosen</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">NIK</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama Lengkap</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Gelar</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Email</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jabatan Struktural</th>
@@ -2479,7 +2704,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <td className="px-3 py-2">{(dosenPage - 1) * DOSEN_PAGE_SIZE + index + 1}</td>
                                 <td className="px-3 py-2 font-semibold text-[#254080]">{row.kode_dosen || "-"}</td>
                                 <td className="px-3 py-2">{row.nik || "-"}</td>
-                                <td className="px-3 py-2">{row.nama || "-"}</td>
+                                <td className="px-3 py-2">{formatDosenFullName(row.nama, row.gelar) || "-"}</td>
                                 <td className="px-3 py-2">{row.gelar || "-"}</td>
                                 <td className="px-3 py-2">{row.email || "-"}</td>
                                 <td className="px-3 py-2">{row.jabatan_struktural || "-"}</td>
@@ -2654,7 +2879,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                         }`}
                                       >
                                         <span>
-                                          <span className="block font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="block font-semibold">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</span>
                                           <span className="block text-xs text-[#7282a8]">
                                             {dosen.kode_dosen || "-"} · {dosen.email || "-"}
                                           </span>

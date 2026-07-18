@@ -324,7 +324,13 @@ exports.getDosenDropdown = async (req, res) => {
     const availabilityRows = activePeriode
       ? await DosenKetersediaanPeriode.findAll({
           where: { periode_penjaluran_id: activePeriode.id },
-          attributes: ["dosen_id", "tersedia_membimbing", "kuota_bimbingan_periode", "alasan_tidak_tersedia"],
+          attributes: [
+            "dosen_id",
+            "configuration_status",
+            "tersedia_membimbing",
+            "kuota_bimbingan_periode",
+            "alasan_tidak_tersedia",
+          ],
         })
       : [];
     const availabilityByDosen = new Map(availabilityRows.map((item) => [Number(item.dosen_id), item]));
@@ -347,7 +353,12 @@ exports.getDosenDropdown = async (req, res) => {
     );
 
     const mappedDosens = dosens
-      .filter((dosen) => availabilityByDosen.get(dosen.id)?.tersedia_membimbing !== false)
+      .filter((dosen) => {
+        if (!activePeriode) return false;
+        const availability = availabilityByDosen.get(dosen.id);
+        return availability?.configuration_status === "ready"
+          && availability?.tersedia_membimbing === true;
+      })
       .map((dosen) => {
         const availability = availabilityByDosen.get(dosen.id);
         const kuotaBimbingan = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);

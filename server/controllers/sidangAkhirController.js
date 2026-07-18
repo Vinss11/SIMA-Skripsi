@@ -1577,7 +1577,13 @@ exports.autoAssignSidangPenguji = async (req, res) => {
     );
     if (academicPeriode) {
       const periodRestrictions = await DosenKetersediaanPeriode.findAll({
-        where: { periode_penjaluran_id: academicPeriode.id, tersedia_menguji: false },
+        where: {
+          periode_penjaluran_id: academicPeriode.id,
+          [Op.or]: [
+            { configuration_status: { [Op.ne]: "ready" } },
+            { tersedia_menguji: false },
+          ],
+        },
         attributes: ["dosen_id"],
         transaction,
       });

@@ -1,6 +1,10 @@
 const { Topik, Dosen, Mahasiswa, SekretarisProdi, DosenKlaster, Klaster, PeriodePenjaluran, DosenKetersediaanPeriode } = require("../models");
 const { Op } = require("sequelize");
-const { assertDosenCanReceiveNewAssignment, isDosenAcademicallyActive } = require("../services/dosenStatusService");
+const {
+  assertDosenCanReceiveNewAssignment,
+  isDosenAcademicallyActive,
+  validateDosenForNewAssignment,
+} = require("../services/dosenStatusService");
 
 const CLUSTER_NORMALIZATION_MAP = {
   sirkel: "Sirkel",
@@ -192,7 +196,9 @@ exports.getTopics = async (req, res) => {
         const periodAvailability = availabilityByDosen.get(Number(topic.dosen_id));
         const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh
           && isDosenAcademicallyActive(topic.dosen)
-          && periodAvailability?.tersedia_membimbing !== false;
+          && Boolean(activePeriode)
+          && periodAvailability?.configuration_status === "ready"
+          && periodAvailability?.tersedia_membimbing === true;
 
         return {
           ...topicData,
@@ -242,7 +248,22 @@ exports.getTopicById = async (req, res) => {
 
     const topicData = topic.toJSON();
     const kuotaInfo = await topic.dosen.getKuotaInfo();
-    const isAvailable = topic.status === "available" && !kuotaInfo.is_penuh && isDosenAcademicallyActive(topic.dosen);
+    const activePeriode = await PeriodePenjaluran.findOne({
+      where: { status: "active", is_active: true },
+      attributes: ["id"],
+      order: [["updatedAt", "DESC"]],
+    });
+    const availability = activePeriode
+      ? await DosenKetersediaanPeriode.findOne({
+          where: { dosen_id: topic.dosen_id, periode_penjaluran_id: activePeriode.id },
+        })
+      : null;
+    const isAvailable = topic.status === "available"
+      && !kuotaInfo.is_penuh
+      && isDosenAcademicallyActive(topic.dosen)
+      && Boolean(activePeriode)
+      && availability?.configuration_status === "ready"
+      && availability?.tersedia_membimbing === true;
 
     res.json({
       success: true,
@@ -342,14 +363,13 @@ exports.createTopic = async (req, res) => {
     }
     const activePeriode = await PeriodePenjaluran.findOne({ where: { status: "active", is_active: true }, order: [["updatedAt", "DESC"]] });
     if (activePeriode) {
-      const availability = await DosenKetersediaanPeriode.findOne({
-        where: { dosen_id: dosen.id, periode_penjaluran_id: activePeriode.id },
+      const periodEligibility = await validateDosenForNewAssignment(dosen.id, activePeriode.id, {
+        availabilityField: "tersedia_membimbing",
+        activityLabel: "menerima mahasiswa/topik baru",
+        checkQuota: false,
       });
-      if (availability && availability.tersedia_membimbing === false) {
-        return res.status(409).json({
-          success: false,
-          message: `Anda sedang tidak tersedia menerima mahasiswa/topik pada ${activePeriode.label_periode}.`,
-        });
+      if (!periodEligibility.allowed) {
+        return res.status(409).json({ success: false, message: periodEligibility.message });
       }
     }
 
@@ -488,10 +508,23 @@ exports.updateTopic = async (req, res) => {
       });
     }
 
+    const activePeriode = await PeriodePenjaluran.findOne({
+      where: { status: "active", is_active: true },
+      attributes: ["id"],
+      order: [["updatedAt", "DESC"]],
+    });
     if (status === "available") {
-      const owner = await Dosen.findByPk(topic.dosen_id);
-      const eligibility = assertDosenCanReceiveNewAssignment(owner, "topik aktif baru");
-      if (!eligibility.allowed) return res.status(409).json({ success: false, message: eligibility.message });
+      const eligibility = await validateDosenForNewAssignment(topic.dosen_id, activePeriode?.id || null, {
+        availabilityField: "tersedia_membimbing",
+        activityLabel: "menawarkan topik aktif baru",
+        checkQuota: false,
+      });
+      if (!activePeriode || !eligibility.allowed) {
+        return res.status(409).json({
+          success: false,
+          message: !activePeriode ? "Belum ada periode penjaluran aktif." : eligibility.message,
+        });
+      }
     }
     if (status) topic.status = status;
 
@@ -509,7 +542,16 @@ exports.updateTopic = async (req, res) => {
     });
 
     const kuotaInfo = await updatedTopic.dosen.getKuotaInfo();
-    const isAvailable = updatedTopic.status === "available" && !kuotaInfo.is_penuh && isDosenAcademicallyActive(updatedTopic.dosen);
+    const availability = activePeriode
+      ? await DosenKetersediaanPeriode.findOne({
+          where: { dosen_id: updatedTopic.dosen_id, periode_penjaluran_id: activePeriode.id },
+        })
+      : null;
+    const isAvailable = updatedTopic.status === "available"
+      && !kuotaInfo.is_penuh
+      && isDosenAcademicallyActive(updatedTopic.dosen)
+      && availability?.configuration_status === "ready"
+      && availability?.tersedia_membimbing === true;
 
     res.json({
       success: true,

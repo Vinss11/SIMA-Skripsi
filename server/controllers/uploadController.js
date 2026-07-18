@@ -3,12 +3,17 @@ const CFB = require("cfb");
 const fs = require("fs");
 const { Op } = require("sequelize");
 const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
-const { assertDosenCanReceiveNewAssignment, DOSEN_STATUSES } = require("../services/dosenStatusService");
+const {
+  assertDosenCanReceiveNewAssignment,
+  initializeAvailabilityForDosen,
+  getJakartaDateOnly,
+} = require("../services/dosenStatusService");
 const {
   STRUKTURAL_POSITIONS,
   normalizeJabatanStrukturalInput,
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
+const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
 
 const TEMPLATE_HEADERS = {
   topik: [
@@ -27,10 +32,6 @@ const TEMPLATE_HEADERS = {
     { key: "klaster", label: "Klaster" },
     { key: "kuota bimbingan", label: "Kuota Bimbingan" },
     { key: "status dosen", label: "Status Dosen" },
-    { key: "status akun", label: "Status Akun" },
-    { key: "melanjutkan mahasiswa lama", label: "Melanjutkan Mahasiswa Lama" },
-    { key: "tanggal efektif status", label: "Tanggal Efektif Status" },
-    { key: "alasan status", label: "Alasan Status" },
   ],
   mahasiswa: [
     { key: "nim", label: "NIM" },
@@ -69,6 +70,31 @@ function styleXlsxCommentNotesAsStickyNotes(buffer) {
         hasChanges = true;
       }
     });
+
+    const templateWorksheet = workbookArchive.FileIndex.find(
+      (file) => /sheet1\.xml$/i.test(file.name) && Buffer.isBuffer(file.content)
+    );
+    if (templateWorksheet) {
+      const originalXml = templateWorksheet.content.toString("utf8");
+      if (!originalXml.includes("<dataValidations")) {
+        const statusValidationXml = [
+          '<dataValidations count="1">',
+          '<dataValidation type="list" allowBlank="0" showErrorMessage="1" showInputMessage="1" ',
+          'errorStyle="stop" errorTitle="Status Dosen tidak valid" ',
+          'error="Pilih tepat satu status dari daftar yang tersedia." ',
+          'promptTitle="Status Dosen" prompt="Pilih tepat satu status." sqref="H2:H1001">',
+          `<formula1>"${DOSEN_STATUS_IMPORT_LABELS.join(",")}"</formula1>`,
+          "</dataValidation>",
+          "</dataValidations>",
+        ].join("");
+        const updatedXml = originalXml.replace("</sheetData>", `</sheetData>${statusValidationXml}`);
+        if (updatedXml !== originalXml) {
+          templateWorksheet.content = Buffer.from(updatedXml, "utf8");
+          templateWorksheet.size = templateWorksheet.content.length;
+          hasChanges = true;
+        }
+      }
+    }
 
     return hasChanges ? CFB.write(workbookArchive, { type: "buffer", fileType: "zip" }) : buffer;
   } catch (error) {
@@ -167,6 +193,28 @@ const DEFAULT_KLASTER_MASTER = [
   { kode: "SIRKEL", nama: "Sistem Informasi & Rekayasa Perangkat Lunak" },
   { kode: "SIBER", nama: "Sistem Siber" },
 ];
+
+const DOSEN_STATUS_IMPORT_OPTIONS = [
+  { label: "Aktif", value: "active" },
+  { label: "Nonaktif Sementara", value: "inactive" },
+  { label: "Tugas Belajar", value: "study_leave" },
+  { label: "Pensiun", value: "retired" },
+];
+const DOSEN_STATUS_IMPORT_LABELS = DOSEN_STATUS_IMPORT_OPTIONS.map((item) => item.label);
+const DOSEN_STATUS_IMPORT_BY_LABEL = new Map(
+  DOSEN_STATUS_IMPORT_OPTIONS.map((item) => [item.label.toLowerCase(), item.value])
+);
+
+function normalizeDosenStatusImport(value, allowInternalValue = false) {
+  const normalized = String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+  if (!normalized) return null;
+  const labelValue = DOSEN_STATUS_IMPORT_BY_LABEL.get(normalized);
+  if (labelValue) return labelValue;
+  if (allowInternalValue && DOSEN_STATUS_IMPORT_OPTIONS.some((item) => item.value === normalized)) {
+    return normalized;
+  }
+  return null;
+}
 
 const TOPIK_CLUSTER_LABEL_BY_CODE = {
   SIRKEL: "Sirkel",
@@ -395,6 +443,7 @@ function parseKlasterListInput(rawKlasterValue, klasterMap) {
 }
 
 function extractDosenUploadValues(row = {}) {
+  const hasStatusLabelColumn = Object.prototype.hasOwnProperty.call(row, "Status Dosen");
   return {
     nik: row["NIK"] || row["Nik"] || row["nik"] || row["Nip"],
     nama: row["Nama"] || row["nama"] || row["NAMA"],
@@ -417,10 +466,7 @@ function extractDosenUploadValues(row = {}) {
       row["CLUSTER"],
     rawKuotaBimbingan: row["Kuota Bimbingan"] ?? row["kuota_bimbingan"] ?? row["KUOTA_BIMBINGAN"],
     rawStatusKeaktifan: row["Status Dosen"] ?? row.status_keaktifan ?? row["STATUS_DOSEN"],
-    rawAccountIsActive: row["Status Akun"] ?? row.account_is_active ?? row["STATUS_AKUN"],
-    rawContinueExisting: row["Melanjutkan Mahasiswa Lama"] ?? row.continue_existing_supervision,
-    rawStatusEffectiveAt: row["Tanggal Efektif Status"] ?? row.status_effective_at,
-    rawStatusReason: row["Alasan Status"] ?? row.status_reason,
+    statusInputIsInternal: !hasStatusLabelColumn && row.status_keaktifan !== undefined,
   };
 }
 
@@ -438,10 +484,6 @@ function isEmptyDosenUploadRow(values) {
     values.klasterRaw,
     values.rawKuotaBimbingan,
     values.rawStatusKeaktifan,
-    values.rawAccountIsActive,
-    values.rawContinueExisting,
-    values.rawStatusEffectiveAt,
-    values.rawStatusReason,
   ].every(isBlankUploadValue);
 }
 
@@ -472,23 +514,6 @@ function validateKuotaBimbinganValue(value) {
   }
 
   return { isValid: true, value: kuota };
-}
-
-function parseDosenImportBoolean(value, defaultValue) {
-  if (isBlankUploadValue(value)) return { valid: true, value: defaultValue };
-  const normalized = String(value).trim().toLowerCase();
-  if (["ya", "aktif", "true", "1"].includes(normalized)) return { valid: true, value: true };
-  if (["tidak", "nonaktif", "false", "0"].includes(normalized)) return { valid: true, value: false };
-  return { valid: false, value: defaultValue };
-}
-
-function isRealDateOnly(value) {
-  const match = String(value || "").trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return false;
-  const parsed = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-  return parsed.getUTCFullYear() === Number(match[1])
-    && parsed.getUTCMonth() === Number(match[2]) - 1
-    && parsed.getUTCDate() === Number(match[3]);
 }
 
 async function getNextDosenSequence(transaction) {
@@ -532,7 +557,7 @@ function formatDosenKlasterCodes(allKlasters, klasterIds) {
     .join(", ");
 }
 
-async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = false }) {
+async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = false, adminId = null }) {
   const results = {
     success: [],
     failed: [],
@@ -552,25 +577,29 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
     try {
       const {
         nik, nama, gelar, email, rawJabatanStruktural, klasterRaw, rawKuotaBimbingan,
-        rawStatusKeaktifan, rawAccountIsActive, rawContinueExisting,
-        rawStatusEffectiveAt, rawStatusReason,
+        rawStatusKeaktifan, statusInputIsInternal,
       } = values;
       const jabatanStruktural = normalizeJabatanStrukturalInput(rawJabatanStruktural);
-      const kuotaBimbingan =
-        rawKuotaBimbingan === undefined || rawKuotaBimbingan === null || String(rawKuotaBimbingan).trim() === ""
-          ? 5
-          : rawKuotaBimbingan;
+      const kuotaBimbingan = rawKuotaBimbingan;
 
-      if (!nama || !email) {
+      const missingRequiredFields = [];
+      if (isBlankUploadValue(nik)) missingRequiredFields.push("NIK");
+      if (isBlankUploadValue(nama)) missingRequiredFields.push("Nama");
+      if (isBlankUploadValue(gelar)) missingRequiredFields.push("Gelar");
+      if (isBlankUploadValue(email)) missingRequiredFields.push("Email");
+      if (isBlankUploadValue(klasterRaw)) missingRequiredFields.push("Klaster");
+      if (isBlankUploadValue(rawKuotaBimbingan)) missingRequiredFields.push("Kuota Bimbingan");
+      if (isBlankUploadValue(rawStatusKeaktifan)) missingRequiredFields.push("Status Dosen");
+      if (missingRequiredFields.length > 0) {
         results.failed.push({
           row: rowNumber,
           data: row,
-          error: "Field wajib tidak lengkap (Nama dan Email harus diisi)",
+          error: `Field wajib belum diisi: ${missingRequiredFields.join(", ")}. Hanya Jabatan Struktural yang boleh dikosongkan.`,
         });
         continue;
       }
 
-      const nameValidation = validateHumanName(nama, "Nama dosen");
+      const nameValidation = validateDosenName(nama);
       if (!nameValidation.isValid) {
         results.failed.push({
           row: rowNumber,
@@ -579,6 +608,12 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         });
         continue;
       }
+      const gelarValidation = validateDosenTitle(gelar);
+      if (!gelarValidation.isValid) {
+        results.failed.push({ row: rowNumber, data: row, error: gelarValidation.message });
+        continue;
+      }
+      const normalizedGelar = gelarValidation.normalized;
 
       const normalizedNik = nik ? nik.toString().trim() : null;
       const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
@@ -658,34 +693,17 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         continue;
       }
       const kuota = kuotaValidation.value;
-      const statusKeaktifan = String(rawStatusKeaktifan || "active").trim().toLowerCase();
-      const accountParsed = parseDosenImportBoolean(rawAccountIsActive, statusKeaktifan !== "retired");
-      const continueParsed = parseDosenImportBoolean(rawContinueExisting, statusKeaktifan === "active" || statusKeaktifan === "study_leave");
-      const statusEffectiveAt = isBlankUploadValue(rawStatusEffectiveAt)
-        ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())
-        : String(rawStatusEffectiveAt).trim();
-      const statusReason = String(rawStatusReason || "").trim();
-      if (!DOSEN_STATUSES.includes(statusKeaktifan)) {
-        results.failed.push({ row: rowNumber, data: row, error: "Status dosen harus active, inactive, study_leave, atau retired." });
+      const statusKeaktifan = normalizeDosenStatusImport(rawStatusKeaktifan, statusInputIsInternal === true);
+      if (!statusKeaktifan) {
+        results.failed.push({
+          row: rowNumber,
+          data: row,
+          error: `Status Dosen harus memilih tepat satu opsi: ${DOSEN_STATUS_IMPORT_LABELS.join(" | ")}.`,
+        });
         continue;
       }
-      if (!accountParsed.valid || !continueParsed.valid) {
-        results.failed.push({ row: rowNumber, data: row, error: "Status akun dan izin melanjutkan harus diisi ya/tidak atau aktif/nonaktif." });
-        continue;
-      }
-      if (!isRealDateOnly(statusEffectiveAt)) {
-        results.failed.push({ row: rowNumber, data: row, error: "Tanggal efektif status harus tanggal riil berformat YYYY-MM-DD." });
-        continue;
-      }
-      const todayJakarta = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-      if (statusEffectiveAt > todayJakarta) {
-        results.failed.push({ row: rowNumber, data: row, error: "Tanggal efektif status tidak boleh di masa depan." });
-        continue;
-      }
-      if (statusKeaktifan !== "active" && statusReason.length < 5) {
-        results.failed.push({ row: rowNumber, data: row, error: "Alasan status minimal 5 karakter untuk dosen yang tidak aktif." });
-        continue;
-      }
+      const statusEffectiveAt = getJakartaDateOnly();
+      const statusReason = "Status awal saat dosen ditambahkan";
 
       if (normalizedNik) {
         const existingDosenNik = await Dosen.findOne({
@@ -758,7 +776,6 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
       }
 
       const generatedKodeDosen = `DSN${String(nextKodeSequence).padStart(4, "0")}`;
-      const generatedNik = String(nextKodeSequence).padStart(9, "0");
       nextKodeSequence += 1;
 
       let savedDosen = null;
@@ -766,19 +783,20 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         savedDosen = await Dosen.create(
           {
             kode_dosen: generatedKodeDosen,
-            nik: normalizedNik || generatedNik,
+            nik: normalizedNik,
             nama: nameValidation.normalized,
-            gelar: gelar ? String(gelar).trim() || null : null,
+            gelar: normalizedGelar,
             email: normalizedEmail,
             password: DEFAULT_PASSWORD_DOSEN,
             is_default_password: true,
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
             status_keaktifan: statusKeaktifan,
-            account_is_active: statusKeaktifan === "retired" ? false : accountParsed.value,
-            continue_existing_supervision: statusKeaktifan === "active" ? true : statusKeaktifan === "retired" ? false : continueParsed.value,
+            account_is_active: statusKeaktifan !== "retired",
+            continue_existing_supervision: statusKeaktifan === "active",
             status_effective_at: statusEffectiveAt,
-            status_reason: statusReason || null,
+            status_reason: statusReason,
+            status_updated_by: adminId,
             status_updated_at: new Date(),
           },
           { transaction }
@@ -788,22 +806,24 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
           const selectedKlasters = allKlasters.filter((item) => parsedKlaster.klasterIds.includes(item.id));
           await savedDosen.setKlasters(selectedKlasters, { transaction });
         }
+
+        await initializeAvailabilityForDosen(savedDosen, transaction);
       }
 
       const klasterLabel = formatDosenKlasterCodes(allKlasters, parsedKlaster.klasterIds);
       results.success.push({
         row: rowNumber,
         kode_dosen: savedDosen?.kode_dosen || generatedKodeDosen,
-        nik: savedDosen?.nik || normalizedNik || generatedNik,
+        nik: savedDosen?.nik || normalizedNik,
         nama: savedDosen?.nama || nameValidation.normalized,
-        gelar: savedDosen?.gelar ?? (gelar ? String(gelar).trim() || null : null),
+        gelar: savedDosen?.gelar ?? normalizedGelar,
         email: savedDosen?.email || normalizedEmail,
         jabatan_struktural: savedDosen?.jabatan_struktural ?? jabatanStruktural,
         klaster: klasterLabel,
         kuota_bimbingan: savedDosen?.kuota_bimbingan ?? kuota,
         status_keaktifan: savedDosen?.status_keaktifan ?? statusKeaktifan,
-        account_is_active: savedDosen?.account_is_active ?? (statusKeaktifan !== "retired" && accountParsed.value),
-        continue_existing_supervision: savedDosen?.continue_existing_supervision ?? continueParsed.value,
+        account_is_active: savedDosen?.account_is_active ?? statusKeaktifan !== "retired",
+        continue_existing_supervision: savedDosen?.continue_existing_supervision ?? statusKeaktifan === "active",
         status_effective_at: savedDosen?.status_effective_at ?? statusEffectiveAt,
         status_reason: savedDosen?.status_reason ?? statusReason,
       });
@@ -2396,7 +2416,11 @@ async function previewUploadDosenHandler(req, res) {
     }
 
     t = await sequelize.transaction();
-    const results = await processDosenUploadRows(uploadRows, { transaction: t, shouldCreate: false });
+    const results = await processDosenUploadRows(uploadRows, {
+      transaction: t,
+      shouldCreate: false,
+      adminId: req.user?.id || null,
+    });
     await t.commit();
 
     return res.status(200).json({
@@ -2458,7 +2482,11 @@ exports.commitUploadDosen = async (req, res) => {
       });
     }
 
-    const results = await processDosenUploadRows(uploadRows, { transaction: t, shouldCreate: true });
+    const results = await processDosenUploadRows(uploadRows, {
+      transaction: t,
+      shouldCreate: true,
+      adminId: req.user?.id || null,
+    });
     if (results.success.length > 0) {
       await t.commit();
     } else {
@@ -2496,7 +2524,7 @@ exports.downloadDosenTemplate = (req, res) => {
   try {
     const templateHeaders = [
       "NIK", "Nama", "Gelar", "Email", "Jabatan Struktural", "Klaster", "Kuota Bimbingan",
-      "Status Dosen", "Status Akun", "Melanjutkan Mahasiswa Lama", "Tanggal Efektif Status", "Alasan Status",
+      "Status Dosen",
     ];
     const exampleRows = [
       {
@@ -2507,11 +2535,7 @@ exports.downloadDosenTemplate = (req, res) => {
         "Jabatan Struktural": "",
         Klaster: "MEDIS, ITSC",
         "Kuota Bimbingan": 10,
-        "Status Dosen": "active",
-        "Status Akun": "aktif",
-        "Melanjutkan Mahasiswa Lama": "ya",
-        "Tanggal Efektif Status": "2026-07-15",
-        "Alasan Status": "Dosen aktif",
+        "Status Dosen": "Aktif",
       },
       {
         NIK: "900000002",
@@ -2521,11 +2545,7 @@ exports.downloadDosenTemplate = (req, res) => {
         "Jabatan Struktural": "",
         Klaster: "MEDIS, ITSC, SDATA",
         "Kuota Bimbingan": 8,
-        "Status Dosen": "study_leave",
-        "Status Akun": "aktif",
-        "Melanjutkan Mahasiswa Lama": "ya",
-        "Tanggal Efektif Status": "2026-07-15",
-        "Alasan Status": "Tugas belajar",
+        "Status Dosen": "Tugas Belajar",
       },
     ];
     const referenceRows = [
@@ -2565,18 +2585,18 @@ exports.downloadDosenTemplate = (req, res) => {
       {
         "Tipe Referensi": "Kuota Bimbingan",
         "Nilai yang Diizinkan": "Bilangan bulat 1-99",
-        Keterangan: "Jika dikosongkan saat upload, sistem memakai default 5.",
+        Keterangan: "Wajib diisi. Nilai harus berupa bilangan bulat dari 1 sampai 99.",
       },
       {
+        "Tipe Referensi": "Gelar",
+        "Nilai yang Diizinkan": "Huruf, titik, koma, spasi, tanda hubung, kurung, dan apostrof",
+        Keterangan: "Wajib diisi, maksimal 150 karakter, tidak boleh hanya simbol atau memakai simbol berulang seperti ..., ,,, dan --.",
+      },
+      ...DOSEN_STATUS_IMPORT_OPTIONS.map((status) => ({
         "Tipe Referensi": "Status Dosen",
-        "Nilai yang Diizinkan": "active | inactive | study_leave | retired",
-        Keterangan: "Default active. Status selain active wajib memiliki alasan.",
-      },
-      {
-        "Tipe Referensi": "Status Akun / Melanjutkan Mahasiswa Lama",
-        "Nilai yang Diizinkan": "aktif/nonaktif atau ya/tidak",
-        Keterangan: "Akun retired selalu nonaktif. Izin melanjutkan retired selalu tidak.",
-      },
+        "Nilai yang Diizinkan": status.label,
+        Keterangan: "Wajib memilih tepat satu status. Jangan menggunakan kode teknis atau menggabungkan beberapa status.",
+      })),
     ];
 
     const wb = XLSX.utils.book_new();
@@ -2593,11 +2613,7 @@ exports.downloadDosenTemplate = (req, res) => {
       { wch: 36 }, // Jabatan Struktural
       { wch: 28 }, // Klaster
       { wch: 18 }, // Kuota Bimbingan
-      { wch: 20 }, // Status Dosen
-      { wch: 16 }, // Status Akun
-      { wch: 30 }, // Melanjutkan
-      { wch: 24 }, // Tanggal efektif
-      { wch: 40 }, // Alasan
+      { wch: 24 }, // Status Dosen
     ];
     exampleSheet["!cols"] = ws["!cols"];
     const jabatanStrukturalHeaderNote = [
@@ -2610,6 +2626,18 @@ exports.downloadDosenTemplate = (req, res) => {
       "Satu jabatan struktural hanya boleh dipakai oleh satu dosen.",
       "",
       "Contoh: Sekretaris Program Studi Informatika - Program Sarjana Reguler",
+    ].join("\n");
+    const gelarHeaderNote = [
+      "Wajib diisi, maksimal 150 karakter.",
+      "",
+      "Karakter yang diperbolehkan:",
+      "- Huruf",
+      "- Titik dan koma",
+      "- Spasi dan tanda hubung",
+      "- Kurung dan apostrof",
+      "",
+      "Tidak boleh hanya berisi simbol atau menggunakan simbol berulang seperti ..., ,,, dan --.",
+      "Contoh: Dr., S.Kom., M.Kom., Ph.D.",
     ].join("\n");
     const klasterHeaderNote = [
       "Isi satu atau lebih klaster.",
@@ -2625,14 +2653,32 @@ exports.downloadDosenTemplate = (req, res) => {
       "",
       "Contoh: MEDIS, ITSC, SDATA",
     ].join("\n");
+    const statusDosenHeaderNote = [
+      "Wajib diisi dengan tepat satu status.",
+      "",
+      "Pilihan yang valid:",
+      ...DOSEN_STATUS_IMPORT_LABELS.map((status) => `- ${status}`),
+      "",
+      "Gunakan label di atas persis seperti tertulis.",
+      "Jangan memakai kode teknis seperti study_leave dan jangan menggabungkan beberapa status dalam satu sel.",
+      "Status akun dan kebijakan bimbingan akan ditentukan otomatis oleh sistem.",
+    ].join("\n");
+    ws["C1"].c = [{ a: "SIMPS UII", t: gelarHeaderNote }];
+    ws["C1"].c.hidden = true;
     ws["E1"].c = [{ a: "SIMPS UII", t: jabatanStrukturalHeaderNote }];
     ws["E1"].c.hidden = true;
     ws["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
     ws["F1"].c.hidden = true;
+    ws["H1"].c = [{ a: "SIMPS UII", t: statusDosenHeaderNote }];
+    ws["H1"].c.hidden = true;
+    exampleSheet["C1"].c = [{ a: "SIMPS UII", t: gelarHeaderNote }];
+    exampleSheet["C1"].c.hidden = true;
     exampleSheet["E1"].c = [{ a: "SIMPS UII", t: jabatanStrukturalHeaderNote }];
     exampleSheet["E1"].c.hidden = true;
     exampleSheet["F1"].c = [{ a: "SIMPS UII", t: klasterHeaderNote }];
     exampleSheet["F1"].c.hidden = true;
+    exampleSheet["H1"].c = [{ a: "SIMPS UII", t: statusDosenHeaderNote }];
+    exampleSheet["H1"].c.hidden = true;
 
     XLSX.utils.book_append_sheet(wb, ws, "Template Dosen");
     XLSX.utils.book_append_sheet(wb, exampleSheet, "Contoh Pengisian");
@@ -2640,7 +2686,10 @@ exports.downloadDosenTemplate = (req, res) => {
 
     const buffer = styleXlsxCommentNotesAsStickyNotes(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }));
 
-    res.setHeader("Content-Disposition", "attachment; filename=template_dosen.xlsx");
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Content-Disposition", "attachment; filename=template_dosen_status_baru.xlsx");
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
     res.send(buffer);

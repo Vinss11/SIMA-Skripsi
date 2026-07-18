@@ -199,6 +199,14 @@ async function validateDosenKuota(dosen_id, transaction) {
       where: { dosen_id, periode_penjaluran_id: activePeriode.id },
       transaction,
     });
+    if (!availability || availability.configuration_status !== "ready") {
+      return {
+        isAvailable: false,
+        kuotaInfo,
+        message: "Ketersediaan dosen belum dikonfirmasi oleh Sekretaris Prodi untuk periode aktif.",
+        dosen,
+      };
+    }
     if (availability) {
       const periodTotal = Number(availability.kuota_bimbingan_periode || 0);
       const periodInfo = {

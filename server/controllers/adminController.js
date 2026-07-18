@@ -14,7 +14,9 @@ const {
   DOSEN_STATUSES,
   analyzeDosenStatusImpact,
   assertDosenCanReceiveNewAssignment,
+  initializeAvailabilityForDosen,
 } = require("../services/dosenStatusService");
+const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -49,39 +51,6 @@ function normalizeNameKey(name) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ");
-}
-
-function validateHumanName(name, label) {
-  const normalizedName = String(name || "")
-    .trim()
-    .replace(/\s+/g, " ");
-
-  if (!normalizedName) {
-    return {
-      isValid: false,
-      message: `${label} harus diisi`,
-    };
-  }
-
-  if (/\d/.test(normalizedName)) {
-    return {
-      isValid: false,
-      message: `${label} tidak boleh mengandung angka`,
-    };
-  }
-
-  const allowedPattern = /^[A-Za-z'.,\s-]+$/;
-  if (!allowedPattern.test(normalizedName)) {
-    return {
-      isValid: false,
-      message: `${label} mengandung karakter tidak valid. Gunakan huruf, spasi, titik, koma, apostrof, atau tanda hubung.`,
-    };
-  }
-
-  return {
-    isValid: true,
-    normalized: normalizedName,
-  };
 }
 
 function validateKuotaBimbinganValue(value) {
@@ -906,20 +875,39 @@ exports.createDosen = async (req, res) => {
       email,
       jabatan_struktural,
       kuota_bimbingan,
+      status_keaktifan,
       klaster_ids,
     } = req.body || {};
 
     const normalizedNik = nik ? String(nik).trim() : null;
     const normalizedEmail = String(email || "").trim().toLowerCase();
-    const normalizedGelar = gelar ? String(gelar).trim() : null;
+    const gelarValidation = validateDosenTitle(gelar);
+    const normalizedGelar = gelarValidation.normalized || null;
     const normalizedJabatanStruktural = normalizeJabatanStrukturalInput(jabatan_struktural);
-    const kuotaInput = kuota_bimbingan === undefined || kuota_bimbingan === null || kuota_bimbingan === ""
-      ? 5
-      : kuota_bimbingan;
+    const normalizedStatus = String(status_keaktifan || "").trim().toLowerCase();
+    const kuotaInput = kuota_bimbingan;
     const kuotaValidation = validateKuotaBimbinganValue(kuotaInput);
     const parsedKuota = kuotaValidation.value;
 
-    const nameValidation = validateHumanName(nama, "Nama dosen");
+    if (!DOSEN_STATUSES.includes(normalizedStatus)) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Status dosen wajib diisi dengan nilai active, inactive, study_leave, atau retired.",
+      });
+    }
+
+    if (!normalizedNik) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "NIK wajib diisi." });
+    }
+
+    if (!gelarValidation.isValid) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: gelarValidation.message });
+    }
+
+    const nameValidation = validateDosenName(nama);
     if (!nameValidation.isValid) {
       await t.rollback();
       return res.status(400).json({
@@ -958,14 +946,6 @@ exports.createDosen = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: kuotaValidation.message,
-      });
-    }
-
-    if (normalizedGelar && normalizedGelar.length > 120) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Gelar maksimal 120 karakter.",
       });
     }
 
@@ -1030,6 +1010,11 @@ exports.createDosen = async (req, res) => {
       ? [...new Set(klaster_ids.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item > 0))]
       : [];
 
+    if (normalizedKlasterIds.length === 0) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Pilih minimal satu Klaster Riset." });
+    }
+
     let klasters = [];
     if (normalizedKlasterIds.length > 0) {
       klasters = await Klaster.findAll({
@@ -1048,13 +1033,12 @@ exports.createDosen = async (req, res) => {
 
     const nextSeq = await getNextDosenSequence(t);
     const generatedKodeDosen = `DSN${String(nextSeq).padStart(4, "0")}`;
-    const generatedNik = String(nextSeq).padStart(9, "0");
     const defaultPassword = process.env.DEFAULT_PASSWORD_DOSEN || "12345678";
 
     const newDosen = await Dosen.create(
       {
         kode_dosen: generatedKodeDosen,
-        nik: normalizedNik || generatedNik,
+        nik: normalizedNik,
         nama: nameValidation.normalized,
         gelar: normalizedGelar || null,
         email: normalizedEmail,
@@ -1062,6 +1046,13 @@ exports.createDosen = async (req, res) => {
         is_default_password: true,
         jabatan_struktural: normalizedJabatanStruktural || null,
         kuota_bimbingan: parsedKuota,
+        status_keaktifan: normalizedStatus,
+        account_is_active: normalizedStatus !== "retired",
+        continue_existing_supervision: normalizedStatus === "active",
+        status_effective_at: getJakartaDateOnly(),
+        status_reason: "Status awal saat dosen ditambahkan",
+        status_updated_by: req.user.id,
+        status_updated_at: new Date(),
       },
       { transaction: t }
     );
@@ -1069,6 +1060,8 @@ exports.createDosen = async (req, res) => {
     if (klasters.length > 0) {
       await newDosen.setKlasters(klasters, { transaction: t });
     }
+
+    await initializeAvailabilityForDosen(newDosen, t);
 
     await t.commit();
 
@@ -1082,6 +1075,11 @@ exports.createDosen = async (req, res) => {
         "email",
         "jabatan_struktural",
         "kuota_bimbingan",
+        "status_keaktifan",
+        "account_is_active",
+        "continue_existing_supervision",
+        "status_effective_at",
+        "status_reason",
         "createdAt",
         "updatedAt",
       ],
@@ -1143,16 +1141,17 @@ exports.updateDosenProfil = async (req, res) => {
     const rawJabatanStruktural = req.body?.jabatan_struktural;
     const rawKlasterIds = req.body?.klaster_ids;
 
-    const gelar = rawGelar === undefined ? dosen.gelar : String(rawGelar || "").trim() || null;
+    const gelarValidation = validateDosenTitle(rawGelar === undefined ? dosen.gelar : rawGelar);
+    const gelar = gelarValidation.normalized || null;
     const jabatanStruktural = rawJabatanStruktural === undefined
       ? normalizeJabatanStrukturalInput(dosen.jabatan_struktural)
       : normalizeJabatanStrukturalInput(rawJabatanStruktural);
 
-    if (gelar && gelar.length > 120) {
+    if (!gelarValidation.isValid) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Gelar maksimal 120 karakter.",
+        message: gelarValidation.message,
       });
     }
 

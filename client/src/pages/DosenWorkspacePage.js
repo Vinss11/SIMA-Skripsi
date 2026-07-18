@@ -1732,7 +1732,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [masterDosenKuotaValue, setMasterDosenKuotaValue] = useState("5");
   const [masterDosenSelectedDosenIds, setMasterDosenSelectedDosenIds] = useState([]);
   const [savingMasterDosenKuota, setSavingMasterDosenKuota] = useState(false);
-  const [dosenPeriodAvailability, setDosenPeriodAvailability] = useState({ periodes: [], periode: null, dosens: [] });
+  const [dosenPeriodAvailability, setDosenPeriodAvailability] = useState({
+    periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false,
+  });
   const [dosenStatusFollowUps, setDosenStatusFollowUps] = useState([]);
   const [savingAvailabilityDosenId, setSavingAvailabilityDosenId] = useState(null);
 
@@ -2578,9 +2580,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           periodes: Array.isArray(payload.periodes) ? payload.periodes : [],
           periode: payload.periode || null,
           dosens: Array.isArray(payload.dosens) ? payload.dosens : [],
+          readiness: payload.readiness || null,
+          is_readonly: payload.is_readonly === true,
         });
       } else {
-        setDosenPeriodAvailability({ periodes: [], periode: null, dosens: [] });
+        setDosenPeriodAvailability({ periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false });
         issues.push(dosenAvailabilityResult?.reason?.message || "Gagal memuat ketersediaan dosen per periode.");
       }
       if (dosenFollowUpResult?.status === "fulfilled") {
@@ -5805,6 +5809,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         periodes: Array.isArray(payload?.periodes) ? payload.periodes : [],
         periode: payload?.periode || null,
         dosens: Array.isArray(payload?.dosens) ? payload.dosens : [],
+        readiness: payload?.readiness || null,
+        is_readonly: payload?.is_readonly === true,
       });
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal memuat ketersediaan dosen.");
@@ -5837,6 +5843,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
             tersedia_sidang: row.tersedia_sidang,
             kuota_bimbingan_periode: Number(row.kuota_bimbingan_periode),
             alasan_tidak_tersedia: row.alasan_tidak_tersedia,
+            review_note: row.review_note,
           }],
         }),
       });
@@ -6062,9 +6069,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       .join("<br>");
 
     const konfirmasi = await Swal.fire({
-      title: "Buka periode ini?",
+      title: "Buat draft periode ini?",
       html: `
-        Periode yang akan dibuka:<br><b>${formatLabel(periodeForm.semester)} ${tahunAkademik}</b><br><br>
+        Draft periode yang akan dibuat:<br><b>${formatLabel(periodeForm.semester)} ${tahunAkademik}</b><br><br>
         ${ketuaSummary}<br><br>
         Pengawas Magang: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_magang_dosen_id))?.nama || "-"}</b><br>
         Pengampu Pengabdian Masyarakat: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_pengabdian_dosen_id))?.nama || "-"}</b><br>
@@ -6072,7 +6079,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       `,
       icon: "question",
       showCancelButton: true,
-      confirmButtonText: "Ya, buka periode",
+      confirmButtonText: "Ya, buat draft",
       cancelButtonText: "Batal",
       confirmButtonColor: "#117246",
     });
@@ -6099,7 +6106,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         }),
       });
 
-      showSuccessToast("Periode berhasil dibuka.");
+      showSuccessToast("Draft periode berhasil dibuat. Tinjau ketersediaan dosen sebelum aktivasi.");
       setPeriodeForm({ ...PERIODE_FORM_INITIAL });
       setPeriodeFormErrors({});
       await loadAllData();
@@ -6124,7 +6131,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           setPeriodeMasterErrors(nextMasterErrors);
           return;
         }
-        showErrorToast(openError.message || "Gagal membuka periode.");
+        showErrorToast(openError.message || "Gagal membuat draft periode.");
       }
     } finally {
       setSavingPeriode(false);
@@ -6388,7 +6395,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setPeriodeMode("list");
     } catch (activateError) {
       if (activateError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(activateError.message || "Gagal mengaktifkan periode.");
+        const readinessErrors = activateError?.detail?.readiness?.errors;
+        if (Array.isArray(readinessErrors) && readinessErrors.length > 0) {
+          await Swal.fire({
+            title: "Periode belum siap",
+            html: `<div style="text-align:left"><p style="margin-bottom:8px">${activateError.message}</p><ul style="padding-left:20px;list-style:disc">${readinessErrors
+              .map((item) => `<li>${String(item?.message || "Konfigurasi belum lengkap.")}</li>`)
+              .join("")}</ul></div>`,
+            icon: "warning",
+            confirmButtonColor: "#2f63e3",
+          });
+        } else {
+          showErrorToast(activateError.message || "Gagal mengaktifkan periode.");
+        }
       }
     } finally {
       setSavingPeriode(false);
@@ -10680,7 +10699,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="flex flex-wrap items-end justify-between gap-3">
                         <div>
-                          <h3 className="text-lg font-black text-[#1b274b]">Ketersediaan Dosen per Periode</h3>
+                          <h3 className="text-lg font-black text-[#1b274b]">Ketersediaan Dosen per Periode Penjaluran</h3>
                           <p className="text-sm text-[#5d6c91]">Status master tetap ditetapkan Admin. Pengaturan ini hanya berlaku pada periode yang dipilih.</p>
                         </div>
                         <div>
@@ -10696,27 +10715,54 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           </select>
                         </div>
                       </div>
+                      {dosenPeriodAvailability.is_readonly ? (
+                        <div className="mt-3 rounded-lg border border-[#d9e1f2] bg-[#f7f9fd] px-3 py-2 text-sm font-semibold text-[#596887]">
+                          Periode sudah ditutup. Konfigurasi ditampilkan sebagai riwayat dan tidak dapat diubah.
+                        </div>
+                      ) : null}
+                      {dosenPeriodAvailability.readiness ? (
+                        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                          {[
+                            ["Siap", dosenPeriodAvailability.readiness.counts?.ready || 0, "border-[#cce8d8] bg-[#f0fbf5] text-[#127947]"],
+                            ["Perlu Ditinjau", dosenPeriodAvailability.readiness.counts?.needs_review || 0, "border-[#f0d3a5] bg-[#fff8ed] text-[#a15b18]"],
+                            ["Dikunci Admin", dosenPeriodAvailability.readiness.counts?.locked_by_master_status || 0, "border-[#d9e1f2] bg-[#f7f9fd] text-[#596887]"],
+                            ["Kesiapan Aktivasi", dosenPeriodAvailability.readiness.ready ? "Siap" : "Belum Siap", dosenPeriodAvailability.readiness.ready ? "border-[#cce8d8] bg-[#f0fbf5] text-[#127947]" : "border-[#f0c6c6] bg-[#fff4f4] text-[#a03f3f]"],
+                          ].map(([label, value, style]) => (
+                            <div key={label} className={`rounded-lg border p-3 ${style}`}>
+                              <p className="text-xs font-bold uppercase">{label}</p>
+                              <p className="mt-1 text-xl font-black">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
-                        <table className="w-full min-w-[1800px] text-left text-sm">
+                        <table className="w-full min-w-[1950px] text-left text-sm">
                           <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2">Dosen</th>
-                            <th className="bg-[#f8fbff] px-3 py-2">Status Master</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Membimbing</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Status Master Saat Ini</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Status Konfigurasi</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Menerima Bimbingan Baru</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Menguji</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Ketua Cluster</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengampu</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengawas</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Mendampingi Sidang</th>
-                            <th className="bg-[#f8fbff] px-3 py-2">Kuota Periode</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Kuota Penjaluran</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Alasan</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Aksi</th>
                           </tr></thead>
                           <tbody>
                             {dosenPeriodAvailability.dosens.map((row) => {
                               const isActive = row.status_keaktifan === "active";
+                              const canEdit = row.can_edit === true && !dosenPeriodAvailability.is_readonly;
+                              const configurationMeta = {
+                                ready: ["Siap", "bg-[#e8f8ef] text-[#127947]"],
+                                needs_review: ["Perlu Ditinjau", "bg-[#fff1df] text-[#a15b18]"],
+                                locked_by_master_status: ["Dikunci Admin", "bg-[#edf0f6] text-[#596887]"],
+                              }[row.configuration_status] || [row.configuration_status || "Perlu Ditinjau", "bg-[#fff1df] text-[#a15b18]"];
                               const availabilityFields = [
                                 "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
                                 "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
@@ -10725,14 +10771,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <tr key={`availability-${row.id}`} className="border-b border-[#eff3fb]">
                                   <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{row.nama}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td>
                                   <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${isActive ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan}</span></td>
+                                  <td className="px-3 py-2"><span className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-bold ${configurationMeta[1]}`}>{configurationMeta[0]}</span>{row.review_note ? <p className="mt-1 max-w-[220px] text-xs text-[#6a779a]">{row.review_note}</p> : null}</td>
                                   {availabilityFields.map((field) => (
                                     <td key={`${row.id}-${field}`} className="px-3 py-2 text-center">
-                                      <input type="checkbox" checked={Boolean(row[field])} disabled={!isActive} onChange={(event) => updateDosenAvailabilityDraft(row.id, field, event.target.checked)} className="h-4 w-4 accent-[#2f63e3]" />
+                                      <input type="checkbox" checked={Boolean(row[field])} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, field, event.target.checked)} className="h-4 w-4 accent-[#2f63e3]" />
                                     </td>
                                   ))}
-                                  <td className="px-3 py-2"><input type="number" min="0" max="99" value={row.kuota_bimbingan_periode} disabled={!isActive} onChange={(event) => updateDosenAvailabilityDraft(row.id, "kuota_bimbingan_periode", event.target.value)} className="w-24 rounded-lg border border-[#d3dbef] px-2 py-1.5" /></td>
-                                  <td className="px-3 py-2"><input type="text" value={row.alasan_tidak_tersedia || ""} onChange={(event) => updateDosenAvailabilityDraft(row.id, "alasan_tidak_tersedia", event.target.value)} placeholder={isActive ? "Wajib jika ada yang tidak tersedia" : "Status master oleh Admin"} className="w-72 rounded-lg border border-[#d3dbef] px-2 py-1.5" /></td>
-                                  <td className="px-3 py-2"><button type="button" disabled={savingAvailabilityDosenId === row.id} onClick={() => handleSaveDosenAvailability(row)} className="rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : "Simpan"}</button></td>
+                                  <td className="px-3 py-2"><input type="number" min="0" max="99" value={row.kuota_bimbingan_periode} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "kuota_bimbingan_periode", event.target.value)} className="w-24 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
+                                  <td className="px-3 py-2"><input type="text" value={row.alasan_tidak_tersedia || ""} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "alasan_tidak_tersedia", event.target.value)} placeholder={canEdit ? "Wajib jika ada yang tidak tersedia" : "Tidak dapat diubah"} className="w-72 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
+                                  <td className="px-3 py-2"><button type="button" disabled={!canEdit || savingAvailabilityDosenId === row.id} onClick={() => handleSaveDosenAvailability(row)} className="whitespace-nowrap rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : row.configuration_status === "needs_review" ? "Konfirmasi & Simpan" : "Simpan"}</button></td>
                                 </tr>
                               );
                             })}
@@ -11701,7 +11748,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       }`}
                     >
                       <CalendarRange className="h-4 w-4" />
-                      Buka Periode
+                      Buat Draft Periode
                     </button>
                   </div>
                 </div>
@@ -11812,9 +11859,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                 {periodeMode === "open" ? (
                   <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <h3 className="text-lg font-black text-[#1b274b]">Buka Periode Baru</h3>
+                    <h3 className="text-lg font-black text-[#1b274b]">Buat Draft Periode Baru</h3>
                     <p className="mt-1 text-sm text-[#5d6c91]">
-                      Gunakan master data penanggung jawab, lalu isi detail periode yang akan dibuka.
+                      Gunakan master data penanggung jawab, lalu isi detail draft periode. Aktivasi dilakukan setelah seluruh ketersediaan siap.
                     </p>
 
                     <div className="mt-4 space-y-4">
@@ -11870,7 +11917,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           2. Detail Periode Penjaluran
                         </p>
                         <p className="mt-1 text-sm text-[#5d6c91]">
-                          Isi periode akademik yang akan dibuka.
+                          Isi periode akademik yang akan dibuat sebagai draft.
                         </p>
 
                         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -11951,7 +11998,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         onClick={handleOpenPeriode}
                         className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Buka Periode
+                        Buat Draft Periode
                       </button>
                     </div>
                   </div>

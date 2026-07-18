@@ -27,6 +27,9 @@ const {
   validateDosenForNewAssignment,
   analyzeDosenStatusImpact,
   resolveResearchSubmissionRegistration,
+  initializeAvailabilityForPeriod,
+  copyAvailabilityFromPreviousPeriod,
+  toEffectiveAvailability,
 } = require("../services/dosenStatusService");
 const {
   buildTopikListFromSubmission,
@@ -2189,6 +2192,10 @@ exports.getKetuaKlasterOverview = async (req, res) => {
       });
     }
 
+    if (getPeriodeStatusLabel(periodeDipakai) !== "closed") {
+      await initializeAvailabilityForPeriod(periodeDipakai.id);
+    }
+
     const ketuaRows = await KlasterKetuaPeriode.findAll({
       where: { periode_penjaluran_id: periodeDipakai.id },
       include: [
@@ -2209,13 +2216,17 @@ exports.getKetuaKlasterOverview = async (req, res) => {
     });
 
     const ketuaAvailabilityRows = await DosenKetersediaanPeriode.findAll({
-      where: { periode_penjaluran_id: periodeDipakai.id, tersedia_ketua_cluster: false },
+      where: {
+        periode_penjaluran_id: periodeDipakai.id,
+        configuration_status: "ready",
+        tersedia_ketua_cluster: true,
+      },
       attributes: ["dosen_id"],
     });
-    const unavailableKetuaIds = new Set(ketuaAvailabilityRows.map((item) => Number(item.dosen_id)));
+    const availableKetuaIds = new Set(ketuaAvailabilityRows.map((item) => Number(item.dosen_id)));
     const dosenPerKlasterMap = new Map();
     for (const row of dosenKlasterRows) {
-      if (unavailableKetuaIds.has(Number(row.dosen_id))) continue;
+      if (!availableKetuaIds.has(Number(row.dosen_id))) continue;
       const key = row.klaster_id;
       const current = dosenPerKlasterMap.get(key) || [];
       current.push({
@@ -2287,6 +2298,112 @@ exports.getKetuaKlasterOverview = async (req, res) => {
   }
 };
 
+function getSekretarisActorId(req) {
+  return req.user?.sekretaris_prodi_id || null;
+}
+
+async function buildPeriodeAvailabilityReadiness(periodeId, transaction = null) {
+  const periode = await PeriodePenjaluran.findByPk(periodeId, { transaction });
+  if (!periode) return null;
+  if (periode.status !== "closed") await initializeAvailabilityForPeriod(periode.id, transaction);
+
+  const [availabilityRows, ketuaRows] = await Promise.all([
+    DosenKetersediaanPeriode.findAll({
+      where: { periode_penjaluran_id: periode.id },
+      include: [{
+        model: Dosen,
+        as: "dosen",
+        attributes: ["id", "nama", "kode_dosen", "status_keaktifan"],
+        required: true,
+      }],
+      transaction,
+    }),
+    KlasterKetuaPeriode.findAll({
+      where: { periode_penjaluran_id: periode.id },
+      include: [{ model: Klaster, as: "klaster", attributes: ["id", "kode", "nama"], required: true }],
+      transaction,
+    }),
+  ]);
+
+  const availabilityByDosen = new Map(availabilityRows.map((row) => [Number(row.dosen_id), row]));
+  const counts = { total: availabilityRows.length, ready: 0, needs_review: 0, locked_by_master_status: 0 };
+  const needsReviewDosens = [];
+  for (const row of availabilityRows) {
+    const status = row.configuration_status || "needs_review";
+    if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+    if (status === "needs_review") {
+      needsReviewDosens.push({
+        id: row.dosen_id,
+        nama: row.dosen?.nama || null,
+        kode_dosen: row.dosen?.kode_dosen || null,
+      });
+    }
+  }
+
+  const errors = [];
+  if (needsReviewDosens.length > 0) {
+    errors.push({
+      code: "availability_needs_review",
+      message: `${needsReviewDosens.length} dosen masih berstatus Perlu Ditinjau.`,
+      dosens: needsReviewDosens,
+    });
+  }
+
+  const startDate = periode.tanggal_mulai ? new Date(periode.tanggal_mulai) : null;
+  const endDate = periode.tanggal_selesai ? new Date(periode.tanggal_selesai) : null;
+  if (!startDate || Number.isNaN(startDate.getTime())) {
+    errors.push({ code: "invalid_start_date", message: "Tanggal mulai periode belum valid." });
+  }
+  if (!endDate || Number.isNaN(endDate.getTime())) {
+    errors.push({ code: "invalid_end_date", message: "Tanggal selesai periode belum valid." });
+  }
+  if (startDate && endDate && startDate.getTime() > endDate.getTime()) {
+    errors.push({ code: "invalid_date_range", message: "Tanggal selesai harus setelah tanggal mulai." });
+  }
+
+  const assertRoleReady = (dosenId, availabilityField, label) => {
+    const normalizedId = Number(dosenId || 0);
+    if (!normalizedId) {
+      errors.push({ code: "missing_required_role", message: `${label} belum ditetapkan.` });
+      return;
+    }
+    const availability = availabilityByDosen.get(normalizedId);
+    if (!availability || availability.dosen?.status_keaktifan !== "active") {
+      errors.push({ code: "inactive_role_holder", dosen_id: normalizedId, message: `${label} harus menggunakan dosen berstatus aktif.` });
+      return;
+    }
+    if (availability.configuration_status !== "ready") {
+      errors.push({ code: "role_holder_not_ready", dosen_id: normalizedId, message: `${label} belum dikonfirmasi pada ketersediaan periode.` });
+      return;
+    }
+    if (availability[availabilityField] !== true) {
+      errors.push({ code: "role_holder_unavailable", dosen_id: normalizedId, message: `${label} tidak tersedia untuk peran tersebut.` });
+    }
+  };
+
+  const ketuaByCode = new Map();
+  for (const row of ketuaRows) {
+    const code = resolveResearchClusterCode(row.klaster);
+    if (code && !ketuaByCode.has(code)) ketuaByCode.set(code, row);
+  }
+  for (const code of RESEARCH_CLUSTER_CODES) {
+    const mapping = ketuaByCode.get(code);
+    assertRoleReady(mapping?.dosen_id, "tersedia_ketua_cluster", `Ketua Cluster ${code}`);
+  }
+  assertRoleReady(periode.pengawas_magang_dosen_id, "tersedia_pengawas_jalur", "Dosen pengawas magang");
+  assertRoleReady(periode.pengawas_pengabdian_dosen_id, "tersedia_pengampu", "Dosen pengampu pengabdian masyarakat");
+  assertRoleReady(periode.pengawas_perintisan_bisnis_dosen_id, "tersedia_pengampu", "Dosen pengampu perintisan bisnis");
+
+  return {
+    ready: errors.length === 0,
+    periode_id: periode.id,
+    periode_status: periode.status,
+    counts,
+    needs_review_dosens: needsReviewDosens,
+    errors,
+  };
+}
+
 // GET /api/sekretaris/master-dosen/ketersediaan
 exports.getDosenKetersediaanPeriode = async (req, res) => {
   try {
@@ -2305,6 +2422,8 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
       return res.json({ success: true, data: { periodes: [], periode: null, dosens: [] } });
     }
 
+    if (periode.status !== "closed") await initializeAvailabilityForPeriod(periode.id);
+
     const dosens = await Dosen.findAll({
       attributes: [
         "id", "kode_dosen", "nik", "nama", "email", "status_keaktifan",
@@ -2321,8 +2440,18 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
 
     const mapped = dosens.map((dosen) => {
       const saved = dosen.ketersediaanPeriodes?.[0] || null;
-      const academicallyActive = dosen.status_keaktifan === "active";
-      const defaultAvailable = academicallyActive;
+      const configurationStatus = saved?.configuration_status
+        || (dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status");
+      const storedAvailability = {
+        tersedia_membimbing: Boolean(saved?.tersedia_membimbing),
+        tersedia_menguji: Boolean(saved?.tersedia_menguji),
+        tersedia_ketua_cluster: Boolean(saved?.tersedia_ketua_cluster),
+        tersedia_pengampu: Boolean(saved?.tersedia_pengampu),
+        tersedia_pengawas_jalur: Boolean(saved?.tersedia_pengawas_jalur),
+        tersedia_sidang: Boolean(saved?.tersedia_sidang),
+        kuota_bimbingan_periode: Number(saved?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0),
+      };
+      const effectiveAvailability = toEffectiveAvailability(dosen, saved, periode.status);
       return {
         id: dosen.id,
         kode_dosen: dosen.kode_dosen,
@@ -2331,22 +2460,24 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
         email: dosen.email,
         status_keaktifan: dosen.status_keaktifan,
         continue_existing_supervision: dosen.continue_existing_supervision,
-        tersedia_membimbing: saved?.tersedia_membimbing ?? defaultAvailable,
-        tersedia_menguji: saved?.tersedia_menguji ?? defaultAvailable,
-        tersedia_ketua_cluster: saved?.tersedia_ketua_cluster ?? defaultAvailable,
-        tersedia_pengampu: saved?.tersedia_pengampu ?? defaultAvailable,
-        tersedia_pengawas_jalur: saved?.tersedia_pengawas_jalur ?? defaultAvailable,
-        tersedia_sidang: saved?.tersedia_sidang ?? defaultAvailable,
-        kuota_bimbingan_periode: saved?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan,
+        ...storedAvailability,
         alasan_tidak_tersedia: saved?.alasan_tidak_tersedia || "",
         configured: Boolean(saved),
+        configuration_status: configurationStatus,
+        reviewed_at: saved?.reviewed_at || null,
+        reviewed_by_sekretaris_id: saved?.reviewed_by_sekretaris_id || null,
+        review_note: saved?.review_note || "",
+        stored_availability: storedAvailability,
+        effective_availability: effectiveAvailability,
+        can_edit: periode.status !== "closed" && configurationStatus !== "locked_by_master_status",
         updatedAt: saved?.updatedAt || null,
       };
     });
 
+    const readiness = await buildPeriodeAvailabilityReadiness(periode.id);
     return res.json({
       success: true,
-      data: { periodes, periode, dosens: mapped },
+      data: { periodes, periode, dosens: mapped, readiness, is_readonly: periode.status === "closed" },
     });
   } catch (error) {
     console.error("Error di getDosenKetersediaanPeriode:", error);
@@ -2384,17 +2515,30 @@ exports.saveDosenKetersediaanPeriode = async (req, res) => {
         return res.status(404).json({ success: false, message: `Dosen ID ${dosenId} tidak ditemukan.` });
       }
 
+      if (dosen.status_keaktifan !== "active") {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: `${dosen.nama} dikunci oleh status master ${dosen.status_keaktifan} dan tidak dapat dikonfigurasi.`,
+        });
+      }
+
       const reason = String(input?.alasan_tidak_tersedia || "").trim();
+      const reviewerId = getSekretarisActorId(req);
       const values = {
-        tersedia_membimbing: dosen.status_keaktifan === "active" && quota > 0 && input?.tersedia_membimbing !== false,
-        tersedia_menguji: dosen.status_keaktifan === "active" && input?.tersedia_menguji !== false,
-        tersedia_ketua_cluster: dosen.status_keaktifan === "active" && input?.tersedia_ketua_cluster !== false,
-        tersedia_pengampu: dosen.status_keaktifan === "active" && input?.tersedia_pengampu !== false,
-        tersedia_pengawas_jalur: dosen.status_keaktifan === "active" && input?.tersedia_pengawas_jalur !== false,
-        tersedia_sidang: dosen.status_keaktifan === "active" && input?.tersedia_sidang !== false,
+        tersedia_membimbing: quota > 0 && input?.tersedia_membimbing === true,
+        tersedia_menguji: input?.tersedia_menguji === true,
+        tersedia_ketua_cluster: input?.tersedia_ketua_cluster === true,
+        tersedia_pengampu: input?.tersedia_pengampu === true,
+        tersedia_pengawas_jalur: input?.tersedia_pengawas_jalur === true,
+        tersedia_sidang: input?.tersedia_sidang === true,
         kuota_bimbingan_periode: quota,
         alasan_tidak_tersedia: reason || null,
-        updated_by_sekretaris_id: req.user.sekretaris_prodi_id || (req.user.role === "sekretaris_prodi" ? req.user.id : null),
+        updated_by_sekretaris_id: reviewerId,
+        configuration_status: "ready",
+        reviewed_at: new Date(),
+        reviewed_by_sekretaris_id: reviewerId,
+        review_note: String(input?.review_note || "Dikonfirmasi oleh Sekretaris Prodi").trim(),
       };
       const anyUnavailable = Object.keys(values)
         .filter((key) => key.startsWith("tersedia_"))
@@ -2404,11 +2548,20 @@ exports.saveDosenKetersediaanPeriode = async (req, res) => {
         return res.status(400).json({ success: false, message: `Alasan ketidaktersediaan ${dosen.nama} wajib diisi.` });
       }
 
-      const [record] = await DosenKetersediaanPeriode.upsert({
-        dosen_id: dosenId,
-        periode_penjaluran_id: periodeId,
-        ...values,
-      }, { transaction, returning: true });
+      let record = await DosenKetersediaanPeriode.findOne({
+        where: { dosen_id: dosenId, periode_penjaluran_id: periodeId },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (record) {
+        await record.update(values, { transaction });
+      } else {
+        record = await DosenKetersediaanPeriode.create({
+          dosen_id: dosenId,
+          periode_penjaluran_id: periodeId,
+          ...values,
+        }, { transaction });
+      }
       savedRows.push(record);
     }
     await transaction.commit();
@@ -2560,20 +2713,16 @@ exports.assignKetuaKlaster = async (req, res) => {
       });
     }
 
-    const eligibility = assertDosenCanReceiveNewAssignment(dosen, "tugas Ketua Cluster baru");
+    const eligibility = await validateDosenForNewAssignment(dosenId, periodePenjaluranId, {
+      availabilityField: "tersedia_ketua_cluster",
+      activityLabel: "tugas Ketua Cluster baru",
+      checkQuota: false,
+      transaction: t,
+    });
     if (!eligibility.allowed) {
       await t.rollback();
       return res.status(409).json({ success: false, message: eligibility.message });
     }
-    const availability = await DosenKetersediaanPeriode.findOne({
-      where: { dosen_id: dosenId, periode_penjaluran_id: periodePenjaluranId },
-      transaction: t,
-    });
-    if (availability && availability.tersedia_ketua_cluster === false) {
-      await t.rollback();
-      return res.status(409).json({ success: false, message: `${dosen.nama} tidak tersedia menjadi Ketua Cluster pada periode ini.` });
-    }
-
     const statusPeriode = getPeriodeStatusLabel(periode);
     if (statusPeriode !== "draft") {
       await t.rollback();
@@ -3050,8 +3199,8 @@ exports.openPeriodePendaftaran = async (req, res) => {
         pengawas_magang_dosen_id: pengawasMagangDosenId,
         pengawas_pengabdian_dosen_id: pengawasPengabdianDosenId,
         pengawas_perintisan_bisnis_dosen_id: pengawasPerintisanBisnisDosenId,
-        is_active: true,
-        status: "active",
+        is_active: false,
+        status: "draft",
       },
       { transaction: t }
     );
@@ -3066,12 +3215,27 @@ exports.openPeriodePendaftaran = async (req, res) => {
       { transaction: t }
     );
 
+    await initializeAvailabilityForPeriod(periode.id, t);
+    const copyResult = await copyAvailabilityFromPreviousPeriod(
+      periode.id,
+      req.user?.sekretaris_prodi_id || null,
+      t
+    );
+
     await t.commit();
 
     return res.json({
       success: true,
-      message: `Periode ${periode.label_periode} berhasil dibuka.`,
-      data: periode,
+      message: `Draft periode ${periode.label_periode} berhasil dibuat. Tinjau ketersediaan dosen sebelum aktivasi.`,
+      data: {
+        periode,
+        availability_copy: {
+          copied: copyResult.copied,
+          needs_review: copyResult.needs_review,
+          locked: copyResult.locked,
+          previous_period: copyResult.previous_period?.label_periode || null,
+        },
+      },
     });
   } catch (error) {
     if (!t.finished) await t.rollback();
@@ -3127,6 +3291,16 @@ exports.activatePeriodePendaftaran = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: `Masih ada periode aktif (${activePeriode.label_periode}). Tutup periode aktif terlebih dahulu.`,
+      });
+    }
+
+    const readiness = await buildPeriodeAvailabilityReadiness(periode.id, t);
+    if (!readiness?.ready) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode belum siap diaktifkan. Selesaikan review ketersediaan dan penanggung jawab wajib.",
+        detail: { readiness },
       });
     }
 
@@ -3230,6 +3404,14 @@ exports.updatePeriodeTanggal = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Periode tidak ditemukan.",
+      });
+    }
+
+    if (getPeriodeStatusLabel(periode) === "closed") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Tanggal periode yang sudah ditutup tidak dapat diubah.",
       });
     }
 

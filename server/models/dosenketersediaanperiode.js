@@ -7,6 +7,7 @@ module.exports = (sequelize, DataTypes) => {
       DosenKetersediaanPeriode.belongsTo(models.Dosen, { foreignKey: "dosen_id", as: "dosen" });
       DosenKetersediaanPeriode.belongsTo(models.PeriodePenjaluran, { foreignKey: "periode_penjaluran_id", as: "periode" });
       DosenKetersediaanPeriode.belongsTo(models.SekretarisProdi, { foreignKey: "updated_by_sekretaris_id", as: "updatedBySekretaris" });
+      DosenKetersediaanPeriode.belongsTo(models.SekretarisProdi, { foreignKey: "reviewed_by_sekretaris_id", as: "reviewedBySekretaris" });
     }
   }
   DosenKetersediaanPeriode.init({
@@ -21,6 +22,10 @@ module.exports = (sequelize, DataTypes) => {
     kuota_bimbingan_periode: DataTypes.INTEGER,
     alasan_tidak_tersedia: DataTypes.TEXT,
     updated_by_sekretaris_id: DataTypes.INTEGER,
+    configuration_status: DataTypes.ENUM("ready", "needs_review", "locked_by_master_status"),
+    reviewed_at: DataTypes.DATE,
+    reviewed_by_sekretaris_id: DataTypes.INTEGER,
+    review_note: DataTypes.TEXT,
   }, { sequelize, modelName: "DosenKetersediaanPeriode", tableName: "DosenKetersediaanPeriodes", timestamps: true });
   return DosenKetersediaanPeriode;
 };
