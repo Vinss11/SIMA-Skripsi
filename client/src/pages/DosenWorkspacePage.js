@@ -1737,6 +1737,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   });
   const [dosenStatusFollowUps, setDosenStatusFollowUps] = useState([]);
   const [savingAvailabilityDosenId, setSavingAvailabilityDosenId] = useState(null);
+  const [selectedAvailabilityDosenIds, setSelectedAvailabilityDosenIds] = useState([]);
+  const [bulkAvailabilityQuota, setBulkAvailabilityQuota] = useState("10");
+  const [savingBulkAvailability, setSavingBulkAvailability] = useState(false);
 
   const [topikForm, setTopikForm] = useState({
     kode: "",
@@ -2583,8 +2586,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           readiness: payload.readiness || null,
           is_readonly: payload.is_readonly === true,
         });
+        setSelectedAvailabilityDosenIds([]);
       } else {
         setDosenPeriodAvailability({ periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false });
+        setSelectedAvailabilityDosenIds([]);
         issues.push(dosenAvailabilityResult?.reason?.message || "Gagal memuat ketersediaan dosen per periode.");
       }
       if (dosenFollowUpResult?.status === "fulfilled") {
@@ -5812,6 +5817,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         readiness: payload?.readiness || null,
         is_readonly: payload?.is_readonly === true,
       });
+      setSelectedAvailabilityDosenIds([]);
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal memuat ketersediaan dosen.");
     }
@@ -5854,6 +5860,152 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     } finally {
       setSavingAvailabilityDosenId(null);
     }
+  };
+
+  const availabilityPayloadFromRow = (row, overrides = {}) => ({
+    dosen_id: row.id,
+    tersedia_membimbing: Boolean(row.tersedia_membimbing),
+    tersedia_menguji: Boolean(row.tersedia_menguji),
+    tersedia_ketua_cluster: Boolean(row.tersedia_ketua_cluster),
+    tersedia_pengampu: Boolean(row.tersedia_pengampu),
+    tersedia_pengawas_jalur: Boolean(row.tersedia_pengawas_jalur),
+    tersedia_sidang: Boolean(row.tersedia_sidang),
+    kuota_bimbingan_periode: Number(row.kuota_bimbingan_periode),
+    alasan_tidak_tersedia: row.alasan_tidak_tersedia,
+    review_note: row.review_note,
+    ...overrides,
+  });
+
+  const getSelectedAvailabilityRows = () => {
+    const selectedIds = new Set(selectedAvailabilityDosenIds.map(Number));
+    return dosenPeriodAvailability.dosens.filter(
+      (row) => selectedIds.has(Number(row.id)) && row.can_edit === true && !dosenPeriodAvailability.is_readonly
+    );
+  };
+
+  const toggleAvailabilitySelection = (dosenId) => {
+    const parsedId = Number(dosenId);
+    setSelectedAvailabilityDosenIds((previous) => previous.some((id) => Number(id) === parsedId)
+      ? previous.filter((id) => Number(id) !== parsedId)
+      : [...previous, parsedId]);
+  };
+
+  const selectAllNeedsReviewAvailability = () => {
+    const ids = dosenPeriodAvailability.dosens
+      .filter((row) => row.configuration_status === "needs_review" && row.can_edit === true)
+      .map((row) => Number(row.id));
+    setSelectedAvailabilityDosenIds(ids);
+    if (ids.length === 0) showErrorToast("Tidak ada dosen berstatus Perlu Ditinjau yang dapat dipilih.");
+  };
+
+  const applyBulkAvailabilityQuota = () => {
+    const quota = Number(bulkAvailabilityQuota);
+    const selectedRows = getSelectedAvailabilityRows();
+    if (!Number.isInteger(quota) || quota < 0 || quota > 99) {
+      showErrorToast("Kuota massal harus berupa bilangan bulat 0 sampai 99.");
+      return;
+    }
+    if (selectedRows.length === 0) {
+      showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
+      return;
+    }
+    const selectedIds = new Set(selectedRows.map((row) => Number(row.id)));
+    setDosenPeriodAvailability((previous) => ({
+      ...previous,
+      dosens: previous.dosens.map((row) => selectedIds.has(Number(row.id))
+        ? { ...row, kuota_bimbingan_periode: quota, tersedia_membimbing: quota > 0 && row.tersedia_membimbing }
+        : row),
+    }));
+    showSuccessToast(`Kuota ${selectedRows.length} dosen diperbarui. Klik Konfirmasi Dosen Terpilih untuk menyimpan.`);
+  };
+
+  const saveBulkAvailabilityRows = async (rows, successMessage) => {
+    const periodeId = Number(dosenPeriodAvailability.periode?.id);
+    if (!periodeId || rows.length === 0) return;
+    setSavingBulkAvailability(true);
+    try {
+      await fetchWithAuth("/api/sekretaris/master-dosen/ketersediaan", {
+        method: "PUT",
+        body: JSON.stringify({ periode_penjaluran_id: periodeId, rows }),
+      });
+      await loadDosenPeriodAvailability(periodeId);
+      showSuccessToast(successMessage);
+    } catch (availabilityError) {
+      showErrorToast(availabilityError.message || "Gagal menyimpan ketersediaan dosen terpilih.");
+    } finally {
+      setSavingBulkAvailability(false);
+    }
+  };
+
+  const handleConfirmSelectedAvailability = async () => {
+    const selectedRows = getSelectedAvailabilityRows();
+    if (selectedRows.length === 0) {
+      showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
+      return;
+    }
+    const availabilityFields = [
+      "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
+      "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
+    ];
+    const invalidRows = selectedRows.filter((row) => {
+      const hasUnavailableRole = availabilityFields.some((field) => row[field] !== true);
+      return hasUnavailableRole && String(row.alasan_tidak_tersedia || "").trim().length < 3;
+    });
+    if (invalidRows.length > 0) {
+      showErrorToast(`Isi alasan ketidaktersediaan pada: ${invalidRows.slice(0, 3).map((row) => row.nama).join(", ")}${invalidRows.length > 3 ? ", dan lainnya" : ""}.`);
+      return;
+    }
+    const confirmation = await Swal.fire({
+      title: `Konfirmasi ${selectedRows.length} dosen?`,
+      text: "Nilai checkbox, kuota, dan alasan yang terlihat akan disimpan sebagai konfigurasi Siap.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Ya, konfirmasi",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#117246",
+    });
+    if (!confirmation.isConfirmed) return;
+    await saveBulkAvailabilityRows(
+      selectedRows.map((row) => availabilityPayloadFromRow(row, { review_note: "Dikonfirmasi secara massal oleh Sekretaris Prodi" })),
+      `${selectedRows.length} dosen berhasil dikonfirmasi.`
+    );
+  };
+
+  const handleMarkSelectedNotInvolved = async () => {
+    const selectedRows = getSelectedAvailabilityRows();
+    if (selectedRows.length === 0) {
+      showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
+      return;
+    }
+    const result = await Swal.fire({
+      title: `Tandai ${selectedRows.length} dosen tidak dilibatkan?`,
+      text: "Seluruh peran periode akan dimatikan dan kuota bimbingan menjadi 0.",
+      input: "textarea",
+      inputLabel: "Alasan wajib",
+      inputPlaceholder: "Contoh: Tidak dilibatkan pada periode ini",
+      showCancelButton: true,
+      confirmButtonText: "Simpan",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#b45309",
+      inputValidator: (value) => String(value || "").trim().length < 3 ? "Alasan minimal 3 karakter." : undefined,
+    });
+    if (!result.isConfirmed) return;
+    const reason = String(result.value || "").trim();
+    const disabledValues = {
+      tersedia_membimbing: false,
+      tersedia_menguji: false,
+      tersedia_ketua_cluster: false,
+      tersedia_pengampu: false,
+      tersedia_pengawas_jalur: false,
+      tersedia_sidang: false,
+      kuota_bimbingan_periode: 0,
+      alasan_tidak_tersedia: reason,
+      review_note: "Ditandai tidak dilibatkan secara massal oleh Sekretaris Prodi",
+    };
+    await saveBulkAvailabilityRows(
+      selectedRows.map((row) => availabilityPayloadFromRow(row, disabledValues)),
+      `${selectedRows.length} dosen ditandai tidak dilibatkan pada periode ini.`
+    );
   };
 
   const handleResolveDosenStatusFollowUp = async (row) => {
@@ -6087,7 +6239,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
     setSavingPeriode(true);
     try {
-      await fetchWithAuth("/api/sekretaris/periode/open", {
+      const createdDraft = await fetchWithAuth("/api/sekretaris/periode/open", {
         method: "POST",
         body: JSON.stringify({
           ketua_itsc_dosen_id: Number(periodeMasterForm.ketua_itsc_dosen_id),
@@ -6106,7 +6258,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         }),
       });
 
-      showSuccessToast("Draft periode berhasil dibuat. Tinjau ketersediaan dosen sebelum aktivasi.");
+      const copySummary = createdDraft?.availability_copy;
+      showSuccessToast(copySummary?.previous_period
+        ? `Draft berhasil dibuat. ${copySummary.copied || 0} konfigurasi disalin dari ${copySummary.previous_period}; ${copySummary.needs_review || 0} perlu ditinjau.`
+        : "Draft periode berhasil dibuat. Semua dosen aktif perlu ditinjau sebelum aktivasi.");
       setPeriodeForm({ ...PERIODE_FORM_INITIAL });
       setPeriodeFormErrors({});
       await loadAllData();
@@ -10738,9 +10893,68 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
 
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={selectAllNeedsReviewAvailability}
+                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability}
+                            className="rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#27407b] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Pilih Semua Perlu Ditinjau
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedAvailabilityDosenIds([])}
+                            disabled={selectedAvailabilityDosenIds.length === 0 || savingBulkAvailability}
+                            className="rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#596887] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Hapus Pilihan
+                          </button>
+                          <span className="text-xs font-bold text-[#526184]">{selectedAvailabilityDosenIds.length} dosen dipilih</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="text-xs font-bold text-[#526184]" htmlFor="bulk-availability-quota">Kuota massal</label>
+                          <input
+                            id="bulk-availability-quota"
+                            type="number"
+                            min="0"
+                            max="99"
+                            value={bulkAvailabilityQuota}
+                            onChange={(event) => setBulkAvailabilityQuota(event.target.value)}
+                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability}
+                            className="w-20 rounded-lg border border-[#d3dbef] bg-white px-2 py-2 text-sm disabled:bg-[#f3f5f9]"
+                          />
+                          <button
+                            type="button"
+                            onClick={applyBulkAvailabilityQuota}
+                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
+                            className="rounded-lg border border-[#2f63e3] bg-white px-3 py-2 text-xs font-bold text-[#2f63e3] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Terapkan Kuota
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleMarkSelectedNotInvolved}
+                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
+                            className="rounded-lg bg-[#b45309] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Tandai Tidak Dilibatkan
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleConfirmSelectedAvailability}
+                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
+                            className="rounded-lg bg-[#117246] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {savingBulkAvailability ? "Menyimpan..." : "Konfirmasi Dosen Terpilih"}
+                          </button>
+                        </div>
+                      </div>
                       <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
-                        <table className="w-full min-w-[1950px] text-left text-sm">
+                        <table className="w-full min-w-[2020px] text-left text-sm">
                           <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Pilih</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Dosen</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Status Master Saat Ini</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Status Konfigurasi</th>
@@ -10769,6 +10983,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               ];
                               return (
                                 <tr key={`availability-${row.id}`} className="border-b border-[#eff3fb]">
+                                  <td className="px-3 py-2 text-center"><input type="checkbox" checked={selectedAvailabilityDosenIds.some((id) => Number(id) === Number(row.id))} disabled={!canEdit || savingBulkAvailability} onChange={() => toggleAvailabilitySelection(row.id)} aria-label={`Pilih ${row.nama}`} className="h-4 w-4 accent-[#2f63e3]" /></td>
                                   <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{row.nama}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td>
                                   <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${isActive ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan}</span></td>
                                   <td className="px-3 py-2"><span className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-bold ${configurationMeta[1]}`}>{configurationMeta[0]}</span>{row.review_note ? <p className="mt-1 max-w-[220px] text-xs text-[#6a779a]">{row.review_note}</p> : null}</td>
@@ -10779,7 +10994,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   ))}
                                   <td className="px-3 py-2"><input type="number" min="0" max="99" value={row.kuota_bimbingan_periode} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "kuota_bimbingan_periode", event.target.value)} className="w-24 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
                                   <td className="px-3 py-2"><input type="text" value={row.alasan_tidak_tersedia || ""} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "alasan_tidak_tersedia", event.target.value)} placeholder={canEdit ? "Wajib jika ada yang tidak tersedia" : "Tidak dapat diubah"} className="w-72 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
-                                  <td className="px-3 py-2"><button type="button" disabled={!canEdit || savingAvailabilityDosenId === row.id} onClick={() => handleSaveDosenAvailability(row)} className="whitespace-nowrap rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : row.configuration_status === "needs_review" ? "Konfirmasi & Simpan" : "Simpan"}</button></td>
+                                  <td className="px-3 py-2"><button type="button" disabled={!canEdit || savingAvailabilityDosenId === row.id || savingBulkAvailability} onClick={() => handleSaveDosenAvailability(row)} className="whitespace-nowrap rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : row.configuration_status === "needs_review" ? "Konfirmasi & Simpan" : "Simpan"}</button></td>
                                 </tr>
                               );
                             })}
