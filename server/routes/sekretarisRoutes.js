@@ -22,6 +22,8 @@ router.post("/surat-tugas-pembimbing/:id/issue", authenticateToken, authorizeRol
 router.post("/surat-tugas-pembimbing/:id/cancel", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, suratTugasPembimbingController.cancel);
 router.get("/periode", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeOverview);
 router.post("/periode/master-penanggung-jawab", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterPenanggungJawabPeriode);
+router.get("/periode/setup-template", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeSetupTemplate);
+router.post("/periode/preview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.previewPeriodePendaftaran);
 router.post("/periode/open", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.openPeriodePendaftaran);
 router.get("/master-dosen/kuota-overview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMasterDosenKuotaOverview);
 router.put("/master-dosen/kuota", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.setMasterDosenKuota);
@@ -29,13 +31,11 @@ router.get("/master-dosen/ketersediaan", authenticateToken, authorizeRole("sekre
 router.put("/master-dosen/ketersediaan", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveDosenKetersediaanPeriode);
 router.get("/master-dosen/tindak-lanjut-status", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getTindakLanjutStatusDosen);
 router.get("/master-dosen/tindak-lanjut-status/:id/current-impact", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getTindakLanjutStatusDosenCurrentImpact);
+router.post("/master-dosen/tindak-lanjut-status/:followUpId/mahasiswa/:mahasiswaId/replacement", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.activateDosenStatusReplacement);
 router.put("/master-dosen/tindak-lanjut-status/:id/resolve", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.resolveTindakLanjutStatusDosen);
-router.post("/periode/:id/activate", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.activatePeriodePendaftaran);
-router.post("/periode/close", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.closePeriodePendaftaran);
 router.patch("/periode/:id/tanggal", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.updatePeriodeTanggal);
 router.post("/periode/:id/close", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.closePeriodeById);
 router.get("/ketua-klaster", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getKetuaKlasterOverview);
-router.post("/ketua-klaster/assign", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.assignKetuaKlaster);
 router.get(
   "/penelitian/final",
   authenticateToken,

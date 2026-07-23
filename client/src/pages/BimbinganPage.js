@@ -114,7 +114,7 @@ function isRowInBimbinganViewTab(row, tabKey) {
   const statusPermohonan = String(row.status_permohonan || "").toLowerCase();
 
   if (tabKey === "permohonan") {
-    return ["pending", "rejected", "expired"].includes(statusPermohonan);
+    return ["pending", "rejected", "expired", "cancelled_supervisor_change"].includes(statusPermohonan);
   }
   if (tabKey === "resume") {
     return isApprovedLikeStatus(statusPermohonan);
@@ -132,6 +132,7 @@ function statusPermohonanBadge(status, isOverduePending = false) {
   if (normalized === "rescheduled") return "bg-[#e8f1ff] text-[#244ea7]";
   if (normalized === "rejected") return "bg-[#ffeded] text-[#b03d3d]";
   if (normalized === "expired") return "bg-[#b73a3a] text-white";
+  if (normalized === "cancelled_supervisor_change") return "bg-[#fff0e4] text-[#a65316]";
   if (normalized === "pending") return "bg-[#fff5df] text-[#9b6d00]";
   return "bg-[#eef2fb] text-[#55658f]";
 }
@@ -211,6 +212,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [rows, setRows] = useState([]);
   const [stats, setStats] = useState(null);
   const [dosenPembimbing, setDosenPembimbing] = useState(null);
+  const [supervisionAccess, setSupervisionAccess] = useState(null);
 
   const [mode, setMode] = useState("list");
   const [selectedRowId, setSelectedRowId] = useState(null);
@@ -274,6 +276,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setRows(fetchedRows);
       setStats(data.stats || null);
       setDosenPembimbing(data.dosen_pembimbing || null);
+      setSupervisionAccess(data.supervision_access || null);
       return fetchedRows;
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
@@ -320,6 +323,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   }, [activeViewTab]);
 
   const progressPercent = useMemo(() => Number(stats?.progress_percent || 0), [stats]);
+  const isReplacementPending = supervisionAccess?.status === "replacement_pending";
+  const canCreateGuidance = supervisionAccess?.can_create_guidance !== false;
+  const canSubmitResume = supervisionAccess?.can_submit_resume !== false;
 
   const acceptedCount = useMemo(
     () =>
@@ -416,6 +422,10 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   };
 
   const openAjukanMode = () => {
+    if (!canCreateGuidance) {
+      setError(supervisionAccess?.reason || "Bimbingan baru belum dapat diajukan.");
+      return;
+    }
     setMode("add");
     resetFormErrors();
   };
@@ -435,6 +445,11 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const handleSubmitRequest = async (event) => {
     event.preventDefault();
     setError("");
+
+    if (!canCreateGuidance) {
+      setError(supervisionAccess?.reason || "Bimbingan baru belum dapat diajukan.");
+      return;
+    }
 
     if (!validateAjukanForm()) return;
 
@@ -464,6 +479,10 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   };
 
   const handleSubmitResume = async (rowId) => {
+    if (!canSubmitResume) {
+      setError(supervisionAccess?.reason || "Resume belum dapat dikirim.");
+      return;
+    }
     const resume = String(resumeDraft[rowId] || "").trim();
     if (resume.length < 20) {
       setError("Resume minimal 20 karakter.");
@@ -576,6 +595,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const selectedResumeWaitingSessionStart = isResumeWaitingSessionStart(selectedRow);
   const canSubmitResumeOnDetail =
     activeViewTab !== "riwayat" &&
+    canSubmitResume &&
     selectedRow &&
     canSubmitResumeNow(selectedRow);
   const shouldShowPreviousRejectedResume =
@@ -602,6 +622,18 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
       {error ? (
         <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-4 py-3 text-sm font-semibold text-[#a03f3f]">{error}</div>
+      ) : null}
+
+      {isReplacementPending ? (
+        <div className="rounded-xl border border-[#f0cf91] bg-[#fff8e8] px-4 py-3 text-sm text-[#795300]">
+          <p className="font-black">Menunggu Penggantian Pembimbing</p>
+          <p className="mt-1">
+            Pembimbing Anda tidak dapat melanjutkan proses bimbingan. Sekretaris Prodi sedang menyiapkan pembimbing pengganti. Histori bimbingan sebelumnya tetap tersimpan.
+          </p>
+          {supervisionAccess?.replacement?.status === "waiting_assignment_letter" ? (
+            <p className="mt-2 font-semibold">Pembimbing pengganti sudah dipilih dan sedang menunggu penerbitan surat tugas.</p>
+          ) : null}
+        </div>
       ) : null}
 
       <section className="grid grid-cols-1 gap-4 xl:grid-cols-3">
@@ -639,9 +671,10 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           <h3 className="text-lg font-black text-[#1b274b]">Dosen Pembimbing Skripsi</h3>
           {dosenPembimbing ? (
             <div className="mt-2 space-y-1 text-sm text-[#2b3f74]">
-              <p className="font-bold text-[#1b274b]">{dosenPembimbing.nama}</p>
+              <p className="font-bold text-[#1b274b]">{[dosenPembimbing.nama, dosenPembimbing.gelar].filter(Boolean).join(", ")}</p>
               <p>NIK: {dosenPembimbing.nik || "-"}</p>
               <p>Email: {dosenPembimbing.email || "-"}</p>
+              {isReplacementPending ? <p className="font-semibold text-[#9a6410]">Pembimbing sebelumnya — penggantian sedang diproses.</p> : null}
             </div>
           ) : (
             <p className="mt-2 text-sm text-[#5d6c91]">Belum ada dosen pembimbing skripsi aktif.</p>
@@ -704,11 +737,12 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             <button
               type="button"
               onClick={openAjukanMode}
+              disabled={!canCreateGuidance}
               className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-bold transition ${
                 mode === "add"
                   ? "border-[#2f63e3] bg-[#2f63e3] text-white hover:brightness-110"
                   : "border-[#d3dbef] bg-white text-[#27407b] hover:bg-[#f3f6ff]"
-              }`}
+              } disabled:cursor-not-allowed disabled:opacity-50`}
             >
               <Send className="h-4 w-4" />
               Ajukan Bimbingan
@@ -788,7 +822,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                       const isOverduePending = isPendingSchedulePassed(row);
                       const isExpired = String(row.status_permohonan || "").toLowerCase() === "expired";
                       const resumeStatusMeta = getResumeStatusMeta(row);
-                      const canEditResumeNow = canSubmitResumeNow(row);
+                      const canEditResumeNow = canSubmitResume && canSubmitResumeNow(row);
                       return (
                         <tr
                           key={`row-bimbingan-${row.id}`}
@@ -979,7 +1013,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             <div className="flex items-end justify-end">
               <button
                 type="submit"
-                disabled={submittingRequest || !dosenPembimbing}
+                disabled={submittingRequest || !dosenPembimbing || !canCreateGuidance}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
               >
                 <Send className="h-4 w-4" />

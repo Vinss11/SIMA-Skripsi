@@ -78,7 +78,11 @@ function formatDosenFullName(name, title) {
   }
   const prefix = prefixParts.join(" ");
   const suffix = titleParts.join(", ");
-  return `${prefix ? `${prefix} ` : ""}${normalizedName}${suffix ? `, ${suffix}` : ""}`;
+  const lowerName = normalizedName.toLowerCase();
+  const hasPrefix = !prefix || lowerName.startsWith(prefix.toLowerCase());
+  const hasSuffix = !suffix || lowerName.endsWith(suffix.toLowerCase());
+  if (hasPrefix && hasSuffix) return normalizedName;
+  return `${prefix && !hasPrefix ? `${prefix} ` : ""}${normalizedName}${suffix && !hasSuffix ? `, ${suffix}` : ""}`;
 }
 
 module.exports = {

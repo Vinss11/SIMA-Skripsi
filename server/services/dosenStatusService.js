@@ -9,6 +9,7 @@ const {
   PeriodePenjaluran,
   JadwalSidangPenguji,
   DosenKetersediaanPeriode,
+  RiwayatKetersediaanMembimbing,
   RiwayatPersetujuan,
   IzinLanjutSkripsi,
   DokumenSidang,
@@ -48,13 +49,6 @@ function buildInitialAvailabilityValues(dosen, periodeId) {
     dosen_id: dosen.id,
     periode_penjaluran_id: periodeId,
     tersedia_membimbing: false,
-    tersedia_menguji: false,
-    tersedia_ketua_cluster: false,
-    tersedia_pengampu: false,
-    tersedia_pengawas_jalur: false,
-    tersedia_sidang: false,
-    kuota_bimbingan_periode: Number(dosen.kuota_bimbingan || 0),
-    alasan_tidak_tersedia: dosen.status_keaktifan === "active" ? null : "Dikunci oleh status master dosen",
     configuration_status: dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status",
     reviewed_at: null,
     reviewed_by_sekretaris_id: null,
@@ -64,7 +58,7 @@ function buildInitialAvailabilityValues(dosen, periodeId) {
 
 async function initializeAvailabilityForDosen(dosen, transaction = null) {
   const periods = await PeriodePenjaluran.findAll({
-    where: { status: { [Op.in]: ["draft", "active"] } },
+    where: { status: "active" },
     attributes: ["id"],
     transaction,
   });
@@ -78,9 +72,17 @@ async function initializeAvailabilityForDosen(dosen, transaction = null) {
   const values = periods
     .filter((item) => !existingIds.has(Number(item.id)))
     .map((item) => buildInitialAvailabilityValues(dosen, item.id));
-  return values.length > 0
-    ? DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true })
-    : [];
+  if (values.length === 0) return [];
+  const created = await DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true });
+  await RiwayatKetersediaanMembimbing.bulkCreate(values.map((item) => ({
+    dosen_id: item.dosen_id,
+    periode_penjaluran_id: item.periode_penjaluran_id,
+    tersedia_sebelumnya: null,
+    tersedia_baru: false,
+    changed_by_sekretaris_id: null,
+    sumber_perubahan: "new_dosen",
+  })), { transaction });
+  return created;
 }
 
 async function initializeAvailabilityForPeriod(periodeId, transaction = null) {
@@ -101,9 +103,19 @@ async function initializeAvailabilityForPeriod(periodeId, transaction = null) {
   const values = dosens
     .filter((dosen) => !existingIds.has(Number(dosen.id)))
     .map((dosen) => buildInitialAvailabilityValues(dosen, periodeId));
-  return values.length > 0
-    ? DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true })
-    : [];
+  if (values.length === 0) return [];
+  const created = await DosenKetersediaanPeriode.bulkCreate(values, { transaction, returning: true });
+  if (period.status === "active") {
+    await RiwayatKetersediaanMembimbing.bulkCreate(values.map((item) => ({
+      dosen_id: item.dosen_id,
+      periode_penjaluran_id: item.periode_penjaluran_id,
+      tersedia_sebelumnya: null,
+      tersedia_baru: false,
+      changed_by_sekretaris_id: null,
+      sumber_perubahan: "new_dosen",
+    })), { transaction });
+  }
+  return created;
 }
 
 async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) {
@@ -112,7 +124,7 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
     include: [{
       model: PeriodePenjaluran,
       as: "periode",
-      where: { status: { [Op.in]: ["draft", "active"] } },
+      where: { status: "active" },
       attributes: [],
       required: true,
     }],
@@ -120,7 +132,10 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
   });
   const configurationStatus = dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status";
   for (const row of rows) {
+    const previousValue = Boolean(row.tersedia_membimbing);
+    const nextValue = dosen.status_keaktifan === "active" ? previousValue : false;
     await row.update({
+      tersedia_membimbing: nextValue,
       configuration_status: configurationStatus,
       reviewed_at: null,
       reviewed_by_sekretaris_id: null,
@@ -128,6 +143,16 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
         ? "Status master kembali aktif dan perlu ditinjau ulang"
         : "Dikunci oleh perubahan status master dosen",
     }, { transaction });
+    if (previousValue !== nextValue) {
+      await RiwayatKetersediaanMembimbing.create({
+        dosen_id: dosen.id,
+        periode_penjaluran_id: row.periode_penjaluran_id,
+        tersedia_sebelumnya: previousValue,
+        tersedia_baru: nextValue,
+        changed_by_sekretaris_id: null,
+        sumber_perubahan: "master_status_change",
+      }, { transaction });
+    }
   }
   return rows.length;
 }
@@ -161,15 +186,21 @@ async function getExistingSupervisionPermission(dosenId, transaction = null) {
 
 async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   const transaction = options.transaction || null;
-  const availabilityField = options.availabilityField || "tersedia_membimbing";
+  const availabilityField = options.availabilityField === undefined
+    ? "tersedia_membimbing"
+    : options.availabilityField;
+  const requiresPeriodAvailability = availabilityField === "tersedia_membimbing";
   const activityLabel = options.activityLabel || "penugasan baru";
   const checkQuota = options.checkQuota !== false;
-  const dosen = await Dosen.findByPk(dosenId, { transaction });
+  const dosen = await Dosen.findByPk(dosenId, {
+    transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+  });
   const eligibility = assertDosenCanReceiveNewAssignment(dosen, activityLabel);
   if (!eligibility.allowed) return { ...eligibility, dosen };
 
   const availability = periodeId ? await getAvailability(dosenId, periodeId, transaction) : null;
-  if (periodeId && (!availability || availability.configuration_status !== "ready")) {
+  if (requiresPeriodAvailability && periodeId && (!availability || availability.configuration_status !== "ready")) {
     return {
       allowed: false,
       dosen,
@@ -177,7 +208,7 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
       message: "Ketersediaan dosen belum dikonfirmasi oleh Sekretaris Prodi untuk periode ini.",
     };
   }
-  if (periodeId && availability?.[availabilityField] !== true) {
+  if (requiresPeriodAvailability && periodeId && availability?.tersedia_membimbing !== true) {
     return {
       allowed: false,
       dosen,
@@ -189,18 +220,21 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
   let capacity = null;
   if (checkQuota) {
     const requiredSlots = Math.max(1, Number(options.requiredSlots || 1));
-    const { countActiveSupervisions } = require("./supervisorAccessService");
-    const activeSupervisionCount = await countActiveSupervisions(
+    const { getActiveSupervisionLoad } = require("./supervisorAccessService");
+    const supervisionLoad = await getActiveSupervisionLoad(
       dosenId,
       transaction,
       options.excludeMahasiswaId || null
     );
-    const total = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);
+    const activeSupervisionCount = Number(supervisionLoad.total || 0);
+    const total = Number(dosen.kuota_bimbingan ?? 0);
     capacity = {
       total,
       terpakai: Number(activeSupervisionCount || 0),
       sisa: Math.max(total - Number(activeSupervisionCount || 0), 0),
       is_penuh: total <= Number(activeSupervisionCount || 0),
+      rincian_jalur: supervisionLoad.rincian_jalur,
+      reservasi_penggantian: Number(supervisionLoad.reservasi_penggantian || 0),
     };
     if (capacity.is_penuh || capacity.sisa < requiredSlots) {
       return {
@@ -223,16 +257,11 @@ function toEffectiveAvailability(dosen, saved, periodeStatus) {
   const masterActive = dosen.status_keaktifan === "active";
   const configurationReady = saved?.configuration_status === "ready";
   const effectiveAllowed = masterActive && configurationReady;
-  const effective = {};
-  for (const field of [
-    "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
-    "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
-  ]) {
-    effective[`efektif_${field.replace("tersedia_", "")}`] = isClosed
-      ? Boolean(saved?.[field])
-      : Boolean(effectiveAllowed && saved?.[field]);
-  }
-  return effective;
+  return {
+    efektif_membimbing: isClosed
+      ? Boolean(saved?.tersedia_membimbing)
+      : Boolean(effectiveAllowed && saved?.tersedia_membimbing),
+  };
 }
 
 async function copyAvailabilityFromPreviousPeriod(periodeId, sekretarisId, transaction = null) {
@@ -283,13 +312,6 @@ async function copyAvailabilityFromPreviousPeriod(periodeId, sekretarisId, trans
     }
     await target.update({
       tersedia_membimbing: source.tersedia_membimbing,
-      tersedia_menguji: source.tersedia_menguji,
-      tersedia_ketua_cluster: source.tersedia_ketua_cluster,
-      tersedia_pengampu: source.tersedia_pengampu,
-      tersedia_pengawas_jalur: source.tersedia_pengawas_jalur,
-      tersedia_sidang: source.tersedia_sidang,
-      kuota_bimbingan_periode: source.kuota_bimbingan_periode,
-      alasan_tidak_tersedia: source.alasan_tidak_tersedia,
       configuration_status: "ready",
       reviewed_at: now,
       reviewed_by_sekretaris_id: sekretarisId || null,
@@ -348,7 +370,7 @@ async function validateResearchSubmissionReviewer(submission, dosenId, role, tra
   const periodeId = await resolveResearchSubmissionPeriodId(submission, transaction);
   const validation = await validateDosenForNewAssignment(dosenId, periodeId, {
     transaction,
-    availabilityField: role === "ketua_cluster" ? "tersedia_ketua_cluster" : "tersedia_membimbing",
+    availabilityField: role === "ketua_cluster" ? null : "tersedia_membimbing",
     activityLabel: role === "ketua_cluster"
       ? "memproses pengajuan sebagai Ketua Cluster"
       : "memproses pengajuan sebagai calon pembimbing",
@@ -418,7 +440,7 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
       include: [{
         model: PeriodePenjaluran,
         as: "periode",
-        where: { status: { [Op.in]: ["draft", "active"] } },
+        where: { status: "active" },
         required: true,
         attributes: [],
       }],
@@ -470,7 +492,7 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
     }),
     PeriodePenjaluran.count({
       where: {
-        status: { [Op.in]: ["draft", "active"] },
+        status: "active",
         [Op.or]: [
           { ketua_penelitian_dosen_id: dosenId },
           { pengawas_magang_dosen_id: dosenId },

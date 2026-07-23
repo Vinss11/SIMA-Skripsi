@@ -51,4 +51,7 @@ route.use("/api/sekretaris", sekretarisRoutes);
 const pendaftaranRoutes = require("./pendaftaranRoutes");
 route.use("/api/pendaftaran", pendaftaranRoutes);
 
+const notificationRoutes = require("./notificationRoutes");
+route.use("/api/notifications", notificationRoutes);
+
 module.exports = route;

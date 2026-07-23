@@ -10,6 +10,7 @@ const {
   PenetapanPembimbing,
   PenetapanPembimbingDosen,
   SuratTugasPembimbing,
+  BimbinganSkripsi,
 } = require("../models");
 const { validateDosenForNewAssignment } = require("./dosenStatusService");
 
@@ -42,6 +43,63 @@ function assertSupervisorComposition(dosenIds) {
 async function withTransaction(transaction, callback) {
   if (transaction) return callback(transaction);
   return sequelize.transaction(callback);
+}
+
+function jakartaDateOnly() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date()).reduce((result, part) => {
+    if (part.type !== "literal") result[part.type] = part.value;
+    return result;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+async function handleGuidanceAfterSupervisorReplacement({
+  mahasiswaId,
+  oldSupervisorIds,
+  newReviewerDosenId,
+  reassignedBySekretarisId,
+  transaction,
+}) {
+  const normalizedOldIds = [...new Set((oldSupervisorIds || []).map(Number).filter(Boolean))];
+  if (normalizedOldIds.length === 0) return { cancelled: 0, reassigned_reviews: 0 };
+  const [cancelled] = await BimbinganSkripsi.update({
+    status_permohonan: "cancelled_supervisor_change",
+    catatan_dosen: "Dibatalkan otomatis karena pergantian pembimbing. Silakan ajukan jadwal baru kepada pembimbing pengganti.",
+    tanggal_keputusan: new Date(),
+  }, {
+    where: {
+      mahasiswa_id: mahasiswaId,
+      dosen_id: { [Op.in]: normalizedOldIds },
+      [Op.or]: [
+        { status_permohonan: "pending" },
+        {
+          status_permohonan: { [Op.in]: ["approved", "rescheduled"] },
+          permintaan_tanggal: { [Op.gte]: jakartaDateOnly() },
+          status_resume: { [Op.notIn]: ["submitted", "revisi", "approved"] },
+        },
+      ],
+    },
+    transaction,
+  });
+  const [reassignedReviews] = await BimbinganSkripsi.update({
+    reviewer_dosen_id: newReviewerDosenId,
+    reassigned_reviewer_at: new Date(),
+    reassigned_by_sekretaris_id: reassignedBySekretarisId || null,
+  }, {
+    where: {
+      mahasiswa_id: mahasiswaId,
+      dosen_id: { [Op.in]: normalizedOldIds },
+      status_permohonan: { [Op.in]: ["approved", "rescheduled"] },
+      status_resume: { [Op.in]: ["submitted", "revisi"] },
+    },
+    transaction,
+  });
+  return { cancelled, reassigned_reviews: reassignedReviews };
 }
 
 const assignmentInclude = [
@@ -106,6 +164,8 @@ async function createDraftSupervisorAssignment({
   semesterPenjaluranKe = null,
   dosenPembimbingIds,
   sumberData = "penjaluran",
+  catatanPergantian = null,
+  tanggalMulai = null,
   createdBySekretarisId = null,
   transaction = null,
   skipEligibilityValidation = false,
@@ -150,13 +210,19 @@ async function createDraftSupervisorAssignment({
     const resolvedSemester = semesterPenjaluranKe == null
       ? await resolveSemesterPenjaluranKe(normalizedMahasiswaId, pendaftaranPenjaluranId, t)
       : Number(semesterPenjaluranKe);
+    const plannedStartDate = tanggalMulai ? new Date(tanggalMulai) : null;
+    if (plannedStartDate && Number.isNaN(plannedStartDate.getTime())) {
+      throw new SupervisorAssignmentError("Tanggal efektif penggantian tidak valid.", 400);
+    }
     const penetapan = await PenetapanPembimbing.create({
       mahasiswa_id: normalizedMahasiswaId,
       pendaftaran_penjaluran_id: pendaftaranPenjaluranId || null,
       periode_mulai_id: periodeMulaiId || null,
       semester_penjaluran_ke: Number.isInteger(resolvedSemester) && resolvedSemester > 0 ? resolvedSemester : null,
       status: "draft",
+      tanggal_mulai: plannedStartDate,
       sumber_data: sumberData,
+      catatan_pergantian: String(catatanPergantian || "").trim() || null,
       created_by_sekretaris_id: createdBySekretarisId || null,
     }, { transaction: t });
     await PenetapanPembimbingDosen.bulkCreate(dosenIds.map((dosenId, index) => ({
@@ -199,6 +265,13 @@ async function activateSupervisorAssignment({
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
+    const oldMembers = oldActive
+      ? await PenetapanPembimbingDosen.findAll({
+          where: { penetapan_pembimbing_id: oldActive.id },
+          attributes: ["dosen_id"],
+          transaction: t,
+        })
+      : [];
     if (oldActive) {
       const replacementDate = startedAt || new Date();
       await oldActive.update({
@@ -215,6 +288,15 @@ async function activateSupervisorAssignment({
       surat_tugas_id: suratTugasId || null,
     }, { transaction: t });
     await mahasiswa.update({ dosen_pembimbing_skripsi_id: primary.dosen_id }, { transaction: t });
+    if (oldActive) {
+      await handleGuidanceAfterSupervisorReplacement({
+        mahasiswaId: mahasiswa.id,
+        oldSupervisorIds: oldMembers.map((item) => item.dosen_id),
+        newReviewerDosenId: primary.dosen_id,
+        reassignedBySekretarisId: penetapan.created_by_sekretaris_id,
+        transaction: t,
+      });
+    }
     return getActiveSupervisorAssignment(penetapan.mahasiswa_id, t);
   });
 }
@@ -305,8 +387,11 @@ function toAssignmentResponse(penetapan) {
     semester_penjaluran_ke: plain.semester_penjaluran_ke,
     tanggal_mulai: plain.tanggal_mulai,
     tanggal_selesai: plain.tanggal_selesai,
+    createdAt: plain.createdAt,
+    updatedAt: plain.updatedAt,
     alasan_berakhir: plain.alasan_berakhir,
     sumber_data: plain.sumber_data,
+    catatan_pergantian: plain.catatan_pergantian || null,
     surat_tugas_id: plain.surat_tugas_id,
     surat_tugas: plain.suratTugas || null,
     pendaftaran: plain.pendaftaran || null,

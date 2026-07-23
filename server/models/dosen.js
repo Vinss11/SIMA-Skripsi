@@ -123,6 +123,7 @@ module.exports = (sequelize, DataTypes) => {
 
       Dosen.hasMany(models.RiwayatStatusDosen, { foreignKey: "dosen_id", as: "riwayatStatus" });
       Dosen.hasMany(models.DosenKetersediaanPeriode, { foreignKey: "dosen_id", as: "ketersediaanPeriodes" });
+      Dosen.hasMany(models.RiwayatKetersediaanMembimbing, { foreignKey: "dosen_id", as: "riwayatKetersediaanMembimbing" });
       Dosen.hasMany(models.TindakLanjutStatusDosen, { foreignKey: "dosen_id", as: "tindakLanjutStatus" });
       Dosen.hasMany(models.PenetapanPembimbingDosen, { foreignKey: "dosen_id", as: "keanggotaanPenetapanPembimbing" });
 
@@ -163,17 +164,21 @@ module.exports = (sequelize, DataTypes) => {
     }
 
     // Method untuk mendapatkan info kuota lengkap
-    async getKuotaInfo() {
-      const terpakai = await this.getJumlahMahasiswaDibimbing();
-      const sisa = this.kuota_bimbingan - terpakai;
-      const persentase = (terpakai / this.kuota_bimbingan) * 100;
+    async getKuotaInfo(transaction = null) {
+      const { getActiveSupervisionLoad } = require("../services/supervisorAccessService");
+      const load = await getActiveSupervisionLoad(this.id, transaction);
+      const terpakai = Number(load.total || 0);
+      const total = Number(this.kuota_bimbingan || 0);
+      const sisa = Math.max(total - terpakai, 0);
+      const persentase = total > 0 ? (terpakai / total) * 100 : 0;
 
       return {
-        total: this.kuota_bimbingan,
+        total,
         terpakai,
         sisa,
         persentase: Math.round(persentase),
         is_penuh: sisa <= 0,
+        rincian_jalur: load.rincian_jalur,
       };
     }
   }

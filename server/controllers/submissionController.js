@@ -26,6 +26,9 @@ const {
   finalizeJudulMandiriDeadlineSubmissionsByIds,
 } = require("../services/topikParallelReviewService");
 const { validateResearchSubmissionReviewer } = require("../services/dosenStatusService");
+const { isActiveSupervisor } = require("../services/supervisorAccessService");
+const { getSupervisorAssignmentHistory } = require("../services/penetapanPembimbingService");
+const { formatDosenFullName } = require("../utils/dosenIdentity");
 
 const NON_PENELITIAN_UPLOAD_ROOT = process.env.VERCEL
   ? path.join("/tmp", "sima-uploads", "non-penelitian")
@@ -248,34 +251,34 @@ function getSubmissionDetailIncludes() {
         {
           model: Dosen,
           as: "dosenPembimbingAkademik",
-          attributes: ["id", "nik", "nama"],
+          attributes: ["id", "nik", "nama", "gelar"],
         },
       ],
     },
     {
       model: Dosen,
       as: "dosen1",
-      attributes: ["id", "nik", "nama", "email"],
+      attributes: ["id", "nik", "nama", "gelar", "email"],
     },
     {
       model: Dosen,
       as: "dosen2",
-      attributes: ["id", "nik", "nama", "email"],
+      attributes: ["id", "nik", "nama", "gelar", "email"],
     },
     {
       model: Dosen,
       as: "dosen3",
-      attributes: ["id", "nik", "nama", "email"],
+      attributes: ["id", "nik", "nama", "gelar", "email"],
     },
     {
       model: Dosen,
       as: "dosenCurrent",
-      attributes: ["id", "nik", "nama", "email"],
+      attributes: ["id", "nik", "nama", "gelar", "email"],
     },
     {
       model: Dosen,
       as: "prospectiveSupervisor",
-      attributes: ["id", "nik", "nama", "email"],
+      attributes: ["id", "nik", "nama", "gelar", "email"],
     },
     {
       model: Pengajuan,
@@ -294,7 +297,7 @@ function getSubmissionDetailIncludes() {
             {
               model: Dosen,
               as: "dosenCurrent",
-              attributes: ["id", "nik", "nama"],
+              attributes: ["id", "nik", "nama", "gelar"],
             },
           ],
         },
@@ -307,7 +310,7 @@ function getSubmissionDetailIncludes() {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama"],
+          attributes: ["id", "nik", "nama", "gelar"],
         },
         {
           model: SekretarisProdi,
@@ -330,6 +333,43 @@ async function loadSubmissionDetailById(submissionId) {
 function toObjectPayload(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value;
+}
+
+function formatAssignmentSupervisors(assignment) {
+  return (Array.isArray(assignment?.pembimbings) ? assignment.pembimbings : [])
+    .map((item) => formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar))
+    .filter(Boolean)
+    .join(" & ");
+}
+
+function getAssignmentPrimaryDosen(assignment) {
+  return (Array.isArray(assignment?.pembimbings) ? assignment.pembimbings : [])
+    .find((item) => Number(item?.urutan) === 1)?.dosen || null;
+}
+
+function buildSupervisorAssignmentContext(history = {}) {
+  const active = history?.active || null;
+  const activeDisplay = formatAssignmentSupervisors(active) || null;
+  const isReplacement = String(active?.sumber_data || "").toLowerCase() === "pergantian";
+  if (!isReplacement) return { active, activeDisplay, replacement: null };
+
+  const previous = (Array.isArray(history?.history) ? history.history : []).find(
+    (item) => item.status === "ended" && Number(item.id) !== Number(active?.id)
+  ) || null;
+  return {
+    active,
+    activeDisplay,
+    replacement: {
+      occurred: true,
+      effective_at: active?.tanggal_mulai || active?.updatedAt || null,
+      recorded_at: active?.updatedAt || active?.createdAt || null,
+      note: active?.catatan_pergantian || null,
+      previous_assignment: previous,
+      active_assignment: active,
+      previous_supervisors: formatAssignmentSupervisors(previous) || null,
+      active_supervisors: activeDisplay,
+    },
+  };
 }
 
 function resolveSelectedJalurFromPendaftaran(row) {
@@ -396,9 +436,9 @@ function buildNonPenelitianStatusRow(row) {
   const workflowStatus = payload.workflow_status || row.form_lanjutan_status || "draft";
   const summary = getNonPenelitianSummary(payload, jalur);
   const dosenPembimbing =
-    payload.dosen_pembimbing?.nama ||
-    row.dosenPembimbingTA?.nama ||
-    row.dosenPembimbingTABaru?.nama ||
+    formatDosenFullName(payload.dosen_pembimbing?.nama, payload.dosen_pembimbing?.gelar) ||
+    formatDosenFullName(row.dosenPembimbingTA?.nama, row.dosenPembimbingTA?.gelar) ||
+    formatDosenFullName(row.dosenPembimbingTABaru?.nama, row.dosenPembimbingTABaru?.gelar) ||
     null;
 
   return {
@@ -444,13 +484,13 @@ async function loadNonPenelitianRegistrationById(id) {
       {
         model: Dosen,
         as: "dosenPembimbingTA",
-        attributes: ["id", "nik", "nama", "email"],
+        attributes: ["id", "nik", "nama", "gelar", "email"],
         required: false,
       },
       {
         model: Dosen,
         as: "dosenPembimbingTABaru",
-        attributes: ["id", "nik", "nama", "email"],
+        attributes: ["id", "nik", "nama", "gelar", "email"],
         required: false,
       },
     ],
@@ -478,13 +518,13 @@ async function enrichWorkflowTimelineActors(workflowTimeline) {
 
   const [dosenActors, sekretarisActors] = await Promise.all([
     dosenIds.length > 0
-      ? Dosen.findAll({ where: { id: { [Op.in]: dosenIds } }, attributes: ["id", "nama"] })
+      ? Dosen.findAll({ where: { id: { [Op.in]: dosenIds } }, attributes: ["id", "nama", "gelar"] })
       : [],
     sekretarisIds.length > 0
       ? SekretarisProdi.findAll({ where: { id: { [Op.in]: sekretarisIds } }, attributes: ["id", "nama"] })
       : [],
   ]);
-  const dosenNameById = new Map(dosenActors.map((item) => [Number(item.id), item.nama]));
+  const dosenNameById = new Map(dosenActors.map((item) => [Number(item.id), formatDosenFullName(item.nama, item.gelar)]));
   const sekretarisNameById = new Map(sekretarisActors.map((item) => [Number(item.id), item.nama]));
 
   return timeline.map((item) => {
@@ -509,6 +549,7 @@ async function buildNonPenelitianDetail(row) {
           id: row.dosenPembimbingTA.id,
           nik: row.dosenPembimbingTA.nik,
           nama: row.dosenPembimbingTA.nama,
+          gelar: row.dosenPembimbingTA.gelar || null,
           email: row.dosenPembimbingTA.email,
         }
       : row.dosenPembimbingTABaru
@@ -516,6 +557,7 @@ async function buildNonPenelitianDetail(row) {
           id: row.dosenPembimbingTABaru.id,
           nik: row.dosenPembimbingTABaru.nik,
           nama: row.dosenPembimbingTABaru.nama,
+          gelar: row.dosenPembimbingTABaru.gelar || null,
           email: row.dosenPembimbingTABaru.email,
         }
       : null);
@@ -658,7 +700,11 @@ exports.getMySubmissions = async (req, res) => {
       ),
     ];
 
-    const topikByKode = await loadTopikMetaByKode(topikKodes);
+    const [topikByKode, supervisorHistory] = await Promise.all([
+      loadTopikMetaByKode(topikKodes),
+      getSupervisorAssignmentHistory(mahasiswa_id),
+    ]);
+    const supervisorContext = buildSupervisorAssignmentContext(supervisorHistory);
 
     const compactData = submissions.map((submission) => {
       const approvalStage = getPengajuanApprovalStage(submission);
@@ -671,6 +717,8 @@ exports.getMySubmissions = async (req, res) => {
         tahap_approval: approvalStage,
         createdAt: submission.createdAt,
         updatedAt: submission.updatedAt,
+        supervisor_updated_at: supervisorContext.replacement?.recorded_at || null,
+        pergantian_pembimbing: supervisorContext.replacement,
         pendaftaran: submission.pendaftaranPenjaluran
           ? {
               id: submission.pendaftaranPenjaluran.id,
@@ -726,7 +774,9 @@ exports.getMySubmissions = async (req, res) => {
               cluster: approvedTopik.cluster || null,
             }
           : null;
-        base.dosen_pembimbing = submission.dosenCurrent ? submission.dosenCurrent.nama : null;
+        base.dosen_pembimbing = supervisorContext.activeDisplay || (submission.dosenCurrent
+          ? formatDosenFullName(submission.dosenCurrent.nama, submission.dosenCurrent.gelar)
+          : null);
         base.review_deadline_at = getTopikParallelReviewDeadline(submission);
         base.deadline_terlewati = Boolean(parallelState.deadline_passed && parallelState.pending_count > 0);
       } else {
@@ -740,6 +790,7 @@ exports.getMySubmissions = async (req, res) => {
                 id: submission.prospectiveSupervisor.id,
                 nik: submission.prospectiveSupervisor.nik,
                 nama: submission.prospectiveSupervisor.nama,
+                gelar: submission.prospectiveSupervisor.gelar || null,
               }
             : null,
         };
@@ -838,7 +889,12 @@ exports.getMySubmissions = async (req, res) => {
 
     const nonPenelitianRows = nonPenelitianRowsRaw
       .filter((row) => isNonPenelitianJalurForStatus(resolveSelectedJalurFromPendaftaran(row)))
-      .map((row) => buildNonPenelitianStatusRow(row));
+      .map((row) => ({
+        ...buildNonPenelitianStatusRow(row),
+        ...(supervisorContext.activeDisplay ? { dosen_pembimbing: supervisorContext.activeDisplay } : {}),
+        supervisor_updated_at: supervisorContext.replacement?.recorded_at || null,
+        pergantian_pembimbing: supervisorContext.replacement,
+      }));
 
     const statusRows = [...compactData, ...nonPenelitianRows, ...pendingRegistrationRows].sort(
       (left, right) =>
@@ -927,9 +983,24 @@ exports.getSubmissionById = async (req, res) => {
         });
       }
 
+      const detail = await buildNonPenelitianDetail(registration);
+      const supervisorContext = buildSupervisorAssignmentContext(
+        await getSupervisorAssignmentHistory(registration.mahasiswa_id)
+      );
+      const activePrimary = getAssignmentPrimaryDosen(supervisorContext.active);
+      if (activePrimary) {
+        if (supervisorContext.replacement) {
+          detail.hasil_pengajuan.dosen_pembimbing_awal = detail.hasil_pengajuan.dosen_pembimbing || null;
+        }
+        detail.hasil_pengajuan.dosen_pembimbing = activePrimary;
+      }
+      detail.penetapan_pembimbing_aktif = supervisorContext.active;
+      detail.pergantian_pembimbing = supervisorContext.replacement;
+      detail.diperbarui_pada = supervisorContext.replacement?.recorded_at || detail.diperbarui_pada;
+
       return res.json({
         success: true,
-        data: await buildNonPenelitianDetail(registration),
+        data: detail,
       });
     }
 
@@ -968,7 +1039,16 @@ exports.getSubmissionById = async (req, res) => {
           getApprovalType(item) === "koordinator" &&
           String(item.status || "").toLowerCase() === "pending"
       );
-      if (!dosenPilihan.includes(accessorDosenId) && !hasPendingKetuaClusterAccess) {
+      const hasDirectSubmissionAccess = dosenPilihan.includes(accessorDosenId);
+      const hasSupervisorAccess =
+        !hasDirectSubmissionAccess && !hasPendingKetuaClusterAccess
+          ? await isActiveSupervisor(accessorDosenId, submission.mahasiswa_id)
+          : false;
+      if (
+        !hasDirectSubmissionAccess &&
+        !hasPendingKetuaClusterAccess &&
+        !hasSupervisorAccess
+      ) {
         return res.status(403).json({
           success: false,
           message: "Anda tidak memiliki akses ke pengajuan ini",
@@ -1137,6 +1217,7 @@ exports.getSubmissionById = async (req, res) => {
             id: dosenApproved.id,
             nik: dosenApproved.nik,
             nama: dosenApproved.nama,
+            gelar: dosenApproved.gelar || null,
             email: dosenApproved.email,
           }
         : submission.dosenCurrent
@@ -1144,6 +1225,7 @@ exports.getSubmissionById = async (req, res) => {
             id: submission.dosenCurrent.id,
             nik: submission.dosenCurrent.nik,
             nama: submission.dosenCurrent.nama,
+            gelar: submission.dosenCurrent.gelar || null,
             email: submission.dosenCurrent.email,
           }
         : null;
@@ -1159,6 +1241,7 @@ exports.getSubmissionById = async (req, res) => {
               id: submission.prospectiveSupervisor.id,
               nik: submission.prospectiveSupervisor.nik,
               nama: submission.prospectiveSupervisor.nama,
+              gelar: submission.prospectiveSupervisor.gelar || null,
               email: submission.prospectiveSupervisor.email,
             }
           : null,
@@ -1193,6 +1276,17 @@ exports.getSubmissionById = async (req, res) => {
         )
       : { allowed: true, message: null, legacy_period_unresolved: false };
 
+    const supervisorContext = buildSupervisorAssignmentContext(
+      await getSupervisorAssignmentHistory(submission.mahasiswa_id)
+    );
+    const activePrimary = getAssignmentPrimaryDosen(supervisorContext.active);
+    if (activePrimary) {
+      if (supervisorContext.replacement) {
+        hasilPengajuan.dosen_pembimbing_awal = hasilPengajuan.dosen_pembimbing || null;
+      }
+      hasilPengajuan.dosen_pembimbing = activePrimary;
+    }
+
     const responseData = {
       id: submission.id,
       jenis_jalur: submission.jenis_jalur,
@@ -1200,7 +1294,9 @@ exports.getSubmissionById = async (req, res) => {
       status: submission.status,
       tahap_approval: topikApprovalStage,
       diajukan_pada: submission.createdAt,
-      diperbarui_pada: submission.updatedAt,
+      diperbarui_pada: supervisorContext.replacement?.recorded_at || submission.updatedAt,
+      penetapan_pembimbing_aktif: supervisorContext.active,
+      pergantian_pembimbing: supervisorContext.replacement,
       review_deadline_at:
         submission.tipe_pengajuan === "topik_dosen" || submission.tipe_pengajuan === "judul_mandiri"
           ? getTopikParallelReviewDeadline(submission)
@@ -1282,6 +1378,7 @@ exports.getSubmissionById = async (req, res) => {
                   id: submission.mahasiswa.dosenPembimbingAkademik.id,
                   nik: submission.mahasiswa.dosenPembimbingAkademik.nik,
                   nama: submission.mahasiswa.dosenPembimbingAkademik.nama,
+                  gelar: submission.mahasiswa.dosenPembimbingAkademik.gelar || null,
                 }
               : null,
           }
@@ -1298,6 +1395,7 @@ exports.getSubmissionById = async (req, res) => {
               id: item.dosen.id,
               nik: item.dosen.nik,
               nama: item.dosen.nama,
+              gelar: item.dosen.gelar || null,
             }
           : null,
         sekretaris_prodi: item.sekretarisProdi

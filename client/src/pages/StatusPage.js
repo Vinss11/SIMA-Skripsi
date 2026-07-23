@@ -6,6 +6,7 @@ import {
   FileSearch,
   RefreshCcw,
 } from "lucide-react";
+import { formatDosenFullName } from "../utils/dosen";
 
 const PAGE_SIZE = 20;
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
@@ -163,15 +164,15 @@ function getCurrentReviewerDisplay(row, detail = null) {
   const latestHistory = Array.isArray(detail?.riwayat_persetujuan)
     ? detail.riwayat_persetujuan[detail.riwayat_persetujuan.length - 1]
     : null;
-  return latestHistory?.dosen?.nama || "-";
+  return formatDosenFullName(latestHistory?.dosen?.nama, latestHistory?.dosen?.gelar) || "-";
 }
 
 function getDosenPembimbingDisplay(row, detail = null) {
   if (!row) return "-";
   return (
     row.dosen_pembimbing ||
-    detail?.hasil_pengajuan?.dosen_pembimbing?.nama ||
-    detail?.detail_pengajuan?.calon_dosen_pembimbing?.nama ||
+    formatDosenFullName(detail?.hasil_pengajuan?.dosen_pembimbing?.nama, detail?.hasil_pengajuan?.dosen_pembimbing?.gelar) ||
+    formatDosenFullName(detail?.detail_pengajuan?.calon_dosen_pembimbing?.nama, detail?.detail_pengajuan?.calon_dosen_pembimbing?.gelar) ||
     "-"
   );
 }
@@ -269,6 +270,47 @@ function TextBlock({ label, children }) {
         {children || "-"}
       </div>
     </div>
+  );
+}
+
+function formatAssignmentDosen(assignment) {
+  return (Array.isArray(assignment?.pembimbings) ? assignment.pembimbings : [])
+    .map((item) => formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar))
+    .filter(Boolean)
+    .join(" & ") || "-";
+}
+
+function SupervisorReplacementSection({ replacement }) {
+  if (!replacement?.occurred) return null;
+  const previousName = replacement.previous_supervisors
+    || formatAssignmentDosen(replacement.previous_assignment);
+  const activeName = replacement.active_supervisors
+    || formatAssignmentDosen(replacement.active_assignment);
+
+  return (
+    <section className="rounded-xl border border-[#f0d7a6] bg-[#fffaf0] p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-lg font-black text-[#1a2648]">Riwayat Pergantian Pembimbing</h3>
+          <p className="mt-1 text-sm text-[#6b728b]">
+            Penetapan pembimbing aktif telah diperbarui oleh Sekretaris Prodi.
+          </p>
+        </div>
+        <span className="rounded-full bg-[#fff0cf] px-3 py-1 text-xs font-bold text-[#996116]">
+          Pembimbing Diganti
+        </span>
+      </div>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <DetailField label="Pembimbing Sebelumnya" value={previousName} />
+        <DetailField label="Pembimbing Pengganti" value={activeName} />
+        <DetailField label="Tanggal Efektif" value={formatDateTime(replacement.effective_at)} />
+      </div>
+      {replacement.note ? (
+        <div className="mt-3">
+          <TextBlock label="Catatan Pergantian">{replacement.note}</TextBlock>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -400,7 +442,10 @@ function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
         <div className="mt-4">
           <ResearchReadonlyInput
             label="Calon Dosen Pembimbing"
-            value={detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+            value={formatDosenFullName(
+              detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama,
+              detail.detail_pengajuan?.calon_dosen_pembimbing?.gelar || detail.hasil_pengajuan?.dosen_pembimbing?.gelar
+            ) || "-"}
           />
         </div>
       </section>
@@ -1182,9 +1227,9 @@ function StatusPage({
   const pembimbingDecisionChip = pembimbingDecision ? getStatusChip(pembimbingDecision.status) : null;
   const ketuaClusterDecisionChip = ketuaClusterDecision ? getStatusChip(ketuaClusterDecision.status) : null;
   const pembimbingName =
-    pembimbingDecision?.dosen?.nama ||
-    selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama ||
-    selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.nama ||
+    formatDosenFullName(pembimbingDecision?.dosen?.nama, pembimbingDecision?.dosen?.gelar) ||
+    formatDosenFullName(selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama, selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.gelar) ||
+    formatDosenFullName(selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.nama, selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.gelar) ||
     "-";
   const sidangChip = getSidangStatusChip(sidangStatus);
   const sidangSchedule =
@@ -1448,8 +1493,15 @@ function StatusPage({
                       </span>
                     </td>
                     <td className="px-3 py-2">{getCurrentReviewerDisplay(row)}</td>
-                    <td className="px-3 py-2">{getDosenPembimbingDisplay(row)}</td>
-                    <td className="px-3 py-2">{formatDateTime(row.updatedAt || row.createdAt)}</td>
+                    <td className="px-3 py-2">
+                      <div>{getDosenPembimbingDisplay(row)}</div>
+                      {row.pergantian_pembimbing?.occurred ? (
+                        <span className="mt-1 inline-flex rounded-full bg-[#fff0cf] px-2 py-0.5 text-[11px] font-bold text-[#996116]">
+                          Pengganti
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">{formatDateTime(row.supervisor_updated_at || row.updatedAt || row.createdAt)}</td>
                     <td className="px-3 py-2">
                       {row.record_type === "pendaftaran" ? (
                         <span className="text-xs font-semibold text-[#7180a5]">Menunggu form</span>
@@ -1562,7 +1614,7 @@ function StatusPage({
                       <DetailField label="Pendaftaran" value={formatLabel(selectedDetail.jenis_jalur)} />
                       <DetailField label="Jalur" value={formatLabel(selectedDetail.jalur_program || selectedDetail.tipe_pengajuan)} />
                       <DetailField label="Reviewer Saat Ini" value={selectedDetail.reviewer_saat_ini || "-"} />
-                      <DetailField label="Dosen Pembimbing" value={selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"} />
+                      <DetailField label="Dosen Pembimbing" value={formatDosenFullName(selectedDetail.hasil_pengajuan?.dosen_pembimbing?.nama, selectedDetail.hasil_pengajuan?.dosen_pembimbing?.gelar) || "-"} />
                       <DetailField label="Diajukan Pada" value={formatDateTime(selectedDetail.diajukan_pada)} />
                       <DetailField label="Diperbarui Pada" value={formatDateTime(selectedDetail.diperbarui_pada)} />
                     </>
@@ -1605,6 +1657,10 @@ function StatusPage({
               </div>
             ) : null}
           </section>
+
+          {!loadingDetail && selectedDetail?.pergantian_pembimbing?.occurred ? (
+            <SupervisorReplacementSection replacement={selectedDetail.pergantian_pembimbing} />
+          ) : null}
 
           {!loadingDetail && selectedDetail && selectedDetail.record_type === "non_penelitian" ? (
             <>
@@ -1652,7 +1708,7 @@ function StatusPage({
                 <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
                   <ResearchReadonlyInput
                     label="Keputusan Ketua Cluster"
-                    value={ketuaClusterDecision?.dosen?.nama || "Belum ada keputusan ketua cluster."}
+                    value={formatDosenFullName(ketuaClusterDecision?.dosen?.nama, ketuaClusterDecision?.dosen?.gelar) || "Belum ada keputusan ketua cluster."}
                   />
                   <ResearchReadonlyInput
                     label="Status Ketua Cluster"
@@ -1683,7 +1739,7 @@ function StatusPage({
                       String(item.status || "").toLowerCase() === "cancelled"
                         ? "Sistem"
                         : getApprovalRoleLabel(item.tipe_approval),
-                    actor_name: item.dosen?.nama || item.sekretaris_prodi?.nama || "",
+                    actor_name: formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || item.sekretaris_prodi?.nama || "",
                     note: item.keterangan,
                     at: item.tanggal_keputusan,
                   }))}

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ChevronDown, FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal } from "lucide-react";
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
+import { formatDosenFullName } from "../utils/dosen";
 
 function showSubmissionSuccessToast(message) {
   return Swal.fire({
@@ -222,12 +223,13 @@ function getTopikOptionLabel(item) {
   if (!item) return "";
   const kode = item.kode || "-";
   const judul = item.judul || "-";
-  const dosen = item.dosen?.nama ? ` | ${item.dosen.nama}` : "";
+  const dosenNama = formatDosenFullName(item.dosen?.nama, item.dosen?.gelar);
+  const dosen = dosenNama ? ` | ${dosenNama}` : "";
   return `${kode} - ${judul}${dosen}`;
 }
 
 function getTopikOptionSearchText(item) {
-  return [item?.kode, item?.judul, item?.keyword, item?.cluster, item?.dosen?.nama, item?.dosen?.nik]
+  return [item?.kode, item?.judul, item?.keyword, item?.cluster, item?.dosen?.nama, item?.dosen?.gelar, formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar), item?.dosen?.nik]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -414,7 +416,7 @@ function FormJudulDosen({
 
       const dosenValue = getTopikDosenFilterValue(item);
       if (dosenValue) {
-        const dosenNama = item?.dosen?.nama ? String(item.dosen.nama).trim() : "-";
+        const dosenNama = formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar) || "-";
         const dosenNik = item?.dosen?.nik ? String(item.dosen.nik).trim() : "";
         dosenMap.set(dosenValue, {
           value: dosenValue,
@@ -477,7 +479,7 @@ function FormJudulDosen({
 
       if (!keyword) return true;
 
-      const haystack = [item.kode, item.judul, item.keyword, item.cluster, item.dosen?.nama, item.dosen?.nik]
+      const haystack = [item.kode, item.judul, item.keyword, item.cluster, item.dosen?.nama, item.dosen?.gelar, formatDosenFullName(item.dosen?.nama, item.dosen?.gelar), item.dosen?.nik]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -979,7 +981,7 @@ function FormJudulDosen({
                   >
                     <span className="block font-semibold">{item.kode} - {item.judul || "-"}</span>
                     <span className="mt-0.5 block text-xs text-[#64739a]">
-                      {formatCluster(item.cluster)} | {item.dosen?.nama || "-"} | Keyword: {item.keyword || "-"}
+                      {formatCluster(item.cluster)} | {formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"} | Keyword: {item.keyword || "-"}
                     </span>
                   </button>
                 ))
@@ -1239,7 +1241,7 @@ function FormJudulDosen({
                           </p>
                         </td>
                         <td className="px-3 py-2">{formatCluster(item.cluster)}</td>
-                        <td className="px-3 py-2">{item.dosen?.nama || "-"}</td>
+                        <td className="px-3 py-2">{formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"}</td>
                         <td className="px-3 py-2">
                           {kuotaDosen.terpakai ?? 0}/{kuotaDosen.total ?? 0}
                         </td>
@@ -1296,7 +1298,7 @@ function FormJudulDosen({
                     {item.kode} - {item.judul}
                   </p>
                   <p className="text-xs text-[#62719a]">
-                    Bidang: {formatCluster(item.cluster)} | Dosen: {item.dosen?.nama || "-"}
+                    Bidang: {formatCluster(item.cluster)} | Dosen: {formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"}
                   </p>
                   <p className="text-xs text-[#62719a]">Keyword: {item.keyword || "-"}</p>
                 </div>
@@ -1508,7 +1510,7 @@ function FormJudulSendiri({
     if (!dosen || dosen.is_kuota_penuh) return;
     if (!getDosenPenelitianClusterLabels(dosen).includes(selectedCluster)) return;
     setSelectedDosenId(String(dosen.id));
-    setDosenQuery(`${dosen.nama || "-"}${dosen.nik ? ` - NIK: ${dosen.nik}` : ""}`);
+    setDosenQuery(`${formatDosenFullName(dosen.nama, dosen.gelar) || "-"}${dosen.nik ? ` - NIK: ${dosen.nik}` : ""}`);
     setShowDosenOptions(false);
     clearFieldError("selectedDosenId");
   };
@@ -1727,7 +1729,7 @@ function FormJudulSendiri({
                       }`}
                     >
                       <span>
-                        <span className="block font-bold">{dosen.nama || "-"}</span>
+                        <span className="block font-bold">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</span>
                         <span className="mt-0.5 block text-xs text-[#60709a]">
                           NIK: {dosen.nik || "-"} {klasterLabel ? `| Klaster: ${klasterLabel}` : ""}
                         </span>

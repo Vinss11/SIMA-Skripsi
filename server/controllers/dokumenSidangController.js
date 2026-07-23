@@ -7,6 +7,10 @@ const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
   isActiveSupervisor,
 } = require("../services/supervisorAccessService");
+const {
+  getMahasiswaSupervisionAccess,
+  sendSupervisionAccessDenied,
+} = require("../services/mahasiswaSupervisionAccessService");
 
 const TARGET_SESI_MINIMAL = 8;
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
@@ -257,6 +261,7 @@ exports.getMahasiswaDokumenSidang = async (req, res) => {
     const dokumenRow = await findOrCreateDokumenSidang(mahasiswaId);
     const dokumen = serializeDokumenPayload(dokumenRow);
     const summary = summarizeDokumenStatus(dokumen);
+    const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswaId);
 
     return res.json({
       success: true,
@@ -271,14 +276,15 @@ exports.getMahasiswaDokumenSidang = async (req, res) => {
           email: mahasiswa.email,
           angkatan: mahasiswa.angkatan,
         },
-        dosen_pembimbing: mahasiswa.dosenPembimbingSkripsi
+        dosen_pembimbing: supervisionAccess.current_supervisor || (mahasiswa.dosenPembimbingSkripsi
           ? {
               id: mahasiswa.dosenPembimbingSkripsi.id,
               nik: mahasiswa.dosenPembimbingSkripsi.nik,
               nama: mahasiswa.dosenPembimbingSkripsi.nama,
               email: mahasiswa.dosenPembimbingSkripsi.email,
             }
-          : null,
+          : null),
+        supervision_access: supervisionAccess,
         dokumen,
       },
     });
@@ -312,6 +318,13 @@ exports.uploadMahasiswaDokumenSidang = async (req, res) => {
         success: false,
         message: "File dokumen wajib diunggah",
       });
+    }
+
+    const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswaId, transaction);
+    if (!supervisionAccess.can_upload_document) {
+      cleanupUploadedFileFromRequest(req);
+      await transaction.rollback();
+      return sendSupervisionAccessDenied(res, supervisionAccess, "upload_document");
     }
 
     const countedSessions = await countValidBimbinganSessions(mahasiswaId, transaction);

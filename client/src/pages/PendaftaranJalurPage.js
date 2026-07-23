@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, ClipboardPlus, Loader2, Send } from "lucide-react";
+import { formatDosenFullName } from "../utils/dosen";
 
 const PENDAFTARAN_OPTIONS = [
   {
@@ -306,7 +307,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
   const formatAnggotaDpaLabel = (dosen) => {
     if (!dosen) return "";
-    return `${dosen.nama || "-"} - NIK: ${dosen.nik || "-"}`;
+    return `${formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - NIK: ${dosen.nik || "-"}`;
   };
 
   const selectAnggotaDpa = (index, dosen) => {
@@ -509,7 +510,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
 
   const formatDosenInputLabel = (dosen) => {
     if (!dosen) return "";
-    const nama = String(dosen.nama || "").trim();
+    const nama = formatDosenFullName(dosen.nama, dosen.gelar);
     const nik = String(dosen.nik || "").trim();
     if (nama && nik) return `${nama} - NIK: ${nik}`;
     if (nama) return nama;
@@ -1428,7 +1429,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       .filter((dosen) => {
                         if (!normalizedDpaSearch || selectedDpa) return true;
                         const haystack =
-                          `${dosen.nama || ""} ${dosen.nik || ""} ${dosen.kode_dosen || ""} ${dosen.email || ""}`.toLowerCase();
+                          `${formatDosenFullName(dosen.nama, dosen.gelar)} ${dosen.nik || ""} ${dosen.kode_dosen || ""} ${dosen.email || ""}`.toLowerCase();
                         return haystack.includes(normalizedDpaSearch);
                       })
                       .slice(0, 8);
@@ -1563,7 +1564,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                           onClick={() => selectAnggotaDpa(index, dosen)}
                                           className="block w-full border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] last:border-0 hover:bg-[#f4f7ff]"
                                         >
-                                          <span className="block font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="block font-semibold">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</span>
                                           <span className="block text-xs text-[#6477a8]">
                                             NIK: {dosen.nik || "-"}
                                           </span>
@@ -1623,7 +1624,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                         <span className="block font-semibold">{item.nim} - {item.nama}</span>
                                         <span className="block text-xs">
                                           {item.eligible
-                                            ? `DPA: ${item.dosen_pembimbing_akademik?.nama || "-"}`
+                                            ? `DPA: ${formatDosenFullName(item.dosen_pembimbing_akademik?.nama, item.dosen_pembimbing_akademik?.gelar) || "-"}`
                                             : item.eligibility_reason}
                                         </span>
                                       </button>
@@ -1637,7 +1638,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                 <div className="mt-3 rounded-lg border border-[#dbe4f7] bg-[#f8faff] p-3 text-sm text-[#40598f]">
                                   <p><b>NIM:</b> {anggota.nim}</p>
                                   <p><b>Nama:</b> {anggota.nama}</p>
-                                  <p><b>DPA:</b> {anggota.mahasiswa.dosen_pembimbing_akademik?.nama || "-"}</p>
+                                  <p><b>DPA:</b> {formatDosenFullName(anggota.mahasiswa.dosen_pembimbing_akademik?.nama, anggota.mahasiswa.dosen_pembimbing_akademik?.gelar) || "-"}</p>
                                 </div>
                               ) : null}
                             </div>

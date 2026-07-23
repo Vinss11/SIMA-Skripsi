@@ -24,6 +24,11 @@ module.exports = (sequelize, DataTypes) => {
         as: "ketersediaanDosens",
       });
 
+      PeriodePenjaluran.hasMany(models.RiwayatKetersediaanMembimbing, {
+        foreignKey: "periode_penjaluran_id",
+        as: "riwayatKetersediaanMembimbing",
+      });
+
       PeriodePenjaluran.hasMany(models.PenetapanPembimbing, {
         foreignKey: "periode_mulai_id",
         as: "penetapanPembimbingDimulai",
@@ -90,7 +95,7 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: true,
       },
       status: {
-        type: DataTypes.ENUM("draft", "active", "closed"),
+        type: DataTypes.ENUM("active", "closed"),
         allowNull: false,
         defaultValue: "active",
       },

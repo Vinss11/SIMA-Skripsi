@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
+  Bell,
   CalendarDays,
   CheckCircle2,
   Eye,
@@ -22,10 +23,14 @@ import {
 } from "lucide-react";
 import PengajuanPage from "./PengajuanPage";
 import StatusPage from "./StatusPage";
+import { formatDosenFullName } from "../utils/dosen";
 import BimbinganPage from "./BimbinganPage";
 import MahasiswaDokumenSidangPage from "./MahasiswaDokumenSidangPage";
 import MenuSectionHeader from "../components/MenuSectionHeader";
 import SupervisorAssignmentTimeline from "../components/SupervisorAssignmentTimeline";
+import NotificationMenuBadge from "../components/NotificationMenuBadge";
+import NotificationPage from "./NotificationPage";
+import useNotifications from "../hooks/useNotifications";
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
@@ -39,6 +44,11 @@ const TAB_HEADERS = {
     icon: LayoutDashboard,
     title: "Dashboard Mahasiswa",
     subtitle: "Ringkasan progres skripsi, pengajuan aktif, dan status pembimbing.",
+  },
+  notifications: {
+    icon: Bell,
+    title: "Pemberitahuan",
+    subtitle: "Lihat seluruh informasi dan perubahan terbaru pada proses skripsi Anda.",
   },
   "izin-lanjut": {
     icon: ShieldAlert,
@@ -797,7 +807,7 @@ function UlangAlihJalurCard({
               <option value="">Pilih dosen</option>
               {dosenOptions.map((dosen) => (
                 <option key={`prev-ta-${dosen.id}`} value={dosen.id}>
-                  {dosen.nama} {dosen.nik ? `- ${dosen.nik}` : ""}
+                  {formatDosenFullName(dosen.nama, dosen.gelar)} {dosen.nik ? `- ${dosen.nik}` : ""}
                 </option>
               ))}
             </select>
@@ -814,7 +824,7 @@ function UlangAlihJalurCard({
               <option value="">Pilih dosen</option>
               {dosenOptions.map((dosen) => (
                 <option key={`new-ta-${dosen.id}`} value={dosen.id} disabled={dosen.is_kuota_penuh}>
-                  {dosen.nama} {dosen.nik ? `- ${dosen.nik}` : ""}{dosen.is_kuota_penuh ? " (Kuota penuh)" : ""}
+                  {formatDosenFullName(dosen.nama, dosen.gelar)} {dosen.nik ? `- ${dosen.nik}` : ""}{dosen.is_kuota_penuh ? " (Kuota penuh)" : ""}
                 </option>
               ))}
             </select>
@@ -901,6 +911,8 @@ function DashboardHome({
 
   const bimbinganCounted = Number(bimbinganSummary?.stats?.counted_sessions || 0);
   const bimbinganTarget = Number(bimbinganSummary?.stats?.target_minimum || 8);
+  const supervisionAccess = bimbinganSummary?.supervision_access || null;
+  const isReplacementPending = supervisionAccess?.status === "replacement_pending";
   const bimbinganProgress = hasApprovedSubmission && hasDospem ? `${bimbinganCounted} dari ${bimbinganTarget}` : "Belum dimulai";
   const bimbinganBadge = hasApprovedSubmission && hasDospem ? "Sesi Tervalidasi" : "Menunggu Approval";
 
@@ -915,6 +927,18 @@ function DashboardHome({
           <span>NIM: {studentNim}</span>
         </div>
       </section>
+
+      {isReplacementPending ? (
+        <section className="rounded-xl border border-[#f0cf91] bg-[#fff8e8] p-4 text-sm text-[#795300] shadow-sm">
+          <p className="font-black">Menunggu Penggantian Pembimbing</p>
+          <p className="mt-1">
+            Pembimbing Anda tidak dapat melanjutkan proses bimbingan. Sekretaris Prodi sedang menyiapkan pembimbing pengganti. Histori bimbingan sebelumnya tetap tersimpan.
+          </p>
+          {supervisionAccess?.replacement?.status === "waiting_assignment_letter" ? (
+            <p className="mt-2 font-semibold">Pembimbing pengganti sudah dipilih dan sedang menunggu penerbitan surat tugas.</p>
+          ) : null}
+        </section>
+      ) : null}
 
       <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
@@ -944,8 +968,8 @@ function DashboardHome({
           icon={<GraduationCap className="h-4 w-4 text-[#bc3c3c]" />}
           lineTone="border-l-[#d14a4a]"
           cardTone="bg-[#fff1f1]"
-          badge={hasDospem ? "Aktif" : "Belum Ada"}
-          badgeTone={hasDospem ? "bg-[#d14a4a] text-white" : "bg-[#f0d6d6] text-[#7f3b3b]"}
+          badge={isReplacementPending ? "Menunggu Pengganti" : hasDospem ? "Aktif" : "Belum Ada"}
+          badgeTone={isReplacementPending ? "bg-[#d89522] text-white" : hasDospem ? "bg-[#d14a4a] text-white" : "bg-[#f0d6d6] text-[#7f3b3b]"}
         />
         <SummaryCard
           title="Bimbingan"
@@ -1347,6 +1371,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const sessionExpiredRef = useRef(false);
+  const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const mustChangePassword = Boolean(session?.user?.role === "mahasiswa" && session?.prompt_change_password);
   const semesterLanjutanGate = jalurStatus?.semester_lanjutan_gate || null;
   const isHardLockedBySemester = Boolean(
@@ -1510,6 +1535,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const visibleNavItems = useMemo(() => {
     return [
       { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+      { id: "notifications", label: "Pemberitahuan", icon: Bell },
       { id: "izin-lanjut", label: "Permohonan Extend", icon: ShieldAlert },
       { id: "ulang-alih", label: "Alih / Ulang Jalur", icon: RefreshCcw },
       { id: "pengajuan", label: "Pengajuan", icon: FileText },
@@ -1883,9 +1909,10 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 const isActive = activeTab === item.id;
                 const isUlangAlihItem = item.id === "ulang-alih";
                 const isLockedBySemester =
-                  isHardLockedBySemester && item.id !== "izin-lanjut" && !isUlangAlihItem;
+                  isHardLockedBySemester && item.id !== "izin-lanjut" && item.id !== "notifications" && !isUlangAlihItem;
                 const isLockedByOnboardingItem =
                   isLockedByOnboarding &&
+                  item.id !== "notifications" &&
                   item.id !== "pengajuan" &&
                   !(item.id === "bimbingan" && !bimbinganLockInfo.isLocked);
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
@@ -1919,8 +1946,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                         isActive ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#405070] hover:bg-[#f2f6ff]"
                       } ${isDisabled ? "cursor-not-allowed opacity-55" : ""}`}
                     >
-                      <Icon className="h-4 w-4" />
-                      {item.label}
+                       <Icon className="h-4 w-4" />
+                       <span>{item.label}</span>
+                       {item.id === "notifications" ? (
+                         <NotificationMenuBadge count={notificationState.unreadCount} active={isActive} />
+                       ) : null}
                     </button>
                   </React.Fragment>
                 );
@@ -1974,6 +2004,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 onGoToPengajuan={() => setActiveTab("pengajuan")}
                 onGoToStatus={() => setActiveTab("status")}
                 supervisorHistory={supervisorHistory}
+              />
+            ) : null}
+
+            {!loading && !mustChangePassword && activeTab === "notifications" ? (
+              <NotificationPage
+                notificationState={notificationState}
+                onNavigate={() => setActiveTab("dashboard")}
               />
             ) : null}
 

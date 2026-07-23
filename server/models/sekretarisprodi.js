@@ -31,6 +31,7 @@ module.exports = (sequelize, DataTypes) => {
       });
 
       SekretarisProdi.hasMany(models.DosenKetersediaanPeriode, { foreignKey: "updated_by_sekretaris_id", as: "ketersediaanDosenUpdated" });
+      SekretarisProdi.hasMany(models.RiwayatKetersediaanMembimbing, { foreignKey: "changed_by_sekretaris_id", as: "riwayatKetersediaanMembimbingChanged" });
       SekretarisProdi.hasMany(models.TindakLanjutStatusDosen, { foreignKey: "resolved_by_sekretaris_id", as: "tindakLanjutStatusResolved" });
     }
 

@@ -32,6 +32,9 @@ import {
 import Swal from "sweetalert2";
 import MenuSectionHeader from "../components/MenuSectionHeader";
 import SupervisorAssignmentTimeline from "../components/SupervisorAssignmentTimeline";
+import NotificationMenuBadge from "../components/NotificationMenuBadge";
+import NotificationPage from "./NotificationPage";
+import useNotifications from "../hooks/useNotifications";
 import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
 import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
 import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
@@ -41,6 +44,8 @@ const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_PAGE_SIZE = 20;
 const DOSEN_GRID_PAGE_SIZE = 20;
+const DOSEN_AVAILABILITY_PAGE_SIZE = 20;
+const DOSEN_FOLLOW_UP_PAGE_SIZE = 20;
 const MAHASISWA_MASTER_FILTER_INITIAL = {
   angkatan: "",
   program_kuliah: "",
@@ -65,6 +70,7 @@ const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
   { key: "ketersediaan-periode", label: "Ketersediaan per Periode" },
+  { key: "tindak-lanjut", label: "Tindak Lanjut" },
 ];
 const DOSEN_MASTER_STATUS_LABELS = {
   active: "Aktif",
@@ -239,9 +245,21 @@ function buildMahasiswaMasterPeriodeFilterValue(row) {
 const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
   semester: "ganjil",
+  label_periode: "",
   tanggal_mulai: "",
   tanggal_selesai: "",
 };
+const PERIODE_SETUP_STORAGE_KEY = "periode_penjaluran_setup";
+
+function readStoredPeriodeSetup() {
+  if (typeof window === "undefined") return null;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(PERIODE_SETUP_STORAGE_KEY) || "null");
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (_) {
+    return null;
+  }
+}
 const RESEARCH_CLUSTER_EDITOR_FIELDS = [
   {
     key: "ITSC",
@@ -345,6 +363,147 @@ function formatLabel(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+const DOSEN_PREFIX_TITLE_WORDS = new Set(["prof", "dr", "ir", "drs", "dra", "h", "hj"]);
+
+function formatDosenFullName(namaValue, gelarValue) {
+  const nama = String(namaValue || "").trim().replace(/\s+/g, " ");
+  const gelar = String(gelarValue || "").trim().replace(/\s+/g, " ").replace(/\s*,\s*/g, ", ");
+  if (!nama) return gelar;
+  if (!gelar) return nama;
+  const titleParts = gelar.split(",").map((item) => item.trim()).filter(Boolean);
+  const prefixes = [];
+  while (
+    titleParts.length > 0
+    && titleParts[0].split(" ").filter(Boolean).every(
+      (word) => DOSEN_PREFIX_TITLE_WORDS.has(word.replace(/\./g, "").toLowerCase())
+    )
+  ) {
+    prefixes.push(titleParts.shift());
+  }
+  return `${prefixes.length ? `${prefixes.join(" ")} ` : ""}${nama}${titleParts.length ? `, ${titleParts.join(", ")}` : ""}`;
+}
+
+function ReplacementDosenCombobox({
+  candidates = [],
+  value,
+  onChange,
+  hasError = false,
+  placeholder = "Cari nama atau kode dosen...",
+  allowEmpty = false,
+  inputId,
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedDosen = candidates.find((candidate) => Number(candidate.id) === Number(value)) || null;
+  const selectedLabel = selectedDosen ? formatDosenFullName(selectedDosen.nama, selectedDosen.gelar) : "";
+  const [query, setQuery] = useState(selectedLabel);
+
+  useEffect(() => {
+    if (!isOpen) setQuery(selectedLabel);
+  }, [isOpen, selectedLabel]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const isSelectedLabel = selectedLabel && normalizedQuery === selectedLabel.toLowerCase();
+  const filteredCandidates = candidates.filter((candidate) => {
+    if (!normalizedQuery || isSelectedLabel) return true;
+    return [
+      formatDosenFullName(candidate.nama, candidate.gelar),
+      candidate.kode_dosen,
+      candidate.nik,
+      candidate.email,
+    ].some((item) => String(item || "").toLowerCase().includes(normalizedQuery));
+  });
+
+  const clearSelection = () => {
+    setQuery("");
+    onChange("");
+    setIsOpen(true);
+  };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+        <input
+          id={inputId}
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={`${inputId}-options`}
+          value={query}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            if (value) onChange("");
+            setIsOpen(true);
+          }}
+          placeholder={placeholder}
+          className={`w-full rounded-lg border bg-white py-2.5 pl-9 pr-10 text-sm outline-none ${
+            hasError
+              ? "border-[#d64545] focus:border-[#d64545]"
+              : "border-[#d3dbef] focus:border-[#2f63e3]"
+          }`}
+        />
+        {allowEmpty && (value || query) ? (
+          <button
+            type="button"
+            aria-label="Kosongkan pembimbing kedua"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={clearSelection}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#7b88a8] hover:text-[#344a7a]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+      </div>
+
+      {isOpen ? (
+        <div
+          id={`${inputId}-options`}
+          role="listbox"
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[260px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg"
+        >
+          {allowEmpty ? (
+            <button
+              type="button"
+              role="option"
+              aria-selected={!value}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={clearSelection}
+              className="flex min-h-[52px] w-full items-center border-b border-[#edf1fb] px-3 py-2 text-left text-sm font-semibold text-[#526184] hover:bg-[#f4f7ff]"
+            >
+              Tidak ada pembimbing kedua
+            </button>
+          ) : null}
+          {filteredCandidates.length > 0 ? filteredCandidates.map((candidate) => (
+            <button
+              key={`${inputId}-${candidate.id}`}
+              type="button"
+              role="option"
+              aria-selected={Number(value) === Number(candidate.id)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(String(candidate.id));
+                setQuery(formatDosenFullName(candidate.nama, candidate.gelar));
+                setIsOpen(false);
+              }}
+              className={`flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] ${
+                Number(value) === Number(candidate.id) ? "bg-[#eaf0ff]" : "bg-white"
+              }`}
+            >
+              <span className="min-w-0"><span className="block truncate text-sm font-bold text-[#263a66]">{formatDosenFullName(candidate.nama, candidate.gelar)}</span><span className="block text-xs text-[#7282a8]">{candidate.kode_dosen || candidate.nik || candidate.email || "-"}</span></span>
+              <span className="shrink-0 text-xs font-semibold text-[#526184]">Sisa {candidate.sisa}/{candidate.kuota}</span>
+            </button>
+          )) : (
+            <p className="px-3 py-4 text-center text-sm font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ResearchReviewReadonlyInput({ label, value }) {
   return (
     <div>
@@ -397,7 +556,10 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
         <div className="mt-4">
           <ResearchReviewReadonlyInput
             label="Calon Dosen Pembimbing"
-            value={detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama || "-"}
+            value={formatDosenFullName(
+              detail.detail_pengajuan?.calon_dosen_pembimbing?.nama || detail.hasil_pengajuan?.dosen_pembimbing?.nama,
+              detail.detail_pengajuan?.calon_dosen_pembimbing?.gelar || detail.hasil_pengajuan?.dosen_pembimbing?.gelar
+            ) || "-"}
           />
         </div>
       </section>
@@ -448,7 +610,7 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
 
 function formatPeriodeMasterDosenInputLabel(dosen) {
   if (!dosen) return "";
-  const nama = String(dosen?.nama || "").trim();
+  const nama = formatDosenFullName(dosen?.nama, dosen?.gelar);
   const nik = String(dosen?.nik || "").trim();
   if (nama && nik) return `${nama} - NIK: ${nik}`;
   if (nama) return nama;
@@ -933,8 +1095,8 @@ function getFinalResearchSummary(row) {
   const topicType = row?.tipe_pengajuan === "judul_mandiri" ? "Judul Mandiri" : "Topik Dosen";
   return [
     topicType,
-    topic?.dosen_nama ? `Dosen: ${topic.dosen_nama}` : null,
-    row?.ketua_cluster?.nama ? `Ketua Cluster: ${row.ketua_cluster.nama}` : null,
+    topic?.dosen_nama ? `Dosen: ${formatDosenFullName(topic.dosen_nama, topic.dosen_gelar)}` : null,
+    row?.ketua_cluster?.nama ? `Ketua Cluster: ${formatDosenFullName(row.ketua_cluster.nama, row.ketua_cluster.gelar)}` : null,
   ]
     .filter(Boolean)
     .join(" | ") || "-";
@@ -1223,7 +1385,7 @@ function SubmissionDecisionDetailSection({ items = [] }) {
                     {getSubmissionStatusLabel(item?.status)}
                   </span>
                   <span className="text-xs font-semibold text-[#5b688b]">
-                    {[getSubmissionApprovalRoleLabel(item), item?.dosen?.nama || item?.sekretaris_prodi?.nama]
+                    {[getSubmissionApprovalRoleLabel(item), formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar) || item?.sekretaris_prodi?.nama]
                       .filter(Boolean)
                       .join(" | ")}
                   </span>
@@ -1274,6 +1436,15 @@ function toDateInputValue(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toISOString().slice(0, 10);
+}
+
+function getJakartaDateInputValue() {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
 }
 
 function normalizeResearchClusterCode(value) {
@@ -1378,6 +1549,25 @@ const DOSEN_PENGAMPU_REVIEW_CONFIG_BY_TAB = Object.values(DOSEN_PENGAMPU_REVIEW_
   },
   {}
 );
+
+function buildMonitoringNonResearchDetail(row) {
+  const source = row?.pengajuan_detail || {};
+  const payload = source?.payload && typeof source.payload === "object" && !Array.isArray(source.payload)
+    ? source.payload
+    : {};
+  const jalur = String(payload.jalur || row?.penjaluran || "").trim().toLowerCase();
+
+  return {
+    id: row?.pendaftaran_id || source.id || null,
+    mahasiswa: row?.mahasiswa || null,
+    jalur,
+    workflow_status: source.workflow_status || payload.workflow_status || null,
+    form_lanjutan_status: source.workflow_status || payload.workflow_status || null,
+    submitted_at: source.submitted_at || null,
+    payload,
+  };
+}
+
 function buildNavSections(isSekretaris, responsibilityItems = []) {
   if (!isSekretaris) {
     const specialItems = [];
@@ -1400,7 +1590,10 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
       {
         key: "umum",
         label: "Umum",
-        items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }],
+        items: [
+          { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+          { id: "notifications", label: "Pemberitahuan", icon: Bell },
+        ],
       },
       {
         key: "mahasiswa",
@@ -1445,7 +1638,10 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
     {
       key: "umum",
       label: "Umum",
-      items: [{ id: "dashboard", label: "Dashboard", icon: LayoutDashboard }],
+      items: [
+        { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+        { id: "notifications", label: "Pemberitahuan", icon: Bell },
+      ],
     },
     {
       key: "mahasiswa",
@@ -1494,6 +1690,11 @@ function buildTabHeaders(isSekretaris) {
       icon: LayoutDashboard,
       title: "Dashboard Dosen",
       subtitle: "Ringkasan review pengajuan, status pamit, topik aktif, dan kuota bimbingan.",
+    },
+    notifications: {
+      icon: Bell,
+      title: "Pemberitahuan",
+      subtitle: "Lihat pemberitahuan penugasan dan aktivitas terbaru.",
     },
     "mahasiswa-bimbingan": {
       icon: ListChecks,
@@ -1618,6 +1819,13 @@ function buildTabHeaders(isSekretaris) {
 
 function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile, isSekretaris = false }) {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
+  const submissionNotificationRef = useRef(null);
+  const showSubmissionNotificationPanel = false;
+  const submissionNotificationItems = [];
+  const unreadSubmissionNotificationCount = notificationState.unreadCount;
+  const setShowSubmissionNotificationPanel = () => {};
+  const handleToggleSubmissionNotificationPanel = () => setActiveTab("notifications");
   const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
   const [topikMode, setTopikMode] = useState("list");
 
@@ -1739,10 +1947,91 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false,
   });
   const [dosenStatusFollowUps, setDosenStatusFollowUps] = useState([]);
-  const [savingAvailabilityDosenId, setSavingAvailabilityDosenId] = useState(null);
+  const [dosenStatusFollowUpQuery, setDosenStatusFollowUpQuery] = useState("");
+  const [dosenStatusFollowUpPage, setDosenStatusFollowUpPage] = useState(1);
+  const [dosenStatusFollowUpDetailRow, setDosenStatusFollowUpDetailRow] = useState(null);
+  const [dosenStatusFollowUpDetail, setDosenStatusFollowUpDetail] = useState(null);
+  const [loadingDosenStatusFollowUpDetail, setLoadingDosenStatusFollowUpDetail] = useState(false);
+  const [savingDosenStatusFollowUpAction, setSavingDosenStatusFollowUpAction] = useState("");
+  const [dosenStatusFollowUpForms, setDosenStatusFollowUpForms] = useState({});
+  const [dosenStatusFollowUpResolutionForm, setDosenStatusFollowUpResolutionForm] = useState({ note: "" });
+  const [dosenStatusFollowUpFormErrors, setDosenStatusFollowUpFormErrors] = useState({});
   const [selectedAvailabilityDosenIds, setSelectedAvailabilityDosenIds] = useState([]);
-  const [bulkAvailabilityQuota, setBulkAvailabilityQuota] = useState("10");
+  const [dirtyAvailabilityDosenIds, setDirtyAvailabilityDosenIds] = useState([]);
+  const [dosenPeriodAvailabilityQuery, setDosenPeriodAvailabilityQuery] = useState("");
+  const [dosenPeriodAvailabilityPage, setDosenPeriodAvailabilityPage] = useState(1);
   const [savingBulkAvailability, setSavingBulkAvailability] = useState(false);
+  const filteredDosenPeriodAvailabilityRows = useMemo(() => {
+    const keyword = dosenPeriodAvailabilityQuery.trim().toLowerCase();
+    if (!keyword) return dosenPeriodAvailability.dosens;
+    return dosenPeriodAvailability.dosens.filter((row) =>
+      [row.nama, row.gelar, formatDosenFullName(row.nama, row.gelar), row.kode_dosen, row.nik, row.email]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }, [dosenPeriodAvailability.dosens, dosenPeriodAvailabilityQuery]);
+  const totalDosenPeriodAvailabilityPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredDosenPeriodAvailabilityRows.length / DOSEN_AVAILABILITY_PAGE_SIZE)),
+    [filteredDosenPeriodAvailabilityRows.length]
+  );
+  const pagedDosenPeriodAvailabilityRows = useMemo(() => {
+    const start = (dosenPeriodAvailabilityPage - 1) * DOSEN_AVAILABILITY_PAGE_SIZE;
+    return filteredDosenPeriodAvailabilityRows.slice(start, start + DOSEN_AVAILABILITY_PAGE_SIZE);
+  }, [dosenPeriodAvailabilityPage, filteredDosenPeriodAvailabilityRows]);
+  const dosenPeriodAvailabilityRangeStart = filteredDosenPeriodAvailabilityRows.length === 0
+    ? 0
+    : (dosenPeriodAvailabilityPage - 1) * DOSEN_AVAILABILITY_PAGE_SIZE + 1;
+  const dosenPeriodAvailabilityRangeEnd = Math.min(
+    dosenPeriodAvailabilityPage * DOSEN_AVAILABILITY_PAGE_SIZE,
+    filteredDosenPeriodAvailabilityRows.length
+  );
+  useEffect(() => {
+    if (dosenPeriodAvailabilityPage > totalDosenPeriodAvailabilityPages) {
+      setDosenPeriodAvailabilityPage(totalDosenPeriodAvailabilityPages);
+    }
+  }, [dosenPeriodAvailabilityPage, totalDosenPeriodAvailabilityPages]);
+  const filteredDosenStatusFollowUps = useMemo(() => {
+    const keyword = dosenStatusFollowUpQuery.trim().toLowerCase();
+    if (!keyword) return dosenStatusFollowUps;
+    return dosenStatusFollowUps.filter((row) => [
+      row.dosen?.nama,
+      row.dosen?.gelar,
+      formatDosenFullName(row.dosen?.nama, row.dosen?.gelar),
+      row.dosen?.kode_dosen,
+      row.dosen?.nik,
+      DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan],
+    ].filter(Boolean).join(" ").toLowerCase().includes(keyword));
+  }, [dosenStatusFollowUpQuery, dosenStatusFollowUps]);
+  const totalDosenStatusFollowUpPages = useMemo(
+    () => Math.max(1, Math.ceil(filteredDosenStatusFollowUps.length / DOSEN_FOLLOW_UP_PAGE_SIZE)),
+    [filteredDosenStatusFollowUps.length]
+  );
+  const pagedDosenStatusFollowUps = useMemo(() => {
+    const start = (dosenStatusFollowUpPage - 1) * DOSEN_FOLLOW_UP_PAGE_SIZE;
+    return filteredDosenStatusFollowUps.slice(start, start + DOSEN_FOLLOW_UP_PAGE_SIZE);
+  }, [dosenStatusFollowUpPage, filteredDosenStatusFollowUps]);
+  const dosenStatusFollowUpRangeStart = filteredDosenStatusFollowUps.length === 0
+    ? 0
+    : (dosenStatusFollowUpPage - 1) * DOSEN_FOLLOW_UP_PAGE_SIZE + 1;
+  const dosenStatusFollowUpRangeEnd = Math.min(
+    dosenStatusFollowUpPage * DOSEN_FOLLOW_UP_PAGE_SIZE,
+    filteredDosenStatusFollowUps.length
+  );
+  useEffect(() => {
+    if (dosenStatusFollowUpPage > totalDosenStatusFollowUpPages) {
+      setDosenStatusFollowUpPage(totalDosenStatusFollowUpPages);
+    }
+  }, [dosenStatusFollowUpPage, totalDosenStatusFollowUpPages]);
+  const affectedDosenStatusFollowUpStudents = Array.isArray(dosenStatusFollowUpDetail?.affected_mahasiswa)
+    ? dosenStatusFollowUpDetail.affected_mahasiswa
+    : [];
+  const rawDosenStatusFollowUpBlockingCount = dosenStatusFollowUpDetail?.resolution_status?.blocking_count;
+  const dosenStatusFollowUpBlockingCount = Number.isInteger(rawDosenStatusFollowUpBlockingCount)
+    ? rawDosenStatusFollowUpBlockingCount
+    : affectedDosenStatusFollowUpStudents.length;
+  const hasPendingDosenStatusReplacement = dosenStatusFollowUpBlockingCount > 0;
 
   const [topikForm, setTopikForm] = useState({
     kode: "",
@@ -1846,6 +2135,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     rows: [],
   });
   const [monitoringMahasiswaQuery, setMonitoringMahasiswaQuery] = useState("");
+  const [monitoringMahasiswaMode, setMonitoringMahasiswaMode] = useState("list");
+  const [selectedMonitoringMahasiswa, setSelectedMonitoringMahasiswa] = useState(null);
+  const [monitoringSubmissionDetail, setMonitoringSubmissionDetail] = useState(null);
+  const [loadingMonitoringDetail, setLoadingMonitoringDetail] = useState(false);
+  const [monitoringDetailError, setMonitoringDetailError] = useState("");
   const [mahasiswaMasterQuery, setMahasiswaMasterQuery] = useState("");
   const [mahasiswaMasterFilters, setMahasiswaMasterFilters] = useState({
     ...MAHASISWA_MASTER_FILTER_INITIAL,
@@ -1873,7 +2167,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     master_penanggung_jawab: null,
     penanggung_jawab_lock: null,
   });
-  const [periodeMasterForm, setPeriodeMasterForm] = useState({ ...PERIODE_MASTER_INITIAL });
+  const storedPeriodeSetup = useMemo(readStoredPeriodeSetup, []);
+  const [periodeMasterForm, setPeriodeMasterForm] = useState({
+    ...PERIODE_MASTER_INITIAL,
+    ...(storedPeriodeSetup?.penanggung_jawab || {}),
+  });
   const [periodeMasterSearchQueryByField, setPeriodeMasterSearchQueryByField] = useState(
     buildPeriodeMasterSearchInitial
   );
@@ -1884,9 +2182,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [periodeMasterErrors, setPeriodeMasterErrors] = useState({});
   const [periodeMasterEditMode, setPeriodeMasterEditMode] = useState(false);
   const [savingPeriodeMaster, setSavingPeriodeMaster] = useState(false);
-  const [periodeForm, setPeriodeForm] = useState({ ...PERIODE_FORM_INITIAL });
+  const [periodeForm, setPeriodeForm] = useState({
+    ...PERIODE_FORM_INITIAL,
+    ...(storedPeriodeSetup?.periode || {}),
+  });
   const [periodeFormErrors, setPeriodeFormErrors] = useState({});
-  const [periodeMode, setPeriodeMode] = useState("list");
+  const [periodeMode, setPeriodeMode] = useState(
+    storedPeriodeSetup && (
+      storedPeriodeSetup.step === "availability"
+      || storedPeriodeSetup.step === "preview"
+      || (Array.isArray(storedPeriodeSetup.dosens) && storedPeriodeSetup.dosens.length > 0)
+      || Object.values(storedPeriodeSetup.periode || {}).some((value) => String(value || "").trim())
+    ) ? "open" : "list"
+  );
+  const [periodeSetup, setPeriodeSetup] = useState({
+    step: storedPeriodeSetup?.step || "periode",
+    dosens: Array.isArray(storedPeriodeSetup?.dosens) ? storedPeriodeSetup.dosens : [],
+    preview: storedPeriodeSetup?.preview || null,
+    previous_period: storedPeriodeSetup?.previous_period || null,
+  });
   const [periodePage, setPeriodePage] = useState(1);
   const [editingPeriode, setEditingPeriode] = useState(null);
   const [periodeEditForm, setPeriodeEditForm] = useState({
@@ -1909,13 +2223,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [ketuaKlasterPage, setKetuaKlasterPage] = useState(1);
   const [ketuaKlasterDraft, setKetuaKlasterDraft] = useState({});
   const [ketuaKlasterError, setKetuaKlasterError] = useState("");
-  const [savingKetuaKlasterId, setSavingKetuaKlasterId] = useState(null);
+  const [savingKetuaKlasterId] = useState(null);
   const [savingPeriode, setSavingPeriode] = useState(false);
   const [rowActionLoadingId, setRowActionLoadingId] = useState(null);
   const [exportingPendaftaran, setExportingPendaftaran] = useState(false);
   const [exportingMahasiswaMaster, setExportingMahasiswaMaster] = useState(false);
-  const [showSubmissionNotificationPanel, setShowSubmissionNotificationPanel] = useState(false);
-  const [submissionNotificationSeenAt, setSubmissionNotificationSeenAt] = useState(0);
 
   const periodeMasterSource = useMemo(
     () => (periodeOverview?.master_penanggung_jawab && typeof periodeOverview.master_penanggung_jawab === "object"
@@ -1929,7 +2241,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const pendaftaranFilterPopupRef = useRef(null);
   const mahasiswaMasterFilterTriggerRef = useRef(null);
   const mahasiswaMasterFilterPopupRef = useRef(null);
-  const submissionNotificationRef = useRef(null);
   const activeTabHeader = tabHeaders[activeTab] || tabHeaders.dashboard;
   const isSubmissionReviewTabActive = activeTab === "submissions" || activeTab === "ketua-cluster-review";
   const activePengampuReviewConfig = DOSEN_PENGAMPU_REVIEW_CONFIG_BY_TAB[activeTab] || null;
@@ -1948,11 +2259,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     () => navSections.flatMap((section) => section.items.map((item) => item.id)),
     [navSections]
   );
-  const submissionNotificationStorageKey = useMemo(() => {
-    const baseId = session?.user?.id || session?.user?.username || "dosen";
-    const role = isSekretaris ? "sekretaris_prodi" : "dosen";
-    return `simps_notif_submission_seen_at_${role}_${baseId}`;
-  }, [isSekretaris, session?.user?.id, session?.user?.username]);
   const penanggungJawabLock = periodeOverview?.penanggung_jawab_lock || null;
   const isPeriodeMasterConfigured = Boolean(periodeMasterSource?.id);
   const isPeriodeMasterLocked = Boolean(penanggungJawabLock?.locked);
@@ -1993,29 +2299,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   }, [activeTab]);
 
   useEffect(() => {
+    if (typeof window === "undefined" || periodeMode !== "open" || periodeSetup.step === "opened") return;
+    window.localStorage.setItem(PERIODE_SETUP_STORAGE_KEY, JSON.stringify({
+      step: periodeSetup.step,
+      periode: periodeForm,
+      penanggung_jawab: periodeMasterForm,
+      dosens: periodeSetup.dosens,
+      preview: periodeSetup.preview,
+      previous_period: periodeSetup.previous_period,
+    }));
+  }, [periodeMode, periodeSetup, periodeForm, periodeMasterForm]);
+
+  useEffect(() => {
     if (!availableTabIds.includes(activeTab)) {
       setActiveTab("dashboard");
     }
   }, [activeTab, availableTabIds]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = window.localStorage.getItem(submissionNotificationStorageKey);
-    const parsed = Number(raw || 0);
-    setSubmissionNotificationSeenAt(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
-  }, [submissionNotificationStorageKey]);
-
-  useEffect(() => {
-    if (!showSubmissionNotificationPanel) return undefined;
-    const handleOutsideClick = (event) => {
-      if (submissionNotificationRef.current?.contains(event.target)) return;
-      setShowSubmissionNotificationPanel(false);
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-    };
-  }, [showSubmissionNotificationPanel]);
 
   useEffect(() => {
     if (!showMahasiswaMasterFilterPanel) return undefined;
@@ -2638,7 +2937,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setKetuaKlasterPeriodeId("");
     }
 
-    setError(issues.join(" "));
+    const visibleIssues = [...new Set(issues.filter((message) => {
+      const normalized = String(message || "").toLowerCase();
+      return !(
+        normalized.includes("tidak diizinkan memproses bimbingan lama")
+        || normalized.includes("tindak lanjut harus diselesaikan oleh sekprodi")
+      );
+    }))];
+    setError(visibleIssues.join(" "));
     setLoading(false);
   }, [fetchWithAuth, isSekretaris, mitraMagangStatusFilter]);
 
@@ -2878,6 +3184,46 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     );
   }, [monitoringMahasiswa.rows, monitoringMahasiswaQuery]);
 
+  const monitoringDetailJalur = String(
+    selectedMonitoringMahasiswa?.penjaluran || selectedMonitoringMahasiswa?.jalur || ""
+  )
+    .trim()
+    .toLowerCase();
+  const isMonitoringResearchDetail = monitoringDetailJalur === "penelitian";
+  const monitoringResearchTopicRows = useMemo(() => {
+    if (!isMonitoringResearchDetail || !monitoringSubmissionDetail) return [];
+    const topics = Array.isArray(monitoringSubmissionDetail?.detail_pengajuan?.topik_dipilih)
+      ? monitoringSubmissionDetail.detail_pengajuan.topik_dipilih
+      : [];
+    const approvedTopic = monitoringSubmissionDetail?.hasil_pengajuan?.topik_disetujui;
+    if (!approvedTopic) return topics;
+    const completeTopic = topics.find(
+      (item) =>
+        (approvedTopic.slot && Number(item?.slot) === Number(approvedTopic.slot)) ||
+        (approvedTopic.kode && String(item?.kode || "") === String(approvedTopic.kode))
+    );
+    return [{ ...(completeTopic || {}), ...approvedTopic }];
+  }, [isMonitoringResearchDetail, monitoringSubmissionDetail]);
+
+  const monitoringSubmissionTitle = useMemo(() => {
+    if (!monitoringSubmissionDetail) return "-";
+    if (isMonitoringResearchDetail) {
+      return (
+        monitoringSubmissionDetail?.hasil_pengajuan?.topik_disetujui?.judul ||
+        monitoringSubmissionDetail?.detail_pengajuan?.judul_mandiri ||
+        monitoringResearchTopicRows[0]?.judul ||
+        "-"
+      );
+    }
+    const payload = getMagangPayload(monitoringSubmissionDetail);
+    if (monitoringDetailJalur === "magang") {
+      const company = getMagangCompanyName(monitoringSubmissionDetail);
+      const position = getMagangProposedPositionLabel(monitoringSubmissionDetail);
+      return [company, position !== "-" ? position : null].filter(Boolean).join(" - ") || "-";
+    }
+    return payload.nama_program || payload.nama_bisnis || payload.nama_usaha || payload.ringkasan || "-";
+  }, [isMonitoringResearchDetail, monitoringDetailJalur, monitoringResearchTopicRows, monitoringSubmissionDetail]);
+
   const contextualSubmissions = useMemo(() => {
     if (activeTab === "ketua-cluster-review") {
       return submissions.filter((row) => isKetuaClusterSubmissionReview(row));
@@ -3056,7 +3402,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       if (status) statusSet.add(status);
 
       const dosenId = row?.dosen?.id ?? row?.dosen_id ?? row?.dosenId;
-      const dosenName = String(row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen || "").trim();
+      const dosenName = formatDosenFullName(
+        row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen,
+        row?.dosen?.gelar || row?.dosen_gelar
+      );
       const dosenKey = dosenId ? String(dosenId) : dosenName.toLowerCase();
       if (dosenKey && dosenName) {
         dosenMap.set(dosenKey, dosenName);
@@ -3088,7 +3437,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
 
       const dosenId = row?.dosen?.id ?? row?.dosen_id ?? row?.dosenId;
-      const dosenName = String(row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen || "").trim();
+      const dosenName = formatDosenFullName(
+        row?.dosen?.nama || row?.dosen_nama || row?.nama_dosen,
+        row?.dosen?.gelar || row?.dosen_gelar
+      );
       const rowDosenKey = dosenId ? String(dosenId) : dosenName.toLowerCase();
       if (selectedDosen && rowDosenKey !== selectedDosen) {
         return false;
@@ -3103,7 +3455,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         row.cluster,
         row.status,
         row.dosen?.nama,
+        row.dosen?.gelar,
         row.dosen_nama,
+        row.dosen_gelar,
         row.nama_dosen,
       ]
         .filter(Boolean)
@@ -3413,24 +3767,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     [submissionDetail?.riwayat_persetujuan]
   );
 
-  const submissionNotificationItems = useMemo(() => {
-    return submissions
-      .filter((row) => row?.status === "pending" && !isKetuaClusterSubmissionReview(row))
-      .slice()
-      .sort(
-        (left, right) =>
-          new Date(right?.diajukan_pada || right?.diperbarui_pada || 0).getTime() -
-          new Date(left?.diajukan_pada || left?.diperbarui_pada || 0).getTime()
-      );
-  }, [submissions]);
-  const unreadSubmissionNotificationCount = useMemo(() => {
-    if (submissionNotificationItems.length === 0) return 0;
-    return submissionNotificationItems.filter((item) => {
-      const createdAt = new Date(item?.diajukan_pada || item?.diperbarui_pada || 0).getTime();
-      if (!Number.isFinite(createdAt) || createdAt <= 0) return false;
-      return createdAt > Number(submissionNotificationSeenAt || 0);
-    }).length;
-  }, [submissionNotificationItems, submissionNotificationSeenAt]);
   const filteredFinalResearchRows = useMemo(() => {
     const keyword = finalResearchQuery.trim().toLowerCase();
     if (!keyword) return finalResearchRows;
@@ -3683,12 +4019,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const keyword = finalNonPenelitianDosenQuery.trim().toLowerCase();
     const source = periodeDosenOptions.map((dosen) => ({
       ...dosen,
-      label: `${dosen.nama || "-"} - NIK: ${dosen.nik || "-"}`,
+      label: `${formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - NIK: ${dosen.nik || "-"}`,
     }));
     if (!keyword) return [];
     return source
       .filter((dosen) =>
-        [dosen.nama, dosen.nik, dosen.email, dosen.label]
+        [dosen.nama, dosen.gelar, formatDosenFullName(dosen.nama, dosen.gelar), dosen.nik, dosen.email, dosen.label]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
@@ -3769,11 +4105,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const selectedSet = new Set(masterDosenSelectedDosenIds.map((item) => Number(item)));
     return pagedMasterDosenKuotaIds.every((id) => selectedSet.has(id));
   }, [masterDosenSelectedDosenIds, pagedMasterDosenKuotaIds]);
-  const masterPeriodeMissingLabels = useMemo(() => {
-    return PERIODE_MASTER_ALL_FIELDS
-      .filter((item) => !String(periodeMasterForm?.[item.key] || "").trim())
-      .map((item) => item.label);
-  }, [periodeMasterForm]);
   const periodeMasterSelectedDosenIdsByField = useMemo(() => {
     const map = {};
     for (const item of PERIODE_MASTER_ALL_FIELDS) {
@@ -3817,6 +4148,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         row.kode,
         row.nama,
         row.ketua?.ketua_dosen?.nama,
+        row.ketua?.ketua_dosen?.gelar,
         row.ketua?.ketua_dosen?.nik,
         row.ketua?.ketua_dosen?.kode_dosen,
         ...(Array.isArray(row.kandidat_dosen) ? row.kandidat_dosen.map((item) => item.nama) : []),
@@ -3878,8 +4210,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
             angkatan: mahasiswa.angkatan,
             program_kuliah: mahasiswa.program_kuliah || null,
             status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
-            dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
-            dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+            dosen_pembimbing_akademik: formatDosenFullName(mahasiswa.dosenPembimbingAkademik?.nama, mahasiswa.dosenPembimbingAkademik?.gelar) || "-",
+            dosen_pembimbing_skripsi: formatDosenFullName(mahasiswa.dosenPembimbingSkripsi?.nama, mahasiswa.dosenPembimbingSkripsi?.gelar) || "-",
             semester_mahasiswa: null,
             semester_penjaluran_ke: 0,
             semester_penjaluran_aktif: mahasiswa.semester_penjaluran_aktif || 0,
@@ -3909,8 +4241,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         angkatan: mahasiswa.angkatan,
         program_kuliah: item.program_kuliah || mahasiswa.program_kuliah || null,
         status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
-        dosen_pembimbing_akademik: mahasiswa.dosenPembimbingAkademik?.nama || "-",
-        dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi?.nama || "-",
+        dosen_pembimbing_akademik: formatDosenFullName(mahasiswa.dosenPembimbingAkademik?.nama, mahasiswa.dosenPembimbingAkademik?.gelar) || "-",
+        dosen_pembimbing_skripsi: formatDosenFullName(mahasiswa.dosenPembimbingSkripsi?.nama, mahasiswa.dosenPembimbingSkripsi?.gelar) || "-",
         semester_mahasiswa: item.semester_mahasiswa || null,
         semester_penjaluran_ke: item.semester_penjaluran_ke || 0,
         semester_penjaluran_aktif:
@@ -3925,9 +4257,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         nama_penjaluran: item.nama_penjaluran || null,
         penjaluran_sebelumnya: item.penjaluran_sebelumnya || null,
         penjaluran_baru: item.penjaluran_baru || null,
-        pembimbing_ta: item.pembimbing_ta?.nama || null,
-        pembimbing_ta_sebelumnya: item.dosen_pembimbing_ta_sebelumnya?.nama || null,
-        pembimbing_ta_baru: item.dosen_pembimbing_ta_baru?.nama || null,
+        pembimbing_ta: formatDosenFullName(item.pembimbing_ta?.nama, item.pembimbing_ta?.gelar) || null,
+        pembimbing_ta_sebelumnya: formatDosenFullName(item.dosen_pembimbing_ta_sebelumnya?.nama, item.dosen_pembimbing_ta_sebelumnya?.gelar) || null,
+        pembimbing_ta_baru: formatDosenFullName(item.dosen_pembimbing_ta_baru?.nama, item.dosen_pembimbing_ta_baru?.gelar) || null,
         pendaftaran_status: item.status || null,
         tanggal_penjaluran: item.createdAt || null,
         updatedAt: item.updatedAt || mahasiswa.updatedAt,
@@ -4311,6 +4643,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   }, [isSubmissionReviewTabActive]);
 
   useEffect(() => {
+    if (activeTab !== "monitoring-mahasiswa") {
+      setMonitoringMahasiswaMode("list");
+      setSelectedMonitoringMahasiswa(null);
+      setMonitoringSubmissionDetail(null);
+      setMonitoringDetailError("");
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     if (activeTab !== "magang-review") {
       handleBackToMagangReviewList();
     }
@@ -4369,24 +4710,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
   }, [submissionDetail?.can_review, submissionReviewTopikOptions, submissionTopikFocusSlot]);
 
-  const markSubmissionNotificationsAsRead = useCallback(() => {
-    const nowTs = Date.now();
-    setSubmissionNotificationSeenAt(nowTs);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(submissionNotificationStorageKey, String(nowTs));
-    }
-  }, [submissionNotificationStorageKey]);
-
-  const handleToggleSubmissionNotificationPanel = () => {
-    setShowSubmissionNotificationPanel((prev) => {
-      const next = !prev;
-      if (next) {
-        markSubmissionNotificationsAsRead();
-      }
-      return next;
-    });
-  };
-
   const handleOpenSubmissionReview = async (id, defaultDecision = "approve") => {
     setSelectedSubmissionId(id);
     setSubmissionDecision(defaultDecision === "reject" ? "reject" : "approve");
@@ -4406,6 +4729,40 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     } finally {
       setLoadingSubmissionDetail(false);
     }
+  };
+
+  const handleOpenMonitoringDetail = async (row) => {
+    if (!row?.mahasiswa?.id) return;
+
+    setSelectedMonitoringMahasiswa(row);
+    setMonitoringMahasiswaMode("detail");
+    setMonitoringSubmissionDetail(null);
+    setMonitoringDetailError("");
+    setLoadingMonitoringDetail(true);
+
+    try {
+      const normalizedJalur = String(row.penjaluran || row.jalur || "").trim().toLowerCase();
+      if (normalizedJalur === "penelitian") {
+        if (!row.pengajuan_id) throw new Error("Detail pengajuan penelitian belum tersedia.");
+        const detail = await fetchWithAuth(`/api/dosen/submissions/${row.pengajuan_id}`);
+        setMonitoringSubmissionDetail(detail || null);
+      } else {
+        setMonitoringSubmissionDetail(buildMonitoringNonResearchDetail(row));
+      }
+    } catch (detailError) {
+      if (detailError?.message !== "__SESSION_EXPIRED__") {
+        setMonitoringDetailError(detailError.message || "Gagal memuat detail mahasiswa bimbingan.");
+      }
+    } finally {
+      setLoadingMonitoringDetail(false);
+    }
+  };
+
+  const handleBackToMonitoringList = () => {
+    setMonitoringMahasiswaMode("list");
+    setSelectedMonitoringMahasiswa(null);
+    setMonitoringSubmissionDetail(null);
+    setMonitoringDetailError("");
   };
 
   const handleBackToSubmissionList = () => {
@@ -5848,63 +6205,50 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         is_readonly: payload?.is_readonly === true,
       });
       setSelectedAvailabilityDosenIds([]);
+      setDirtyAvailabilityDosenIds([]);
+      setDosenPeriodAvailabilityPage(1);
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal memuat ketersediaan dosen.");
     }
   };
 
-  const updateDosenAvailabilityDraft = (dosenId, field, value) => {
+  const updateDosenAvailabilityDraft = (dosenId, changes) => {
     setDosenPeriodAvailability((prev) => ({
       ...prev,
-      dosens: prev.dosens.map((row) => Number(row.id) === Number(dosenId) ? { ...row, [field]: value } : row),
+      dosens: prev.dosens.map((row) => Number(row.id) === Number(dosenId) ? { ...row, ...changes } : row),
     }));
+    setDirtyAvailabilityDosenIds((previous) => previous.some((id) => Number(id) === Number(dosenId))
+      ? previous
+      : [...previous, Number(dosenId)]);
   };
 
-  const handleSaveDosenAvailability = async (row) => {
+  const handleSaveDosenAvailabilityChanges = async () => {
     const periodeId = Number(dosenPeriodAvailability.periode?.id);
-    if (!periodeId || !row?.id) return;
-    setSavingAvailabilityDosenId(row.id);
+    const dirtyIds = new Set(dirtyAvailabilityDosenIds.map(Number));
+    const rows = dosenPeriodAvailability.dosens.filter(
+      (row) => dirtyIds.has(Number(row.id)) && row.can_edit === true && !dosenPeriodAvailability.is_readonly
+    );
+    if (!periodeId || rows.length === 0) return;
+    setSavingBulkAvailability(true);
     try {
       await fetchWithAuth("/api/sekretaris/master-dosen/ketersediaan", {
         method: "PUT",
         body: JSON.stringify({
           periode_penjaluran_id: periodeId,
-          rows: [{
+          rows: rows.map((row) => ({
             dosen_id: row.id,
-            tersedia_membimbing: row.tersedia_membimbing,
-            tersedia_menguji: row.tersedia_menguji,
-            tersedia_ketua_cluster: row.tersedia_ketua_cluster,
-            tersedia_pengampu: row.tersedia_pengampu,
-            tersedia_pengawas_jalur: row.tersedia_pengawas_jalur,
-            tersedia_sidang: row.tersedia_sidang,
-            kuota_bimbingan_periode: Number(row.kuota_bimbingan_periode),
-            alasan_tidak_tersedia: row.alasan_tidak_tersedia,
-            review_note: row.review_note,
-          }],
+            tersedia_membimbing: Boolean(row.tersedia_membimbing),
+          })),
         }),
       });
       await loadDosenPeriodAvailability(periodeId);
-      showSuccessToast(`Ketersediaan ${row.nama} berhasil disimpan.`);
+      showSuccessToast(`Perubahan ketersediaan ${rows.length} dosen berhasil disimpan.`);
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal menyimpan ketersediaan dosen.");
     } finally {
-      setSavingAvailabilityDosenId(null);
+      setSavingBulkAvailability(false);
     }
   };
-
-  const availabilityPayloadFromRow = (row, overrides = {}) => ({
-    dosen_id: row.id,
-    tersedia_membimbing: Boolean(row.tersedia_membimbing),
-    tersedia_menguji: Boolean(row.tersedia_menguji),
-    tersedia_ketua_cluster: Boolean(row.tersedia_ketua_cluster),
-    tersedia_pengampu: Boolean(row.tersedia_pengampu),
-    tersedia_pengawas_jalur: Boolean(row.tersedia_pengawas_jalur),
-    tersedia_sidang: Boolean(row.tersedia_sidang),
-    kuota_bimbingan_periode: Number(row.kuota_bimbingan_periode),
-    alasan_tidak_tersedia: row.alasan_tidak_tersedia,
-    review_note: row.review_note,
-    ...overrides,
-  });
 
   const getSelectedAvailabilityRows = () => {
     const selectedIds = new Set(selectedAvailabilityDosenIds.map(Number));
@@ -5920,85 +6264,49 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       : [...previous, parsedId]);
   };
 
-  const selectAllNeedsReviewAvailability = () => {
+  const selectAllEditableAvailability = () => {
     const ids = dosenPeriodAvailability.dosens
-      .filter((row) => row.configuration_status === "needs_review" && row.can_edit === true)
+      .filter((row) => row.can_edit === true)
       .map((row) => Number(row.id));
     setSelectedAvailabilityDosenIds(ids);
-    if (ids.length === 0) showErrorToast("Tidak ada dosen berstatus Perlu Ditinjau yang dapat dipilih.");
+    if (ids.length === 0) showErrorToast("Tidak ada dosen aktif yang dapat dipilih.");
   };
 
-  const applyBulkAvailabilityQuota = () => {
-    const quota = Number(bulkAvailabilityQuota);
-    const selectedRows = getSelectedAvailabilityRows();
-    if (!Number.isInteger(quota) || quota < 0 || quota > 99) {
-      showErrorToast("Kuota massal harus berupa bilangan bulat 0 sampai 99.");
-      return;
-    }
-    if (selectedRows.length === 0) {
-      showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
-      return;
-    }
+  const applyAvailabilityDraftToSelected = (selectedRows, tersediaMembimbing) => {
     const selectedIds = new Set(selectedRows.map((row) => Number(row.id)));
     setDosenPeriodAvailability((previous) => ({
       ...previous,
       dosens: previous.dosens.map((row) => selectedIds.has(Number(row.id))
-        ? { ...row, kuota_bimbingan_periode: quota, tersedia_membimbing: quota > 0 && row.tersedia_membimbing }
+        ? {
+            ...row,
+            tersedia_membimbing: tersediaMembimbing,
+            configuration_status: "ready",
+          }
         : row),
     }));
-    showSuccessToast(`Kuota ${selectedRows.length} dosen diperbarui. Klik Konfirmasi Dosen Terpilih untuk menyimpan.`);
+    setDirtyAvailabilityDosenIds((previous) => [
+      ...new Set([...previous.map(Number), ...selectedIds]),
+    ]);
+    setSelectedAvailabilityDosenIds([]);
   };
 
-  const saveBulkAvailabilityRows = async (rows, successMessage) => {
-    const periodeId = Number(dosenPeriodAvailability.periode?.id);
-    if (!periodeId || rows.length === 0) return;
-    setSavingBulkAvailability(true);
-    try {
-      await fetchWithAuth("/api/sekretaris/master-dosen/ketersediaan", {
-        method: "PUT",
-        body: JSON.stringify({ periode_penjaluran_id: periodeId, rows }),
-      });
-      await loadDosenPeriodAvailability(periodeId);
-      showSuccessToast(successMessage);
-    } catch (availabilityError) {
-      showErrorToast(availabilityError.message || "Gagal menyimpan ketersediaan dosen terpilih.");
-    } finally {
-      setSavingBulkAvailability(false);
-    }
-  };
-
-  const handleConfirmSelectedAvailability = async () => {
+  const handleMarkSelectedReceiving = async () => {
     const selectedRows = getSelectedAvailabilityRows();
     if (selectedRows.length === 0) {
       showErrorToast("Pilih minimal satu dosen terlebih dahulu.");
       return;
     }
-    const availabilityFields = [
-      "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
-      "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
-    ];
-    const invalidRows = selectedRows.filter((row) => {
-      const hasUnavailableRole = availabilityFields.some((field) => row[field] !== true);
-      return hasUnavailableRole && String(row.alasan_tidak_tersedia || "").trim().length < 3;
-    });
-    if (invalidRows.length > 0) {
-      showErrorToast(`Isi alasan ketidaktersediaan pada: ${invalidRows.slice(0, 3).map((row) => row.nama).join(", ")}${invalidRows.length > 3 ? ", dan lainnya" : ""}.`);
-      return;
-    }
     const confirmation = await Swal.fire({
-      title: `Konfirmasi ${selectedRows.length} dosen?`,
-      text: "Nilai checkbox, kuota, dan alasan yang terlihat akan disimpan sebagai konfigurasi Siap.",
+      title: `Tandai ${selectedRows.length} dosen menerima bimbingan baru?`,
+      text: "Perubahan akan diterapkan ke grid dan disimpan ketika tombol Simpan Perubahan ditekan.",
       icon: "question",
       showCancelButton: true,
-      confirmButtonText: "Ya, konfirmasi",
+      confirmButtonText: "Tandai Menerima",
       cancelButtonText: "Batal",
       confirmButtonColor: "#117246",
     });
     if (!confirmation.isConfirmed) return;
-    await saveBulkAvailabilityRows(
-      selectedRows.map((row) => availabilityPayloadFromRow(row, { review_note: "Dikonfirmasi secara massal oleh Sekretaris Prodi" })),
-      `${selectedRows.length} dosen berhasil dikonfirmasi.`
-    );
+    applyAvailabilityDraftToSelected(selectedRows, true);
   };
 
   const handleMarkSelectedNotInvolved = async () => {
@@ -6008,107 +6316,142 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       return;
     }
     const result = await Swal.fire({
-      title: `Tandai ${selectedRows.length} dosen tidak dilibatkan?`,
-      text: "Seluruh peran periode akan dimatikan dan kuota bimbingan menjadi 0.",
-      input: "textarea",
-      inputLabel: "Alasan wajib",
-      inputPlaceholder: "Contoh: Tidak dilibatkan pada periode ini",
+      title: `Tandai ${selectedRows.length} dosen tidak menerima bimbingan baru?`,
+      text: "Perubahan akan diterapkan ke grid dan disimpan ketika tombol Simpan Perubahan ditekan.",
       showCancelButton: true,
-      confirmButtonText: "Simpan",
+      confirmButtonText: "Terapkan",
       cancelButtonText: "Batal",
       confirmButtonColor: "#b45309",
-      inputValidator: (value) => String(value || "").trim().length < 3 ? "Alasan minimal 3 karakter." : undefined,
     });
     if (!result.isConfirmed) return;
-    const reason = String(result.value || "").trim();
-    const disabledValues = {
-      tersedia_membimbing: false,
-      tersedia_menguji: false,
-      tersedia_ketua_cluster: false,
-      tersedia_pengampu: false,
-      tersedia_pengawas_jalur: false,
-      tersedia_sidang: false,
-      kuota_bimbingan_periode: 0,
-      alasan_tidak_tersedia: reason,
-      review_note: "Ditandai tidak dilibatkan secara massal oleh Sekretaris Prodi",
-    };
-    await saveBulkAvailabilityRows(
-      selectedRows.map((row) => availabilityPayloadFromRow(row, disabledValues)),
-      `${selectedRows.length} dosen ditandai tidak dilibatkan pada periode ini.`
-    );
+    applyAvailabilityDraftToSelected(selectedRows, false);
   };
 
-  const handleResolveDosenStatusFollowUp = async (row) => {
-    let latestContext;
-    Swal.fire({
-      title: "Menganalisis dampak terbaru...",
-      allowOutsideClick: false,
-      allowEscapeKey: false,
-      didOpen: () => Swal.showLoading(),
-    });
+  const loadDosenStatusFollowUpPage = async (row, options = {}) => {
+    if (!row?.id) return null;
+    setLoadingDosenStatusFollowUpDetail(true);
+    setDosenStatusFollowUpFormErrors({});
     try {
-      latestContext = await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${row.id}/current-impact`);
-      Swal.close();
-    } catch (impactError) {
-      Swal.close();
-      showErrorToast(impactError.message || "Gagal memuat dampak terbaru.");
+      const context = await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${row.id}/current-impact`);
+      const today = getJakartaDateInputValue();
+      setDosenStatusFollowUpDetailRow(row);
+      setDosenStatusFollowUpDetail(context);
+      setDosenStatusFollowUpForms((previous) => {
+        const next = options.resetForms ? {} : { ...previous };
+        (context?.affected_mahasiswa || []).forEach((mahasiswa) => {
+          next[mahasiswa.id] = {
+            primary_id: "",
+            secondary_id: "",
+            tanggal_mulai: today,
+            catatan: "",
+            ...(next[mahasiswa.id] || {}),
+          };
+        });
+        return next;
+      });
+      if (options.resetForms) {
+        setDosenStatusFollowUpResolutionForm({ note: "" });
+      }
+      return context;
+    } catch (error) {
+      showErrorToast(error.message || "Gagal memuat detail tindak lanjut.");
+      if (options.resetForms) setDosenStatusFollowUpDetailRow(null);
+      return null;
+    } finally {
+      setLoadingDosenStatusFollowUpDetail(false);
+    }
+  };
+
+  const handleOpenDosenStatusFollowUpPage = async (row) => {
+    setDosenStatusFollowUpDetailRow(row);
+    setDosenStatusFollowUpDetail(null);
+    await loadDosenStatusFollowUpPage(row, { resetForms: true });
+  };
+
+  const handleBackFromDosenStatusFollowUpPage = () => {
+    setDosenStatusFollowUpDetailRow(null);
+    setDosenStatusFollowUpDetail(null);
+    setDosenStatusFollowUpForms({});
+    setDosenStatusFollowUpResolutionForm({ note: "" });
+    setDosenStatusFollowUpFormErrors({});
+  };
+
+  const updateDosenStatusFollowUpStudentForm = (mahasiswaId, field, value) => {
+    setDosenStatusFollowUpForms((previous) => ({
+      ...previous,
+      [mahasiswaId]: { ...(previous[mahasiswaId] || {}), [field]: value },
+    }));
+    setDosenStatusFollowUpFormErrors((previous) => {
+      const next = { ...previous };
+      delete next[`${mahasiswaId}.${field}`];
+      delete next.general;
+      return next;
+    });
+  };
+
+  const handleActivateInlineReplacement = async (mahasiswa) => {
+    const form = dosenStatusFollowUpForms[mahasiswa.id] || {};
+    const primaryId = Number(form.primary_id || 0);
+    const secondaryId = Number(form.secondary_id || 0);
+    const errors = {};
+    if (!primaryId) errors[`${mahasiswa.id}.primary_id`] = "Pembimbing 1 wajib dipilih.";
+    if (secondaryId && secondaryId === primaryId) errors[`${mahasiswa.id}.secondary_id`] = "Pembimbing 1 dan 2 tidak boleh sama.";
+    if (!form.tanggal_mulai) errors[`${mahasiswa.id}.tanggal_mulai`] = "Tanggal efektif wajib diisi.";
+    if (form.tanggal_mulai && form.tanggal_mulai > getJakartaDateInputValue()) errors[`${mahasiswa.id}.tanggal_mulai`] = "Tanggal efektif tidak boleh menggunakan tanggal mendatang.";
+    if (Object.keys(errors).length > 0) {
+      setDosenStatusFollowUpFormErrors((previous) => ({ ...previous, ...errors }));
       return;
     }
-
-    const impact = latestContext?.current_impact || {};
-    const categoryLabels = {
-      mahasiswa_bimbingan: "Keputusan mahasiswa bimbingan aktif",
-      review_pending: "Keputusan review yang masih tertunda",
-      penugasan_periode: "Keputusan penugasan periode/master",
-      jadwal_sidang: "Keputusan jadwal sidang",
-      reaktivasi: "Checklist reaktivasi topik, kapasitas, ketersediaan, dan peran",
-    };
-    const categories = (Array.isArray(latestContext?.required_categories) ? latestContext.required_categories : [])
-      .filter((key) => categoryLabels[key])
-      .map((key) => [key, categoryLabels[key]]);
-    const latestImpactSummary = `${Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa aktif · ${Number(impact.review_pending || 0)} review · ${Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang`;
-    const decisionFields = categories.map(([key, label]) => `
-      <label style="display:block;text-align:left;font-size:12px;font-weight:700;margin-top:10px">${label}</label>
-      <textarea id="follow-up-${key}" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Tuliskan keputusan konkret (minimal 10 karakter)"></textarea>
-    `).join("");
-    const result = await Swal.fire({
-      title: `Selesaikan tindak lanjut ${row?.dosen?.nama || "dosen"}`,
-      html: `
-        <p style="text-align:left;font-size:12px;margin:0 0 10px;color:#596887"><strong>Dampak terbaru:</strong> ${latestImpactSummary}</p>
-        <label style="display:block;text-align:left;font-size:12px;font-weight:700">Catatan penyelesaian</label>
-        <textarea id="follow-up-note" class="swal2-textarea" style="width:100%;margin:4px 0 0;min-height:64px" placeholder="Ringkasan keputusan Sekprodi"></textarea>
-        ${decisionFields}
-        ${categories.length > 0 ? '<label style="display:flex;gap:8px;text-align:left;margin-top:12px;font-size:12px"><input id="follow-up-exception" type="checkbox" /> Dampak yang masih tercatat telah memiliki keputusan dan ditutup dengan pengecualian.</label>' : ""}
-      `,
-      showCancelButton: true,
-      confirmButtonText: "Tandai selesai",
-      cancelButtonText: "Batal",
-      preConfirm: () => {
-        const popup = Swal.getPopup();
-        const note = String(popup?.querySelector("#follow-up-note")?.value || "").trim();
-        const decisions = Object.fromEntries(categories.map(([key]) => [key, String(popup?.querySelector(`#follow-up-${key}`)?.value || "").trim()]));
-        const missing = categories.filter(([key]) => decisions[key].length < 10);
-        const exception = Boolean(popup?.querySelector("#follow-up-exception")?.checked);
-        if (note.length < 5) return Swal.showValidationMessage("Catatan penyelesaian minimal 5 karakter.");
-        if (missing.length > 0) return Swal.showValidationMessage("Setiap kategori dampak wajib memiliki keputusan minimal 10 karakter.");
-        if (categories.length > 0 && !exception) return Swal.showValidationMessage("Konfirmasi penyelesaian dengan pengecualian wajib dicentang.");
-        return { note, decisions, exception };
-      },
-    });
-    if (!result.isConfirmed) return;
+    const activePeriod = dosenStatusFollowUpDetail?.replacement_context?.active_period;
+    if (!activePeriod?.id) {
+      showErrorToast("Belum ada periode aktif untuk memvalidasi pembimbing pengganti.");
+      return;
+    }
+    setSavingDosenStatusFollowUpAction(`activate-${mahasiswa.id}`);
     try {
-      await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${row.id}/resolve`, {
-        method: "PUT",
+      const result = await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${dosenStatusFollowUpDetailRow.id}/mahasiswa/${mahasiswa.id}/replacement`, {
+        method: "POST",
         body: JSON.stringify({
-          catatan_penyelesaian: result.value.note,
-          resolution_decisions: result.value.decisions,
-          resolve_with_exception: result.value.exception,
+          dosen_pembimbing_ids: [primaryId, secondaryId].filter(Boolean),
+          periode_penjaluran_id: activePeriod.id,
+          tanggal_mulai: form.tanggal_mulai,
+          catatan: String(form.catatan || "").trim() || null,
         }),
       });
-      setDosenStatusFollowUps((prev) => prev.filter((item) => item.id !== row.id));
-      showSuccessToast("Tindak lanjut status dosen ditandai selesai.");
-    } catch (followUpError) {
-      showErrorToast(followUpError.message || "Gagal menyelesaikan tindak lanjut.");
+      if (result?.follow_up_resolved) {
+        setDosenStatusFollowUps((previous) => previous.filter(
+          (item) => item.id !== dosenStatusFollowUpDetailRow.id
+        ));
+        handleBackFromDosenStatusFollowUpPage();
+        showSuccessToast("Pembimbing pengganti aktif dan tindak lanjut telah selesai.");
+        return;
+      }
+      await loadDosenStatusFollowUpPage(dosenStatusFollowUpDetailRow);
+      showSuccessToast("Pembimbing pengganti berhasil diaktifkan.");
+    } catch (error) {
+      showErrorToast(error.message || "Gagal mengaktifkan pembimbing pengganti.");
+    } finally {
+      setSavingDosenStatusFollowUpAction("");
+    }
+  };
+
+  const handleResolveInlineDosenStatusFollowUp = async () => {
+    const note = String(dosenStatusFollowUpResolutionForm.note || "").trim();
+    setSavingDosenStatusFollowUpAction("resolve");
+    try {
+      await fetchWithAuth(`/api/sekretaris/master-dosen/tindak-lanjut-status/${dosenStatusFollowUpDetailRow.id}/resolve`, {
+        method: "PUT",
+        body: JSON.stringify({
+          catatan_tindak_lanjut: note || null,
+        }),
+      });
+      setDosenStatusFollowUps((previous) => previous.filter((item) => item.id !== dosenStatusFollowUpDetailRow.id));
+      handleBackFromDosenStatusFollowUpPage();
+      showSuccessToast("Tindak lanjut status dosen berhasil diselesaikan.");
+    } catch (error) {
+      showErrorToast(error.message || "Gagal menyelesaikan tindak lanjut.");
+    } finally {
+      setSavingDosenStatusFollowUpAction("");
     }
   };
 
@@ -6195,6 +6538,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const masterErrors = {};
     const tahunAkademik = periodeForm.tahun_akademik.trim();
 
+    if (!String(periodeForm.label_periode || "").trim()) {
+      fieldErrors.label_periode = "Label periode wajib diisi.";
+    }
+
     PERIODE_MASTER_ALL_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
         masterErrors[item.key] = `${item.label} belum diatur di master data.`;
@@ -6243,84 +6590,150 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
     setPeriodeFormErrors({});
 
-    const ketuaSummary = PERIODE_MASTER_KETUA_FIELDS
-      .map((item) => {
-        const dosen = periodeDosenMap.get(Number(periodeMasterForm[item.key]));
-        return `${item.label}: <b>${dosen?.nama || "-"}</b>`;
-      })
-      .join("<br>");
-
-    const konfirmasi = await Swal.fire({
-      title: "Buat draft periode ini?",
-      html: `
-        Draft periode yang akan dibuat:<br><b>${formatLabel(periodeForm.semester)} ${tahunAkademik}</b><br><br>
-        ${ketuaSummary}<br><br>
-        Pengawas Magang: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_magang_dosen_id))?.nama || "-"}</b><br>
-        Pengampu Pengabdian Masyarakat: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_pengabdian_dosen_id))?.nama || "-"}</b><br>
-        Pengampu Perintisan Bisnis: <b>${periodeDosenMap.get(Number(periodeMasterForm.pengawas_perintisan_bisnis_dosen_id))?.nama || "-"}</b>
-      `,
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonText: "Ya, buat draft",
-      cancelButtonText: "Batal",
-      confirmButtonColor: "#117246",
-    });
-    if (!konfirmasi.isConfirmed) return;
-
     setSavingPeriode(true);
     try {
-      const createdDraft = await fetchWithAuth("/api/sekretaris/periode/open", {
-        method: "POST",
-        body: JSON.stringify({
-          ketua_itsc_dosen_id: Number(periodeMasterForm.ketua_itsc_dosen_id),
-          ketua_sirkel_dosen_id: Number(periodeMasterForm.ketua_sirkel_dosen_id),
-          ketua_siber_dosen_id: Number(periodeMasterForm.ketua_siber_dosen_id),
-          ketua_mvk_dosen_id: Number(periodeMasterForm.ketua_mvk_dosen_id),
-          pengawas_magang_dosen_id: Number(periodeMasterForm.pengawas_magang_dosen_id),
-          pengawas_pengabdian_dosen_id: Number(periodeMasterForm.pengawas_pengabdian_dosen_id),
-          pengawas_perintisan_bisnis_dosen_id: Number(
-            periodeMasterForm.pengawas_perintisan_bisnis_dosen_id
-          ),
-          tahun_akademik: tahunAkademik,
-          semester: periodeForm.semester,
-          tanggal_mulai: periodeForm.tanggal_mulai || null,
-          tanggal_selesai: periodeForm.tanggal_selesai || null,
-        }),
+      const template = await fetchWithAuth("/api/sekretaris/periode/setup-template");
+      setPeriodeSetup({
+        step: "availability",
+        dosens: Array.isArray(template?.dosens) ? template.dosens : [],
+        preview: null,
+        previous_period: template?.previous_period || null,
       });
-
-      const copySummary = createdDraft?.availability_copy;
-      showSuccessToast(copySummary?.previous_period
-        ? `Draft berhasil dibuat. ${copySummary.copied || 0} konfigurasi disalin dari ${copySummary.previous_period}; ${copySummary.needs_review || 0} perlu ditinjau.`
-        : "Draft periode berhasil dibuat. Semua dosen aktif perlu ditinjau sebelum aktivasi.");
-      setPeriodeForm({ ...PERIODE_FORM_INITIAL });
-      setPeriodeFormErrors({});
-      await loadAllData();
-      setPeriodeMode("list");
+      setSelectedAvailabilityDosenIds([]);
     } catch (openError) {
       if (openError?.message !== "__SESSION_EXPIRED__") {
-        if (openError?.detail && typeof openError.detail === "object") {
-          const nextPeriodeErrors = {};
-          const nextMasterErrors = {};
-          const masterKeys = new Set([
-            ...PERIODE_MASTER_KETUA_FIELDS.map((item) => item.key),
-            ...PERIODE_MASTER_JALUR_FIELDS.map((item) => item.key),
-          ]);
-          Object.entries(openError.detail).forEach(([key, message]) => {
-            if (masterKeys.has(key)) {
-              nextMasterErrors[key] = message;
-            } else {
-              nextPeriodeErrors[key] = message;
-            }
-          });
-          setPeriodeFormErrors(nextPeriodeErrors);
-          setPeriodeMasterErrors(nextMasterErrors);
-          return;
-        }
-        showErrorToast(openError.message || "Gagal membuat draft periode.");
+        showErrorToast(openError.message || "Gagal memuat template ketersediaan.");
       }
     } finally {
       setSavingPeriode(false);
     }
+  };
+
+  const handleStartPeriodeSetup = async () => {
+    setSavingPeriode(true);
+    try {
+      const template = await fetchWithAuth("/api/sekretaris/periode/setup-template");
+      const suggested = template?.suggested_period || {};
+      setPeriodeForm((previous) => ({
+        ...previous,
+        tahun_akademik: previous.tahun_akademik || suggested.tahun_akademik || "",
+        semester: previous.semester || suggested.semester || "ganjil",
+        label_periode: previous.label_periode || suggested.label_periode || "",
+      }));
+      if (template?.penanggung_jawab) {
+        setPeriodeMasterForm((previous) => ({ ...previous, ...template.penanggung_jawab }));
+      }
+      setPeriodeSetup((previous) => ({
+        ...previous,
+        step: "periode",
+        previous_period: template?.previous_period || null,
+      }));
+      setPeriodeMode("open");
+      setEditingPeriode(null);
+      setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
+      setPeriodeFormErrors({});
+      setPeriodeMasterErrors({});
+    } catch (error) {
+      showErrorToast(error.message || "Gagal menyiapkan periode berikutnya.");
+    } finally {
+      setSavingPeriode(false);
+    }
+  };
+
+  const buildPeriodeSetupPayload = () => ({
+    periode: {
+      ...periodeForm,
+      label_periode: periodeForm.label_periode
+        || `${formatLabel(periodeForm.semester)} ${periodeForm.tahun_akademik}`,
+    },
+    penanggung_jawab: {
+      ...periodeMasterForm,
+      pengampu_pengabdian_dosen_id: Number(periodeMasterForm.pengawas_pengabdian_dosen_id),
+      pengampu_perintisan_bisnis_dosen_id: Number(periodeMasterForm.pengawas_perintisan_bisnis_dosen_id),
+    },
+    ketersediaan_dosen: periodeSetup.dosens.map((row) => ({
+      dosen_id: Number(row.id),
+      tersedia_membimbing: Boolean(row.tersedia_membimbing),
+      configuration_status: row.configuration_status === "copied" ? "ready" : row.configuration_status,
+    })),
+  });
+
+  const updatePeriodeSetupDosen = (dosenId, changes) => {
+    setPeriodeSetup((previous) => ({
+      ...previous,
+      preview: null,
+      dosens: previous.dosens.map((row) => Number(row.id) === Number(dosenId)
+        ? { ...row, ...changes }
+        : row),
+    }));
+  };
+
+  const handlePreviewPeriodeSetup = async () => {
+    const needsReview = periodeSetup.dosens.filter((row) => row.configuration_status === "needs_review");
+    if (needsReview.length > 0) {
+      showErrorToast(`${needsReview.length} dosen masih perlu ditinjau.`);
+      return;
+    }
+    setSavingPeriode(true);
+    try {
+      const preview = await fetchWithAuth("/api/sekretaris/periode/preview", {
+        method: "POST",
+        body: JSON.stringify(buildPeriodeSetupPayload()),
+      });
+      setPeriodeSetup((previous) => ({ ...previous, step: "preview", preview }));
+    } catch (previewError) {
+      showErrorToast(previewError.message || "Preview pembukaan periode gagal dibuat.");
+    } finally {
+      setSavingPeriode(false);
+    }
+  };
+
+  const handleOpenPeriodeFromPreview = async () => {
+    const confirmation = await Swal.fire({
+      title: "Buka pendaftaran sekarang?",
+      text: "Periode akan langsung aktif dan dapat digunakan mahasiswa.",
+      icon: "question",
+      showCancelButton: true,
+      confirmButtonText: "Buka Pendaftaran",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#117246",
+    });
+    if (!confirmation.isConfirmed) return;
+    setSavingPeriode(true);
+    try {
+      await fetchWithAuth("/api/sekretaris/periode/open", {
+        method: "POST",
+        body: JSON.stringify(buildPeriodeSetupPayload()),
+      });
+      window.localStorage.removeItem(PERIODE_SETUP_STORAGE_KEY);
+      setPeriodeSetup((previous) => ({ ...previous, step: "opened" }));
+      showSuccessToast("Pendaftaran periode berhasil dibuka.");
+      await loadAllData();
+    } catch (openError) {
+      showErrorToast(openError.message || "Gagal membuka pendaftaran.");
+    } finally {
+      setSavingPeriode(false);
+    }
+  };
+
+  const handleCancelPeriodeSetup = async () => {
+    if (periodeSetup.step !== "periode" || periodeSetup.dosens.length > 0) {
+      const result = await Swal.fire({
+        title: "Batalkan persiapan periode?",
+        text: "Seluruh data persiapan yang tersimpan di browser akan dihapus.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Ya, batalkan",
+        cancelButtonText: "Kembali",
+        confirmButtonColor: "#b83a3a",
+      });
+      if (!result.isConfirmed) return;
+    }
+    window.localStorage.removeItem(PERIODE_SETUP_STORAGE_KEY);
+    setPeriodeForm({ ...PERIODE_FORM_INITIAL });
+    setPeriodeSetup({ step: "periode", dosens: [], preview: null, previous_period: null });
+    setSelectedAvailabilityDosenIds([]);
+    setPeriodeMode("list");
   };
 
   const loadReadonlyPeriodeRoles = useCallback(
@@ -6483,120 +6896,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       ...prev,
       [klasterId]: dosenId,
     }));
-  };
-
-  const handleSaveKetuaKlaster = async (row) => {
-    const selectedDosenId = Number(ketuaKlasterDraft[row.id]);
-    const selectedPeriodeId = Number(ketuaKlasterPeriodeId || ketuaKlasterOverview.periode_terpilih?.id);
-
-    if (!Number.isInteger(selectedPeriodeId) || selectedPeriodeId <= 0) {
-      showErrorToast("Periode belum dipilih.");
-      return;
-    }
-
-    if (!Number.isInteger(selectedDosenId) || selectedDosenId <= 0) {
-      showErrorToast(`Pilih ketua untuk klaster ${row.kode} terlebih dahulu.`);
-      return;
-    }
-
-    const selectedDosen = Array.isArray(row.kandidat_dosen)
-      ? row.kandidat_dosen.find((item) => item.id === selectedDosenId)
-      : null;
-    const confirm = await Swal.fire({
-      title: "Simpan ketua klaster?",
-      html: `Klaster: <b>${row.kode} - ${row.nama}</b><br>Ketua: <b>${selectedDosen?.nama || "-"}</b>`,
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonText: "Ya, simpan",
-      cancelButtonText: "Batal",
-      confirmButtonColor: "#2f63e3",
-    });
-    if (!confirm.isConfirmed) return;
-
-    setSavingKetuaKlasterId(row.id);
-    try {
-      await fetchWithAuth("/api/sekretaris/ketua-klaster/assign", {
-        method: "POST",
-        body: JSON.stringify({
-          periode_penjaluran_id: selectedPeriodeId,
-          klaster_id: row.id,
-          dosen_id: selectedDosenId,
-        }),
-      });
-      showSuccessToast(`Ketua klaster ${row.kode} berhasil disimpan.`);
-      await loadKetuaKlasterByPeriode(selectedPeriodeId);
-    } catch (saveError) {
-      if (saveError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(saveError.message || "Gagal menyimpan ketua klaster.");
-      }
-    } finally {
-      setSavingKetuaKlasterId(null);
-    }
-  };
-
-  const handleActivateDraftPeriode = async () => {
-    const selectedId = Number(selectedKetuaPeriode?.id || ketuaKlasterPeriodeId);
-    if (!Number.isInteger(selectedId) || selectedId <= 0) {
-      showErrorToast("Pilih periode draft terlebih dahulu.");
-      return;
-    }
-
-    const selectedStatus = String(selectedKetuaPeriode?.status || "").toLowerCase();
-    if (selectedStatus === "active") {
-      showErrorToast("Periode ini sudah aktif.");
-      return;
-    }
-    if (selectedStatus === "closed") {
-      showErrorToast("Periode closed tidak bisa diaktifkan. Buat draft periode baru.");
-      return;
-    }
-
-    if (ketuaReviewStats.belumTerisi > 0) {
-      showErrorToast(
-        `Masih ada ${ketuaReviewStats.belumTerisi} klaster tanpa ketua. Lengkapi dulu sebelum aktivasi.`
-      );
-      return;
-    }
-
-    const confirm = await Swal.fire({
-      title: "Aktifkan periode ini?",
-      html: `Periode: <b>${selectedKetuaPeriode?.label_periode || "-"}</b><br/>Setelah aktif, periode dipakai untuk alur approval klaster.`,
-      icon: "question",
-      showCancelButton: true,
-      confirmButtonText: "Ya, aktifkan",
-      cancelButtonText: "Batal",
-      confirmButtonColor: "#117246",
-    });
-    if (!confirm.isConfirmed) return;
-
-    setSavingPeriode(true);
-    try {
-      await fetchWithAuth(`/api/sekretaris/periode/${selectedId}/activate`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      showSuccessToast("Periode berhasil diaktifkan.");
-      await loadAllData();
-      setPeriodeMode("list");
-    } catch (activateError) {
-      if (activateError?.message !== "__SESSION_EXPIRED__") {
-        const readinessErrors = activateError?.detail?.readiness?.errors;
-        if (Array.isArray(readinessErrors) && readinessErrors.length > 0) {
-          await Swal.fire({
-            title: "Periode belum siap",
-            html: `<div style="text-align:left"><p style="margin-bottom:8px">${activateError.message}</p><ul style="padding-left:20px;list-style:disc">${readinessErrors
-              .map((item) => `<li>${String(item?.message || "Konfigurasi belum lengkap.")}</li>`)
-              .join("")}</ul></div>`,
-            icon: "warning",
-            confirmButtonColor: "#2f63e3",
-          });
-        } else {
-          showErrorToast(activateError.message || "Gagal mengaktifkan periode.");
-        }
-      }
-    } finally {
-      setSavingPeriode(false);
-    }
   };
 
   const mahasiswaMasterFilterPopup = showMahasiswaMasterFilterPanel && typeof document !== "undefined"
@@ -7044,7 +7343,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               >
                 <Bell className="h-4.5 w-4.5" />
                 {unreadSubmissionNotificationCount > 0 ? (
-                  <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-[#ff4d4f]" />
+                  <span className="absolute right-0.5 top-0.5 inline-flex min-w-4 items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-black text-white">
+                    {unreadSubmissionNotificationCount > 99 ? "99+" : unreadSubmissionNotificationCount}
+                  </span>
                 ) : null}
               </button>
 
@@ -7152,7 +7453,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           }`}
                         >
                           <Icon className="h-4 w-4" />
-                          {item.label}
+                          <span>{item.label}</span>
+                          {item.id === "notifications" ? (
+                            <NotificationMenuBadge count={notificationState.unreadCount} active={isActive} />
+                          ) : null}
                         </button>
                       );
                     })}
@@ -7231,7 +7535,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <h3 className="mb-3 text-lg font-black text-[#1b274b]">Info Kuota</h3>
                   <div className="space-y-2 text-sm text-[#2a3c66]">
                     <p>
-                      <span className="font-bold">Dosen:</span> {kuotaData?.dosen?.nama || "-"}
+                      <span className="font-bold">Dosen:</span> {formatDosenFullName(kuotaData?.dosen?.nama, kuotaData?.dosen?.gelar) || "-"}
                     </p>
                     <p>
                       <span className="font-bold">NIK:</span> {kuotaData?.dosen?.nik || "-"}
@@ -7250,7 +7554,168 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               </div>
             ) : null}
 
+            {!loading && activeTab === "notifications" ? (
+              <NotificationPage
+                notificationState={notificationState}
+                onNavigate={(notification) => {
+                  if (["lecturer_supervised_student", "lecturer_supervision_history"].includes(notification?.action_key)) {
+                    setActiveTab("monitoring-mahasiswa");
+                  }
+                }}
+              />
+            ) : null}
+
             {!loading && activeTab === "monitoring-mahasiswa" ? (
+              monitoringMahasiswaMode === "detail" ? (
+                <div className="space-y-4">
+                  <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={handleBackToMonitoringList}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-[#d3dbef] text-[#2b3f74] hover:bg-[#f3f7ff]"
+                        title="Kembali ke grid mahasiswa bimbingan"
+                      >
+                        <ArrowLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenMonitoringDetail(selectedMonitoringMahasiswa)}
+                        disabled={loadingMonitoringDetail}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <RefreshCcw className="h-4 w-4" />
+                        Refresh
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-black text-[#1b274b]">Progress Bimbingan</h3>
+                        <p className="mt-1 text-sm text-[#5d6c91]">
+                          Progress sesi bimbingan tervalidasi untuk {selectedMonitoringMahasiswa?.mahasiswa?.nama || "mahasiswa"}.
+                        </p>
+                      </div>
+                      <span className="text-2xl font-black text-[#2454b8]">
+                        {selectedMonitoringMahasiswa?.bimbingan?.progress_percent || 0}%
+                      </span>
+                    </div>
+                    <div className="mt-4 h-3 overflow-hidden rounded-full bg-[#e8edf8]">
+                      <div
+                        className="h-full rounded-full bg-[#2f63e3] transition-[width]"
+                        style={{ width: `${selectedMonitoringMahasiswa?.bimbingan?.progress_percent || 0}%` }}
+                      />
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 border-t border-[#edf1f8] pt-4 sm:grid-cols-3">
+                      <div>
+                        <p className="text-xs font-bold uppercase text-[#68779e]">Sesi Tervalidasi</p>
+                        <p className="mt-1 text-base font-black text-[#1f2d53]">
+                          {selectedMonitoringMahasiswa?.bimbingan?.tervalidasi || 0}/{selectedMonitoringMahasiswa?.bimbingan?.target || 8} sesi
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold uppercase text-[#68779e]">Dokumen Sidang</p>
+                        <p className="mt-1 text-base font-black text-[#1f2d53]">
+                          {selectedMonitoringMahasiswa?.dokumen?.approved || 0}/{selectedMonitoringMahasiswa?.dokumen?.target || 3} disetujui
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-bold uppercase text-[#68779e]">Tahap Saat Ini</p>
+                        <p className="mt-1 text-base font-black text-[#1f2d53]">
+                          {selectedMonitoringMahasiswa?.tahap || "-"}
+                        </p>
+                      </div>
+                    </div>
+                  </section>
+
+                  {loadingMonitoringDetail ? (
+                    <section className="rounded-xl border border-[#e4e9f6] bg-white p-8 text-center text-sm font-semibold text-[#60709a] shadow-sm">
+                      Memuat detail pengajuan mahasiswa...
+                    </section>
+                  ) : null}
+
+                  {!loadingMonitoringDetail && monitoringDetailError ? (
+                    <section className="rounded-xl border border-[#efb5b5] bg-[#fff6f6] p-4 text-sm font-semibold text-[#a93636] shadow-sm">
+                      {monitoringDetailError}
+                    </section>
+                  ) : null}
+
+                  {!loadingMonitoringDetail && monitoringSubmissionDetail ? (
+                    <>
+                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                        <div className="mb-4">
+                          <h3 className="text-lg font-black text-[#1b274b]">Detail Pengajuan</h3>
+                          <p className="mt-1 text-sm text-[#5d6c91]">
+                            Informasi penjaluran dan form yang diajukan mahasiswa.
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          <ResearchReviewReadonlyInput
+                            label="Mahasiswa"
+                            value={selectedMonitoringMahasiswa?.mahasiswa?.nama || "-"}
+                          />
+                          <ResearchReviewReadonlyInput
+                            label="NIM"
+                            value={selectedMonitoringMahasiswa?.mahasiswa?.nim || "-"}
+                          />
+                          <ResearchReviewReadonlyInput
+                            label="Jalur"
+                            value={formatLabel(selectedMonitoringMahasiswa?.penjaluran || selectedMonitoringMahasiswa?.jalur || "-")}
+                          />
+                          <ResearchReviewReadonlyInput
+                            label="Pendaftaran"
+                            value={formatLabel(selectedMonitoringMahasiswa?.jalur || "-")}
+                          />
+                          <ResearchReviewReadonlyInput label="Judul / Pengajuan" value={monitoringSubmissionTitle} />
+                          <ResearchReviewReadonlyInput
+                            label="Status"
+                            value={formatLabel(selectedMonitoringMahasiswa?.status_pengajuan || monitoringSubmissionDetail?.status || monitoringSubmissionDetail?.workflow_status || "approved")}
+                          />
+                        </div>
+
+                        <div className="mt-6 border-t border-[#e8edf7] pt-5">
+                          {isMonitoringResearchDetail ? (
+                            <ResearchReviewDetailForm
+                              detail={monitoringSubmissionDetail}
+                              topikRows={monitoringResearchTopicRows}
+                            />
+                          ) : monitoringDetailJalur === "magang" ? (
+                            <MagangReadonlyDetailForm detail={monitoringSubmissionDetail} />
+                          ) : (
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                              {getPengampuReviewDetailFields(
+                                monitoringSubmissionDetail,
+                                DOSEN_PENGAMPU_REVIEW_TABS[monitoringDetailJalur] ||
+                                  DOSEN_PENGAMPU_REVIEW_TABS.perintisan_bisnis
+                              ).map(([label, value]) => (
+                                <div key={`monitoring-detail-${label}`} className="border-b border-[#e8edf7] px-1 py-3">
+                                  <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
+                                  <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
+                                    {formatMagangPayloadValue(value)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </section>
+
+                      {isMonitoringResearchDetail ? (
+                        <section className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                          <SubmissionDecisionDetailSection
+                            items={monitoringSubmissionDetail?.riwayat_persetujuan || []}
+                          />
+                        </section>
+                      ) : (
+                        <FinalDecisionDetailSection detail={monitoringSubmissionDetail} />
+                      )}
+                    </>
+                  ) : null}
+                </div>
+              ) : (
               <div className="flex min-h-0 flex-1 flex-col gap-4">
                 <section className="grid grid-cols-1 gap-3 md:grid-cols-3">
                   {[
@@ -7389,11 +7854,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <td className="px-3 py-3">
                               <button
                                 type="button"
-                                onClick={() => setActiveTab(row.next_action || "bimbingan-review")}
+                                onClick={() => handleOpenMonitoringDetail(row)}
                                 className="inline-flex items-center gap-1.5 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110"
                               >
-                                <Activity className="h-3.5 w-3.5" />
-                                Update
+                                <Eye className="h-3.5 w-3.5" />
+                                Detail
                               </button>
                             </td>
                           </tr>
@@ -7413,6 +7878,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   </div>
                 </section>
               </div>
+              )
             ) : null}
 
             {!loading &&
@@ -7791,7 +8257,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               ? [
                                   {
                                     ...finalResearchFocusedTopic,
-                                    dosen: finalResearchFocusedTopic.dosen_nama,
+                                    dosen: formatDosenFullName(finalResearchFocusedTopic.dosen_nama, finalResearchFocusedTopic.dosen_gelar),
                                     reviewer_status: finalResearchFocusedTopic.status_ketua_cluster,
                                   },
                                 ]
@@ -7866,7 +8332,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <input
                                   type="text"
                                   readOnly
-                                  value={finalResearchFocusedTopic?.dosen_nama || "-"}
+                                  value={formatDosenFullName(finalResearchFocusedTopic?.dosen_nama, finalResearchFocusedTopic?.dosen_gelar) || "-"}
                                   className="w-full rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2 text-sm text-[#445477]"
                                 />
                               </div>
@@ -7883,8 +8349,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   {periodeDosenOptions
                                     .filter((dosen) => Number(dosen.id) !== Number(finalResearchFocusedTopic?.dosen_id))
                                     .map((dosen) => (
-                                      <option key={`research-secondary-${dosen.id}`} value={dosen.id}>
-                                        {dosen.nama || "-"} - NIK: {dosen.nik || "-"}
+                                      <option
+                                        key={`research-secondary-${dosen.id}`}
+                                        value={dosen.id}
+                                        disabled={dosen.kuota?.is_penuh === true}
+                                      >
+                                        {formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - {dosen.kuota?.is_penuh
+                                          ? "Kuota penuh"
+                                          : `Sisa kuota: ${dosen.kuota?.sisa ?? 0}`}
                                       </option>
                                     ))}
                                 </select>
@@ -8144,6 +8616,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                             type="button"
                                             role="option"
                                             aria-selected={Number(finalNonPenelitianDosenPembimbingId) === Number(dosen.id)}
+                                            disabled={dosen.kuota?.is_penuh === true}
                                             onMouseDown={(event) => event.preventDefault()}
                                             onClick={() => {
                                               setFinalNonPenelitianDosenPembimbingId(String(dosen.id));
@@ -8154,18 +8627,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                               setFinalNonPenelitianDosenComboOpen(false);
                                               setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
                                             }}
-                                            className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] ${
+                                            className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:bg-[#f4f5f8] disabled:text-[#8a94ad] ${
                                               Number(finalNonPenelitianDosenPembimbingId) === Number(dosen.id)
                                                 ? "bg-[#e8efff] font-bold text-[#2756b8]"
                                                 : "text-[#263a66]"
                                             }`}
                                           >
                                             <span className="min-w-0 flex-1 font-semibold leading-5">
-                                              {dosen.nama || "-"}
+                                              {formatDosenFullName(dosen.nama, dosen.gelar) || "-"}
                                             </span>
                                             <span className="shrink-0 text-right text-xs text-[#27407b]">
-                                              NIK:<br />
-                                              {dosen.nik || "-"}
+                                              {dosen.kuota?.is_penuh ? "Kuota penuh" : `Sisa kuota: ${dosen.kuota?.sisa ?? 0}`}<br />
+                                              {dosen.kuota?.terpakai ?? 0}/{dosen.kuota?.total ?? 0} bimbingan
                                             </span>
                                           </button>
                                         ))
@@ -8189,8 +8662,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                           (dosen) => Number(dosen.id) !== Number(finalNonPenelitianDosenPembimbingId || 0)
                                         )
                                         .map((dosen) => (
-                                          <option key={`nonresearch-secondary-${dosen.id}`} value={dosen.id}>
-                                            {dosen.nama || "-"} - NIK: {dosen.nik || "-"}
+                                          <option key={`nonresearch-secondary-${dosen.id}`} value={dosen.id} disabled={dosen.kuota?.is_penuh === true}>
+                                            {formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - Sisa kuota: {dosen.kuota?.sisa ?? 0}
                                           </option>
                                         ))}
                                     </select>
@@ -8319,13 +8792,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       <p
                                         key={`final-grid-detail-${row.id}-${getFinalResearchTopicKey(topic)}`}
                                         className="line-clamp-1 text-xs leading-5 text-[#43537d] break-words"
-                                        title={`Dosen: ${topic.dosen_nama || "-"} | Ketua Cluster: ${
-                                          topic.ketua_cluster?.nama || "-"
+                                        title={`Dosen: ${formatDosenFullName(topic.dosen_nama, topic.dosen_gelar) || "-"} | Ketua Cluster: ${
+                                          formatDosenFullName(topic.ketua_cluster?.nama, topic.ketua_cluster?.gelar) || "-"
                                         }`}
                                       >
-                                        <span className="font-semibold">Dosen:</span> {topic.dosen_nama || "-"}
+                                        <span className="font-semibold">Dosen:</span> {formatDosenFullName(topic.dosen_nama, topic.dosen_gelar) || "-"}
                                         {" | "}
-                                        <span className="font-semibold">Ketua:</span> {topic.ketua_cluster?.nama || "-"}
+                                        <span className="font-semibold">Ketua:</span> {formatDosenFullName(topic.ketua_cluster?.nama, topic.ketua_cluster?.gelar) || "-"}
                                       </p>
                                     ))}
                                   </div>
@@ -9093,6 +9566,95 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         )}
                       </div>
                     ) : null}
+                  </div>
+                ) : null}
+
+                {false ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-lg font-black text-[#1b274b]">Tindak Lanjut Perubahan Status Dosen</h3>
+                          <p className="mt-1 text-sm text-[#5d6c91]">Proses penggantian pembimbing, penyesuaian tugas, dan reaktivasi dosen dari satu halaman.</p>
+                        </div>
+                        <button type="button" onClick={loadAllData} className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]">
+                          <RefreshCcw className="h-4 w-4" /> Refresh
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
+                        <div className="relative">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                          <input
+                            type="search"
+                            value={dosenStatusFollowUpQuery}
+                            onChange={(event) => {
+                              setDosenStatusFollowUpQuery(event.target.value);
+                              setDosenStatusFollowUpPage(1);
+                            }}
+                            placeholder="Cari nama, kode, atau status dosen..."
+                            aria-label="Cari tindak lanjut status dosen"
+                            className="w-[320px] rounded-lg border border-[#d3dbef] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <span className="rounded-full bg-[#fff1df] px-3 py-1.5 text-xs font-black text-[#a15b18]">{filteredDosenStatusFollowUps.length} perlu diproses</span>
+                      </div>
+
+                      <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                        <table className="w-full min-w-[1120px] text-left text-sm">
+                          <thead>
+                            <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                              <th className="bg-[#f8fbff] px-3 py-2">Dosen</th>
+                              <th className="bg-[#f8fbff] px-3 py-2">Status Master</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 text-center">Mahasiswa Aktif</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 text-center">Review Tertunda</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 text-center">Jadwal Sidang</th>
+                              <th className="bg-[#f8fbff] px-3 py-2">Jenis Tindak Lanjut</th>
+                              <th className="bg-[#f8fbff] px-3 py-2">Status</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 text-center">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {pagedDosenStatusFollowUps.map((row) => {
+                              const impact = row.impact_snapshot || {};
+                              const requiresReplacement = row.dosen?.continue_existing_supervision === false
+                                && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
+                              const typeLabel = impact.reactivation_required
+                                ? "Reaktivasi"
+                                : requiresReplacement
+                                ? "Penggantian Pembimbing"
+                                : "Penyesuaian Tugas";
+                              return (
+                                <tr key={`follow-up-${row.id}`} className="border-b border-[#eff3fb] last:border-b-0">
+                                  <td className="px-3 py-3"><p className="font-bold text-[#1f3160]">{formatDosenFullName(row.dosen?.nama, row.dosen?.gelar) || "Dosen"}</p><p className="text-xs text-[#6a779a]">{row.dosen?.kode_dosen || row.dosen?.nik || "-"}</p></td>
+                                  <td className="px-3 py-3"><span className="rounded-full bg-[#fff1df] px-2 py-1 text-xs font-bold text-[#a15b18]">{DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan] || row.dosen?.status_keaktifan || "-"}</span></td>
+                                  <td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.mahasiswa_bimbingan_aktif || 0)}</td>
+                                  <td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.review_pending || 0)}</td>
+                                  <td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.jadwal_sidang_mendatang || 0)}</td>
+                                  <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${requiresReplacement ? "bg-[#fff0f0] text-[#a03f3f]" : impact.reactivation_required ? "bg-[#eef3ff] text-[#34549b]" : "bg-[#fff8ed] text-[#a15b18]"}`}>{typeLabel}</span></td>
+                                  <td className="px-3 py-3"><span className="rounded-full bg-[#fff1df] px-2 py-1 text-xs font-bold text-[#a15b18]">Terbuka</span></td>
+                                  <td className="px-3 py-3 text-center"><button type="button" onClick={() => handleOpenDosenStatusFollowUpPage(row)} className="rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2454c7]">Proses</button></td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                        {filteredDosenStatusFollowUps.length === 0 ? (
+                          <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">{dosenStatusFollowUps.length === 0 ? "Tidak ada tindak lanjut terbuka." : "Tindak lanjut yang dicari tidak ditemukan."}</p>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                        <p className="text-sm text-[#4f5e86]">Menampilkan {dosenStatusFollowUpRangeStart} - {dosenStatusFollowUpRangeEnd} dari {filteredDosenStatusFollowUps.length} tindak lanjut.</p>
+                        <div className="flex items-center gap-2">
+                          <button type="button" onClick={() => setDosenStatusFollowUpPage((previous) => Math.max(1, previous - 1))} disabled={dosenStatusFollowUpPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50">Sebelumnya</button>
+                          <span className="text-sm font-semibold text-[#314778]">Halaman {dosenStatusFollowUpPage} / {totalDosenStatusFollowUpPages}</span>
+                          <button type="button" onClick={() => setDosenStatusFollowUpPage((previous) => Math.min(totalDosenStatusFollowUpPages, previous + 1))} disabled={dosenStatusFollowUpPage >= totalDosenStatusFollowUpPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50">Berikutnya</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -10507,7 +11069,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       <button
                         key={`master-dosen-tab-${item.key}`}
                         type="button"
-                        onClick={() => setMasterDosenTab(item.key)}
+                        onClick={() => {
+                          if (item.key !== "tindak-lanjut" && dosenStatusFollowUpDetailRow) {
+                            handleBackFromDosenStatusFollowUpPage();
+                          }
+                          setMasterDosenTab(item.key);
+                        }}
                         className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
                           masterDosenTab === item.key
                             ? "border-[#2f63e3] bg-[#2f63e3] text-white"
@@ -10515,8 +11082,46 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         }`}
                       >
                         {item.label}
+                        {item.key === "tindak-lanjut" && dosenStatusFollowUps.length > 0 ? (
+                          <span className={`ml-2 rounded-full px-2 py-0.5 text-xs font-black ${masterDosenTab === item.key ? "bg-white/20 text-white" : "bg-[#fff1df] text-[#a15b18]"}`}>
+                            {dosenStatusFollowUps.length}
+                          </span>
+                        ) : null}
                       </button>
                     ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow) {
+                          handleBackFromDosenStatusFollowUpPage();
+                        } else if (masterDosenTab !== "penanggung-jawab") {
+                          setMasterDosenTab("penanggung-jawab");
+                        } else {
+                          setActiveTab("dashboard");
+                        }
+                      }}
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff]"
+                      title="Kembali"
+                      aria-label="Kembali"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow
+                        ? loadDosenStatusFollowUpPage(dosenStatusFollowUpDetailRow)
+                        : loadAllData()}
+                      disabled={Boolean(dosenStatusFollowUpDetailRow && loadingDosenStatusFollowUpDetail)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
                   </div>
                 </div>
 
@@ -10611,7 +11216,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                               : "text-[#213460] hover:bg-[#f4f7ff]"
                                           }`}
                                         >
-                                          <span className="font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="font-semibold">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</span>
                                           <span className="text-right text-xs text-[#5d6c91]">
                                             {hasConflict
                                               ? `Sudah ditugaskan: ${dosen.assignment_conflict_label}`
@@ -10699,7 +11304,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                               : "text-[#213460] hover:bg-[#f4f7ff]"
                                           }`}
                                         >
-                                          <span className="font-semibold">{dosen.nama || "-"}</span>
+                                          <span className="font-semibold">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</span>
                                           <span className="text-right text-xs text-[#5d6c91]">
                                             {hasConflict
                                               ? `Sudah ditugaskan: ${dosen.assignment_conflict_label}`
@@ -10761,27 +11366,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                 {masterDosenTab === "kuota-bimbingan" ? (
                   <>
-                    <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setMasterDosenTab("penanggung-jawab")}
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff]"
-                          aria-label="Kembali ke tab penanggung jawab"
-                        >
-                          <ArrowLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={loadAllData}
-                          className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
-                        >
-                          <RefreshCcw className="h-4 w-4" />
-                          Refresh
-                        </button>
-                      </div>
-                    </div>
-
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="mb-3">
                         <h3 className="text-lg font-black text-[#1b274b]">Set Kuota Dosen</h3>
@@ -10841,7 +11425,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
 
                       <div className="relative mt-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                        <table className="w-full min-w-[1400px] text-left text-sm">
+                        <table className="w-full min-w-[1650px] text-left text-sm">
                           <thead>
                             <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">
@@ -10858,7 +11442,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama Dosen</th>
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jabatan Struktural</th>
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
-                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa Bimbingan</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa Bimbingan (Total)</th>
+                              <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Rincian Jalur</th>
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Sisa Kuota</th>
                               <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                             </tr>
@@ -10889,12 +11474,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                         <div className="text-xs text-[#7080a6]">{row.nik || "-"}</div>
                                       </td>
                                       <td className="px-3 py-2">
-                                        <p className="font-semibold text-[#1f3160]">{row.nama || "-"}</p>
+                                        <p className="font-semibold text-[#1f3160]">{formatDosenFullName(row.nama, row.gelar) || "-"}</p>
                                         <p className="text-xs text-[#6a779a]">{row.email || "-"}</p>
                                       </td>
                                       <td className="px-3 py-2">{row.jabatan_struktural || "-"}</td>
                                       <td className="px-3 py-2">{row.kuota?.total ?? 0}</td>
                                       <td className="px-3 py-2">{row.kuota?.terpakai ?? 0}</td>
+                                      <td className="px-3 py-2 text-xs leading-5 text-[#526184]">
+                                        <span className="whitespace-nowrap">Penelitian: <b>{row.kuota?.rincian_jalur?.penelitian ?? 0}</b></span>{" · "}
+                                        <span className="whitespace-nowrap">Magang: <b>{row.kuota?.rincian_jalur?.magang ?? 0}</b></span>{" · "}
+                                        <span className="whitespace-nowrap">Perintisan: <b>{row.kuota?.rincian_jalur?.perintisan_bisnis ?? 0}</b></span>{" · "}
+                                        <span className="whitespace-nowrap">Pengabdian: <b>{row.kuota?.rincian_jalur?.pengabdian_masyarakat ?? 0}</b></span>
+                                      </td>
                                       <td className="px-3 py-2">{row.kuota?.sisa ?? 0}</td>
                                       <td className="px-3 py-2">
                                         {row.kuota?.is_penuh ? (
@@ -11002,13 +11593,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
                         <div className="flex flex-wrap items-center gap-2">
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                            <input
+                              type="search"
+                              value={dosenPeriodAvailabilityQuery}
+                              onChange={(event) => {
+                                setDosenPeriodAvailabilityQuery(event.target.value);
+                                setDosenPeriodAvailabilityPage(1);
+                              }}
+                              placeholder="Cari nama atau kode dosen..."
+                              aria-label="Cari dosen pada ketersediaan periode"
+                              className="w-[280px] rounded-lg border border-[#d3dbef] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                            />
+                          </div>
                           <button
                             type="button"
-                            onClick={selectAllNeedsReviewAvailability}
+                            onClick={selectAllEditableAvailability}
                             disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability}
                             className="rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#27407b] disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            Pilih Semua Perlu Ditinjau
+                            Pilih Semua Dosen
                           </button>
                           <button
                             type="button"
@@ -11021,62 +11626,36 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           <span className="text-xs font-bold text-[#526184]">{selectedAvailabilityDosenIds.length} dosen dipilih</span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <label className="text-xs font-bold text-[#526184]" htmlFor="bulk-availability-quota">Kuota massal</label>
-                          <input
-                            id="bulk-availability-quota"
-                            type="number"
-                            min="0"
-                            max="99"
-                            value={bulkAvailabilityQuota}
-                            onChange={(event) => setBulkAvailabilityQuota(event.target.value)}
-                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability}
-                            className="w-20 rounded-lg border border-[#d3dbef] bg-white px-2 py-2 text-sm disabled:bg-[#f3f5f9]"
-                          />
-                          <button
-                            type="button"
-                            onClick={applyBulkAvailabilityQuota}
-                            disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
-                            className="rounded-lg border border-[#2f63e3] bg-white px-3 py-2 text-xs font-bold text-[#2f63e3] disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            Terapkan Kuota
-                          </button>
                           <button
                             type="button"
                             onClick={handleMarkSelectedNotInvolved}
                             disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
                             className="rounded-lg bg-[#b45309] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            Tandai Tidak Dilibatkan
+                            Tandai Tidak Menerima
                           </button>
                           <button
                             type="button"
-                            onClick={handleConfirmSelectedAvailability}
+                            onClick={handleMarkSelectedReceiving}
                             disabled={dosenPeriodAvailability.is_readonly || savingBulkAvailability || selectedAvailabilityDosenIds.length === 0}
                             className="rounded-lg bg-[#117246] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {savingBulkAvailability ? "Menyimpan..." : "Konfirmasi Dosen Terpilih"}
+                            {savingBulkAvailability ? "Menyimpan..." : "Tandai Menerima"}
                           </button>
                         </div>
                       </div>
                       <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
-                        <table className="w-full min-w-[2020px] text-left text-sm">
+                        <table className="w-full min-w-[1120px] text-left text-sm">
                           <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Pilih</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Dosen</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Status Master Saat Ini</th>
                             <th className="bg-[#f8fbff] px-3 py-2">Status Konfigurasi</th>
                             <th className="bg-[#f8fbff] px-3 py-2 text-center">Menerima Bimbingan Baru</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Menguji</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Ketua Cluster</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengampu</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Pengawas</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 text-center">Mendampingi Sidang</th>
-                            <th className="bg-[#f8fbff] px-3 py-2">Kuota Penjaluran</th>
-                            <th className="bg-[#f8fbff] px-3 py-2">Alasan</th>
-                            <th className="bg-[#f8fbff] px-3 py-2">Aksi</th>
+                            <th className="bg-[#f8fbff] px-3 py-2">Kapasitas Saat Ini</th>
                           </tr></thead>
                           <tbody>
-                            {dosenPeriodAvailability.dosens.map((row) => {
+                            {pagedDosenPeriodAvailabilityRows.map((row) => {
                               const isActive = row.status_keaktifan === "active";
                               const canEdit = row.can_edit === true && !dosenPeriodAvailability.is_readonly;
                               const configurationMeta = {
@@ -11084,47 +11663,156 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 needs_review: ["Perlu Ditinjau", "bg-[#fff1df] text-[#a15b18]"],
                                 locked_by_master_status: ["Dikunci Admin", "bg-[#edf0f6] text-[#596887]"],
                               }[row.configuration_status] || [row.configuration_status || "Perlu Ditinjau", "bg-[#fff1df] text-[#a15b18]"];
-                              const availabilityFields = [
-                                "tersedia_membimbing", "tersedia_menguji", "tersedia_ketua_cluster",
-                                "tersedia_pengampu", "tersedia_pengawas_jalur", "tersedia_sidang",
-                              ];
                               return (
                                 <tr key={`availability-${row.id}`} className="border-b border-[#eff3fb]">
                                   <td className="px-3 py-2 text-center"><input type="checkbox" checked={selectedAvailabilityDosenIds.some((id) => Number(id) === Number(row.id))} disabled={!canEdit || savingBulkAvailability} onChange={() => toggleAvailabilitySelection(row.id)} aria-label={`Pilih ${row.nama}`} className="h-4 w-4 accent-[#2f63e3]" /></td>
-                                  <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{row.nama}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td>
+                                  <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{formatDosenFullName(row.nama, row.gelar)}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td>
                                   <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${isActive ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan}</span></td>
                                   <td className="px-3 py-2"><span className={`whitespace-nowrap rounded-full px-2 py-1 text-xs font-bold ${configurationMeta[1]}`}>{configurationMeta[0]}</span>{row.review_note ? <p className="mt-1 max-w-[220px] text-xs text-[#6a779a]">{row.review_note}</p> : null}</td>
-                                  {availabilityFields.map((field) => (
-                                    <td key={`${row.id}-${field}`} className="px-3 py-2 text-center">
-                                      <input type="checkbox" checked={Boolean(row[field])} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, field, event.target.checked)} className="h-4 w-4 accent-[#2f63e3]" />
-                                    </td>
-                                  ))}
-                                  <td className="px-3 py-2"><input type="number" min="0" max="99" value={row.kuota_bimbingan_periode} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "kuota_bimbingan_periode", event.target.value)} className="w-24 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
-                                  <td className="px-3 py-2"><input type="text" value={row.alasan_tidak_tersedia || ""} disabled={!canEdit} onChange={(event) => updateDosenAvailabilityDraft(row.id, "alasan_tidak_tersedia", event.target.value)} placeholder={canEdit ? "Wajib jika ada yang tidak tersedia" : "Tidak dapat diubah"} className="w-72 rounded-lg border border-[#d3dbef] px-2 py-1.5 disabled:bg-[#f3f5f9]" /></td>
-                                  <td className="px-3 py-2"><button type="button" disabled={!canEdit || savingAvailabilityDosenId === row.id || savingBulkAvailability} onClick={() => handleSaveDosenAvailability(row)} className="whitespace-nowrap rounded-lg bg-[#117246] px-3 py-1.5 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{savingAvailabilityDosenId === row.id ? "Menyimpan..." : row.configuration_status === "needs_review" ? "Konfirmasi & Simpan" : "Simpan"}</button></td>
+                                  <td className="px-3 py-2 text-center"><input type="checkbox" checked={Boolean(row.tersedia_membimbing)} disabled={!canEdit || savingBulkAvailability} onChange={(event) => updateDosenAvailabilityDraft(row.id, { tersedia_membimbing: event.target.checked, configuration_status: "ready" })} className="h-4 w-4 accent-[#2f63e3]" /></td>
+                                  <td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{Number(row.terpakai || 0)} / {Number(row.kuota || 0)}</p><p className="text-xs text-[#6a779a]">Sisa {Number(row.sisa || 0)}</p></td>
                                 </tr>
                               );
                             })}
                           </tbody>
                         </table>
-                        {dosenPeriodAvailability.dosens.length === 0 ? <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">Belum ada periode atau data dosen.</p> : null}
+                        {filteredDosenPeriodAvailabilityRows.length === 0 ? (
+                          <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">
+                            {dosenPeriodAvailability.dosens.length === 0
+                              ? "Belum ada periode atau data dosen."
+                              : "Dosen yang dicari tidak ditemukan."}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                        <p className="text-sm text-[#4f5e86]">
+                          Menampilkan {dosenPeriodAvailabilityRangeStart} - {dosenPeriodAvailabilityRangeEnd} dari {filteredDosenPeriodAvailabilityRows.length} dosen.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setDosenPeriodAvailabilityPage((previous) => Math.max(1, previous - 1))}
+                            disabled={dosenPeriodAvailabilityPage === 1 || savingBulkAvailability}
+                            className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Sebelumnya
+                          </button>
+                          <span className="text-sm font-semibold text-[#314778]">
+                            Halaman {dosenPeriodAvailabilityPage} / {totalDosenPeriodAvailabilityPages}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setDosenPeriodAvailabilityPage((previous) => Math.min(totalDosenPeriodAvailabilityPages, previous + 1))}
+                            disabled={dosenPeriodAvailabilityPage >= totalDosenPeriodAvailabilityPages || savingBulkAvailability}
+                            className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Berikutnya
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleSaveDosenAvailabilityChanges}
+                            disabled={dosenPeriodAvailability.is_readonly || dirtyAvailabilityDosenIds.length === 0 || savingBulkAvailability}
+                            className="ml-1 rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {savingBulkAvailability ? "Menyimpan..." : `Simpan Perubahan${dirtyAvailabilityDosenIds.length ? ` (${dirtyAvailabilityDosenIds.length})` : ""}`}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
-                    <div className="rounded-xl border border-[#f0d3a5] bg-[#fffaf1] p-4 shadow-sm">
+                    {false ? <div className="rounded-xl border border-[#f0d3a5] bg-[#fffaf1] p-4 shadow-sm">
                       <h3 className="text-lg font-black text-[#68400f]">Tindak Lanjut Perubahan Status</h3>
                       <p className="text-sm text-[#805c2d]">Keputusan penggantian pembimbing dan penyesuaian tugas dilakukan manual oleh Sekprodi.</p>
                       <div className="mt-3 grid gap-3 lg:grid-cols-2">
                         {dosenStatusFollowUps.map((row) => {
                           const impact = row.impact_snapshot || {};
                           return <div key={row.id} className="rounded-lg border border-[#efd8b5] bg-white p-3 text-sm">
-                            <div className="flex items-start justify-between gap-3"><div><p className="font-black text-[#29385f]">{row.dosen?.nama || "Dosen"}</p><p className="text-xs text-[#6d7896]">Status: {DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan] || row.dosen?.status_keaktifan}</p></div><button type="button" onClick={() => handleResolveDosenStatusFollowUp(row)} className="rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white">Selesaikan</button></div>
+                            <div className="flex items-start justify-between gap-3"><div><p className="font-black text-[#29385f]">{formatDosenFullName(row.dosen?.nama, row.dosen?.gelar) || "Dosen"}</p><p className="text-xs text-[#6d7896]">Status: {DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan] || row.dosen?.status_keaktifan}</p></div><button type="button" onClick={() => handleOpenDosenStatusFollowUpPage(row)} className="rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white">Proses</button></div>
                             <p className="mt-2 text-[#596887]">{Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa aktif · {Number(impact.review_pending || 0)} review · {Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang</p>
                             {impact.reactivation_required ? <p className="mt-2 rounded-md bg-[#eef3ff] px-2 py-1 text-xs font-semibold text-[#34549b]">Reaktivasi: periksa topik lama, ketersediaan periode, kapasitas, dan penetapan kembali peran.</p> : null}
                           </div>;
                         })}
                         {dosenStatusFollowUps.length === 0 ? <p className="text-sm font-semibold text-[#6f7c9c]">Tidak ada tindak lanjut terbuka.</p> : null}
                       </div>
+                    </div> : null}
+                  </div>
+                ) : null}
+
+                {masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow ? (
+                  <div className="space-y-4">
+                    {loadingDosenStatusFollowUpDetail ? <div className="rounded-xl border border-[#e4e9f6] bg-white p-8 text-center text-sm font-semibold text-[#60709a]">Memuat detail tindak lanjut...</div> : null}
+                    {!loadingDosenStatusFollowUpDetail && dosenStatusFollowUpDetail ? <>
+                      <div className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                        <h4 className="text-lg font-black text-[#1b274b]">Informasi Dosen dan Dampak</h4>
+                        <p className="mt-1 text-sm text-[#5d6c91]">Data ini merupakan hasil analisis terbaru sistem dan bersifat read-only.</p>
+                        <div className="mt-4 grid gap-4 md:grid-cols-2">
+                          <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Dosen</label><input disabled value={formatDosenFullName(dosenStatusFollowUpDetail.dosen?.nama, dosenStatusFollowUpDetail.dosen?.gelar) || "-"} className="w-full rounded-lg border border-[#d3dbef] bg-[#f4f6fa] px-3 py-2.5 text-sm text-[#596887]" /></div>
+                          <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Status Master</label><input disabled value={DOSEN_MASTER_STATUS_LABELS[dosenStatusFollowUpDetail.dosen?.status_keaktifan] || dosenStatusFollowUpDetail.dosen?.status_keaktifan || "-"} className="w-full rounded-lg border border-[#d3dbef] bg-[#f4f6fa] px-3 py-2.5 text-sm text-[#596887]" /></div>
+                          <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Mahasiswa Aktif</label><input disabled value={Number(dosenStatusFollowUpDetail.current_impact?.mahasiswa_bimbingan_aktif || 0)} className="w-full rounded-lg border border-[#d3dbef] bg-[#f4f6fa] px-3 py-2.5 text-sm text-[#596887]" /></div>
+                          <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Review dan Jadwal Terdampak</label><input disabled value={`${Number(dosenStatusFollowUpDetail.current_impact?.review_pending || 0)} review · ${Number(dosenStatusFollowUpDetail.current_impact?.jadwal_sidang_mendatang || 0)} jadwal sidang`} className="w-full rounded-lg border border-[#d3dbef] bg-[#f4f6fa] px-3 py-2.5 text-sm text-[#596887]" /></div>
+                        </div>
+                      </div>
+
+                      {affectedDosenStatusFollowUpStudents.map((mahasiswa, index) => {
+                        const form = dosenStatusFollowUpForms[mahasiswa.id] || {};
+                        const candidates = mahasiswa.replacement_candidates || [];
+                        const replacementStatus = mahasiswa.supervision_status === "active" ? "active" : "awaiting_selection";
+                        const isLastAffectedStudent = dosenStatusFollowUpBlockingCount === 1;
+                        return <div key={`follow-up-form-${mahasiswa.id}`} className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                          <div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="text-lg font-black text-[#1b274b]">{index + 1}. Penggantian Pembimbing Mahasiswa</h4><p className="mt-1 text-sm font-bold text-[#344a7a]">{mahasiswa.nama} · {mahasiswa.nim}</p><p className="text-sm text-[#5d6c91]">Klaster topik: {mahasiswa.replacement_cluster?.code || "Belum teridentifikasi"}{mahasiswa.replacement_cluster?.label ? ` - ${mahasiswa.replacement_cluster.label}` : ""}</p></div><span className={`rounded-full px-3 py-1 text-xs font-black ${replacementStatus === "active" ? "bg-[#e8f7ef] text-[#137748]" : "bg-[#fff1df] text-[#a15b18]"}`}>{replacementStatus === "active" ? "Pengganti Aktif" : "Menunggu Pengganti"}</span></div>
+
+                          {replacementStatus === "awaiting_selection" ? <div className="mt-5 grid gap-4 md:grid-cols-2">
+                            <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Pembimbing 1 <span className="text-[#c0392b]">*</span></label><ReplacementDosenCombobox inputId={`replacement-primary-${mahasiswa.id}`} candidates={candidates} value={form.primary_id || ""} onChange={(value) => updateDosenStatusFollowUpStudentForm(mahasiswa.id, "primary_id", value)} hasError={Boolean(dosenStatusFollowUpFormErrors[`${mahasiswa.id}.primary_id`])} placeholder="Cari nama atau kode dosen pembimbing utama..." /></div>
+                            <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Pembimbing 2</label><ReplacementDosenCombobox inputId={`replacement-secondary-${mahasiswa.id}`} candidates={candidates} value={form.secondary_id || ""} onChange={(value) => updateDosenStatusFollowUpStudentForm(mahasiswa.id, "secondary_id", value)} hasError={Boolean(dosenStatusFollowUpFormErrors[`${mahasiswa.id}.secondary_id`])} placeholder="Cari nama atau kode dosen pembimbing kedua..." allowEmpty /></div>
+                            <div><label className="mb-1 block text-sm font-bold text-[#344a7a]">Tanggal Efektif <span className="text-[#c0392b]">*</span></label><input type="date" max={getJakartaDateInputValue()} value={form.tanggal_mulai || ""} onChange={(event) => updateDosenStatusFollowUpStudentForm(mahasiswa.id, "tanggal_mulai", event.target.value)} className={`w-full rounded-lg border px-3 py-2.5 text-sm outline-none ${dosenStatusFollowUpFormErrors[`${mahasiswa.id}.tanggal_mulai`] ? "border-[#d64545] focus:border-[#d64545]" : "border-[#d3dbef] focus:border-[#2f63e3]"}`} /></div>
+                            <div className="md:col-span-2"><label className="mb-1 block text-sm font-bold text-[#344a7a]">Catatan Tambahan <span className="font-normal text-[#6d7896]">(opsional)</span></label><textarea value={form.catatan || ""} onChange={(event) => updateDosenStatusFollowUpStudentForm(mahasiswa.id, "catatan", event.target.value)} placeholder="Tambahkan informasi lain jika diperlukan" className="min-h-[100px] w-full rounded-lg border border-[#d3dbef] px-3 py-2.5 text-sm outline-none focus:border-[#2f63e3]" /></div>
+                            <div className="md:col-span-2"><button type="button" onClick={() => handleActivateInlineReplacement(mahasiswa)} disabled={Boolean(savingDosenStatusFollowUpAction)} className="rounded-lg bg-[#2f63e3] px-4 py-2.5 text-sm font-bold text-white disabled:opacity-50">{savingDosenStatusFollowUpAction === `activate-${mahasiswa.id}` ? "Menetapkan..." : isLastAffectedStudent ? "Tetapkan Pengganti & Selesaikan" : "Tetapkan Pembimbing Pengganti"}</button></div>
+                          </div> : null}
+                          {replacementStatus === "active" ? <div className="mt-4 rounded-lg border border-[#cce8d8] bg-[#f0fbf5] px-4 py-3 text-sm font-semibold text-[#127947]">Pembimbing pengganti sudah aktif dan mahasiswa dapat melanjutkan proses bimbingan.</div> : null}
+                        </div>;
+                      })}
+
+                      {!hasPendingDosenStatusReplacement && dosenStatusFollowUpDetail.resolution_status?.has_other_impacts ? <div className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+                        <h4 className="text-lg font-black text-[#1b274b]">Penyelesaian Tindak Lanjut</h4>
+                        <p className="mt-1 text-sm text-[#5d6c91]">Selesaikan dampak non-pembimbing yang masih memerlukan keputusan Sekretaris Prodi.</p>
+                        <div className="mt-4">
+                          <label className="mb-1 block text-sm font-bold text-[#344a7a]">Catatan Tindak Lanjut <span className="ml-1 font-normal text-[#6d7896]">(opsional)</span></label>
+                          <textarea value={dosenStatusFollowUpResolutionForm.note} onChange={(event) => setDosenStatusFollowUpResolutionForm({ note: event.target.value })} maxLength={1000} className="min-h-[100px] w-full rounded-lg border border-[#d3dbef] px-3 py-2.5 text-sm outline-none focus:border-[#2f63e3]" placeholder="Tambahkan informasi yang belum tercatat oleh sistem, jika ada" />
+                          <div className="mt-1 flex justify-end text-xs text-[#6d7896]"><p>{dosenStatusFollowUpResolutionForm.note.length}/1000</p></div>
+                        </div>
+                        <div className="mt-5 flex gap-2"><button type="button" onClick={handleBackFromDosenStatusFollowUpPage} className="rounded-lg border border-[#d3dbef] px-4 py-2.5 text-sm font-bold text-[#344a7a]">Kembali</button><button type="button" onClick={handleResolveInlineDosenStatusFollowUp} disabled={Boolean(savingDosenStatusFollowUpAction)} className="rounded-lg bg-[#117246] px-4 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">{savingDosenStatusFollowUpAction === "resolve" ? "Menyimpan..." : "Selesaikan Tindak Lanjut"}</button></div>
+                      </div> : null}
+                    </> : null}
+                  </div>
+                ) : null}
+
+                {masterDosenTab === "tindak-lanjut" && !dosenStatusFollowUpDetailRow ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
+                        <div className="relative"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" /><input type="search" value={dosenStatusFollowUpQuery} onChange={(event) => { setDosenStatusFollowUpQuery(event.target.value); setDosenStatusFollowUpPage(1); }} placeholder="Cari nama, kode, atau status dosen..." aria-label="Cari tindak lanjut status dosen" className="w-[320px] rounded-lg border border-[#d3dbef] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]" /></div>
+                        <span className="rounded-full bg-[#fff1df] px-3 py-1.5 text-xs font-black text-[#a15b18]">{filteredDosenStatusFollowUps.length} perlu diproses</span>
+                      </div>
+                      <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                        <table className="w-full min-w-[1120px] text-left text-sm">
+                          <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]"><th className="bg-[#f8fbff] px-3 py-2">Dosen</th><th className="bg-[#f8fbff] px-3 py-2">Status Master</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Mahasiswa Aktif</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Review Tertunda</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Jadwal Sidang</th><th className="bg-[#f8fbff] px-3 py-2">Jenis Tindak Lanjut</th><th className="bg-[#f8fbff] px-3 py-2">Status</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Aksi</th></tr></thead>
+                          <tbody>{pagedDosenStatusFollowUps.map((row) => {
+                            const impact = row.impact_snapshot || {};
+                            const requiresReplacement = row.dosen?.continue_existing_supervision === false && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
+                            const typeLabel = impact.reactivation_required ? "Reaktivasi" : requiresReplacement ? "Penggantian Pembimbing" : "Penyesuaian Tugas";
+                            return <tr key={`follow-up-${row.id}`} className="border-b border-[#eff3fb] last:border-b-0">
+                              <td className="px-3 py-3"><p className="font-bold text-[#1f3160]">{formatDosenFullName(row.dosen?.nama, row.dosen?.gelar) || "Dosen"}</p><p className="text-xs text-[#6a779a]">{row.dosen?.kode_dosen || row.dosen?.nik || "-"}</p></td>
+                              <td className="px-3 py-3"><span className="rounded-full bg-[#fff1df] px-2 py-1 text-xs font-bold text-[#a15b18]">{DOSEN_MASTER_STATUS_LABELS[row.dosen?.status_keaktifan] || row.dosen?.status_keaktifan || "-"}</span></td>
+                              <td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.mahasiswa_bimbingan_aktif || 0)}</td><td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.review_pending || 0)}</td><td className="px-3 py-3 text-center font-bold text-[#1f3160]">{Number(impact.jadwal_sidang_mendatang || 0)}</td>
+                              <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${requiresReplacement ? "bg-[#fff0f0] text-[#a03f3f]" : impact.reactivation_required ? "bg-[#eef3ff] text-[#34549b]" : "bg-[#fff8ed] text-[#a15b18]"}`}>{typeLabel}</span></td>
+                              <td className="px-3 py-3"><span className="rounded-full bg-[#fff1df] px-2 py-1 text-xs font-bold text-[#a15b18]">Terbuka</span></td>
+                              <td className="px-3 py-3 text-center"><button type="button" onClick={() => handleOpenDosenStatusFollowUpPage(row)} className="rounded-lg bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:bg-[#2454c7]">Proses</button></td>
+                            </tr>;
+                          })}</tbody>
+                        </table>
+                        {filteredDosenStatusFollowUps.length === 0 ? <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">{dosenStatusFollowUps.length === 0 ? "Tidak ada tindak lanjut terbuka." : "Tindak lanjut yang dicari tidak ditemukan."}</p> : null}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3"><p className="text-sm text-[#4f5e86]">Menampilkan {dosenStatusFollowUpRangeStart} - {dosenStatusFollowUpRangeEnd} dari {filteredDosenStatusFollowUps.length} tindak lanjut.</p><div className="flex items-center gap-2"><button type="button" onClick={() => setDosenStatusFollowUpPage((previous) => Math.max(1, previous - 1))} disabled={dosenStatusFollowUpPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50">Sebelumnya</button><span className="text-sm font-semibold text-[#314778]">Halaman {dosenStatusFollowUpPage} / {totalDosenStatusFollowUpPages}</span><button type="button" onClick={() => setDosenStatusFollowUpPage((previous) => Math.min(totalDosenStatusFollowUpPages, previous + 1))} disabled={dosenStatusFollowUpPage >= totalDosenStatusFollowUpPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50">Berikutnya</button></div></div>
                     </div>
                   </div>
                 ) : null}
@@ -11183,7 +11871,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <td className="px-3 py-2">{row.keyword || "-"}</td>
                               <td className="px-3 py-2">{row.cluster || "-"}</td>
                               <td className="px-3 py-2">
-                                {row.dosen?.nama || row.dosen_nama || row.nama_dosen || "-"}
+                                {formatDosenFullName(
+                                  row.dosen?.nama || row.dosen_nama || row.nama_dosen,
+                                  row.dosen?.gelar || row.dosen_gelar
+                                ) || "-"}
                               </td>
                               <td className="px-3 py-2">{formatLabel(row.status)}</td>
                               <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
@@ -11799,7 +12490,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                     "-"
                                   )}
                                 </td>
-                                <td className="px-3 py-2">{row.dosen_pembimbing_akademik?.nama || "-"}</td>
+                                <td className="px-3 py-2">{formatDosenFullName(row.dosen_pembimbing_akademik?.nama, row.dosen_pembimbing_akademik?.gelar) || "-"}</td>
                                 <td className="px-3 py-2">
                                   {row.status === "submitted" ? (
                                     <div className="flex items-center gap-2">
@@ -11934,7 +12625,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <td className="px-3 py-2">
                                 {row.ketua?.ketua_dosen ? (
                                   <>
-                                    <p className="font-semibold text-[#1f3160]">{row.ketua.ketua_dosen.nama}</p>
+                                    <p className="font-semibold text-[#1f3160]">{formatDosenFullName(row.ketua.ketua_dosen.nama, row.ketua.ketua_dosen.gelar)}</p>
                                     <p className="text-xs text-[#6a779a]">
                                       {row.ketua.ketua_dosen.kode_dosen} • {row.ketua.ketua_dosen.nik || "-"}
                                     </p>
@@ -11968,7 +12659,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <button
                                   type="button"
                                   disabled={savingKetuaKlasterId === row.id || !(row.kandidat_dosen || []).length}
-                                  onClick={() => handleSaveKetuaKlaster(row)}
                                   className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                   <ClipboardList className="h-3.5 w-3.5" />
@@ -12034,6 +12724,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     <button
                       type="button"
                       onClick={() => {
+                        if (periodeMode === "open") {
+                          handleCancelPeriodeSetup().catch(() => {});
+                          return;
+                        }
                         setPeriodeMode("list");
                         setEditingPeriode(null);
                         setPeriodeFormErrors({});
@@ -12056,13 +12750,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setPeriodeMode("open");
-                        setEditingPeriode(null);
-                        setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
-                        setPeriodeFormErrors({});
-                        setPeriodeMasterErrors({});
-                      }}
+                      onClick={handleStartPeriodeSetup}
+                      disabled={savingPeriode}
                       className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                         periodeMode === "open"
                           ? "bg-[#2f63e3] text-white"
@@ -12070,7 +12759,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       }`}
                     >
                       <CalendarRange className="h-4 w-4" />
-                      Buat Draft Periode
+                      Buka Periode Baru
                     </button>
                   </div>
                 </div>
@@ -12181,70 +12870,27 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                 {periodeMode === "open" ? (
                   <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                    <h3 className="text-lg font-black text-[#1b274b]">Buat Draft Periode Baru</h3>
+                    <h3 className="text-2xl font-black tracking-tight text-[#1b274b]">Persiapan Pembukaan Periode</h3>
                     <p className="mt-1 text-sm text-[#5d6c91]">
-                      Gunakan master data penanggung jawab, lalu isi detail draft periode. Aktivasi dilakukan setelah seluruh ketersediaan siap.
+                      Data baru disimpan ke server ketika tombol Buka Pendaftaran ditekan.
                     </p>
 
-                    <div className="mt-4 space-y-4">
-                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="mt-4 flex flex-wrap gap-2 text-xs font-bold">
+                      {["periode", "availability", "preview", "opened"].map((step, index) => (
+                        <span key={step} className={`rounded-full px-3 py-1.5 ${periodeSetup.step === step ? "bg-[#2f63e3] text-white" : "bg-[#eef2fb] text-[#657295]"}`}>
+                          {index + 1}. {{ periode: "Periode", availability: "Ketersediaan", preview: "Preview", opened: "Dibuka" }[step]}
+                        </span>
+                      ))}
+                    </div>
+
+                    {periodeSetup.step === "periode" ? (
+                      <div className="mt-4 space-y-4">
+                        <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                          <h3 className="text-lg font-black text-[#1b274b]">Detail Periode Penjaluran</h3>
+                          <p className="mt-1 text-sm text-[#5d6c91]">Isi identitas dan rentang tanggal pendaftaran.</p>
+                          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                           <div>
-                            <p className="text-sm font-black text-[#1b274b]">
-                              1. Preview Master Penanggung Jawab (Read Only)
-                            </p>
-                            <p className="mt-1 text-sm text-[#5d6c91]">
-                              Pengaturan ketua cluster dan pembimbing jalur dikelola dari menu Master Dosen.
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveTab("master-dosen");
-                              setMasterDosenTab("penanggung-jawab");
-                            }}
-                            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
-                          >
-                            Buka Master Dosen
-                          </button>
-                        </div>
-
-                        {masterPeriodeMissingLabels.length > 0 ? (
-                          <div className="mt-3 rounded-lg border border-[#f5d0d0] bg-[#fff3f3] px-3 py-2 text-sm font-semibold text-[#a33f3f]">
-                            Master data belum lengkap. Lengkapi dulu: {masterPeriodeMissingLabels.join(", ")}.
-                          </div>
-                        ) : null}
-
-                        <div className="mt-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
-                          <p className="text-xs font-black uppercase tracking-wide text-[#4e5d87]">Preview Penanggung Jawab</p>
-                          <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
-                            {PERIODE_MASTER_KETUA_FIELDS.map((item) => (
-                              <p key={`periode-master-preview-ketua-${item.key}`} className="text-sm text-[#2c3d68]">
-                                <span className="font-semibold">{item.label}:</span>{" "}
-                                {periodeDosenMap.get(Number(periodeMasterForm[item.key]))?.nama || "-"}
-                              </p>
-                            ))}
-                            {PERIODE_MASTER_JALUR_FIELDS.map((item) => (
-                              <p key={`periode-master-preview-jalur-${item.key}`} className="text-sm text-[#2c3d68]">
-                                <span className="font-semibold">{item.label}:</span>{" "}
-                                {periodeDosenMap.get(Number(periodeMasterForm[item.key]))?.nama || "-"}
-                              </p>
-                            ))}
-                          </div>
-                        </div>
-                      </section>
-
-                      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                        <p className="text-sm font-black text-[#1b274b]">
-                          2. Detail Periode Penjaluran
-                        </p>
-                        <p className="mt-1 text-sm text-[#5d6c91]">
-                          Isi periode akademik yang akan dibuat sebagai draft.
-                        </p>
-
-                        <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                          <div>
-                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tahun Akademik</label>
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tahun Akademik <span className="text-[#c23737]">*</span></label>
                             <input
                               type="text"
                               name="tahun_akademik"
@@ -12253,6 +12899,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               inputMode="numeric"
                               maxLength={9}
                               pattern="\d{4}/\d{4}"
+                              required
+                              aria-required="true"
                               placeholder="Contoh: 2026/2027"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.tahun_akademik ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
@@ -12263,11 +12911,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             ) : null}
                           </div>
                           <div>
-                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Semester</label>
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Semester <span className="text-[#c23737]">*</span></label>
                             <select
                               name="semester"
                               value={periodeForm.semester}
                               onChange={handlePeriodeInputChange}
+                              required
+                              aria-required="true"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.semester ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
                               }`}
@@ -12279,13 +12929,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeFormErrors.semester}</p>
                             ) : null}
                           </div>
+                          <div className="lg:col-span-2">
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Label Periode <span className="text-[#c23737]">*</span></label>
+                            <input type="text" name="label_periode" value={periodeForm.label_periode} onChange={handlePeriodeInputChange} placeholder={`${formatLabel(periodeForm.semester)} ${periodeForm.tahun_akademik || "2026/2027"}`} required aria-required="true" className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${periodeFormErrors.label_periode ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"}`} />
+                            {periodeFormErrors.label_periode ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeFormErrors.label_periode}</p> : null}
+                          </div>
                           <div>
-                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tanggal Mulai</label>
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tanggal Mulai <span className="text-[#c23737]">*</span></label>
                             <input
                               type="date"
                               name="tanggal_mulai"
                               value={periodeForm.tanggal_mulai}
                               onChange={handlePeriodeInputChange}
+                              required
+                              aria-required="true"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.tanggal_mulai ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
                               }`}
@@ -12295,12 +12952,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             ) : null}
                           </div>
                           <div>
-                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tanggal Selesai</label>
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tanggal Selesai <span className="text-[#c23737]">*</span></label>
                             <input
                               type="date"
                               name="tanggal_selesai"
                               value={periodeForm.tanggal_selesai}
                               onChange={handlePeriodeInputChange}
+                              required
+                              aria-required="true"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.tanggal_selesai ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
                               }`}
@@ -12310,19 +12969,109 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             ) : null}
                           </div>
                         </div>
-                      </section>
-                    </div>
+                        </section>
 
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        disabled={savingPeriode}
-                        onClick={handleOpenPeriode}
-                        className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Buat Draft Periode
-                      </button>
-                    </div>
+                        <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                          <h3 className="text-lg font-black text-[#1b274b]">Penanggung Jawab Periode</h3>
+                          <p className="mt-1 text-sm text-[#5d6c91]">Penanggung jawab divalidasi langsung dari status master dosen, bukan dari availability.</p>
+                          <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                            {PERIODE_MASTER_ALL_FIELDS.map((item) => (
+                              <div key={`setup-role-${item.key}`}>
+                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">{item.label} <span className="text-[#c23737]">*</span></label>
+                                <select value={periodeMasterForm[item.key] || ""} onChange={(event) => setPeriodeMasterForm((previous) => ({ ...previous, [item.key]: event.target.value }))} className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${periodeMasterErrors[item.key] ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"}`}>
+                                  <option value="">Pilih dosen</option>
+                                  {(periodeMasterOptionsByField[item.key] || periodeDosenOptions).map((dosen) => <option key={`${item.key}-${dosen.id}`} value={dosen.id}>{formatDosenFullName(dosen.nama, dosen.gelar)} - {dosen.nik || dosen.kode_dosen || "-"}</option>)}
+                                </select>
+                                {periodeMasterErrors[item.key] ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeMasterErrors[item.key]}</p> : null}
+                              </div>
+                            ))}
+                          </div>
+                        </section>
+                        <button type="button" disabled={savingPeriode} onClick={handleOpenPeriode} className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingPeriode ? "Memuat..." : "Lanjut Atur Ketersediaan"}</button>
+                      </div>
+                    ) : null}
+
+                    {periodeSetup.step === "availability" ? (
+                      <div className="mt-4 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe4f6] bg-[#f8fbff] p-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input type="search" value={dosenPeriodAvailabilityQuery} onChange={(event) => setDosenPeriodAvailabilityQuery(event.target.value)} placeholder="Cari dosen..." className="w-64 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm" />
+                            <button type="button" onClick={() => setSelectedAvailabilityDosenIds(periodeSetup.dosens.filter((row) => row.can_edit).map((row) => Number(row.id)))} className="rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#27407b]">Pilih Semua Dosen</button>
+                            <button type="button" onClick={() => setSelectedAvailabilityDosenIds([])} className="rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#596887]">Hapus Pilihan</button>
+                            <span className="text-xs font-bold text-[#526184]">{selectedAvailabilityDosenIds.length} dosen dipilih</span>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button type="button" disabled={!selectedAvailabilityDosenIds.length} onClick={() => selectedAvailabilityDosenIds.forEach((id) => updatePeriodeSetupDosen(id, { tersedia_membimbing: true, configuration_status: "ready" }))} className="rounded-lg bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Tandai Menerima</button>
+                            <button type="button" disabled={!selectedAvailabilityDosenIds.length} onClick={() => selectedAvailabilityDosenIds.forEach((id) => updatePeriodeSetupDosen(id, { tersedia_membimbing: false, configuration_status: "ready" }))} className="rounded-lg bg-[#b45309] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Tandai Tidak Menerima</button>
+                          </div>
+                        </div>
+                        <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                          <table className="w-full min-w-[1050px] text-left text-sm">
+                            <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]"><th className="bg-[#f8fbff] px-3 py-2 text-center">Pilih</th><th className="bg-[#f8fbff] px-3 py-2">Dosen</th><th className="bg-[#f8fbff] px-3 py-2">Status Master</th><th className="bg-[#f8fbff] px-3 py-2">Status Konfigurasi</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Menerima Bimbingan Baru</th><th className="bg-[#f8fbff] px-3 py-2">Kapasitas Saat Ini</th></tr></thead>
+                            <tbody>{periodeSetup.dosens.filter((row) => [row.nama, row.gelar, row.kode_dosen, row.nik].filter(Boolean).join(" ").toLowerCase().includes(dosenPeriodAvailabilityQuery.trim().toLowerCase())).map((row) => {
+                              const statusMeta = { copied: ["Disalin dari periode sebelumnya", "bg-[#eef3ff] text-[#34549b]"], ready: ["Siap", "bg-[#e8f8ef] text-[#127947]"], needs_review: ["Perlu Ditinjau", "bg-[#fff1df] text-[#a15b18]"], locked_by_master_status: ["Dikunci Admin", "bg-[#edf0f6] text-[#596887]"] }[row.configuration_status];
+                              return <tr key={`setup-dosen-${row.id}`} className="border-b border-[#eff3fb]"><td className="px-3 py-2 text-center"><input type="checkbox" disabled={!row.can_edit} checked={selectedAvailabilityDosenIds.includes(Number(row.id))} onChange={() => toggleAvailabilitySelection(row.id)} /></td><td className="px-3 py-2"><p className="font-bold text-[#1f3160]">{formatDosenFullName(row.nama, row.gelar)}</p><p className="text-xs text-[#6a779a]">{row.kode_dosen || row.nik || "-"}</p></td><td className="px-3 py-2">{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan}</td><td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${statusMeta?.[1] || ""}`}>{statusMeta?.[0] || row.configuration_status}</span></td><td className="px-3 py-2 text-center"><input type="checkbox" checked={Boolean(row.tersedia_membimbing)} disabled={!row.can_edit} onChange={(event) => updatePeriodeSetupDosen(row.id, { tersedia_membimbing: event.target.checked, configuration_status: "ready" })} /></td><td className="px-3 py-2"><b>{row.terpakai}/{row.kuota}</b>, sisa {row.sisa}{row.tersedia_membimbing && row.sisa <= 0 ? <span className="ml-2 text-xs font-bold text-[#b43c3c]">Penuh</span> : null}</td></tr>;
+                            })}</tbody>
+                          </table>
+                        </div>
+                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setPeriodeSetup((previous) => ({ ...previous, step: "periode" }))} className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b]">Kembali ke Tanggal</button><button type="button" disabled={savingPeriode} onClick={handlePreviewPeriodeSetup} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Preview Pembukaan</button></div>
+                      </div>
+                    ) : null}
+
+                    {periodeSetup.step === "preview" ? (
+                      <div className="mt-4 space-y-4">
+                        <section className="rounded-xl border border-[#e4e9f6] bg-[#f8fbff] p-4"><h3 className="text-lg font-black text-[#1b274b]">Preview Pembukaan Pendaftaran</h3><p className="mt-2 text-xl font-black text-[#27407b]">{periodeSetup.preview?.periode?.label_periode}</p><p className="text-sm text-[#5d6c91]">{formatDateTime(periodeSetup.preview?.periode?.tanggal_mulai)} - {formatDateTime(periodeSetup.preview?.periode?.tanggal_selesai)}</p></section>
+                        <section className="rounded-xl border border-[#e4e9f6] p-4"><h4 className="font-black text-[#1b274b]">Penanggung Jawab</h4><div className="mt-3 grid gap-2 lg:grid-cols-2">{(periodeSetup.preview?.penanggung_jawab || []).map((item) => <div key={item.key} className="rounded-lg bg-[#f8fbff] p-3"><p className="text-xs font-bold text-[#6b789d]">{item.label}</p><p className="font-semibold text-[#263861]">{formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"}</p></div>)}</div></section>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <section className="rounded-xl border border-[#e4e9f6] p-4">
+                            <h4 className="font-black text-[#1b274b]">Ketersediaan</h4>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              {[
+                                ["Menerima Bimbingan Baru", periodeSetup.preview?.ketersediaan?.menerima || 0],
+                                ["Tidak Menerima", periodeSetup.preview?.ketersediaan?.tidak_menerima || 0],
+                                ["Dikunci Admin", periodeSetup.preview?.ketersediaan?.locked || 0],
+                                ["Perlu Ditinjau", periodeSetup.preview?.ketersediaan?.needs_review || 0],
+                              ].map(([label, value]) => (
+                                <div key={`preview-availability-${label}`}>
+                                  <label className="mb-1 block text-xs font-bold text-[#526184]">{label}</label>
+                                  <input
+                                    type="text"
+                                    value={`${value} dosen`}
+                                    readOnly
+                                    aria-label={label}
+                                    className="w-full cursor-default rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2 text-sm font-semibold text-[#344b7f] outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                          <section className="rounded-xl border border-[#e4e9f6] p-4">
+                            <h4 className="font-black text-[#1b274b]">Kapasitas</h4>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                              {[
+                                ["Total Kuota", periodeSetup.preview?.ketersediaan?.total_kuota || 0],
+                                ["Sudah Terpakai", periodeSetup.preview?.ketersediaan?.terpakai || 0],
+                                ["Kapasitas Tersisa", periodeSetup.preview?.ketersediaan?.sisa || 0],
+                              ].map(([label, value]) => (
+                                <div key={`preview-capacity-${label}`}>
+                                  <label className="mb-1 block text-xs font-bold text-[#526184]">{label}</label>
+                                  <input
+                                    type="text"
+                                    value={value}
+                                    readOnly
+                                    aria-label={label}
+                                    className="w-full cursor-default rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2 text-sm font-semibold text-[#344b7f] outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        </div>
+                        <div className="flex flex-wrap gap-2"><button type="button" onClick={() => setPeriodeSetup((previous) => ({ ...previous, step: "periode" }))} className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b]">Kembali ke Tanggal</button><button type="button" onClick={() => setPeriodeSetup((previous) => ({ ...previous, step: "availability" }))} className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#27407b]">Kembali ke Ketersediaan</button><button type="button" disabled={savingPeriode} onClick={handleOpenPeriodeFromPreview} className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingPeriode ? "Membuka..." : "Buka Pendaftaran"}</button></div>
+                      </div>
+                    ) : null}
+
+                    {periodeSetup.step === "opened" ? <div className="mt-4 rounded-xl border border-[#bfe2ce] bg-[#f0fbf5] p-6 text-center"><h3 className="text-xl font-black text-[#127947]">Pendaftaran Berhasil Dibuka</h3><p className="mt-1 text-sm text-[#426c57]">Periode sudah aktif dan dapat digunakan.</p><button type="button" onClick={() => { setPeriodeMode("list"); setPeriodeSetup({ step: "periode", dosens: [], preview: null, previous_period: null }); setPeriodeForm({ ...PERIODE_FORM_INITIAL }); }} className="mt-4 rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white">Lihat Daftar Periode</button></div> : null}
                   </div>
                 ) : null}
 
@@ -12383,7 +13132,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   <td className="px-3 py-2">
                                     {row.ketua?.ketua_dosen ? (
                                       <>
-                                        <p className="font-semibold text-[#1f3160]">{row.ketua.ketua_dosen.nama}</p>
+                                        <p className="font-semibold text-[#1f3160]">{formatDosenFullName(row.ketua.ketua_dosen.nama, row.ketua.ketua_dosen.gelar)}</p>
                                         <p className="text-xs text-[#6a779a]">
                                           {row.ketua.ketua_dosen.kode_dosen} • {row.ketua.ketua_dosen.nik || "-"}
                                         </p>
@@ -12417,7 +13166,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                     <button
                                       type="button"
                                       disabled={savingKetuaKlasterId === row.id || !(row.kandidat_dosen || []).length}
-                                      onClick={() => handleSaveKetuaKlaster(row)}
                                       className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                       <ClipboardList className="h-3.5 w-3.5" />
@@ -12515,7 +13263,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       <button
                         type="button"
                         disabled={savingPeriode || !selectedKetuaPeriode}
-                        onClick={handleActivateDraftPeriode}
                         className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         Aktifkan Periode
@@ -12586,10 +13333,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                     <section className="mt-4 rounded-xl border border-[#e6ecf8] bg-[#f8fbff] p-4">
                       <p className="text-sm font-black uppercase tracking-wide text-[#2b4f9c]">
-                        Penanggung Jawab Periode (Read Only)
+                        Penanggung Jawab Periode
                       </p>
                       <p className="mt-1 text-sm text-[#5d6c91]">
-                        Data dosen di bawah ini hanya untuk dilihat dan mengikuti konfigurasi saat periode dibuka.
+                        Penanggung jawab ditetapkan sebelum periode dibuka dan tidak dapat diubah ketika periode sudah aktif atau selesai.
                       </p>
 
                       {periodeReadonlyRoles.loading ? (
@@ -12614,7 +13361,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               className="rounded-lg border border-[#dbe4f6] bg-white p-3"
                             >
                               <p className="text-xs font-black uppercase tracking-wide text-[#6f7da5]">{cluster.label}</p>
-                              <p className="mt-1 text-sm font-semibold text-[#1f3160]">{dosen?.nama || "-"}</p>
+                              <p className="mt-1 text-sm font-semibold text-[#1f3160]">{formatDosenFullName(dosen?.nama, dosen?.gelar) || "-"}</p>
                               <p className="text-xs text-[#5d6c91]">{dosen ? `${dosen.kode_dosen || "-"} • ${dosen.nik || "-"}` : "-"}</p>
                             </div>
                           );
@@ -12638,7 +13385,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         ].map((item) => (
                           <div key={`readonly-jalur-${item.label}`} className="rounded-lg border border-[#dbe4f6] bg-white p-3">
                             <p className="text-xs font-black uppercase tracking-wide text-[#6f7da5]">{item.label}</p>
-                            <p className="mt-1 text-sm font-semibold text-[#1f3160]">{item.dosen?.nama || "-"}</p>
+                            <p className="mt-1 text-sm font-semibold text-[#1f3160]">{formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"}</p>
                             <p className="text-xs text-[#5d6c91]">
                               {item.dosen ? `${item.dosen.kode_dosen || "-"} • ${item.dosen.nik || "-"}` : "-"}
                             </p>

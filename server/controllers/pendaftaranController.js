@@ -143,7 +143,7 @@ async function validateDosenIdsExist(dosenIds, transaction) {
 
   const rows = await Dosen.findAll({
     where: { id: uniqueIds },
-    attributes: ["id", "nik", "nama", "email"],
+    attributes: ["id", "nik", "nama", "gelar", "email"],
     transaction,
   });
   return new Map(rows.map((item) => [Number(item.id), item]));
@@ -310,7 +310,7 @@ exports.getDosenDropdown = async (req, res) => {
     });
     const dosens = await Dosen.findAll({
       where: ACTIVE_DOSEN_WHERE,
-      attributes: ["id", "kode_dosen", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan"],
+      attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan"],
       include: [
         {
           model: Klaster,
@@ -329,8 +329,6 @@ exports.getDosenDropdown = async (req, res) => {
             "dosen_id",
             "configuration_status",
             "tersedia_membimbing",
-            "kuota_bimbingan_periode",
-            "alasan_tidak_tersedia",
           ],
         })
       : [];
@@ -344,7 +342,7 @@ exports.getDosenDropdown = async (req, res) => {
       });
     const mappedDosens = (await Promise.all(eligibleDosens.map(async (dosen) => {
         const availability = availabilityByDosen.get(dosen.id);
-        const kuotaBimbingan = Number(availability?.kuota_bimbingan_periode ?? dosen.kuota_bimbingan ?? 0);
+        const kuotaBimbingan = Number(dosen.kuota_bimbingan ?? 0);
         const jumlahBimbingan = await countActiveSupervisions(dosen.id);
         const sisaKuota = Math.max(kuotaBimbingan - jumlahBimbingan, 0);
 
@@ -353,6 +351,7 @@ exports.getDosenDropdown = async (req, res) => {
           kode_dosen: dosen.kode_dosen,
           nik: dosen.nik,
           nama: dosen.nama,
+          gelar: dosen.gelar,
           email: dosen.email,
           jabatan_struktural: dosen.jabatan_struktural,
           kuota_bimbingan: kuotaBimbingan,
@@ -361,7 +360,6 @@ exports.getDosenDropdown = async (req, res) => {
           is_no_bimbingan: jumlahBimbingan === 0,
           is_kuota_penuh: sisaKuota <= 0,
           periode_penjaluran_id: activePeriode?.id || null,
-          alasan_tidak_tersedia: availability?.alasan_tidak_tersedia || null,
           klasters: Array.isArray(dosen.klasters)
             ? dosen.klasters.map((item) => ({
                 id: item.id,
@@ -469,13 +467,13 @@ exports.getMahasiswaPerintisanOptions = async (req, res) => {
         {
           model: Dosen,
           as: "dosenPembimbingAkademik",
-          attributes: ["id", "nik", "nama"],
+          attributes: ["id", "nik", "nama", "gelar"],
           required: false,
         },
         {
           model: Dosen,
           as: "dosenPembimbingSkripsi",
-          attributes: ["id", "nik", "nama"],
+          attributes: ["id", "nik", "nama", "gelar"],
           required: false,
         },
       ],

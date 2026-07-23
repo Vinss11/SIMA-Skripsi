@@ -1028,12 +1028,14 @@ function formatSubmissionDecisionResponse(submission) {
             id: latestApproved.dosen.id,
             nik: latestApproved.dosen.nik,
             nama: latestApproved.dosen.nama,
+            gelar: latestApproved.dosen.gelar || null,
           }
         : submission.dosenCurrent
         ? {
             id: submission.dosenCurrent.id,
             nik: submission.dosenCurrent.nik,
             nama: submission.dosenCurrent.nama,
+            gelar: submission.dosenCurrent.gelar || null,
           }
         : null,
     },
@@ -1046,6 +1048,7 @@ function formatSubmissionDecisionResponse(submission) {
             id: item.dosen.id,
             nik: item.dosen.nik,
             nama: item.dosen.nama,
+            gelar: item.dosen.gelar || null,
           }
         : null,
     })),
@@ -1070,6 +1073,7 @@ function formatSubmissionDecisionResponse(submission) {
         ? {
             id: submission.dosenCurrent.id,
             nama: submission.dosenCurrent.nama,
+            gelar: submission.dosenCurrent.gelar || null,
           }
         : null,
     };
@@ -1084,6 +1088,7 @@ function formatSubmissionDecisionResponse(submission) {
             id: submission.prospectiveSupervisor.id,
             nik: submission.prospectiveSupervisor.nik,
             nama: submission.prospectiveSupervisor.nama,
+            gelar: submission.prospectiveSupervisor.gelar || null,
             email: submission.prospectiveSupervisor.email,
           }
         : null,
@@ -1120,6 +1125,7 @@ function formatIzinLanjutItem(item) {
           id: item.dosenPembimbingSkripsi.id,
           nik: item.dosenPembimbingSkripsi.nik,
           nama: item.dosenPembimbingSkripsi.nama,
+          gelar: item.dosenPembimbingSkripsi.gelar || null,
           email: item.dosenPembimbingSkripsi.email,
         }
       : null,
@@ -1148,12 +1154,12 @@ async function loadSubmissionDecisionById(id) {
       {
         model: Dosen,
         as: "dosenCurrent",
-        attributes: ["id", "nik", "nama", "email"],
+        attributes: ["id", "nik", "nama", "gelar", "email"],
       },
       {
         model: Dosen,
         as: "prospectiveSupervisor",
-        attributes: ["id", "nik", "nama", "email"],
+        attributes: ["id", "nik", "nama", "gelar", "email"],
       },
       {
         model: RiwayatPersetujuan,
@@ -1162,7 +1168,7 @@ async function loadSubmissionDecisionById(id) {
           {
             model: Dosen,
             as: "dosen",
-            attributes: ["id", "nik", "nama"],
+            attributes: ["id", "nik", "nama", "gelar"],
           },
         ],
       },
@@ -4159,6 +4165,8 @@ exports.getMonitoringMahasiswa = async (req, res) => {
             "penjaluran_sebelumnya",
             "status",
             "form_lanjutan_status",
+            "form_lanjutan_payload",
+            "form_lanjutan_submitted_at",
             "createdAt",
             "updatedAt",
           ],
@@ -4178,7 +4186,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
       });
     }
 
-    const [bimbinganRows, dokumenRows, sidangRows] = await Promise.all([
+    const [bimbinganRows, dokumenRows, sidangRows, historicalResearchSubmissions] = await Promise.all([
       BimbinganSkripsi.findAll({
         where: {
           dosen_id: dosenId,
@@ -4208,6 +4216,17 @@ exports.getMonitoringMahasiswa = async (req, res) => {
         where: { mahasiswa_id: { [Op.in]: mahasiswaIds } },
         attributes: ["id", "mahasiswa_id", "status", "registered_at", "updatedAt"],
         order: [["createdAt", "DESC"]],
+      }),
+      Pengajuan.findAll({
+        where: {
+          mahasiswa_id: { [Op.in]: mahasiswaIds },
+          status: { [Op.in]: ["approved", "completed"] },
+        },
+        attributes: ["id", "mahasiswa_id", "jenis_jalur", "tipe_pengajuan", "status", "updatedAt"],
+        order: [
+          ["updatedAt", "DESC"],
+          ["id", "DESC"],
+        ],
       }),
     ]);
 
@@ -4254,8 +4273,18 @@ exports.getMonitoringMahasiswa = async (req, res) => {
       if (!sidangMap.has(mahasiswaId)) sidangMap.set(mahasiswaId, row);
     }
 
+    const historicalResearchSubmissionMap = new Map();
+    for (const submission of historicalResearchSubmissions) {
+      const mahasiswaId = Number(submission.mahasiswa_id);
+      if (!historicalResearchSubmissionMap.has(mahasiswaId)) {
+        historicalResearchSubmissionMap.set(mahasiswaId, submission);
+      }
+    }
+
     const rows = mahasiswas.map((mahasiswa) => {
       const mahasiswaId = Number(mahasiswa.id);
+      const researchSubmission =
+        mahasiswa.pengajuanAktif || historicalResearchSubmissionMap.get(mahasiswaId) || null;
       const bimbingan = bimbinganMap.get(mahasiswaId) || {
         total: 0,
         tervalidasi: 0,
@@ -4293,14 +4322,14 @@ exports.getMonitoringMahasiswa = async (req, res) => {
         nextAction = "dokumen-sidang-review";
       } else if (bimbingan.pending_permohonan > 0 || bimbingan.pending_resume > 0) {
         tahap = "Perlu Review Dosen";
-      } else if (!mahasiswa.pengajuanAktif && !namaPenjaluran) {
+      } else if (!researchSubmission && !namaPenjaluran) {
         tahap = "Belum Memulai Pengajuan";
         nextAction = "mahasiswa-bimbingan";
       }
 
       const activityDates = [
         mahasiswa.updatedAt,
-        mahasiswa.pengajuanAktif?.updatedAt,
+        researchSubmission?.updatedAt,
         pendaftaran?.updatedAt,
         bimbingan.updated_at,
         dokumen.updated_at,
@@ -4322,9 +4351,20 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           email: mahasiswa.email,
           angkatan: mahasiswa.angkatan,
         },
+        pengajuan_id: researchSubmission?.id || mahasiswa.pengajuan_aktif_id || null,
+        pendaftaran_id: pendaftaran?.id || null,
         jalur: pendaftaran?.jalur || mahasiswa.status_jalur_saat_ini,
         penjaluran: namaPenjaluran,
-        status_pengajuan: mahasiswa.pengajuanAktif?.status || null,
+        status_pengajuan: researchSubmission?.status || null,
+        pengajuan_detail: pendaftaran
+          ? {
+              id: pendaftaran.id,
+              status: pendaftaran.status,
+              workflow_status: pendaftaran.form_lanjutan_status,
+              submitted_at: pendaftaran.form_lanjutan_submitted_at || pendaftaran.createdAt,
+              payload: pendaftaran.form_lanjutan_payload || {},
+            }
+          : null,
         tahap,
         perlu_tindakan:
           bimbingan.pending_permohonan > 0 ||

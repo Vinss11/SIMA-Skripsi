@@ -11,6 +11,10 @@ const {
 } = require("../models");
 const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
 const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("../services/supervisorAccessService");
+const {
+  getMahasiswaSupervisionAccess,
+  sendSupervisionAccessDenied,
+} = require("../services/mahasiswaSupervisionAccessService");
 
 async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
   return getExistingSupervisionPermission(dosenId, transaction);
@@ -90,6 +94,7 @@ function normalizePermohonanStatusLabel(status) {
     rescheduled: "Di-reschedule & Disetujui",
     rejected: "Ditolak",
     expired: "Expired (Ditarik Mahasiswa)",
+    cancelled_supervisor_change: "Dibatalkan karena Pergantian Pembimbing",
   };
   return map[String(status || "").toLowerCase()] || String(status || "-");
 }
@@ -101,6 +106,7 @@ function serializeRow(row) {
     id: item.id,
     mahasiswa_id: item.mahasiswa_id,
     dosen_id: item.dosen_id,
+    reviewer_dosen_id: item.reviewer_dosen_id,
     pengajuan_id: item.pengajuan_id,
     permintaan_pesan: item.permintaan_pesan,
     permintaan_tanggal: item.permintaan_tanggal,
@@ -115,6 +121,8 @@ function serializeRow(row) {
     resume_mahasiswa: item.resume_mahasiswa,
     catatan_review_resume: item.catatan_review_resume,
     tanggal_review_resume: item.tanggal_review_resume,
+    reviewer_dosen_id: item.reviewer_dosen_id,
+    reassigned_reviewer_at: item.reassigned_reviewer_at,
     is_counted: Boolean(item.is_counted),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
@@ -309,6 +317,7 @@ exports.getMahasiswaBimbingan = async (req, res) => {
 
     const serializedRows = rows.map(serializeRow).filter(Boolean);
     const stats = buildStatFromRows(serializedRows);
+    const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswa_id);
 
     return res.json({
       success: true,
@@ -320,14 +329,15 @@ exports.getMahasiswaBimbingan = async (req, res) => {
           email: mahasiswa.email,
           angkatan: mahasiswa.angkatan,
         },
-        dosen_pembimbing: mahasiswa.dosenPembimbingSkripsi
+        dosen_pembimbing: supervisionAccess.current_supervisor || (mahasiswa.dosenPembimbingSkripsi
           ? {
               id: mahasiswa.dosenPembimbingSkripsi.id,
               nik: mahasiswa.dosenPembimbingSkripsi.nik,
               nama: mahasiswa.dosenPembimbingSkripsi.nama,
               email: mahasiswa.dosenPembimbingSkripsi.email,
             }
-          : null,
+          : null),
+        supervision_access: supervisionAccess,
         stats,
         rows: summaryOnly ? [] : serializedRows,
       },
@@ -406,6 +416,12 @@ exports.createMahasiswaBimbingan = async (req, res) => {
         success: false,
         message: "Anda belum memiliki dosen pembimbing skripsi aktif",
       });
+    }
+
+    const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswa_id, transaction);
+    if (!supervisionAccess.can_create_guidance) {
+      await transaction.rollback();
+      return sendSupervisionAccessDenied(res, supervisionAccess, "create_guidance");
     }
 
     const pendaftaranAktif = await getLatestPendaftaranForBimbingan(mahasiswa_id, transaction);
@@ -536,6 +552,12 @@ exports.submitResumeMahasiswaBimbingan = async (req, res) => {
       });
     }
 
+    const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswa_id, transaction);
+    if (!supervisionAccess.can_submit_resume) {
+      await transaction.rollback();
+      return sendSupervisionAccessDenied(res, supervisionAccess, "submit_resume");
+    }
+
     if (!["approved", "rescheduled"].includes(row.status_permohonan)) {
       await transaction.rollback();
       return res.status(409).json({
@@ -611,6 +633,7 @@ exports.getDosenBimbingan = async (req, res) => {
     const where = {
       [Op.or]: [
         { dosen_id },
+        { reviewer_dosen_id: dosen_id },
         { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
       ],
     };
@@ -649,8 +672,10 @@ exports.getDosenBimbingan = async (req, res) => {
         stats,
         rows: serializedRows.map((item) => ({
           ...item,
-          can_review: Number(item.dosen_id) === Number(dosen_id),
-          access_mode: Number(item.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+          can_review: Number(item.dosen_id) === Number(dosen_id) || Number(item.reviewer_dosen_id) === Number(dosen_id),
+          access_mode: Number(item.reviewer_dosen_id) === Number(dosen_id)
+            ? "reassigned_reviewer"
+            : Number(item.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
         })),
       },
     });
@@ -682,6 +707,7 @@ exports.getDosenBimbinganDetail = async (req, res) => {
         id: req.params.id,
         [Op.or]: [
           { dosen_id },
+          { reviewer_dosen_id: dosen_id },
           { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
         ],
       },
@@ -710,8 +736,10 @@ exports.getDosenBimbinganDetail = async (req, res) => {
       success: true,
       data: {
         ...serializeRow(row),
-        can_review: Number(row.dosen_id) === Number(dosen_id),
-        access_mode: Number(row.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+        can_review: Number(row.dosen_id) === Number(dosen_id) || Number(row.reviewer_dosen_id) === Number(dosen_id),
+        access_mode: Number(row.reviewer_dosen_id) === Number(dosen_id)
+          ? "reassigned_reviewer"
+          : Number(row.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
       },
     });
   } catch (error) {
@@ -969,7 +997,10 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
     }
 
     const row = await BimbinganSkripsi.findOne({
-      where: { id: req.params.id, dosen_id },
+      where: {
+        id: req.params.id,
+        [Op.or]: [{ dosen_id }, { reviewer_dosen_id: dosen_id }],
+      },
       transaction,
       lock: transaction.LOCK.UPDATE,
     });

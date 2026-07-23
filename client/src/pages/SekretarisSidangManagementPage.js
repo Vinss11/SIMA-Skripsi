@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck2, Eye, Plus, RefreshCcw, Save } from "lucide-react";
+import { formatDosenFullName } from "../utils/dosen";
 
 const GRID_PAGE_SIZE = 20;
 const SIDANG_TABS = [
@@ -990,7 +991,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                         : "-"}
                     </p>
                     <p>Jalur Penjaluran: {selectedRegistrantDetail?.penjaluran_terakhir?.jalur || "-"}</p>
-                    <p>Dosen Pembimbing: {selectedRegistrantDetail?.dosen_pembimbing?.nama || "-"}</p>
+                    <p>Dosen Pembimbing: {formatDosenFullName(selectedRegistrantDetail?.dosen_pembimbing?.nama, selectedRegistrantDetail?.dosen_pembimbing?.gelar) || "-"}</p>
                   </div>
                   <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3 text-sm text-[#42588f]">
                     <p className="font-bold text-[#1f2d53]">Status Pendaftaran Sidang</p>

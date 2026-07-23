@@ -28,6 +28,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: "penjaluran",
     },
+    catatan_pergantian: DataTypes.TEXT,
     surat_tugas_id: DataTypes.INTEGER,
     created_by_sekretaris_id: DataTypes.INTEGER,
   }, {

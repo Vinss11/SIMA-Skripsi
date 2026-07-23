@@ -18,7 +18,11 @@ module.exports = (sequelize, DataTypes) => {
     resolved_by_sekretaris_id: DataTypes.INTEGER,
     resolved_at: DataTypes.DATE,
     resolution_type: DataTypes.ENUM("resolved", "resolved_with_exception"),
-    resolution_decisions: DataTypes.JSONB,
+    resolution_decisions: {
+      type: DataTypes.JSONB,
+      allowNull: false,
+      defaultValue: {},
+    },
     remaining_impact_snapshot: DataTypes.JSONB,
   }, { sequelize, modelName: "TindakLanjutStatusDosen", tableName: "TindakLanjutStatusDosens", timestamps: true });
   return TindakLanjutStatusDosen;

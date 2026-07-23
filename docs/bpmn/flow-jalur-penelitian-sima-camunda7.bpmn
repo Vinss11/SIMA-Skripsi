@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+  xmlns:modeler="http://camunda.org/schema/modeler/1.0"
+  id="Definitions_SimaResearchRegistration"
+  targetNamespace="https://sima.local/bpmn"
+  exporter="Camunda Modeler"
+  exporterVersion="5.26.0"
+  modeler:executionPlatform="Camunda Platform"
+  modeler:executionPlatformVersion="7.20.0">
+
+  <bpmn:collaboration id="Collaboration_SimaResearchRegistration">
+    <bpmn:participant id="Participant_Sima" name="Pendaftaran Jalur Penelitian SIMA" processRef="Process_SimaResearchRegistration" />
+  </bpmn:collaboration>
+
+  <bpmn:process id="Process_SimaResearchRegistration" name="Pendaftaran Jalur Penelitian SIMA" isExecutable="true" camunda:historyTimeToLive="180">
+    <bpmn:laneSet id="LaneSet_Main">
+      <bpmn:lane id="Lane_Student" name="Mahasiswa">
+        <bpmn:flowNodeRef>Start_Registration</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_OpenRegistration</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_SubmissionType</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_SelectPrimaryTopic</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_SelectAlternativeTopics</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_SubmitTopicProposal</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_FillIndependentTitle</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_SelectClusterAndSupervisor</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_SubmitIndependentProposal</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_ViewApprovedResult</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ViewRejectedResult</bpmn:flowNodeRef><bpmn:flowNodeRef>End_Approved</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_Rejected</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_System" name="Sistem SIMA">
+        <bpmn:flowNodeRef>Task_CheckEligibility</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_Eligible</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ShowIneligibleReason</bpmn:flowNodeRef><bpmn:flowNodeRef>End_Unprocessable</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ValidateTopicProposal</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_TopicDataValid</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ReserveTopics</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_EvaluateTopicReviews</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_AnyTopicApproved</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_SelectHighestPriority</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ValidateIndependentProposal</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_IndependentDataValid</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_BranchMerge</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_ChairAvailable</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_RejectionMerge</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_HandleRejection</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_FinalizeApproval</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Lecturer" name="Calon Dosen Pembimbing / Pemilik Topik">
+        <bpmn:flowNodeRef>SubProcess_ReviewTopics</bpmn:flowNodeRef><bpmn:flowNodeRef>Boundary_ReviewTimeout</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Task_ReviewIndependentProposal</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_SupervisorApproved</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_ClusterChair" name="Ketua Cluster">
+        <bpmn:flowNodeRef>Task_ValidateCluster</bpmn:flowNodeRef><bpmn:flowNodeRef>Gateway_ClusterApproved</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_Secretary" name="Sekretaris Prodi">
+        <bpmn:flowNodeRef>Task_AssignClusterChair</bpmn:flowNodeRef><bpmn:flowNodeRef>Task_FinalDecision</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>Gateway_FinalApproved</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+
+    <bpmn:startEvent id="Start_Registration" name="Mulai"><bpmn:outgoing>Flow_01</bpmn:outgoing></bpmn:startEvent>
+    <bpmn:userTask id="Task_OpenRegistration" name="Membuka pendaftaran jalur penelitian" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_01</bpmn:incoming><bpmn:outgoing>Flow_02</bpmn:outgoing></bpmn:userTask>
+    <bpmn:serviceTask id="Task_CheckEligibility" name="Periksa periode dan kelayakan" camunda:type="external" camunda:topic="sima-check-eligibility"><bpmn:incoming>Flow_02</bpmn:incoming><bpmn:outgoing>Flow_03</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_Eligible" name="Mahasiswa memenuhi syarat?" default="Flow_05"><bpmn:incoming>Flow_03</bpmn:incoming><bpmn:outgoing>Flow_04</bpmn:outgoing><bpmn:outgoing>Flow_05</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_04" name="Ya" sourceRef="Gateway_Eligible" targetRef="Gateway_SubmissionType"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${eligible == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_ShowIneligibleReason" name="Tampilkan alasan tidak memenuhi syarat" camunda:type="external" camunda:topic="sima-notify-ineligible"><bpmn:incoming>Flow_05</bpmn:incoming><bpmn:outgoing>Flow_06</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:endEvent id="End_Unprocessable" name="Pendaftaran tidak dapat diproses"><bpmn:incoming>Flow_06</bpmn:incoming></bpmn:endEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_SubmissionType" name="Jenis pengajuan?"><bpmn:incoming>Flow_04</bpmn:incoming><bpmn:outgoing>Flow_12</bpmn:outgoing><bpmn:outgoing>Flow_24</bpmn:outgoing></bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="Flow_12" name="Topik Dosen" sourceRef="Gateway_SubmissionType" targetRef="Task_SelectPrimaryTopic"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${jenisPengajuan == 'TOPIK_DOSEN'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_SelectPrimaryTopic" name="Memilih topik prioritas pertama" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_12</bpmn:incoming><bpmn:outgoing>Flow_13</bpmn:outgoing></bpmn:userTask>
+    <bpmn:userTask id="Task_SelectAlternativeTopics" name="Memilih topik kedua dan ketiga (opsional)" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_13</bpmn:incoming><bpmn:outgoing>Flow_14</bpmn:outgoing></bpmn:userTask>
+    <bpmn:userTask id="Task_SubmitTopicProposal" name="Konfirmasi dan kirim pengajuan topik" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_14</bpmn:incoming><bpmn:outgoing>Flow_15</bpmn:outgoing></bpmn:userTask>
+    <bpmn:serviceTask id="Task_ValidateTopicProposal" name="Validasi topik, dosen, dan kuota" camunda:type="external" camunda:topic="sima-validate-topic-proposal"><bpmn:incoming>Flow_15</bpmn:incoming><bpmn:outgoing>Flow_16</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_TopicDataValid" name="Data pengajuan valid?" default="Flow_18"><bpmn:incoming>Flow_16</bpmn:incoming><bpmn:outgoing>Flow_17</bpmn:outgoing><bpmn:outgoing>Flow_18</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_17" name="Ya" sourceRef="Gateway_TopicDataValid" targetRef="Task_ReserveTopics"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${dataValidTopik == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_ReserveTopics" name="Simpan pengajuan dan reservasi topik" camunda:type="external" camunda:topic="sima-reserve-topics"><bpmn:incoming>Flow_17</bpmn:incoming><bpmn:outgoing>Flow_19</bpmn:outgoing></bpmn:serviceTask>
+
+    <bpmn:subProcess id="SubProcess_ReviewTopics" name="Review topik oleh dosen pemilik topik"><bpmn:incoming>Flow_19</bpmn:incoming><bpmn:outgoing>Flow_20</bpmn:outgoing>
+      <bpmn:multiInstanceLoopCharacteristics isSequential="false" camunda:collection="${selectedTopics}" camunda:elementVariable="topic" />
+      <bpmn:startEvent id="Start_TopicReview"><bpmn:outgoing>Flow_Sub_1</bpmn:outgoing></bpmn:startEvent>
+      <bpmn:userTask id="Task_LecturerReviewTopic" name="Setujui atau tolak topik" camunda:candidateGroups="dosen"><bpmn:incoming>Flow_Sub_1</bpmn:incoming><bpmn:outgoing>Flow_Sub_2</bpmn:outgoing></bpmn:userTask>
+      <bpmn:endEvent id="End_TopicReview"><bpmn:incoming>Flow_Sub_2</bpmn:incoming></bpmn:endEvent>
+      <bpmn:sequenceFlow id="Flow_Sub_1" sourceRef="Start_TopicReview" targetRef="Task_LecturerReviewTopic" />
+      <bpmn:sequenceFlow id="Flow_Sub_2" sourceRef="Task_LecturerReviewTopic" targetRef="End_TopicReview" />
+    </bpmn:subProcess>
+    <bpmn:boundaryEvent id="Boundary_ReviewTimeout" name="Batas waktu review" attachedToRef="SubProcess_ReviewTopics" cancelActivity="true"><bpmn:outgoing>Flow_21</bpmn:outgoing><bpmn:timerEventDefinition><bpmn:timeDuration xsi:type="bpmn:tFormalExpression">PT72H</bpmn:timeDuration></bpmn:timerEventDefinition></bpmn:boundaryEvent>
+    <bpmn:serviceTask id="Task_EvaluateTopicReviews" name="Evaluasi keputusan atau timeout" camunda:type="external" camunda:topic="sima-evaluate-topic-reviews"><bpmn:incoming>Flow_20</bpmn:incoming><bpmn:incoming>Flow_21</bpmn:incoming><bpmn:outgoing>Flow_22</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_AnyTopicApproved" name="Ada topik yang disetujui?" default="Flow_23R"><bpmn:incoming>Flow_22</bpmn:incoming><bpmn:outgoing>Flow_23</bpmn:outgoing><bpmn:outgoing>Flow_23R</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_23" name="Ya" sourceRef="Gateway_AnyTopicApproved" targetRef="Task_SelectHighestPriority"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${adaTopikDisetujui == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_SelectHighestPriority" name="Pilih topik disetujui berprioritas tertinggi" camunda:type="external" camunda:topic="sima-select-highest-priority"><bpmn:incoming>Flow_23</bpmn:incoming><bpmn:outgoing>Flow_36</bpmn:outgoing></bpmn:serviceTask>
+
+    <bpmn:sequenceFlow id="Flow_24" name="Judul Mandiri" sourceRef="Gateway_SubmissionType" targetRef="Task_FillIndependentTitle"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${jenisPengajuan == 'JUDUL_MANDIRI'}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_FillIndependentTitle" name="Mengisi judul, deskripsi, dan keyword" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_24</bpmn:incoming><bpmn:outgoing>Flow_25</bpmn:outgoing></bpmn:userTask>
+    <bpmn:userTask id="Task_SelectClusterAndSupervisor" name="Memilih cluster dan calon dosen" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_25</bpmn:incoming><bpmn:outgoing>Flow_26</bpmn:outgoing></bpmn:userTask>
+    <bpmn:serviceTask id="Task_ValidateIndependentProposal" name="Validasi data, cluster, dosen, dan kuota" camunda:type="external" camunda:topic="sima-validate-independent-proposal"><bpmn:incoming>Flow_26</bpmn:incoming><bpmn:outgoing>Flow_27</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="Gateway_IndependentDataValid" name="Data pengajuan valid?" default="Flow_29R"><bpmn:incoming>Flow_27</bpmn:incoming><bpmn:outgoing>Flow_28</bpmn:outgoing><bpmn:outgoing>Flow_29R</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_28" name="Ya" sourceRef="Gateway_IndependentDataValid" targetRef="Task_SubmitIndependentProposal"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${dataValidMandiri == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_SubmitIndependentProposal" name="Konfirmasi dan kirim judul mandiri" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_28</bpmn:incoming><bpmn:outgoing>Flow_29</bpmn:outgoing></bpmn:userTask>
+    <bpmn:userTask id="Task_ReviewIndependentProposal" name="Review oleh calon dosen pembimbing" camunda:candidateGroups="dosen"><bpmn:incoming>Flow_29</bpmn:incoming><bpmn:outgoing>Flow_30</bpmn:outgoing></bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_SupervisorApproved" name="Disetujui calon dosen?" default="Flow_31R"><bpmn:incoming>Flow_30</bpmn:incoming><bpmn:outgoing>Flow_31</bpmn:outgoing><bpmn:outgoing>Flow_31R</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_31" name="Ya" sourceRef="Gateway_SupervisorApproved" targetRef="Gateway_BranchMerge"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${calonDosenDisetujui == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+
+    <bpmn:exclusiveGateway id="Gateway_BranchMerge"><bpmn:incoming>Flow_31</bpmn:incoming><bpmn:incoming>Flow_36</bpmn:incoming><bpmn:outgoing>Flow_37</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:exclusiveGateway id="Gateway_ChairAvailable" name="Ketua Cluster tersedia?" default="Flow_39"><bpmn:incoming>Flow_37</bpmn:incoming><bpmn:outgoing>Flow_38</bpmn:outgoing><bpmn:outgoing>Flow_39</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_38" name="Ya" sourceRef="Gateway_ChairAvailable" targetRef="Task_ValidateCluster"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${ketuaClusterTersedia == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_AssignClusterChair" name="Menetapkan Ketua Cluster" camunda:candidateGroups="sekretaris-prodi"><bpmn:incoming>Flow_39</bpmn:incoming><bpmn:outgoing>Flow_40</bpmn:outgoing></bpmn:userTask>
+    <bpmn:userTask id="Task_ValidateCluster" name="Validasi kesesuaian topik/judul dengan cluster" camunda:candidateGroups="ketua-cluster"><bpmn:incoming>Flow_38</bpmn:incoming><bpmn:incoming>Flow_40</bpmn:incoming><bpmn:outgoing>Flow_41</bpmn:outgoing></bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_ClusterApproved" name="Disetujui Ketua Cluster?" default="Flow_43R"><bpmn:incoming>Flow_41</bpmn:incoming><bpmn:outgoing>Flow_42</bpmn:outgoing><bpmn:outgoing>Flow_43R</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_42" name="Ya" sourceRef="Gateway_ClusterApproved" targetRef="Task_FinalDecision"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${ketuaClusterDisetujui == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:userTask id="Task_FinalDecision" name="Memberikan keputusan final" camunda:candidateGroups="sekretaris-prodi"><bpmn:incoming>Flow_42</bpmn:incoming><bpmn:outgoing>Flow_43</bpmn:outgoing></bpmn:userTask>
+    <bpmn:exclusiveGateway id="Gateway_FinalApproved" name="Disetujui Sekretaris Prodi?" default="Flow_45R"><bpmn:incoming>Flow_43</bpmn:incoming><bpmn:outgoing>Flow_44</bpmn:outgoing><bpmn:outgoing>Flow_45R</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:sequenceFlow id="Flow_44" name="Ya" sourceRef="Gateway_FinalApproved" targetRef="Task_FinalizeApproval"><bpmn:conditionExpression xsi:type="bpmn:tFormalExpression">${sekprodiDisetujui == true}</bpmn:conditionExpression></bpmn:sequenceFlow>
+    <bpmn:serviceTask id="Task_FinalizeApproval" name="Tetapkan topik dan dosen pembimbing" camunda:type="external" camunda:topic="sima-finalize-approval"><bpmn:incoming>Flow_44</bpmn:incoming><bpmn:outgoing>Flow_46</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:userTask id="Task_ViewApprovedResult" name="Melihat hasil pendaftaran" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_46</bpmn:incoming><bpmn:outgoing>Flow_47</bpmn:outgoing></bpmn:userTask>
+    <bpmn:endEvent id="End_Approved" name="Pendaftaran penelitian disetujui"><bpmn:incoming>Flow_47</bpmn:incoming></bpmn:endEvent>
+
+    <bpmn:exclusiveGateway id="Gateway_RejectionMerge"><bpmn:incoming>Flow_18</bpmn:incoming><bpmn:incoming>Flow_23R</bpmn:incoming><bpmn:incoming>Flow_29R</bpmn:incoming><bpmn:incoming>Flow_31R</bpmn:incoming><bpmn:incoming>Flow_43R</bpmn:incoming><bpmn:incoming>Flow_45R</bpmn:incoming><bpmn:outgoing>Flow_48</bpmn:outgoing></bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="Task_HandleRejection" name="Tolak, lepas reservasi, dan beri tahu" camunda:type="external" camunda:topic="sima-handle-rejection"><bpmn:incoming>Flow_48</bpmn:incoming><bpmn:outgoing>Flow_49</bpmn:outgoing></bpmn:serviceTask>
+    <bpmn:userTask id="Task_ViewRejectedResult" name="Melihat hasil penolakan" camunda:candidateGroups="mahasiswa"><bpmn:incoming>Flow_49</bpmn:incoming><bpmn:outgoing>Flow_50</bpmn:outgoing></bpmn:userTask>
+    <bpmn:endEvent id="End_Rejected" name="Pendaftaran penelitian ditolak"><bpmn:incoming>Flow_50</bpmn:incoming></bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_01" sourceRef="Start_Registration" targetRef="Task_OpenRegistration" />
+    <bpmn:sequenceFlow id="Flow_02" sourceRef="Task_OpenRegistration" targetRef="Task_CheckEligibility" />
+    <bpmn:sequenceFlow id="Flow_03" sourceRef="Task_CheckEligibility" targetRef="Gateway_Eligible" />
+    <bpmn:sequenceFlow id="Flow_05" name="Tidak" sourceRef="Gateway_Eligible" targetRef="Task_ShowIneligibleReason" />
+    <bpmn:sequenceFlow id="Flow_06" sourceRef="Task_ShowIneligibleReason" targetRef="End_Unprocessable" />
+    <bpmn:sequenceFlow id="Flow_13" sourceRef="Task_SelectPrimaryTopic" targetRef="Task_SelectAlternativeTopics" />
+    <bpmn:sequenceFlow id="Flow_14" sourceRef="Task_SelectAlternativeTopics" targetRef="Task_SubmitTopicProposal" />
+    <bpmn:sequenceFlow id="Flow_15" sourceRef="Task_SubmitTopicProposal" targetRef="Task_ValidateTopicProposal" />
+    <bpmn:sequenceFlow id="Flow_16" sourceRef="Task_ValidateTopicProposal" targetRef="Gateway_TopicDataValid" />
+    <bpmn:sequenceFlow id="Flow_18" name="Tidak" sourceRef="Gateway_TopicDataValid" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_19" sourceRef="Task_ReserveTopics" targetRef="SubProcess_ReviewTopics" />
+    <bpmn:sequenceFlow id="Flow_20" sourceRef="SubProcess_ReviewTopics" targetRef="Task_EvaluateTopicReviews" />
+    <bpmn:sequenceFlow id="Flow_21" name="Timeout" sourceRef="Boundary_ReviewTimeout" targetRef="Task_EvaluateTopicReviews" />
+    <bpmn:sequenceFlow id="Flow_22" sourceRef="Task_EvaluateTopicReviews" targetRef="Gateway_AnyTopicApproved" />
+    <bpmn:sequenceFlow id="Flow_23R" name="Tidak" sourceRef="Gateway_AnyTopicApproved" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_25" sourceRef="Task_FillIndependentTitle" targetRef="Task_SelectClusterAndSupervisor" />
+    <bpmn:sequenceFlow id="Flow_26" sourceRef="Task_SelectClusterAndSupervisor" targetRef="Task_ValidateIndependentProposal" />
+    <bpmn:sequenceFlow id="Flow_27" sourceRef="Task_ValidateIndependentProposal" targetRef="Gateway_IndependentDataValid" />
+    <bpmn:sequenceFlow id="Flow_29R" name="Tidak" sourceRef="Gateway_IndependentDataValid" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_29" sourceRef="Task_SubmitIndependentProposal" targetRef="Task_ReviewIndependentProposal" />
+    <bpmn:sequenceFlow id="Flow_30" sourceRef="Task_ReviewIndependentProposal" targetRef="Gateway_SupervisorApproved" />
+    <bpmn:sequenceFlow id="Flow_31R" name="Tidak" sourceRef="Gateway_SupervisorApproved" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_36" sourceRef="Task_SelectHighestPriority" targetRef="Gateway_BranchMerge" />
+    <bpmn:sequenceFlow id="Flow_37" sourceRef="Gateway_BranchMerge" targetRef="Gateway_ChairAvailable" />
+    <bpmn:sequenceFlow id="Flow_39" name="Tidak" sourceRef="Gateway_ChairAvailable" targetRef="Task_AssignClusterChair" />
+    <bpmn:sequenceFlow id="Flow_40" sourceRef="Task_AssignClusterChair" targetRef="Task_ValidateCluster" />
+    <bpmn:sequenceFlow id="Flow_41" sourceRef="Task_ValidateCluster" targetRef="Gateway_ClusterApproved" />
+    <bpmn:sequenceFlow id="Flow_43R" name="Tidak" sourceRef="Gateway_ClusterApproved" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_43" sourceRef="Task_FinalDecision" targetRef="Gateway_FinalApproved" />
+    <bpmn:sequenceFlow id="Flow_45R" name="Tidak" sourceRef="Gateway_FinalApproved" targetRef="Gateway_RejectionMerge" />
+    <bpmn:sequenceFlow id="Flow_46" sourceRef="Task_FinalizeApproval" targetRef="Task_ViewApprovedResult" />
+    <bpmn:sequenceFlow id="Flow_47" sourceRef="Task_ViewApprovedResult" targetRef="End_Approved" />
+    <bpmn:sequenceFlow id="Flow_48" sourceRef="Gateway_RejectionMerge" targetRef="Task_HandleRejection" />
+    <bpmn:sequenceFlow id="Flow_49" sourceRef="Task_HandleRejection" targetRef="Task_ViewRejectedResult" />
+    <bpmn:sequenceFlow id="Flow_50" sourceRef="Task_ViewRejectedResult" targetRef="End_Rejected" />
+  </bpmn:process>
+
+  <bpmndi:BPMNDiagram id="BPMNDiagram_Sima"><bpmndi:BPMNPlane id="BPMNPlane_Sima" bpmnElement="Collaboration_SimaResearchRegistration">
+    <bpmndi:BPMNShape id="Shape_Pool" bpmnElement="Participant_Sima" isHorizontal="true"><dc:Bounds x="30" y="100" width="5920" height="1250" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_LaneStudent" bpmnElement="Lane_Student" isHorizontal="true"><dc:Bounds x="60" y="100" width="5890" height="250" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_LaneSystem" bpmnElement="Lane_System" isHorizontal="true"><dc:Bounds x="60" y="350" width="5890" height="300" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_LaneLecturer" bpmnElement="Lane_Lecturer" isHorizontal="true"><dc:Bounds x="60" y="650" width="5890" height="240" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_LaneCluster" bpmnElement="Lane_ClusterChair" isHorizontal="true"><dc:Bounds x="60" y="890" width="5890" height="220" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="Shape_LaneSecretary" bpmnElement="Lane_Secretary" isHorizontal="true"><dc:Bounds x="60" y="1110" width="5890" height="240" /></bpmndi:BPMNShape>
+
+    <bpmndi:BPMNShape id="S_Start" bpmnElement="Start_Registration"><dc:Bounds x="100" y="190" width="36" height="36" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Open" bpmnElement="Task_OpenRegistration"><dc:Bounds x="170" y="165" width="170" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Check" bpmnElement="Task_CheckEligibility"><dc:Bounds x="390" y="420" width="190" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Eligible" bpmnElement="Gateway_Eligible" isMarkerVisible="true"><dc:Bounds x="630" y="438" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Ineligible" bpmnElement="Task_ShowIneligibleReason"><dc:Bounds x="730" y="525" width="200" height="80" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Unprocessable" bpmnElement="End_Unprocessable"><dc:Bounds x="975" y="547" width="36" height="36" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Type" bpmnElement="Gateway_SubmissionType" isMarkerVisible="true"><dc:Bounds x="1270" y="183" width="50" height="50" /></bpmndi:BPMNShape>
+
+    <bpmndi:BPMNShape id="S_Topic1" bpmnElement="Task_SelectPrimaryTopic"><dc:Bounds x="1380" y="125" width="170" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_TopicAlt" bpmnElement="Task_SelectAlternativeTopics"><dc:Bounds x="1590" y="125" width="190" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_TopicSubmit" bpmnElement="Task_SubmitTopicProposal"><dc:Bounds x="1820" y="125" width="180" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_TopicValidate" bpmnElement="Task_ValidateTopicProposal"><dc:Bounds x="2040" y="385" width="190" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_TopicValidGw" bpmnElement="Gateway_TopicDataValid" isMarkerVisible="true"><dc:Bounds x="2270" y="403" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Reserve" bpmnElement="Task_ReserveTopics"><dc:Bounds x="2360" y="385" width="190" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ReviewSub" bpmnElement="SubProcess_ReviewTopics" isExpanded="false"><dc:Bounds x="2600" y="700" width="220" height="100" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Timer" bpmnElement="Boundary_ReviewTimeout"><dc:Bounds x="2782" y="782" width="36" height="36" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Evaluate" bpmnElement="Task_EvaluateTopicReviews"><dc:Bounds x="2870" y="385" width="190" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_AnyApproved" bpmnElement="Gateway_AnyTopicApproved" isMarkerVisible="true"><dc:Bounds x="3100" y="403" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Highest" bpmnElement="Task_SelectHighestPriority"><dc:Bounds x="3190" y="385" width="210" height="85" /></bpmndi:BPMNShape>
+
+    <bpmndi:BPMNShape id="S_FillTitle" bpmnElement="Task_FillIndependentTitle"><dc:Bounds x="1380" y="245" width="190" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_SelectCluster" bpmnElement="Task_SelectClusterAndSupervisor"><dc:Bounds x="1610" y="245" width="190" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ValidateIndependent" bpmnElement="Task_ValidateIndependentProposal"><dc:Bounds x="1840" y="515" width="200" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_IndependentValid" bpmnElement="Gateway_IndependentDataValid" isMarkerVisible="true"><dc:Bounds x="2080" y="533" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_SubmitIndependent" bpmnElement="Task_SubmitIndependentProposal"><dc:Bounds x="2170" y="245" width="190" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ReviewIndependent" bpmnElement="Task_ReviewIndependentProposal"><dc:Bounds x="2410" y="815" width="210" height="65" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_SupervisorGw" bpmnElement="Gateway_SupervisorApproved" isMarkerVisible="true"><dc:Bounds x="2670" y="823" width="50" height="50" /></bpmndi:BPMNShape>
+
+    <bpmndi:BPMNShape id="S_BranchMerge" bpmnElement="Gateway_BranchMerge" isMarkerVisible="true"><dc:Bounds x="3470" y="403" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ChairAvailable" bpmnElement="Gateway_ChairAvailable" isMarkerVisible="true"><dc:Bounds x="3580" y="403" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_AssignChair" bpmnElement="Task_AssignClusterChair"><dc:Bounds x="3700" y="1160" width="190" height="80" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ValidateCluster" bpmnElement="Task_ValidateCluster"><dc:Bounds x="3970" y="950" width="210" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ClusterGw" bpmnElement="Gateway_ClusterApproved" isMarkerVisible="true"><dc:Bounds x="4230" y="968" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_FinalDecision" bpmnElement="Task_FinalDecision"><dc:Bounds x="4350" y="1160" width="190" height="80" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_FinalGw" bpmnElement="Gateway_FinalApproved" isMarkerVisible="true"><dc:Bounds x="4590" y="1175" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_Finalize" bpmnElement="Task_FinalizeApproval"><dc:Bounds x="4710" y="385" width="210" height="85" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ViewApproved" bpmnElement="Task_ViewApprovedResult"><dc:Bounds x="4970" y="165" width="180" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_EndApproved" bpmnElement="End_Approved"><dc:Bounds x="5200" y="185" width="36" height="36" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_RejectMerge" bpmnElement="Gateway_RejectionMerge" isMarkerVisible="true"><dc:Bounds x="4710" y="535" width="50" height="50" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_HandleReject" bpmnElement="Task_HandleRejection"><dc:Bounds x="4970" y="525" width="200" height="80" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_ViewRejected" bpmnElement="Task_ViewRejectedResult"><dc:Bounds x="5220" y="255" width="180" height="75" /></bpmndi:BPMNShape>
+    <bpmndi:BPMNShape id="S_EndRejected" bpmnElement="End_Rejected"><dc:Bounds x="5450" y="275" width="36" height="36" /></bpmndi:BPMNShape>
+
+    <!-- Orthogonal sequence-flow routing. Shared rejection routes use separate rails. -->
+    <bpmndi:BPMNEdge id="E01" bpmnElement="Flow_01"><di:waypoint x="136" y="208"/><di:waypoint x="170" y="208"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E02" bpmnElement="Flow_02"><di:waypoint x="340" y="208"/><di:waypoint x="365" y="208"/><di:waypoint x="365" y="462"/><di:waypoint x="390" y="462"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E03" bpmnElement="Flow_03"><di:waypoint x="580" y="462"/><di:waypoint x="630" y="463"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E04" bpmnElement="Flow_04"><di:waypoint x="655" y="438"/><di:waypoint x="655" y="208"/><di:waypoint x="1270" y="208"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E05" bpmnElement="Flow_05"><di:waypoint x="655" y="488"/><di:waypoint x="655" y="565"/><di:waypoint x="730" y="565"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E06" bpmnElement="Flow_06"><di:waypoint x="930" y="565"/><di:waypoint x="975" y="565"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E12" bpmnElement="Flow_12"><di:waypoint x="1320" y="208"/><di:waypoint x="1350" y="208"/><di:waypoint x="1350" y="162"/><di:waypoint x="1380" y="162"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E13" bpmnElement="Flow_13"><di:waypoint x="1550" y="162"/><di:waypoint x="1590" y="162"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E14" bpmnElement="Flow_14"><di:waypoint x="1780" y="162"/><di:waypoint x="1820" y="162"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E15" bpmnElement="Flow_15"><di:waypoint x="2000" y="162"/><di:waypoint x="2020" y="162"/><di:waypoint x="2020" y="427"/><di:waypoint x="2040" y="427"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E16" bpmnElement="Flow_16"><di:waypoint x="2230" y="427"/><di:waypoint x="2270" y="428"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E17" bpmnElement="Flow_17"><di:waypoint x="2320" y="428"/><di:waypoint x="2360" y="427"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E18" bpmnElement="Flow_18"><di:waypoint x="2295" y="453"/><di:waypoint x="2295" y="620"/><di:waypoint x="4660" y="620"/><di:waypoint x="4660" y="560"/><di:waypoint x="4710" y="560"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E19" bpmnElement="Flow_19"><di:waypoint x="2550" y="427"/><di:waypoint x="2575" y="427"/><di:waypoint x="2575" y="750"/><di:waypoint x="2600" y="750"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E20" bpmnElement="Flow_20"><di:waypoint x="2820" y="750"/><di:waypoint x="2845" y="750"/><di:waypoint x="2845" y="427"/><di:waypoint x="2870" y="427"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E21" bpmnElement="Flow_21"><di:waypoint x="2800" y="818"/><di:waypoint x="2845" y="818"/><di:waypoint x="2845" y="450"/><di:waypoint x="2870" y="450"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E22" bpmnElement="Flow_22"><di:waypoint x="3060" y="427"/><di:waypoint x="3100" y="428"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E23" bpmnElement="Flow_23"><di:waypoint x="3150" y="428"/><di:waypoint x="3190" y="427"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E23R" bpmnElement="Flow_23R"><di:waypoint x="3125" y="453"/><di:waypoint x="3125" y="635"/><di:waypoint x="4675" y="635"/><di:waypoint x="4675" y="575"/><di:waypoint x="4710" y="575"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E24" bpmnElement="Flow_24"><di:waypoint x="1295" y="233"/><di:waypoint x="1295" y="282"/><di:waypoint x="1380" y="282"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E25" bpmnElement="Flow_25"><di:waypoint x="1570" y="282"/><di:waypoint x="1610" y="282"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E26" bpmnElement="Flow_26"><di:waypoint x="1800" y="282"/><di:waypoint x="1820" y="282"/><di:waypoint x="1820" y="557"/><di:waypoint x="1840" y="557"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E27" bpmnElement="Flow_27"><di:waypoint x="2040" y="557"/><di:waypoint x="2080" y="558"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E28" bpmnElement="Flow_28"><di:waypoint x="2105" y="533"/><di:waypoint x="2105" y="282"/><di:waypoint x="2170" y="282"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E29R" bpmnElement="Flow_29R"><di:waypoint x="2105" y="583"/><di:waypoint x="2105" y="650"/><di:waypoint x="4690" y="650"/><di:waypoint x="4690" y="585"/><di:waypoint x="4710" y="585"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E29" bpmnElement="Flow_29"><di:waypoint x="2360" y="282"/><di:waypoint x="2385" y="282"/><di:waypoint x="2385" y="847"/><di:waypoint x="2410" y="847"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E30" bpmnElement="Flow_30"><di:waypoint x="2620" y="847"/><di:waypoint x="2670" y="848"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E31" bpmnElement="Flow_31"><di:waypoint x="2720" y="848"/><di:waypoint x="3435" y="848"/><di:waypoint x="3435" y="428"/><di:waypoint x="3470" y="428"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E31R" bpmnElement="Flow_31R"><di:waypoint x="2695" y="873"/><di:waypoint x="2695" y="875"/><di:waypoint x="4645" y="875"/><di:waypoint x="4645" y="560"/><di:waypoint x="4710" y="560"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E36" bpmnElement="Flow_36"><di:waypoint x="3400" y="427"/><di:waypoint x="3470" y="428"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E37" bpmnElement="Flow_37"><di:waypoint x="3520" y="428"/><di:waypoint x="3580" y="428"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E38" bpmnElement="Flow_38"><di:waypoint x="3630" y="428"/><di:waypoint x="3940" y="428"/><di:waypoint x="3940" y="992"/><di:waypoint x="3970" y="992"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E39" bpmnElement="Flow_39"><di:waypoint x="3605" y="453"/><di:waypoint x="3605" y="1200"/><di:waypoint x="3700" y="1200"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E40" bpmnElement="Flow_40"><di:waypoint x="3890" y="1200"/><di:waypoint x="3920" y="1200"/><di:waypoint x="3920" y="1015"/><di:waypoint x="3970" y="1015"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E41" bpmnElement="Flow_41"><di:waypoint x="4180" y="992"/><di:waypoint x="4230" y="993"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E42" bpmnElement="Flow_42"><di:waypoint x="4280" y="993"/><di:waypoint x="4320" y="993"/><di:waypoint x="4320" y="1200"/><di:waypoint x="4350" y="1200"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E43R" bpmnElement="Flow_43R"><di:waypoint x="4255" y="1018"/><di:waypoint x="4255" y="1045"/><di:waypoint x="4615" y="1045"/><di:waypoint x="4615" y="560"/><di:waypoint x="4710" y="560"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E43" bpmnElement="Flow_43"><di:waypoint x="4540" y="1200"/><di:waypoint x="4590" y="1200"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E44" bpmnElement="Flow_44"><di:waypoint x="4640" y="1200"/><di:waypoint x="4680" y="1200"/><di:waypoint x="4680" y="427"/><di:waypoint x="4710" y="427"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E45R" bpmnElement="Flow_45R"><di:waypoint x="4615" y="1175"/><di:waypoint x="4615" y="585"/><di:waypoint x="4710" y="585"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E46" bpmnElement="Flow_46"><di:waypoint x="4920" y="427"/><di:waypoint x="4945" y="427"/><di:waypoint x="4945" y="202"/><di:waypoint x="4970" y="202"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E47" bpmnElement="Flow_47"><di:waypoint x="5150" y="202"/><di:waypoint x="5200" y="203"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E48" bpmnElement="Flow_48"><di:waypoint x="4760" y="560"/><di:waypoint x="4970" y="565"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E49" bpmnElement="Flow_49"><di:waypoint x="5170" y="565"/><di:waypoint x="5195" y="565"/><di:waypoint x="5195" y="292"/><di:waypoint x="5220" y="292"/></bpmndi:BPMNEdge>
+    <bpmndi:BPMNEdge id="E50" bpmnElement="Flow_50"><di:waypoint x="5400" y="292"/><di:waypoint x="5450" y="293"/></bpmndi:BPMNEdge>
+  </bpmndi:BPMNPlane></bpmndi:BPMNDiagram>
+</bpmn:definitions>

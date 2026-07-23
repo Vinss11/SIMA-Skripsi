@@ -175,7 +175,7 @@ exports.getTopics = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
+          attributes: ["id", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
       order: [["createdAt", "DESC"]],
@@ -234,7 +234,7 @@ exports.getTopicById = async (req, res) => {
         {
           model: Dosen,
           as: "dosen",
-          attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
+          attributes: ["id", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
       ],
     });

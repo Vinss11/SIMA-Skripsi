@@ -14,6 +14,11 @@ module.exports = (sequelize, DataTypes) => {
         as: "dosen",
       });
 
+      BimbinganSkripsi.belongsTo(models.Dosen, {
+        foreignKey: "reviewer_dosen_id",
+        as: "reviewerDosen",
+      });
+
       BimbinganSkripsi.belongsTo(models.Pengajuan, {
         foreignKey: "pengajuan_id",
         as: "pengajuan",
@@ -48,7 +53,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       status_permohonan: {
-        type: DataTypes.ENUM("pending", "approved", "rescheduled", "rejected", "expired"),
+        type: DataTypes.ENUM("pending", "approved", "rescheduled", "rejected", "expired", "cancelled_supervisor_change"),
         allowNull: false,
         defaultValue: "pending",
       },
@@ -79,6 +84,18 @@ module.exports = (sequelize, DataTypes) => {
       },
       tanggal_review_resume: {
         type: DataTypes.DATE,
+        allowNull: true,
+      },
+      reviewer_dosen_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      reassigned_reviewer_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      reassigned_by_sekretaris_id: {
+        type: DataTypes.INTEGER,
         allowNull: true,
       },
       is_counted: {

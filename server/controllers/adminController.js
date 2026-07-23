@@ -15,9 +15,13 @@ const {
   analyzeDosenStatusImpact,
   assertDosenCanReceiveNewAssignment,
   initializeAvailabilityForDosen,
+  syncAvailabilityForMasterStatusChange,
 } = require("../services/dosenStatusService");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
-const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("../services/supervisorAccessService");
+const {
+  getSupervisedMahasiswaIdsWithLegacyFallback,
+  getActiveSupervisionLoad,
+} = require("../services/supervisorAccessService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -220,31 +224,9 @@ async function getMappedDosens(keyword = "") {
     order: [["nama", "ASC"]],
   });
 
-  const mahasiswaCountRows = await Mahasiswa.findAll({
-    attributes: [
-      "dosen_pembimbing_skripsi_id",
-      [sequelize.fn("COUNT", sequelize.col("id")), "count"],
-    ],
-    where: {
-      dosen_pembimbing_skripsi_id: { [Op.ne]: null },
-      [Op.or]: [
-        { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
-        { status_jalur_saat_ini: null },
-      ],
-    },
-    group: ["dosen_pembimbing_skripsi_id"],
-    raw: true,
-  });
-
-  const bimbinganByDosenId = new Map(
-    mahasiswaCountRows.map((row) => [
-      Number(row.dosen_pembimbing_skripsi_id),
-      Number(row.count || 0),
-    ])
-  );
-
-  return dosens.map((dosen) => {
-    const jumlahBimbingan = bimbinganByDosenId.get(dosen.id) || 0;
+  return Promise.all(dosens.map(async (dosen) => {
+    const supervisionLoad = await getActiveSupervisionLoad(dosen.id);
+    const jumlahBimbingan = Number(supervisionLoad.total || 0);
     const kuota = Number(dosen.kuota_bimbingan || 0);
     const sisaKuota = Math.max(kuota - jumlahBimbingan, 0);
 
@@ -265,6 +247,7 @@ async function getMappedDosens(keyword = "") {
       status_updated_at: dosen.status_updated_at,
       jumlah_bimbingan: jumlahBimbingan,
       sisa_kuota: sisaKuota,
+      rincian_jalur: supervisionLoad.rincian_jalur,
       klasters: Array.isArray(dosen.klasters)
         ? dosen.klasters.map((item) => ({
             id: item.id,
@@ -275,7 +258,7 @@ async function getMappedDosens(keyword = "") {
       createdAt: dosen.createdAt,
       updatedAt: dosen.updatedAt,
     };
-  });
+  }));
 }
 
 // GET /api/admin/mahasiswa - Lihat semua mahasiswa
@@ -313,8 +296,31 @@ exports.getDosenStatusImpact = async (req, res) => {
     if (!DOSEN_STATUSES.includes(requestedStatus)) {
       return res.status(400).json({ success: false, message: "Status keaktifan tidak valid." });
     }
+    const requestedContinueExisting = requestedStatus === "active"
+      ? true
+      : requestedStatus === "retired"
+      ? false
+      : req.query.continue_existing_supervision === undefined
+      ? dosen.continue_existing_supervision !== false
+      : String(req.query.continue_existing_supervision).toLowerCase() === "true";
     const impact = await analyzeDosenStatusImpact(dosen.id);
-    return res.json({ success: true, data: { dosen, status_baru: requestedStatus, impact } });
+    const replacementRequired = requestedContinueExisting === false
+      && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
+    return res.json({
+      success: true,
+      data: {
+        dosen,
+        status_baru: requestedStatus,
+        continue_existing_supervision_baru: requestedContinueExisting,
+        impact: {
+          ...impact,
+          replacement_required: replacementRequired,
+          mahasiswa_memerlukan_pengganti: replacementRequired
+            ? Number(impact.mahasiswa_bimbingan_aktif || 0)
+            : 0,
+        },
+      },
+    });
   } catch (error) {
     console.error("Error di getDosenStatusImpact:", error);
     return res.status(500).json({ success: false, message: "Gagal menganalisis dampak status.", error: error.message });
@@ -408,6 +414,10 @@ exports.updateDosenStatus = async (req, res) => {
       status_updated_by: req.user.id,
       status_updated_at: now,
     }, { transaction });
+
+    if (oldStatus !== statusBaru) {
+      await syncAvailabilityForMasterStatusChange(dosen, transaction);
+    }
 
     const history = await RiwayatStatusDosen.create({
       dosen_id: dosen.id,
@@ -1456,7 +1466,7 @@ exports.setKuotaDosen = async (req, res) => {
     await dosen.update({ kuota_bimbingan: parsedKuota }, { transaction: t });
 
     // Cek apakah perlu re-enable/disable topik
-    const kuotaInfo = await dosen.getKuotaInfo();
+    const kuotaInfo = await dosen.getKuotaInfo(t);
 
     if (parsedKuota > oldKuota && !kuotaInfo.is_penuh) {
       // Kuota ditambah dan tidak penuh → re-enable topik

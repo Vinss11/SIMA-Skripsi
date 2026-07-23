@@ -182,7 +182,7 @@ async function validateDosenKuota(dosen_id, transaction) {
     };
   }
 
-  const kuotaInfo = await dosen.getKuotaInfo();
+  const kuotaInfo = await dosen.getKuotaInfo(transaction);
 
   const eligibility = assertDosenCanReceiveNewAssignment(dosen, "penugasan pembimbing baru");
   if (!eligibility.allowed) {
@@ -209,18 +209,12 @@ async function validateDosenKuota(dosen_id, transaction) {
       };
     }
     if (availability) {
-      const periodTotal = Number(availability.kuota_bimbingan_periode || 0);
-      const periodInfo = {
-        ...kuotaInfo,
-        total: periodTotal,
-        sisa: Math.max(periodTotal - Number(kuotaInfo.terpakai || 0), 0),
-        is_penuh: periodTotal <= Number(kuotaInfo.terpakai || 0),
-      };
+      const periodInfo = kuotaInfo;
       if (!availability.tersedia_membimbing) {
         return { isAvailable: false, kuotaInfo: periodInfo, message: `${dosen.nama} tidak tersedia membimbing pada ${activePeriode.label_periode}.`, dosen };
       }
       if (periodInfo.is_penuh) {
-        return { isAvailable: false, kuotaInfo: periodInfo, message: `Kuota periode ${dosen.nama} sudah penuh (${periodInfo.terpakai}/${periodInfo.total}).`, dosen };
+        return { isAvailable: false, kuotaInfo: periodInfo, message: `Kuota ${dosen.nama} sudah penuh (${periodInfo.terpakai}/${periodInfo.total}).`, dosen };
       }
     }
   }
@@ -2242,9 +2236,8 @@ async function getNonPenelitianReviewQueueForDosenByJalur(req, res, targetJalur)
 
     const eligibleRows = [];
     for (const item of rows) {
-      const field = targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu";
       const validation = await validateDosenForNewAssignment(dosenId, item.periode?.id, {
-        availabilityField: field,
+        availabilityField: null,
         activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
         checkQuota: false,
       });
@@ -2310,7 +2303,7 @@ async function getNonPenelitianReviewDetailForDosenByJalur(req, res, targetJalur
       });
     }
     const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
-      availabilityField: targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu",
+      availabilityField: null,
       activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
       checkQuota: false,
     });
@@ -2390,7 +2383,7 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
     }
     const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
       transaction: t,
-      availabilityField: targetJalur === "magang" ? "tersedia_pengawas_jalur" : "tersedia_pengampu",
+      availabilityField: null,
       activityLabel: targetJalur === "magang" ? "menjadi pengawas jalur" : "menjadi dosen pengampu",
       checkQuota: false,
     });
@@ -2513,7 +2506,7 @@ exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
       });
     }
     const roleValidation = await validateDosenForNewAssignment(dosenId, row.periode?.id, {
-      availabilityField: "tersedia_pengawas_jalur",
+      availabilityField: null,
       activityLabel: "menjadi pengawas jalur",
       checkQuota: false,
     });

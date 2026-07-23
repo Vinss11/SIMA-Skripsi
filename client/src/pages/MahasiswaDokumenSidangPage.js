@@ -117,10 +117,14 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   }, [data]);
 
   const gate = data?.gate || {};
+  const supervisionAccess = data?.supervision_access || null;
+  const isReplacementPending = supervisionAccess?.status === "replacement_pending";
+  const canUploadDocument = supervisionAccess?.can_upload_document !== false;
+  const canRegisterWithSupervisor = supervisionAccess?.can_register_defense !== false;
   const counted = Number(gate.counted_sessions || 0);
   const target = Number(gate.target_minimum || 8);
   const progressPercent = Math.max(0, Math.min(100, Math.round((counted / Math.max(target, 1)) * 100)));
-  const canRegisterSidang = Boolean(sidangStatus?.can_register);
+  const canRegisterSidang = Boolean(sidangStatus?.can_register) && canRegisterWithSupervisor;
 
   const handlePickFile = (docKey, file) => {
     setSelectedFiles((prev) => ({
@@ -134,6 +138,13 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   };
 
   const handleUpload = async (docKey) => {
+    if (!canUploadDocument) {
+      setFieldMessages((prev) => ({
+        ...prev,
+        [docKey]: supervisionAccess?.reason || "Upload dokumen belum dapat dilakukan.",
+      }));
+      return;
+    }
     const selected = selectedFiles[docKey];
     if (!selected) {
       setFieldMessages((prev) => ({
@@ -237,6 +248,15 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
       {error ? (
         <div className="rounded-xl border border-[#f6d7d7] bg-[#fff2f2] p-4 text-sm font-semibold text-[#a03f3f]">
           {error}
+        </div>
+      ) : null}
+
+      {isReplacementPending ? (
+        <div className="rounded-xl border border-[#f0cf91] bg-[#fff8e8] p-4 text-sm text-[#795300]">
+          <p className="font-black">Menunggu Penggantian Pembimbing</p>
+          <p className="mt-1">
+            Pembimbing Anda tidak dapat melanjutkan bimbingan. Upload dokumen dan pendaftaran sidang dinonaktifkan sementara sampai pembimbing pengganti aktif. Dokumen lama tetap dapat dilihat dan diunduh.
+          </p>
         </div>
       ) : null}
 
@@ -412,13 +432,13 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
                   <input
                     type="file"
                     accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    disabled={!gate.unlocked || uploadingKey === item.key}
+                    disabled={!gate.unlocked || !canUploadDocument || uploadingKey === item.key}
                     onChange={(event) => handlePickFile(item.key, event.target.files?.[0] || null)}
                     className="max-w-[350px] rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm text-[#2e406e]"
                   />
                   <button
                     type="button"
-                    disabled={!gate.unlocked || uploadingKey === item.key}
+                    disabled={!gate.unlocked || !canUploadDocument || uploadingKey === item.key}
                     onClick={() => {
                       handleUpload(item.key).catch(() => {});
                     }}

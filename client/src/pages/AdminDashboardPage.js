@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import {
   ArrowLeft,
   BarChart3,
+  Bell,
   Download,
   FileSpreadsheet,
   LayoutDashboard,
@@ -19,9 +20,13 @@ import {
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 import MenuSectionHeader from "../components/MenuSectionHeader";
+import NotificationMenuBadge from "../components/NotificationMenuBadge";
+import NotificationPage from "./NotificationPage";
+import useNotifications from "../hooks/useNotifications";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { id: "notifications", label: "Pemberitahuan", icon: Bell },
   { id: "statistik", label: "Statistik", icon: BarChart3 },
   { id: "upload-dosen", label: "Manajemen Dosen", icon: FileSpreadsheet },
   { id: "upload-mahasiswa", label: "Upload Mahasiswa", icon: Upload },
@@ -33,6 +38,11 @@ const TAB_HEADERS = {
     icon: LayoutDashboard,
     title: "Dashboard Admin",
     subtitle: "Monitoring ringkas data mahasiswa, pengajuan, dan performa operasional sistem.",
+  },
+  notifications: {
+    icon: Bell,
+    title: "Pemberitahuan",
+    subtitle: "Lihat pemberitahuan sistem dan aktivitas terbaru.",
   },
   statistik: {
     icon: BarChart3,
@@ -95,6 +105,11 @@ function normalizeDosenNameInput(value) {
 
 function normalizeDosenTitleInput(value) {
   return normalizeDosenNameInput(value).replace(/\s*,\s*/g, ", ");
+}
+
+function buildDosenEmailFromNik(value) {
+  const nik = String(value || "").replace(/\D/g, "").slice(0, 9);
+  return nik ? `${nik}@uii.ac.id` : "";
 }
 
 function validateDosenNameInput(value) {
@@ -467,6 +482,7 @@ function UploadPanel({
 
 function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile }) {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statistics, setStatistics] = useState(null);
@@ -1205,13 +1221,22 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setSavingDosenStatus(true);
     try {
       const impactPayload = await fetchWithAuth(
-        `/api/admin/dosen/${selectedDosen.id}/status-impact?status=${encodeURIComponent(dosenEditForm.status_keaktifan)}`
+        `/api/admin/dosen/${selectedDosen.id}/status-impact?status=${encodeURIComponent(dosenEditForm.status_keaktifan)}&continue_existing_supervision=${encodeURIComponent(String(dosenEditForm.continue_existing_supervision))}`
       );
       const impact = impactPayload?.impact || {};
+      const replacementNotice = impact.replacement_required
+        ? `<br/><b style="color:#b45309">${Number(impact.mahasiswa_memerlukan_pengganti || 0)} mahasiswa memerlukan pembimbing pengganti karena bimbingan lama tidak dilanjutkan.</b>`
+        : "";
       const confirmation = await Swal.fire({
         icon: "warning",
         title: `Ubah status menjadi ${DOSEN_STATUS_LABELS[dosenEditForm.status_keaktifan] || dosenEditForm.status_keaktifan}?`,
         html: `<div style="text-align:left;line-height:1.7"><b>Analisis dampak</b><br/>• ${Number(impact.mahasiswa_bimbingan_aktif || 0)} mahasiswa bimbingan aktif<br/>• ${Number(impact.topik_tersedia || 0)} topik masih tersedia<br/>• ${Number(impact.tugas_ketua_cluster_aktif || 0)} tugas Ketua Cluster aktif<br/>• ${Number(impact.review_pending || 0)} review tertunda<br/>• ${Number(impact.jadwal_sidang_mendatang || 0)} jadwal sidang mendatang<br/><br/><small>Histori dan penugasan lama tidak akan dihapus atau diganti otomatis.</small></div>`,
+        didOpen: () => {
+          const htmlContainer = Swal.getHtmlContainer();
+          if (htmlContainer && replacementNotice) {
+            htmlContainer.insertAdjacentHTML("beforeend", replacementNotice);
+          }
+        },
         showCancelButton: true,
         confirmButtonText: "Konfirmasi perubahan",
         cancelButtonText: "Batal",
@@ -1322,7 +1347,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
     const validationErrors = {};
     const normalizedNik = createDosenForm.nik.trim();
-    const normalizedEmail = createDosenForm.email.trim().toLowerCase();
+    const normalizedEmail = buildDosenEmailFromNik(normalizedNik);
     if (!normalizedNik) {
       validationErrors.nik = "NIK wajib diisi.";
     } else if (!/^\d{1,9}$/.test(normalizedNik)) {
@@ -1693,7 +1718,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     }`}
                   >
                     <Icon className="h-4 w-4" />
-                    {item.label}
+                    <span>{item.label}</span>
+                    {item.id === "notifications" ? (
+                      <NotificationMenuBadge count={notificationState.unreadCount} active={isActive} />
+                    ) : null}
                   </button>
                 );
               })}
@@ -1738,6 +1766,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               <StatCard title="Approved Pengajuan" value={summary.approvedPengajuan} subtitle="Sudah disetujui" tone="border-[#dff3ec] bg-[#edfaf3]" />
             </section>
           </div>
+        ) : null}
+
+        {!loading && activeTab === "notifications" ? (
+          <NotificationPage notificationState={notificationState} onNavigate={() => setActiveTab("dashboard")} />
         ) : null}
 
         {!loading && activeTab === "statistik" ? (
@@ -2037,11 +2069,14 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         type="text"
                         value={createDosenForm.nik}
                         onChange={(event) => {
+                          const nik = event.target.value.replace(/\D/g, "").slice(0, 9);
                           setCreateDosenForm((prev) => ({
                             ...prev,
-                            nik: event.target.value.replace(/\D/g, "").slice(0, 9),
+                            nik,
+                            email: buildDosenEmailFromNik(nik),
                           }));
                           clearCreateDosenFieldError("nik");
+                          clearCreateDosenFieldError("email");
                         }}
                         placeholder="Contoh: 900000001"
                         aria-invalid={Boolean(createDosenFieldErrors.nik)}
@@ -2051,25 +2086,18 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Kuota Bimbingan <span className="text-[#c33]">*</span></label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email <span className="text-[#c33]">*</span></label>
                       <input
                         required
-                        type="text"
-                        inputMode="numeric"
-                        maxLength={2}
-                        value={createDosenForm.kuota_bimbingan}
-                        onChange={(event) => {
-                          setCreateDosenForm((prev) => ({
-                            ...prev,
-                            kuota_bimbingan: sanitizeTwoDigitPositiveNumber(event.target.value),
-                          }));
-                          clearCreateDosenFieldError("kuota_bimbingan");
-                        }}
-                        placeholder="Masukkan kuota bimbingan"
-                        aria-invalid={Boolean(createDosenFieldErrors.kuota_bimbingan)}
-                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.kuota_bimbingan ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
+                        readOnly
+                        type="email"
+                        value={createDosenForm.email}
+                        placeholder="Email otomatis dari NIK"
+                        aria-readonly="true"
+                        aria-invalid={Boolean(createDosenFieldErrors.email)}
+                        className={`w-full cursor-not-allowed rounded-lg border bg-[#f5f7fc] px-3 py-2 text-sm text-[#6b7898] outline-none ${createDosenFieldErrors.email ? "border-[#dc4c4c]" : "border-[#d0dbf4]"}`}
                       />
-                      {createDosenFieldErrors.kuota_bimbingan ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.kuota_bimbingan}</p> : null}
+                      {createDosenFieldErrors.email ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.email}</p> : null}
                     </div>
 
                     <div>
@@ -2122,23 +2150,25 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Email <span className="text-[#c33]">*</span></label>
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">Kuota Bimbingan <span className="text-[#c33]">*</span></label>
                       <input
                         required
-                        type="email"
-                        value={createDosenForm.email}
+                        type="text"
+                        inputMode="numeric"
+                        maxLength={2}
+                        value={createDosenForm.kuota_bimbingan}
                         onChange={(event) => {
                           setCreateDosenForm((prev) => ({
                             ...prev,
-                            email: event.target.value,
+                            kuota_bimbingan: sanitizeTwoDigitPositiveNumber(event.target.value),
                           }));
-                          clearCreateDosenFieldError("email");
+                          clearCreateDosenFieldError("kuota_bimbingan");
                         }}
-                        placeholder="nama@uii.ac.id"
-                        aria-invalid={Boolean(createDosenFieldErrors.email)}
-                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.email ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
+                        placeholder="Masukkan kuota bimbingan"
+                        aria-invalid={Boolean(createDosenFieldErrors.kuota_bimbingan)}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${createDosenFieldErrors.kuota_bimbingan ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
                       />
-                      {createDosenFieldErrors.email ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.email}</p> : null}
+                      {createDosenFieldErrors.kuota_bimbingan ? <p className="mt-1 text-xs font-semibold text-[#b43f3f]">{createDosenFieldErrors.kuota_bimbingan}</p> : null}
                     </div>
 
                     <div>
@@ -2677,7 +2707,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       className="relative overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height"
                       style={{ overflowAnchor: "none" }}
                     >
-                      <table className="min-w-[1850px] text-left text-sm">
+                      <table className="min-w-[2150px] text-left text-sm">
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
@@ -2689,7 +2719,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jabatan Struktural</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Klaster</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bimbingan</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bimbingan (Total)</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Rincian Jalur</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Sisa</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Dosen</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Login</th>
@@ -2715,6 +2746,12 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 </td>
                                 <td className="px-3 py-2">{row.kuota_bimbingan ?? "-"}</td>
                                 <td className="px-3 py-2">{row.jumlah_bimbingan ?? 0}</td>
+                                <td className="px-3 py-2 text-xs leading-5 text-[#526184]">
+                                  <span className="whitespace-nowrap">Penelitian: <b>{row.rincian_jalur?.penelitian ?? 0}</b></span>{" · "}
+                                  <span className="whitespace-nowrap">Magang: <b>{row.rincian_jalur?.magang ?? 0}</b></span>{" · "}
+                                  <span className="whitespace-nowrap">Perintisan: <b>{row.rincian_jalur?.perintisan_bisnis ?? 0}</b></span>{" · "}
+                                  <span className="whitespace-nowrap">Pengabdian: <b>{row.rincian_jalur?.pengabdian_masyarakat ?? 0}</b></span>
+                                </td>
                                 <td className="px-3 py-2">{row.sisa_kuota ?? 0}</td>
                                 <td className="px-3 py-2"><span className={`rounded-full px-2 py-1 text-xs font-bold ${row.status_keaktifan === "active" ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1df] text-[#a15b18]"}`}>{DOSEN_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan || "Aktif"}</span></td>
                                 <td className="px-3 py-2">{row.account_is_active === false ? "Nonaktif" : "Aktif"}</td>
