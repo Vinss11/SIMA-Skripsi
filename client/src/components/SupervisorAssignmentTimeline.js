@@ -1,7 +1,9 @@
-function formatHistoryDate(value) {
-  if (!value) return "Belum tersedia";
+import { formatDosenFullName } from "../utils/dosen";
+
+function formatHistoryDate(value, fallback = "Tanggal tidak tercatat") {
+  if (!value) return fallback;
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Belum tersedia";
+  if (Number.isNaN(date.getTime())) return fallback;
   return new Intl.DateTimeFormat("id-ID", { day: "numeric", month: "long", year: "numeric" }).format(date);
 }
 
@@ -27,13 +29,15 @@ function AssignmentCard({ assignment }) {
           {supervisors.map((member) => (
             <p key={`${assignment.id}-${member.urutan}`}>
               <span className="font-bold text-[#29385f]">Pembimbing {member.urutan}:</span>{" "}
-              {member.dosen?.nama || "-"}
+              {formatDosenFullName(member.dosen?.nama, member.dosen?.gelar) || "-"}
             </p>
           ))}
-          <p><span className="font-bold text-[#29385f]">Mulai:</span> {formatHistoryDate(assignment?.tanggal_mulai)}</p>
+          <p><span className="font-bold text-[#29385f]">Mulai:</span> {formatHistoryDate(assignment?.tanggal_mulai, "Tanggal mulai tidak tercatat")}</p>
           <p><span className="font-bold text-[#29385f]">Berakhir:</span> {assignment?.tanggal_selesai ? formatHistoryDate(assignment.tanggal_selesai) : "-"}</p>
           <p><span className="font-bold text-[#29385f]">Semester penjaluran:</span> {assignment?.semester_penjaluran_ke || "-"}</p>
-          <p><span className="font-bold text-[#29385f]">Surat tugas:</span> {assignment?.surat_tugas?.nomor_surat || (assignment?.surat_tugas_id ? `#${assignment.surat_tugas_id}` : "Belum tersedia")}</p>
+          <p><span className="font-bold text-[#29385f]">Dasar penetapan:</span> {assignment?.dasar_penetapan || "Keputusan Final Sekretaris Prodi"}</p>
+          <p><span className="font-bold text-[#29385f]">Ditetapkan oleh:</span> {assignment?.ditetapkan_oleh?.nama || "Tidak tercatat"}</p>
+          <p><span className="font-bold text-[#29385f]">Tanggal penetapan:</span> {formatHistoryDate(assignment?.tanggal_penetapan, "Tidak tercatat")}</p>
           <p><span className="font-bold text-[#29385f]">Sumber:</span> {String(assignment?.sumber_data || "-").replaceAll("_", " ")}</p>
           <p><span className="font-bold text-[#29385f]">Pendaftaran:</span> {assignment?.pendaftaran?.id ? `#${assignment.pendaftaran.id}` : "Tidak tercatat"}</p>
         </div>

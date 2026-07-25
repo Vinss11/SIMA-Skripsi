@@ -23,6 +23,7 @@ const storage = multer.diskStorage({
 
 const defaultAllowedExtensions = [".pdf", ".doc", ".docx", ".jpg", ".jpeg", ".png", ".zip", ".rar"];
 const allowedExtensionsByField = {
+  bukti_apply_file_name: [".pdf", ".jpg", ".jpeg", ".png"],
   cv_file_name: [".pdf", ".doc", ".docx"],
   portfolio_file_name: defaultAllowedExtensions,
   transcript_file_name: [".pdf", ".jpg", ".jpeg", ".png"],

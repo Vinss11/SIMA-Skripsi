@@ -828,10 +828,9 @@ function ReadonlyMagangFileField({ label, value, onOpen }) {
           type="button"
           disabled={!canOpen}
           onClick={onOpen}
-          className="inline-flex items-center gap-1 rounded border border-[#aeb9d3] bg-white px-2 py-1 text-sm font-semibold text-[#1a2648] opacity-90 transition hover:bg-[#eef4ff] disabled:cursor-not-allowed disabled:opacity-60"
+          style={{ all: "revert", flexShrink: 0, whiteSpace: "nowrap" }}
           title={canOpen ? `Lihat ${label}` : "File belum tersedia"}
         >
-          <Eye className="h-3.5 w-3.5" />
           Lihat File
         </button>
         <span className="truncate">{hasFile ? value : "No file chosen"}</span>
@@ -988,10 +987,24 @@ function MagangReadonlyDetailForm({ detail, onOpenDocument }) {
             value={applyStatusValue}
           />
         </div>
-        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <ReadonlyMagangInput label="Tanggal apply" value={payload.tanggal_apply || "-"} />
-          <ReadonlyMagangInput label="Metode apply" value={payload.metode_apply || "-"} />
-          <ReadonlyMagangInput label="Bukti apply" value={payload.bukti_apply || "-"} />
+          <ReadonlyMagangInput
+            label="Metode apply"
+            value={
+              { email: "Email", portal_website: "Portal / Website", walk_in: "Walk-in / Langsung" }[
+                payload.metode_apply
+              ] || payload.metode_apply || "-"
+            }
+          />
+          {uploadedDocuments.bukti_apply || payload.bukti_apply_file_name ? (
+            <ReadonlyMagangFileField
+              label="File bukti apply"
+              value={uploadedDocuments.bukti_apply?.original_name || payload.bukti_apply_file_name || "-"}
+              onOpen={makeDocumentOpenHandler("bukti_apply", payload.bukti_apply_file_name)}
+            />
+          ) : null}
+          <ReadonlyMagangInput label="Catatan tambahan" value={payload.bukti_apply || "-"} />
         </div>
       </div>
 
@@ -1865,6 +1878,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [finalNonPenelitianDosenPembimbing2Id, setFinalNonPenelitianDosenPembimbing2Id] = useState("");
   const [finalNonPenelitianDosenQuery, setFinalNonPenelitianDosenQuery] = useState("");
   const [finalNonPenelitianDosenComboOpen, setFinalNonPenelitianDosenComboOpen] = useState(false);
+  const [finalNonPenelitianDosen2Query, setFinalNonPenelitianDosen2Query] = useState("");
+  const [finalNonPenelitianDosen2ComboOpen, setFinalNonPenelitianDosen2ComboOpen] = useState(false);
   const [finalNonPenelitianDecisionErrors, setFinalNonPenelitianDecisionErrors] = useState({
     note: "",
     dosen: "",
@@ -2163,6 +2178,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     draft_periode: null,
     periodes: [],
     dosen_options: [],
+    dosen_pembimbing_options: [],
     ketua_klaster_options: [],
     master_penanggung_jawab: null,
     penanggung_jawab_lock: null,
@@ -2844,6 +2860,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           draft_periode: periodPayload.draft_periode || null,
           periodes: Array.isArray(periodPayload.periodes) ? periodPayload.periodes : [],
           dosen_options: Array.isArray(periodPayload.dosen_options) ? periodPayload.dosen_options : [],
+          dosen_pembimbing_options: Array.isArray(periodPayload.dosen_pembimbing_options)
+            ? periodPayload.dosen_pembimbing_options
+            : [],
           ketua_klaster_options: Array.isArray(periodPayload.ketua_klaster_options)
             ? periodPayload.ketua_klaster_options
             : [],
@@ -2856,6 +2875,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           draft_periode: null,
           periodes: [],
           dosen_options: [],
+          dosen_pembimbing_options: [],
           ketua_klaster_options: [],
           master_penanggung_jawab: null,
           penanggung_jawab_lock: null,
@@ -2922,6 +2942,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         draft_periode: null,
         periodes: [],
         dosen_options: [],
+        dosen_pembimbing_options: [],
         ketua_klaster_options: [],
         master_penanggung_jawab: null,
         penanggung_jawab_lock: null,
@@ -4003,35 +4024,60 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     () => (Array.isArray(periodeOverview.dosen_options) ? periodeOverview.dosen_options : []),
     [periodeOverview.dosen_options]
   );
+  const periodeDosenPembimbingOptions = useMemo(
+    () => (Array.isArray(periodeOverview.dosen_pembimbing_options)
+      ? periodeOverview.dosen_pembimbing_options
+      : []),
+    [periodeOverview.dosen_pembimbing_options]
+  );
   const periodeKetuaKlasterOptions = useMemo(
     () => (Array.isArray(periodeOverview.ketua_klaster_options) ? periodeOverview.ketua_klaster_options : []),
     [periodeOverview.ketua_klaster_options]
   );
   const periodeDosenMap = useMemo(
-    () => new Map(periodeDosenOptions.map((item) => [Number(item.id), item])),
-    [periodeDosenOptions]
+    () => new Map(periodeDosenPembimbingOptions.map((item) => [Number(item.id), item])),
+    [periodeDosenPembimbingOptions]
   );
   const selectedFinalNonPenelitianDosen = useMemo(
     () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbingId || 0)) || null,
     [finalNonPenelitianDosenPembimbingId, periodeDosenMap]
   );
+  const selectedFinalNonPenelitianDosen2 = useMemo(
+    () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbing2Id || 0)) || null,
+    [finalNonPenelitianDosenPembimbing2Id, periodeDosenMap]
+  );
   const filteredFinalNonPenelitianDosenOptions = useMemo(() => {
     const keyword = finalNonPenelitianDosenQuery.trim().toLowerCase();
-    const source = periodeDosenOptions.map((dosen) => ({
+    const source = periodeDosenPembimbingOptions.map((dosen) => ({
       ...dosen,
       label: `${formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - NIK: ${dosen.nik || "-"}`,
     }));
-    if (!keyword) return [];
-    return source
-      .filter((dosen) =>
+    if (!keyword) return source;
+    return source.filter((dosen) =>
         [dosen.nama, dosen.gelar, formatDosenFullName(dosen.nama, dosen.gelar), dosen.nik, dosen.email, dosen.label]
           .filter(Boolean)
           .join(" ")
           .toLowerCase()
           .includes(keyword)
-      )
-      .slice(0, 8);
-  }, [finalNonPenelitianDosenQuery, periodeDosenOptions]);
+      );
+  }, [finalNonPenelitianDosenQuery, periodeDosenPembimbingOptions]);
+  const filteredFinalNonPenelitianDosen2Options = useMemo(() => {
+    const keyword = finalNonPenelitianDosen2Query.trim().toLowerCase();
+    const source = periodeDosenPembimbingOptions
+      .filter((dosen) => Number(dosen.id) !== Number(finalNonPenelitianDosenPembimbingId || 0))
+      .map((dosen) => ({
+        ...dosen,
+        label: `${formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - NIK: ${dosen.nik || "-"}`,
+      }));
+    if (!keyword) return source;
+    return source.filter((dosen) =>
+      [dosen.nama, dosen.gelar, formatDosenFullName(dosen.nama, dosen.gelar), dosen.nik, dosen.email, dosen.label]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }, [finalNonPenelitianDosen2Query, finalNonPenelitianDosenPembimbingId, periodeDosenPembimbingOptions]);
   const totalPeriodePages = useMemo(
     () => Math.max(1, Math.ceil(periodeRows.length / DOSEN_GRID_PAGE_SIZE)),
     [periodeRows.length]
@@ -4273,7 +4319,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
     const mahasiswaBimbinganIds = new Set(
       mahasiswaMasterRows
-        .filter((mahasiswa) => Number(mahasiswa.dosen_pembimbing_skripsi_id) === dosenId)
+        .filter((mahasiswa) => mahasiswa.is_mahasiswa_bimbingan === true
+          || Number(mahasiswa.dosen_pembimbing_skripsi_id) === dosenId)
         .map((mahasiswa) => mahasiswa.id)
     );
 
@@ -4672,8 +4719,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setFinalNonPenelitianDecision("");
       setFinalNonPenelitianDecisionNote("");
       setFinalNonPenelitianDosenPembimbingId("");
+      setFinalNonPenelitianDosenPembimbing2Id("");
       setFinalNonPenelitianDosenQuery("");
       setFinalNonPenelitianDosenComboOpen(false);
+      setFinalNonPenelitianDosen2Query("");
+      setFinalNonPenelitianDosen2ComboOpen(false);
       setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
     }
   }, [activeTab]);
@@ -5119,6 +5169,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalNonPenelitianDosenPembimbing2Id("");
     setFinalNonPenelitianDosenQuery("");
     setFinalNonPenelitianDosenComboOpen(false);
+    setFinalNonPenelitianDosen2Query("");
+    setFinalNonPenelitianDosen2ComboOpen(false);
     setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
     setLoadingFinalNonPenelitianDetail(true);
     setFinalNonPenelitianMode("review");
@@ -5149,6 +5201,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalNonPenelitianDosenPembimbing2Id("");
     setFinalNonPenelitianDosenQuery("");
     setFinalNonPenelitianDosenComboOpen(false);
+    setFinalNonPenelitianDosen2Query("");
+    setFinalNonPenelitianDosen2ComboOpen(false);
     setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
   };
 
@@ -8346,7 +8400,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
                                 >
                                   <option value="">Tanpa Pembimbing 2</option>
-                                  {periodeDosenOptions
+                                  {periodeDosenPembimbingOptions
                                     .filter((dosen) => Number(dosen.id) !== Number(finalResearchFocusedTopic?.dosen_id))
                                     .map((dosen) => (
                                       <option
@@ -8487,6 +8541,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   setFinalNonPenelitianDosenPembimbing2Id("");
                                   setFinalNonPenelitianDosenQuery("");
                                   setFinalNonPenelitianDosenComboOpen(false);
+                                  setFinalNonPenelitianDosen2Query("");
+                                  setFinalNonPenelitianDosen2ComboOpen(false);
                                   setFinalNonPenelitianDecisionErrors({ note: "", dosen: "" });
                                 }}
                                 className={`rounded-lg px-4 py-2 text-sm font-bold transition ${
@@ -8560,7 +8616,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   <div className="relative">
                                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
                                     <input
-                                      type="text"
+                                      type="search"
+                                      name="dosen-pembimbing-utama-search"
+                                      autoComplete="off"
+                                      data-form-type="other"
                                       role="combobox"
                                       aria-expanded={finalNonPenelitianDosenComboOpen}
                                       aria-controls="final-dosen-pembimbing-options"
@@ -8577,7 +8636,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                           ? `${selectedFinalNonPenelitianDosen.nama || "-"} - NIK: ${selectedFinalNonPenelitianDosen.nik || "-"}`
                                           : finalNonPenelitianDosenQuery;
                                         setFinalNonPenelitianDosenQuery(nextQuery);
-                                        setFinalNonPenelitianDosenComboOpen(Boolean(nextQuery.trim()));
+                                        setFinalNonPenelitianDosenComboOpen(true);
                                       }}
                                       onBlur={() => {
                                         window.setTimeout(() => setFinalNonPenelitianDosenComboOpen(false), 120);
@@ -8585,12 +8644,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       onChange={(event) => {
                                         setFinalNonPenelitianDosenQuery(event.target.value);
                                         setFinalNonPenelitianDosenPembimbingId("");
-                                        setFinalNonPenelitianDosenComboOpen(Boolean(event.target.value.trim()));
+                                        setFinalNonPenelitianDosenComboOpen(true);
                                         if (finalNonPenelitianDecisionErrors.dosen) {
                                           setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
                                         }
                                       }}
-                                      placeholder="Cari nama, NIK, atau email dosen..."
+                                      placeholder="Cari nama atau NIK dosen..."
                                       className={`w-full rounded-lg border py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] ${
                                         finalNonPenelitianDecisionErrors.dosen
                                           ? "border-[#d33b3b] bg-[#fffafa]"
@@ -8603,11 +8662,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       {finalNonPenelitianDecisionErrors.dosen}
                                     </p>
                                   ) : null}
-                                  {finalNonPenelitianDosenComboOpen && finalNonPenelitianDosenQuery.trim() ? (
+                                  {finalNonPenelitianDosenComboOpen ? (
                                     <div
                                       id="final-dosen-pembimbing-options"
                                       role="listbox"
-                                      className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-56 overflow-auto rounded-lg border border-[#d9e3fb] bg-white text-sm shadow-lg"
+                                      className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-[280px] overflow-auto rounded-lg border border-[#d9e3fb] bg-white text-sm shadow-lg"
                                     >
                                       {filteredFinalNonPenelitianDosenOptions.length > 0 ? (
                                         filteredFinalNonPenelitianDosenOptions.map((dosen) => (
@@ -8622,12 +8681,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                               setFinalNonPenelitianDosenPembimbingId(String(dosen.id));
                                               if (Number(finalNonPenelitianDosenPembimbing2Id) === Number(dosen.id)) {
                                                 setFinalNonPenelitianDosenPembimbing2Id("");
+                                                setFinalNonPenelitianDosen2Query("");
+                                                setFinalNonPenelitianDosen2ComboOpen(false);
                                               }
                                               setFinalNonPenelitianDosenQuery(dosen.label);
                                               setFinalNonPenelitianDosenComboOpen(false);
                                               setFinalNonPenelitianDecisionErrors((current) => ({ ...current, dosen: "" }));
                                             }}
-                                            className={`flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:bg-[#f4f5f8] disabled:text-[#8a94ad] ${
+                                            className={`flex h-14 w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:bg-[#f4f5f8] disabled:text-[#8a94ad] ${
                                               Number(finalNonPenelitianDosenPembimbingId) === Number(dosen.id)
                                                 ? "bg-[#e8efff] font-bold text-[#2756b8]"
                                                 : "text-[#263a66]"
@@ -8647,26 +8708,87 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       )}
                                     </div>
                                   ) : null}
-                                  <div className="mt-3">
+                                  <div className="relative mt-3">
                                     <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
                                       Pembimbing 2 <span className="font-normal text-[#7582a2]">(opsional)</span>
                                     </label>
-                                    <select
-                                      value={finalNonPenelitianDosenPembimbing2Id}
-                                      onChange={(event) => setFinalNonPenelitianDosenPembimbing2Id(event.target.value)}
-                                      className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                                    >
-                                      <option value="">Tanpa Pembimbing 2</option>
-                                      {periodeDosenOptions
-                                        .filter(
-                                          (dosen) => Number(dosen.id) !== Number(finalNonPenelitianDosenPembimbingId || 0)
-                                        )
-                                        .map((dosen) => (
-                                          <option key={`nonresearch-secondary-${dosen.id}`} value={dosen.id} disabled={dosen.kuota?.is_penuh === true}>
-                                            {formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - Sisa kuota: {dosen.kuota?.sisa ?? 0}
-                                          </option>
-                                        ))}
-                                    </select>
+                                    <div className="relative">
+                                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                                      <input
+                                        type="search"
+                                        name="dosen-pembimbing-kedua-search"
+                                        autoComplete="off"
+                                        data-form-type="other"
+                                        role="combobox"
+                                        aria-expanded={finalNonPenelitianDosen2ComboOpen}
+                                        aria-controls="final-dosen-pembimbing-2-options"
+                                        value={
+                                          finalNonPenelitianDosen2ComboOpen
+                                            ? finalNonPenelitianDosen2Query
+                                            : finalNonPenelitianDosen2Query ||
+                                              (selectedFinalNonPenelitianDosen2
+                                                ? `${selectedFinalNonPenelitianDosen2.nama || "-"} - NIK: ${selectedFinalNonPenelitianDosen2.nik || "-"}`
+                                                : "")
+                                        }
+                                        onFocus={() => {
+                                          const nextQuery = selectedFinalNonPenelitianDosen2
+                                            ? `${selectedFinalNonPenelitianDosen2.nama || "-"} - NIK: ${selectedFinalNonPenelitianDosen2.nik || "-"}`
+                                            : finalNonPenelitianDosen2Query;
+                                          setFinalNonPenelitianDosen2Query(nextQuery);
+                                          setFinalNonPenelitianDosen2ComboOpen(true);
+                                        }}
+                                        onBlur={() => {
+                                          window.setTimeout(() => setFinalNonPenelitianDosen2ComboOpen(false), 120);
+                                        }}
+                                        onChange={(event) => {
+                                          setFinalNonPenelitianDosen2Query(event.target.value);
+                                          setFinalNonPenelitianDosenPembimbing2Id("");
+                                          setFinalNonPenelitianDosen2ComboOpen(true);
+                                        }}
+                                        placeholder="Cari nama atau NIK dosen..."
+                                        className="w-full rounded-lg border border-[#d3dbef] py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                                      />
+                                    </div>
+                                    {finalNonPenelitianDosen2ComboOpen ? (
+                                      <div
+                                        id="final-dosen-pembimbing-2-options"
+                                        role="listbox"
+                                        className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-[280px] overflow-auto rounded-lg border border-[#d9e3fb] bg-white text-sm shadow-lg"
+                                      >
+                                        {filteredFinalNonPenelitianDosen2Options.length > 0 ? (
+                                          filteredFinalNonPenelitianDosen2Options.map((dosen) => (
+                                            <button
+                                              key={`final-dosen-2-combo-${dosen.id}`}
+                                              type="button"
+                                              role="option"
+                                              aria-selected={Number(finalNonPenelitianDosenPembimbing2Id) === Number(dosen.id)}
+                                              disabled={dosen.kuota?.is_penuh === true}
+                                              onMouseDown={(event) => event.preventDefault()}
+                                              onClick={() => {
+                                                setFinalNonPenelitianDosenPembimbing2Id(String(dosen.id));
+                                                setFinalNonPenelitianDosen2Query(dosen.label);
+                                                setFinalNonPenelitianDosen2ComboOpen(false);
+                                              }}
+                                              className={`flex h-14 w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left last:border-b-0 hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:bg-[#f4f5f8] disabled:text-[#8a94ad] ${
+                                                Number(finalNonPenelitianDosenPembimbing2Id) === Number(dosen.id)
+                                                  ? "bg-[#e8efff] font-bold text-[#2756b8]"
+                                                  : "text-[#263a66]"
+                                              }`}
+                                            >
+                                              <span className="min-w-0 flex-1 font-semibold leading-5">
+                                                {formatDosenFullName(dosen.nama, dosen.gelar) || "-"}
+                                              </span>
+                                              <span className="shrink-0 text-right text-xs text-[#27407b]">
+                                                {dosen.kuota?.is_penuh ? "Kuota penuh" : `Sisa kuota: ${dosen.kuota?.sisa ?? 0}`}<br />
+                                                {dosen.kuota?.terpakai ?? 0}/{dosen.kuota?.total ?? 0} bimbingan
+                                              </span>
+                                            </button>
+                                          ))
+                                        ) : (
+                                          <div className="px-3 py-2 text-[#6d7898]">Dosen tidak ditemukan.</div>
+                                        )}
+                                      </div>
+                                    ) : null}
                                   </div>
                                 </div>
                               ) : null}
@@ -10462,7 +10584,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <td className="px-3 py-2">{row.alasan_ulang || "-"}</td>
                               <td className="px-3 py-2">{formatDateTime(row.createdAt)}</td>
                               <td className="px-3 py-2">
-                                {row.status_dospem === "pending" ? (
+                                {row.status_dospem === "pending" && row.can_review !== false ? (
                                   <div className="flex items-center gap-2">
                                     <button
                                       type="button"
@@ -10480,7 +10602,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                     </button>
                                   </div>
                                 ) : (
-                                  <span className="text-xs text-[#68779f]">Sudah diproses</span>
+                                  <span className="text-xs text-[#68779f]">
+                                    {row.status_dospem === "pending" && row.can_review === false
+                                      ? "Hanya lihat"
+                                      : "Sudah diproses"}
+                                  </span>
                                 )}
                               </td>
                             </tr>

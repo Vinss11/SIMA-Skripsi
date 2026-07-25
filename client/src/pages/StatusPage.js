@@ -653,10 +653,24 @@ function NonPenelitianDetail({ detail, hideIntro = false, onOpenDocument }) {
               value={String(payload.sudah_apply_ke_mitra === true)}
             />
           </div>
-          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
             <DisabledFormInput label="Tanggal apply" value={payload.tanggal_apply || "-"} />
-            <DisabledFormInput label="Metode apply" value={payload.metode_apply || "-"} />
-            <DisabledFormInput label="Bukti apply" value={payload.bukti_apply || "-"} />
+            <DisabledFormInput
+              label="Metode apply"
+              value={
+                { email: "Email", portal_website: "Portal / Website", walk_in: "Walk-in / Langsung" }[
+                  payload.metode_apply
+                ] || payload.metode_apply || "-"
+              }
+            />
+            {uploadedDocuments.bukti_apply || payload.bukti_apply_file_name ? (
+              <DisabledFileField
+                label="File bukti apply"
+                value={uploadedDocuments.bukti_apply?.original_name || payload.bukti_apply_file_name || "-"}
+                onOpen={makeDocumentOpenHandler("bukti_apply", payload.bukti_apply_file_name)}
+              />
+            ) : null}
+            <DisabledFormInput label="Catatan tambahan" value={payload.bukti_apply || "-"} />
           </div>
         </div>
 

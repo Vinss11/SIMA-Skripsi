@@ -1,4 +1,5 @@
 const { Dosen, IzinLanjutSkripsi, PendaftaranPenjaluran, PeriodePenjaluran } = require("../models");
+const { getActiveSupervisorAssignment } = require("./penetapanPembimbingService");
 
 function parseAcademicYearStart(tahunAkademik) {
   const match = String(tahunAkademik || "").match(/(\d{4})/);
@@ -169,11 +170,16 @@ async function getLatestIzinByMahasiswa(mahasiswaId, transaction = null) {
 
 async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
   const mahasiswaId = typeof mahasiswa === "object" ? mahasiswa?.id : mahasiswa;
-  const dospemId =
-    typeof mahasiswa === "object" ? mahasiswa?.dosen_pembimbing_skripsi_id : null;
-
-  const semesterData = await getSemesterPenjaluranAktif(mahasiswaId, transaction);
-  const latestIzin = await getLatestIzinByMahasiswa(mahasiswaId, transaction);
+  const [semesterData, latestIzin, activeAssignment] = await Promise.all([
+    getSemesterPenjaluranAktif(mahasiswaId, transaction),
+    getLatestIzinByMahasiswa(mahasiswaId, transaction),
+    getActiveSupervisorAssignment(mahasiswaId, transaction),
+  ]);
+  const dospemId = Number(
+    activeAssignment.pembimbing_1?.id
+      || (typeof mahasiswa === "object" ? mahasiswa?.dosen_pembimbing_skripsi_id : null)
+      || 0
+  ) || null;
 
   const semesterAktif = semesterData.semester_penjaluran_aktif || 1;
   const isSemesterTigaPlus = semesterAktif >= 3;
@@ -278,4 +284,3 @@ module.exports = {
   buildSemesterLanjutanGate,
   toIzinResponse,
 };
-

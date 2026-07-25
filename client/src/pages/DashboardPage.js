@@ -934,9 +934,6 @@ function DashboardHome({
           <p className="mt-1">
             Pembimbing Anda tidak dapat melanjutkan proses bimbingan. Sekretaris Prodi sedang menyiapkan pembimbing pengganti. Histori bimbingan sebelumnya tetap tersimpan.
           </p>
-          {supervisionAccess?.replacement?.status === "waiting_assignment_letter" ? (
-            <p className="mt-2 font-semibold">Pembimbing pengganti sudah dipilih dan sedang menunggu penerbitan surat tugas.</p>
-          ) : null}
         </section>
       ) : null}
 

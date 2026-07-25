@@ -1,6 +1,7 @@
 const { Op } = require("sequelize");
 const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment } = require("../services/dosenStatusService");
 const { countActiveSupervisions } = require("../services/supervisorAccessService");
+const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const {
   Mahasiswa,
   Dosen,
@@ -215,7 +216,11 @@ async function validateExistingBusinessMemberEligibility(mahasiswa, periodeAktif
   if (!latestApprovedSubmission) {
     return { eligible: false, reason: "Mahasiswa belum memiliki pengajuan sebelumnya yang disetujui." };
   }
-  if (!mahasiswa.dosen_pembimbing_skripsi_id) {
+  const activeAssignment = await getActiveSupervisorAssignment(mahasiswa.id, transaction);
+  const previousSupervisorId = Number(
+    activeAssignment.pembimbing_1?.id || mahasiswa.dosen_pembimbing_skripsi_id || 0
+  ) || null;
+  if (!previousSupervisorId) {
     return { eligible: false, reason: "Dosen pembimbing sebelumnya belum tersedia." };
   }
 
@@ -241,6 +246,7 @@ async function validateExistingBusinessMemberEligibility(mahasiswa, periodeAktif
     latestApprovedSubmission,
     approvedPamit,
     previousJalur,
+    previousSupervisorId,
   };
 }
 
@@ -642,7 +648,7 @@ async function createKelompokPerintisanRegistration({
       nim: mahasiswa.nim,
       nama: mahasiswa.nama,
       dosen_pembimbing_akademik_id: mahasiswa.dosen_pembimbing_akademik_id,
-      dosen_pembimbing_ta_sebelumnya_id: mahasiswa.dosen_pembimbing_skripsi_id,
+      dosen_pembimbing_ta_sebelumnya_id: eligibility.previousSupervisorId,
       penjaluran_sebelumnya: eligibility.previousJalur,
     });
   }
@@ -1309,12 +1315,16 @@ exports.submitPendaftaranUlangAlih = async (req, res) => {
       });
     }
 
+    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa.id, t);
+    const previousSupervisorId = Number(
+      activeAssignment.pembimbing_1?.id || mahasiswa.dosen_pembimbing_skripsi_id || 0
+    ) || null;
     const dosenMap = await validateDosenIdsExist(
-      [mahasiswa.dosen_pembimbing_akademik_id, mahasiswa.dosen_pembimbing_skripsi_id],
+      [mahasiswa.dosen_pembimbing_akademik_id, previousSupervisorId],
       t
     );
     const dosenPembimbingAkademik = dosenMap.get(Number(mahasiswa.dosen_pembimbing_akademik_id));
-    const dosenTASebelumnya = dosenMap.get(Number(mahasiswa.dosen_pembimbing_skripsi_id));
+    const dosenTASebelumnya = dosenMap.get(Number(previousSupervisorId));
 
     if (!dosenPembimbingAkademik) {
       await t.rollback();

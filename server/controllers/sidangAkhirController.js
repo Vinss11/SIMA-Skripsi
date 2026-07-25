@@ -319,7 +319,7 @@ exports.getMahasiswaSidangStatus = async (req, res) => {
   try {
     const mahasiswaId = Number(req.user.id);
     const nowJakarta = nowJakartaDateTime();
-    const [mahasiswa, eligibility, openPeriode] = await Promise.all([
+    const [mahasiswa, eligibility, openPeriode, supervisionAccess] = await Promise.all([
       Mahasiswa.findByPk(mahasiswaId, {
         attributes: ["id", "nim", "nama", "angkatan", "email", "dosen_pembimbing_skripsi_id"],
         include: [
@@ -332,6 +332,7 @@ exports.getMahasiswaSidangStatus = async (req, res) => {
       }),
       getMahasiswaSidangEligibility(mahasiswaId),
       getOpenPeriodeSidang(),
+      getMahasiswaSupervisionAccess(mahasiswaId),
     ]);
 
     if (!mahasiswa) {
@@ -401,14 +402,15 @@ exports.getMahasiswaSidangStatus = async (req, res) => {
           angkatan: mahasiswa.angkatan,
           email: mahasiswa.email,
         },
-        dosen_pembimbing: mahasiswa.dosenPembimbingSkripsi
+        dosen_pembimbing: supervisionAccess.current_supervisor || (mahasiswa.dosenPembimbingSkripsi
           ? {
               id: mahasiswa.dosenPembimbingSkripsi.id,
               nama: mahasiswa.dosenPembimbingSkripsi.nama,
               nik: mahasiswa.dosenPembimbingSkripsi.nik,
               email: mahasiswa.dosenPembimbingSkripsi.email,
             }
-          : null,
+          : null),
+        dosen_pembimbings: supervisionAccess.current_supervisors || [],
         periode_sidang_aktif: openPeriode
           ? {
               id: openPeriode.id,
@@ -481,6 +483,7 @@ exports.registerMahasiswaSidang = async (req, res) => {
       await transaction.rollback();
       return sendSupervisionAccessDenied(res, supervisionAccess, "register_defense");
     }
+    const primarySupervisorId = Number(supervisionAccess.current_supervisor?.id || 0) || null;
 
     const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction);
     if (!eligibility.eligible) {
@@ -534,7 +537,7 @@ exports.registerMahasiswaSidang = async (req, res) => {
         {
           periode_sidang_id: openPeriode.id,
           mahasiswa_id: mahasiswaId,
-          dosen_pembimbing_id: mahasiswa.dosen_pembimbing_skripsi_id || null,
+          dosen_pembimbing_id: primarySupervisorId,
           status: "submitted",
           registered_at: new Date(nowJakarta.datetime),
         },

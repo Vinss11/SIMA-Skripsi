@@ -11,6 +11,18 @@ function memberOrder(member) {
   return Number(member?.urutan || 0);
 }
 
+function formatEffectiveDate(value) {
+  if (!value) return "tanggal yang ditetapkan";
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).trim();
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "Asia/Jakarta",
+  }).format(date);
+}
+
 async function createSystemNotification({
   recipientType,
   recipientId,
@@ -55,6 +67,7 @@ async function createSupervisorReplacementNotifications({
   previousMembers = [],
   newMembers = [],
   effectiveDate,
+  assignmentSource = "pergantian",
   transaction,
 }) {
   const previousById = new Map(previousMembers.map((item) => [memberDosenId(item), item]).filter(([id]) => id > 0));
@@ -66,7 +79,19 @@ async function createSupervisorReplacementNotifications({
   const reorderedIds = [...newIds].filter(
     (id) => oldIds.has(id) && memberOrder(previousById.get(id)) !== memberOrder(newById.get(id))
   );
-  const effectiveLabel = String(effectiveDate || "").trim();
+  const effectiveLabel = formatEffectiveDate(effectiveDate);
+  const isInitialAssignment = oldIds.size === 0;
+  const isExtension = assignmentSource === "perpanjangan";
+  const studentType = isInitialAssignment
+    ? NOTIFICATION_TYPES.SUPERVISOR_ASSIGNED_STUDENT
+    : isExtension
+    ? NOTIFICATION_TYPES.SUPERVISOR_EXTENDED_STUDENT
+    : NOTIFICATION_TYPES.SUPERVISOR_REPLACED_STUDENT;
+  const studentMessage = isInitialAssignment
+    ? `Pembimbing skripsi Anda telah ditetapkan mulai ${effectiveLabel}.`
+    : isExtension
+    ? `Penetapan pembimbing skripsi Anda diperbarui untuk periode berikutnya mulai ${effectiveLabel}.`
+    : `Pembimbing skripsi Anda telah diperbarui mulai ${effectiveLabel}. Progres bimbingan sebelumnya tetap tersimpan.`;
   const commonMetadata = {
     mahasiswa_id: mahasiswa.id,
     mahasiswa_nama: mahasiswa.nama,
@@ -79,8 +104,8 @@ async function createSupervisorReplacementNotifications({
   created.push(await createSystemNotification({
     recipientType: "mahasiswa",
     recipientId: mahasiswa.id,
-    type: NOTIFICATION_TYPES.SUPERVISOR_REPLACED_STUDENT,
-    message: `Pembimbing skripsi Anda telah diperbarui mulai ${effectiveLabel}. Progres bimbingan sebelumnya tetap tersimpan.`,
+    type: studentType,
+    message: studentMessage,
     referenceType: "penetapan_pembimbing",
     referenceId: assignmentId,
     actionKey: "student_supervisor_history",
@@ -89,7 +114,7 @@ async function createSupervisorReplacementNotifications({
       previous_supervisor_ids: [...oldIds],
       new_supervisor_ids: [...newIds],
     },
-    deduplicationKey: `supervisor-replacement:${assignmentId}:mahasiswa:${mahasiswa.id}`,
+    deduplicationKey: `supervisor-assignment:${assignmentId}:mahasiswa:${mahasiswa.id}`,
     transaction,
   }));
 
@@ -140,6 +165,25 @@ async function createSupervisorReplacementNotifications({
     }));
   }
 
+  if (isExtension) {
+    const continuedIds = [...newIds].filter((id) => oldIds.has(id) && !reorderedIds.includes(id));
+    for (const dosenId of continuedIds) {
+      const order = memberOrder(newById.get(dosenId));
+      created.push(await createSystemNotification({
+        recipientType: "dosen",
+        recipientId: dosenId,
+        type: NOTIFICATION_TYPES.SUPERVISION_UPDATED_LECTURER,
+        message: `Penugasan Anda sebagai Pembimbing ${order} untuk ${mahasiswa.nama} (${mahasiswa.nim}) diperbarui untuk periode berikutnya mulai ${effectiveLabel}.`,
+        referenceType: "penetapan_pembimbing",
+        referenceId: assignmentId,
+        actionKey: "lecturer_supervised_student",
+        metadata: { ...commonMetadata, supervisor_order: order, assignment_source: assignmentSource },
+        deduplicationKey: `supervisor-assignment:${assignmentId}:dosen:${dosenId}:extended:${order}`,
+        transaction,
+      }));
+    }
+  }
+
   return {
     notifications: created,
     student: 1,
@@ -149,4 +193,10 @@ async function createSupervisorReplacementNotifications({
   };
 }
 
-module.exports = { createSystemNotification, createSupervisorReplacementNotifications };
+const createSupervisorAssignmentNotifications = createSupervisorReplacementNotifications;
+
+module.exports = {
+  createSystemNotification,
+  createSupervisorAssignmentNotifications,
+  createSupervisorReplacementNotifications,
+};

@@ -5,6 +5,7 @@ const {
   Dosen,
 } = require("../models");
 const { canContinueExistingSupervision } = require("./dosenStatusService");
+const { getActiveSupervisorAssignment } = require("./penetapanPembimbingService");
 
 const REPLACEMENT_PENDING_CODE = "SUPERVISOR_REPLACEMENT_PENDING";
 const REPLACEMENT_PENDING_MESSAGE =
@@ -21,11 +22,13 @@ function serializeSupervisor(dosen) {
     email: dosen.email || null,
     status_keaktifan: dosen.status_keaktifan || null,
     continue_existing_supervision: dosen.continue_existing_supervision === true,
+    can_continue_existing_supervision: canContinueExistingSupervision(dosen),
   };
 }
 
 async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
-  const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, {
+  const [mahasiswa, activeAssignment] = await Promise.all([
+    Mahasiswa.findByPk(mahasiswaId, {
     attributes: ["id", "status_jalur_saat_ini", "dosen_pembimbing_skripsi_id"],
     include: [{
       model: Dosen,
@@ -36,7 +39,9 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
       ],
     }],
     transaction,
-  });
+    }),
+    getActiveSupervisorAssignment(mahasiswaId, transaction),
+  ]);
 
   if (!mahasiswa) {
     return {
@@ -51,7 +56,18 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
     };
   }
 
-  const currentSupervisor = mahasiswa.dosenPembimbingSkripsi || null;
+  const currentSupervisor = activeAssignment.pembimbing_1 || mahasiswa.dosenPembimbingSkripsi || null;
+  const currentSupervisors = [
+    activeAssignment.pembimbing_1
+      ? { ...serializeSupervisor(activeAssignment.pembimbing_1), urutan: 1, peran: "utama" }
+      : null,
+    activeAssignment.pembimbing_2
+      ? { ...serializeSupervisor(activeAssignment.pembimbing_2), urutan: 2, peran: "pendamping" }
+      : null,
+  ].filter(Boolean);
+  if (currentSupervisors.length === 0 && currentSupervisor) {
+    currentSupervisors.push({ ...serializeSupervisor(currentSupervisor), urutan: 1, peran: "utama" });
+  }
   if (String(mahasiswa.status_jalur_saat_ini || "").toLowerCase() === "selesai") {
     return {
       status: "completed",
@@ -60,6 +76,7 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
       can_upload_document: false,
       can_register_defense: false,
       current_supervisor: serializeSupervisor(currentSupervisor),
+      current_supervisors: currentSupervisors,
       replacement: null,
       reason: "Proses skripsi telah selesai.",
     };
@@ -73,6 +90,7 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
       can_upload_document: false,
       can_register_defense: false,
       current_supervisor: null,
+      current_supervisors: [],
       replacement: null,
       reason: "Dosen pembimbing skripsi belum ditetapkan.",
     };
@@ -86,6 +104,7 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
       can_upload_document: true,
       can_register_defense: true,
       current_supervisor: serializeSupervisor(currentSupervisor),
+      current_supervisors: currentSupervisors,
       replacement: null,
       reason: null,
     };
@@ -99,6 +118,7 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
     can_upload_document: false,
     can_register_defense: false,
     current_supervisor: serializeSupervisor(currentSupervisor),
+    current_supervisors: currentSupervisors,
     replacement: { status: "awaiting_selection" },
     reason: REPLACEMENT_PENDING_MESSAGE,
   };

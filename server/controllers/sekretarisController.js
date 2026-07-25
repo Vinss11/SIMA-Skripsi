@@ -18,6 +18,7 @@ const {
   DosenKetersediaanPeriode,
   PenetapanPembimbing,
   RiwayatKetersediaanMembimbing,
+  RiwayatStatusDosen,
   TindakLanjutStatusDosen,
   sequelize,
 } = require("../models");
@@ -37,13 +38,19 @@ const {
   assertDosenCanReceiveNewAssignment,
   validateDosenForNewAssignment,
   analyzeDosenStatusImpact,
+  evaluateDosenStatusFollowUp,
   resolveResearchSubmissionRegistration,
   initializeAvailabilityForPeriod,
   copyAvailabilityFromPreviousPeriod,
+  markActiveAvailabilityReadyAfterFollowUp,
   getJakartaDateOnly,
   toEffectiveAvailability,
 } = require("../services/dosenStatusService");
-const { getActiveSupervisionLoad } = require("../services/supervisorAccessService");
+const {
+  getActiveSupervisionLoad,
+  getSupervisedMahasiswaIdsWithLegacyFallback,
+  isActiveSupervisor,
+} = require("../services/supervisorAccessService");
 const { getMahasiswaSupervisionAccess } = require("../services/mahasiswaSupervisionAccessService");
 const {
   buildTopikListFromSubmission,
@@ -1685,7 +1692,16 @@ exports.getPeriodeOverview = async (req, res) => {
       }),
       Dosen.findAll({
         where: ACTIVE_DOSEN_WHERE,
-        attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email", "jabatan_struktural"],
+        attributes: [
+          "id",
+          "kode_dosen",
+          "nik",
+          "nama",
+          "gelar",
+          "email",
+          "jabatan_struktural",
+          "kuota_bimbingan",
+        ],
         order: [["nama", "ASC"]],
       }),
       Klaster.findAll({
@@ -1790,6 +1806,23 @@ exports.getPeriodeOverview = async (req, res) => {
       ...dosen.toJSON(),
       kuota: await dosen.getKuotaInfo(),
     })));
+    const availableSupervisorRows = activePeriode
+      ? await DosenKetersediaanPeriode.findAll({
+          where: {
+            periode_penjaluran_id: activePeriode.id,
+            configuration_status: "ready",
+            tersedia_membimbing: true,
+          },
+          attributes: ["dosen_id"],
+          raw: true,
+        })
+      : [];
+    const availableSupervisorIds = new Set(
+      availableSupervisorRows.map((row) => Number(row.dosen_id))
+    );
+    const dosenPembimbingOptions = dosenOptionsWithCapacity.filter((dosen) =>
+      availableSupervisorIds.has(Number(dosen.id))
+    );
 
     res.json({
       success: true,
@@ -1798,6 +1831,7 @@ exports.getPeriodeOverview = async (req, res) => {
         draft_periode: draftPeriode,
         periodes: mappedPeriodes,
         dosen_options: dosenOptionsWithCapacity,
+        dosen_pembimbing_options: dosenPembimbingOptions,
         ketua_klaster_options: ketuaKlasterOptions,
         master_penanggung_jawab: serializeMasterPenanggungJawab(masterPenanggungJawab),
         penanggung_jawab_lock: penanggungJawabLock,
@@ -2923,9 +2957,13 @@ exports.saveDosenKetersediaanPeriode = async (req, res) => {
 
 exports.getTindakLanjutStatusDosen = async (req, res) => {
   try {
+    const showResolved = req.query.status === "resolved";
     const rows = await TindakLanjutStatusDosen.findAll({
-      where: req.query.status === "resolved" ? { status: "resolved" } : { status: "open" },
-      include: [{ model: Dosen, as: "dosen", attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "status_keaktifan", "continue_existing_supervision"], required: true }],
+      where: showResolved ? { status: "resolved" } : { status: "open" },
+      include: [
+        { model: Dosen, as: "dosen", attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "status_keaktifan", "continue_existing_supervision"], required: true },
+        { model: RiwayatStatusDosen, as: "riwayatStatus", attributes: ["status_sebelumnya", "status_baru"], required: false },
+      ],
       order: [["createdAt", "DESC"]],
     });
     return res.json({ success: true, data: rows });
@@ -2934,34 +2972,46 @@ exports.getTindakLanjutStatusDosen = async (req, res) => {
   }
 };
 
+function evaluateFollowUpRow(row, remainingImpact) {
+  const currentStatus = row?.dosen?.status_keaktifan || row?.riwayatStatus?.status_baru || "active";
+  const previousStatus = row?.riwayatStatus?.status_sebelumnya
+    || (row?.impact_snapshot?.reactivation_required ? "inactive" : currentStatus);
+  return evaluateDosenStatusFollowUp({
+    statusBaru: currentStatus,
+    statusLama: previousStatus,
+    continueExisting: row?.dosen?.continue_existing_supervision === true,
+    impact: remainingImpact,
+  });
+}
+
 function buildFollowUpResolutionContext(row, remainingImpact) {
-  const originalImpact = row?.impact_snapshot || {};
+  const evaluation = evaluateFollowUpRow(row, remainingImpact);
   const requiredCategories = [];
-  if (Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0) requiredCategories.push("mahasiswa_bimbingan");
-  if (Number(remainingImpact.review_pending || 0) > 0) requiredCategories.push("review_pending");
-  if (
-    Number(remainingImpact.tugas_ketua_cluster_aktif || 0) > 0
-    || Number(remainingImpact.tugas_periode_aktif || 0) > 0
-    || Number(remainingImpact.tugas_master_penanggung_jawab || 0) > 0
-  ) requiredCategories.push("penugasan_periode");
-  if (Number(remainingImpact.jadwal_sidang_mendatang || 0) > 0) requiredCategories.push("jadwal_sidang");
-  if (originalImpact.reactivation_required) requiredCategories.push("reaktivasi");
-  return { remainingImpact, requiredCategories };
+  if (evaluation.replacement_required) requiredCategories.push("mahasiswa_bimbingan");
+  if (evaluation.review_transfer_required) requiredCategories.push("review_pending");
+  if (evaluation.role_adjustment_required) requiredCategories.push("penugasan_periode");
+  if (evaluation.defense_adjustment_required) requiredCategories.push("jadwal_sidang");
+  if (evaluation.reactivation_required) requiredCategories.push("reaktivasi");
+  return { remainingImpact, requiredCategories, evaluation };
 }
 
 exports.getTindakLanjutStatusDosenCurrentImpact = async (req, res) => {
   try {
     const row = await TindakLanjutStatusDosen.findByPk(req.params.id, {
-      include: [{ model: Dosen, as: "dosen", attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "status_keaktifan", "continue_existing_supervision"] }],
+      include: [
+        { model: Dosen, as: "dosen", attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "status_keaktifan", "continue_existing_supervision"] },
+        { model: RiwayatStatusDosen, as: "riwayatStatus", attributes: ["status_sebelumnya", "status_baru"], required: false },
+      ],
     });
     if (!row) return res.status(404).json({ success: false, message: "Tindak lanjut tidak ditemukan." });
     if (row.status !== "open") return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
 
     const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id);
     const context = buildFollowUpResolutionContext(row, remainingImpact);
+    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(row.dosen_id);
     const affectedMahasiswa = await Mahasiswa.findAll({
       where: {
-        dosen_pembimbing_skripsi_id: row.dosen_id,
+        id: { [Op.in]: supervisedMahasiswaIds },
         [Op.or]: [
           { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
           { status_jalur_saat_ini: null },
@@ -3133,7 +3183,6 @@ exports.activateDosenStatusReplacement = async (req, res) => {
     const mahasiswa = await Mahasiswa.findOne({
       where: {
         id: mahasiswaId,
-        dosen_pembimbing_skripsi_id: followUp.dosen_id,
         [Op.or]: [
           { status_jalur_saat_ini: { [Op.ne]: "selesai" } },
           { status_jalur_saat_ini: null },
@@ -3145,6 +3194,13 @@ exports.activateDosenStatusReplacement = async (req, res) => {
     if (!mahasiswa) {
       await transaction.rollback();
       return res.status(409).json({ success: false, message: "Mahasiswa tidak lagi tercatat sebagai mahasiswa terdampak dosen ini." });
+    }
+    if (!(await isActiveSupervisor(followUp.dosen_id, mahasiswa.id, transaction))) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Mahasiswa tidak lagi memiliki penetapan aktif dengan dosen terdampak ini.",
+      });
     }
 
     const replacementCluster = await resolveMahasiswaReplacementCluster(mahasiswa.id, transaction);
@@ -3226,7 +3282,6 @@ exports.activateDosenStatusReplacement = async (req, res) => {
     const activeAssignment = await activateSupervisorAssignment({
       penetapanId: draft.id,
       tanggalMulai,
-      suratTugasId: null,
       transaction,
     });
     const notificationResult = await createSupervisorReplacementNotifications({
@@ -3235,20 +3290,18 @@ exports.activateDosenStatusReplacement = async (req, res) => {
       previousMembers,
       newMembers: activeAssignment?.penetapan?.pembimbings || [],
       effectiveDate: tanggalMulai,
+      assignmentSource: "pergantian",
       transaction,
     });
 
     const remainingImpact = await analyzeDosenStatusImpact(followUp.dosen_id, transaction);
-    const hasRemainingStudent = followUpDosen.continue_existing_supervision === false
-      && Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0;
-    const hasOtherImpact = [
-      remainingImpact.review_pending,
-      remainingImpact.tugas_ketua_cluster_aktif,
-      remainingImpact.tugas_periode_aktif,
-      remainingImpact.tugas_master_penanggung_jawab,
-      remainingImpact.jadwal_sidang_mendatang,
-    ].some((value) => Number(value || 0) > 0)
-      || Boolean(followUp.impact_snapshot?.reactivation_required);
+    const remainingEvaluation = evaluateFollowUpRow({
+      dosen: followUpDosen,
+      impact_snapshot: followUp.impact_snapshot,
+    }, remainingImpact);
+    const hasRemainingStudent = remainingEvaluation.replacement_required;
+    const hasOtherImpact = remainingEvaluation.reasons
+      .some((reason) => reason !== "supervisor_replacement");
     const followUpResolved = !hasRemainingStudent && !hasOtherImpact;
 
     if (followUpResolved) {
@@ -3296,9 +3349,11 @@ exports.activateDosenStatusReplacement = async (req, res) => {
 
 exports.createDosenStatusReplacementDraft = exports.activateDosenStatusReplacement;
 exports.resolveTindakLanjutStatusDosen = async (req, res) => {
+  const transaction = await sequelize.transaction();
   try {
     const note = String(req.body?.catatan_tindak_lanjut || "").trim();
     if (note.length > 1000) {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: "Catatan tindak lanjut maksimal 1000 karakter.",
@@ -3310,15 +3365,24 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
         as: "dosen",
         attributes: ["id", "status_keaktifan", "continue_existing_supervision"],
       }],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
     });
-    if (!row) return res.status(404).json({ success: false, message: "Tindak lanjut tidak ditemukan." });
-    if (row.status !== "open") return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
+    if (!row) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Tindak lanjut tidak ditemukan." });
+    }
+    if (row.status !== "open") {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
+    }
 
-    const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id);
+    const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id, transaction);
     if (
       row.dosen?.continue_existing_supervision === false
       && Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0
     ) {
+      await transaction.rollback();
       return res.status(409).json({
         success: false,
         code: "SUPERVISOR_REPLACEMENT_INCOMPLETE",
@@ -3326,17 +3390,30 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
         detail: { remaining_impact: remainingImpact },
       });
     }
+    const actorId = req.user.sekretaris_prodi_id
+      || (req.user.role === "sekretaris_prodi" ? req.user.id : null);
     await row.update({
       status: "resolved",
       catatan_penyelesaian: note || null,
       resolution_type: "resolved",
       resolution_decisions: {},
       remaining_impact_snapshot: remainingImpact,
-      resolved_by_sekretaris_id: req.user.sekretaris_prodi_id || (req.user.role === "sekretaris_prodi" ? req.user.id : null),
+      resolved_by_sekretaris_id: actorId,
       resolved_at: new Date(),
+    }, { transaction });
+    const availabilityReadyCount = await markActiveAvailabilityReadyAfterFollowUp(
+      row.dosen_id,
+      actorId,
+      transaction
+    );
+    await transaction.commit();
+    return res.json({
+      success: true,
+      message: "Tindak lanjut ditandai selesai.",
+      data: { ...row.toJSON(), availability_ready_count: availabilityReadyCount },
     });
-    return res.json({ success: true, message: "Tindak lanjut ditandai selesai.", data: row });
   } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
     return res.status(500).json({ success: false, message: "Gagal menyelesaikan tindak lanjut.", error: error.message });
   }
 };
@@ -3933,6 +4010,31 @@ exports.approvePenelitianFinal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
     }
     const supervisorIds = [Number(winner.dosen_id), secondarySupervisorId].filter(Boolean);
+    if (new Set(supervisorIds).size !== supervisorIds.length) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pembimbing 1 dan Pembimbing 2 harus merupakan dosen yang berbeda.",
+      });
+    }
+    for (let index = 0; index < supervisorIds.length; index += 1) {
+      const validation = await validateDosenForNewAssignment(
+        supervisorIds[index],
+        assignmentRegistration?.periode_penjaluran_id || null,
+        {
+          transaction: t,
+          activityLabel: `menerima penetapan sebagai Pembimbing ${index + 1}`,
+          availabilityField: "tersedia_membimbing",
+        }
+      );
+      if (!validation.allowed) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          message: validation.message,
+        });
+      }
+    }
 
     await submission.update(
       {

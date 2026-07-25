@@ -13,6 +13,7 @@ const {
 const {
   DOSEN_STATUSES,
   analyzeDosenStatusImpact,
+  evaluateDosenStatusFollowUp,
   assertDosenCanReceiveNewAssignment,
   initializeAvailabilityForDosen,
   syncAvailabilityForMasterStatusChange,
@@ -304,8 +305,12 @@ exports.getDosenStatusImpact = async (req, res) => {
       ? dosen.continue_existing_supervision !== false
       : String(req.query.continue_existing_supervision).toLowerCase() === "true";
     const impact = await analyzeDosenStatusImpact(dosen.id);
-    const replacementRequired = requestedContinueExisting === false
-      && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
+    const followUpEvaluation = evaluateDosenStatusFollowUp({
+      statusBaru: requestedStatus,
+      statusLama: dosen.status_keaktifan,
+      continueExisting: requestedContinueExisting,
+      impact,
+    });
     return res.json({
       success: true,
       data: {
@@ -314,11 +319,12 @@ exports.getDosenStatusImpact = async (req, res) => {
         continue_existing_supervision_baru: requestedContinueExisting,
         impact: {
           ...impact,
-          replacement_required: replacementRequired,
-          mahasiswa_memerlukan_pengganti: replacementRequired
+          replacement_required: followUpEvaluation.replacement_required,
+          mahasiswa_memerlukan_pengganti: followUpEvaluation.replacement_required
             ? Number(impact.mahasiswa_bimbingan_aktif || 0)
             : 0,
         },
+        follow_up: followUpEvaluation,
       },
     });
   } catch (error) {
@@ -443,36 +449,90 @@ exports.updateDosenStatus = async (req, res) => {
       topicsDisabled = Array.isArray(affected) ? affected.length : Number(affected || impact.topik_tersedia || 0);
     }
 
-    const isReactivation = statusBaru === "active" && oldStatus !== "active";
-    const needsFollowUp = isReactivation || (statusBaru !== "active" && [
-      impact.mahasiswa_bimbingan_aktif,
-      impact.review_pending,
-      impact.tugas_ketua_cluster_aktif,
-      impact.tugas_periode_aktif,
-      impact.tugas_master_penanggung_jawab,
-      impact.jadwal_sidang_mendatang,
-    ].some((value) => Number(value) > 0));
+    const followUpEvaluation = evaluateDosenStatusFollowUp({
+      statusBaru,
+      statusLama: oldStatus,
+      continueExisting,
+      impact,
+    });
+    const needsFollowUp = followUpEvaluation.required;
+    const openFollowUps = await TindakLanjutStatusDosen.findAll({
+      where: { dosen_id: dosen.id, status: "open" },
+      order: [["createdAt", "DESC"], ["id", "DESC"]],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    let followUpAction = "none";
     if (needsFollowUp) {
       const followUpImpact = {
         ...impact,
-        reactivation_required: isReactivation,
-        reactivation_note: isReactivation
+        follow_up_evaluation: followUpEvaluation,
+        reactivation_required: followUpEvaluation.reactivation_required,
+        reactivation_note: followUpEvaluation.reactivation_required
           ? "Periksa topik lama, ketersediaan periode, kapasitas, dan penetapan kembali peran. Topik tidak diaktifkan otomatis."
           : null,
       };
-      await TindakLanjutStatusDosen.create({
-        dosen_id: dosen.id,
-        riwayat_status_dosen_id: history.id,
-        status: "open",
-        impact_snapshot: followUpImpact,
-      }, { transaction });
+      const currentFollowUp = openFollowUps[0] || null;
+      if (currentFollowUp) {
+        await currentFollowUp.update({
+          riwayat_status_dosen_id: history.id,
+          impact_snapshot: followUpImpact,
+          catatan_penyelesaian: null,
+          resolved_by_sekretaris_id: null,
+          resolved_at: null,
+          resolution_type: null,
+          resolution_decisions: {},
+          remaining_impact_snapshot: null,
+        }, { transaction });
+        followUpAction = "updated";
+      } else {
+        await TindakLanjutStatusDosen.create({
+          dosen_id: dosen.id,
+          riwayat_status_dosen_id: history.id,
+          status: "open",
+          impact_snapshot: followUpImpact,
+        }, { transaction });
+        followUpAction = "created";
+      }
+
+      for (const duplicate of openFollowUps.slice(1)) {
+        await duplicate.update({
+          status: "resolved",
+          catatan_penyelesaian: "Ditutup otomatis karena tindak lanjut aktif dosen dikonsolidasikan ke record terbaru.",
+          resolution_type: "resolved",
+          resolution_decisions: { auto_resolved: true, reason: "duplicate_open_follow_up" },
+          remaining_impact_snapshot: impact,
+          resolved_by_sekretaris_id: null,
+          resolved_at: now,
+        }, { transaction });
+      }
+    } else if (openFollowUps.length > 0) {
+      for (const openFollowUp of openFollowUps) {
+        await openFollowUp.update({
+          status: "resolved",
+          catatan_penyelesaian: "Ditutup otomatis setelah evaluasi ulang karena tidak terdapat dampak yang memerlukan tindak lanjut.",
+          resolution_type: "resolved",
+          resolution_decisions: { auto_resolved: true, reasons: [] },
+          remaining_impact_snapshot: impact,
+          resolved_by_sekretaris_id: null,
+          resolved_at: now,
+        }, { transaction });
+      }
+      followUpAction = "resolved";
     }
 
     await transaction.commit();
     return res.json({
       success: true,
       message: `Status ${dosen.nama} berhasil diubah menjadi ${statusBaru}.`,
-      data: { ...dosen.toJSON(), impact, topik_dinonaktifkan: topicsDisabled, tindak_lanjut_dibuat: needsFollowUp },
+      data: {
+        ...dosen.toJSON(),
+        impact,
+        follow_up: followUpEvaluation,
+        tindak_lanjut_aksi: followUpAction,
+        topik_dinonaktifkan: topicsDisabled,
+        tindak_lanjut_dibuat: needsFollowUp,
+      },
     });
   } catch (error) {
     await transaction.rollback();

@@ -20,7 +20,10 @@ const fs = require("fs");
 const path = require("path");
 const { Op } = require("sequelize");
 const { assertDosenCanReceiveNewAssignment, validateDosenForNewAssignment } = require("../services/dosenStatusService");
-const { replaceSupervisorAssignment } = require("../services/penetapanPembimbingService");
+const {
+  replaceSupervisorAssignment,
+  getActiveSupervisorAssignment,
+} = require("../services/penetapanPembimbingService");
 const {
   buildSemesterLanjutanGate,
   getReferencePeriode,
@@ -53,6 +56,7 @@ const MAGANG_COMPANY_SECTOR_OPTIONS = [
 
 const MAGANG_COMPANY_TYPE_OPTIONS = ["partner_company", "non_partner_company"];
 const MAGANG_NON_PARTNER_INSTITUTION_LABEL = "Other (Non partner Company)";
+const MAGANG_APPLY_METHOD_OPTIONS = ["email", "portal_website", "walk_in"];
 
 const MAGANG_APPLICATION_METHOD_OPTIONS = [
   "via Internship Vacancy",
@@ -123,6 +127,7 @@ function cleanupUploadedFiles(req) {
 
 function buildMagangUploadedDocuments(req) {
   return {
+    bukti_apply: buildUploadedFileMetadata(getUploadedFile(req, "bukti_apply_file_name")),
     cv: buildUploadedFileMetadata(getUploadedFile(req, "cv_file_name")),
     portfolio: buildUploadedFileMetadata(getUploadedFile(req, "portfolio_file_name")),
     transcript: buildUploadedFileMetadata(getUploadedFile(req, "transcript_file_name")),
@@ -138,6 +143,7 @@ const NON_PENELITIAN_UPLOAD_ROOT = process.env.VERCEL
   : path.resolve(__dirname, "..", "uploads", "non-penelitian");
 
 const MAGANG_DOCUMENT_KEY_LABELS = {
+  bukti_apply: "Bukti Apply",
   cv: "CV",
   portfolio: "Portfolio",
   transcript: "Transkrip",
@@ -665,6 +671,7 @@ function normalizeMagangSubmissionPayload(rawPayload) {
     tanggal_apply: String(payload.tanggal_apply || "").trim(),
     metode_apply: String(payload.metode_apply || "").trim(),
     bukti_apply: String(payload.bukti_apply || "").trim(),
+    bukti_apply_file_name: String(payload.bukti_apply_file_name || "").trim(),
     internship_company_website_url: String(payload.internship_company_website_url || "").trim(),
     internship_vacancy_url: normalizeOptionalText(payload.internship_vacancy_url),
     supporting_documents_note: normalizeOptionalText(payload.supporting_documents_note),
@@ -685,6 +692,9 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   if (payload.sudah_apply_ke_mitra === null) {
     return { statusCode: 400, message: "Konfirmasi apply ke mitra magang wajib dipilih." };
   }
+  if (payload.sudah_apply_ke_mitra === false) {
+    return { statusCode: 400, message: "Mahasiswa harus sudah apply ke mitra magang sebelum mengirim form." };
+  }
   if (payload.sudah_apply_ke_mitra === true) {
     if (!payload.tanggal_apply) {
       return { statusCode: 400, message: "Tanggal apply wajib diisi." };
@@ -693,10 +703,13 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
       return { statusCode: 400, message: "Format tanggal apply tidak valid." };
     }
     if (!payload.metode_apply) {
-      return { statusCode: 400, message: "Metode apply wajib diisi." };
+      return { statusCode: 400, message: "Metode apply wajib dipilih terlebih dahulu." };
     }
-    if (!payload.bukti_apply) {
-      return { statusCode: 400, message: "Bukti apply wajib diisi (nama file/url/catatan)." };
+    if (!MAGANG_APPLY_METHOD_OPTIONS.includes(payload.metode_apply)) {
+      return { statusCode: 400, message: "Metode apply tidak valid." };
+    }
+    if (!payload.bukti_apply_file_name) {
+      return { statusCode: 400, message: "File bukti apply wajib diunggah." };
     }
   }
 
@@ -1493,12 +1506,16 @@ exports.checkStatusJalur = async (req, res) => {
       nonPenelitianPayload.workflow_status || pendaftaranAktif?.form_lanjutan_status || null;
 
     const semesterLanjutanGate = await buildSemesterLanjutanGate(mahasiswa);
+    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa_id);
+    const hasActiveSupervisor = Boolean(
+      activeAssignment.pembimbing_1 || mahasiswa.dosen_pembimbing_skripsi_id
+    );
 
     // Eligibility rules
     const availableOptions = {
       baru: !hasActiveSubmission && mahasiswa.status_jalur_saat_ini === "belum_mengajukan",
 
-      ulang: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && mahasiswa.dosen_pembimbing_skripsi_id !== null,
+      ulang: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && hasActiveSupervisor,
 
       ekstensi: !hasActiveSubmission && lastSubmission !== null && lastSubmission.status === "approved" && mahasiswa.status_jalur_saat_ini === "ekstensi",
     };
@@ -1509,7 +1526,7 @@ exports.checkStatusJalur = async (req, res) => {
         current_status: mahasiswa.status_jalur_saat_ini,
         has_active_submission: hasActiveSubmission,
         has_dospem_akademik: mahasiswa.dosen_pembimbing_akademik_id !== null,
-        has_dospem_skripsi: mahasiswa.dosen_pembimbing_skripsi_id !== null,
+        has_dospem_skripsi: hasActiveSupervisor,
         active_pamit: activePamit
           ? {
               id: activePamit.id,
@@ -1778,7 +1795,10 @@ exports.getIzinLanjutStatus = async (req, res) => {
       });
     }
 
-    const gate = await buildSemesterLanjutanGate(mahasiswa);
+    const [gate, activeAssignment] = await Promise.all([
+      buildSemesterLanjutanGate(mahasiswa),
+      getActiveSupervisorAssignment(mahasiswa_id),
+    ]);
     const riwayat = await IzinLanjutSkripsi.findAll({
       where: { mahasiswa_id },
       include: [
@@ -1800,7 +1820,14 @@ exports.getIzinLanjutStatus = async (req, res) => {
           nim: mahasiswa.nim,
           nama: mahasiswa.nama,
           status_jalur_saat_ini: mahasiswa.status_jalur_saat_ini,
-          dosen_pembimbing_skripsi: mahasiswa.dosenPembimbingSkripsi
+          dosen_pembimbing_skripsi: activeAssignment.pembimbing_1
+            ? {
+                id: activeAssignment.pembimbing_1.id,
+                nik: activeAssignment.pembimbing_1.nik,
+                nama: activeAssignment.pembimbing_1.nama,
+                email: activeAssignment.pembimbing_1.email,
+              }
+            : mahasiswa.dosenPembimbingSkripsi
             ? {
                 id: mahasiswa.dosenPembimbingSkripsi.id,
                 nik: mahasiswa.dosenPembimbingSkripsi.nik,
@@ -1854,6 +1881,10 @@ exports.submitIzinLanjutSemester = async (req, res) => {
     }
 
     const gate = await buildSemesterLanjutanGate(mahasiswa, t);
+    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa_id, t);
+    const primarySupervisorId = Number(
+      activeAssignment.pembimbing_1?.id || mahasiswa.dosen_pembimbing_skripsi_id || 0
+    ) || null;
 
     if (!gate.is_semester_tiga_plus) {
       await t.rollback();
@@ -1873,7 +1904,7 @@ exports.submitIzinLanjutSemester = async (req, res) => {
       });
     }
 
-    if (!mahasiswa.dosen_pembimbing_skripsi_id) {
+    if (!primarySupervisorId) {
       await t.rollback();
       return res.status(400).json({
         success: false,
@@ -1886,7 +1917,7 @@ exports.submitIzinLanjutSemester = async (req, res) => {
     const izin = await IzinLanjutSkripsi.create(
       {
         mahasiswa_id,
-        dosen_pembimbing_skripsi_id: mahasiswa.dosen_pembimbing_skripsi_id,
+        dosen_pembimbing_skripsi_id: primarySupervisorId,
         periode_penjaluran_id: periodeReferensi?.id || null,
         semester_penjaluran_ke: gate.semester_penjaluran_aktif,
         status: "pending",
@@ -2015,6 +2046,13 @@ exports.submitFormNonPenelitian = async (req, res) => {
 
       payloadToSave = normalizeMagangSubmissionPayload(rawPayload);
       const uploadedDocuments = buildMagangUploadedDocuments(req);
+      payloadToSave.bukti_apply_file_name = uploadedDocuments.bukti_apply?.original_name || "";
+      if (Number(uploadedDocuments.bukti_apply?.size || 0) > 5 * 1024 * 1024) {
+        return rollbackAndRespond(400, {
+          success: false,
+          message: "Ukuran file bukti apply maksimal 5 MB.",
+        });
+      }
       payloadToSave.cv_file_name = uploadedDocuments.cv?.original_name || payloadToSave.cv_file_name;
       payloadToSave.portfolio_file_name =
         uploadedDocuments.portfolio?.original_name || payloadToSave.portfolio_file_name;
@@ -3764,6 +3802,10 @@ exports.submitPamit = async (req, res) => {
     }
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, { transaction: t });
+    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa_id, t);
+    const primarySupervisorId = Number(
+      activeAssignment.pembimbing_1?.id || mahasiswa?.dosen_pembimbing_skripsi_id || 0
+    ) || null;
 
     const semesterGateCheck = await validateSemesterLanjutanGate(mahasiswa, t, {
       allowUlangFlow: true,
@@ -3778,7 +3820,7 @@ exports.submitPamit = async (req, res) => {
     }
 
     // Validasi: Mahasiswa harus punya Dosen Pembimbing Skripsi
-    if (!mahasiswa.dosen_pembimbing_skripsi_id) {
+    if (!primarySupervisorId) {
       await t.rollback();
       return res.status(400).json({
         success: false,

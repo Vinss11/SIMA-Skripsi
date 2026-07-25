@@ -6,6 +6,7 @@ const { authenticateToken, authorizeRole } = require("../middlewares/authMiddlew
 const nonPenelitianUpload = require("../middlewares/nonPenelitianUploadMiddleware");
 
 const nonPenelitianUploadFields = nonPenelitianUpload.fields([
+  { name: "bukti_apply_file_name", maxCount: 1 },
   { name: "cv_file_name", maxCount: 1 },
   { name: "portfolio_file_name", maxCount: 1 },
   { name: "transcript_file_name", maxCount: 1 },

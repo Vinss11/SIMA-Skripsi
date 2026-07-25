@@ -5,6 +5,7 @@ const { DokumenSidang, Mahasiswa, Dosen, BimbinganSkripsi, sequelize } = require
 const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
 const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
+  getActiveSupervisorRoleMap,
   isActiveSupervisor,
 } = require("../services/supervisorAccessService");
 const {
@@ -441,6 +442,7 @@ exports.getDosenDokumenSidangList = async (req, res) => {
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId);
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosenId);
     const mahasiswaRows = await Mahasiswa.findAll({
       where: { id: { [Op.in]: supervisedMahasiswaIds } },
       attributes: ["id", "nim", "nama", "angkatan", "dosen_pembimbing_skripsi_id"],
@@ -477,8 +479,8 @@ exports.getDosenDokumenSidangList = async (req, res) => {
           status_pendaftaran_sidang: buildStatusPendaftaranSidang(gate, summary),
           summary,
           dokumen,
-          can_review: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId),
-          access_mode: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId) ? "primary" : "secondary_read_only",
+          can_review: Number(supervisorRoleMap.get(Number(mahasiswa.id))?.urutan) === 1,
+          access_mode: Number(supervisorRoleMap.get(Number(mahasiswa.id))?.urutan) === 1 ? "primary" : "active_co_supervisor",
         };
       })
     );
@@ -522,6 +524,7 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
     }
 
     const hasAccess = await isActiveSupervisor(dosenId, mahasiswaId);
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosenId);
     const mahasiswa = hasAccess ? await Mahasiswa.findOne({
       where: { id: mahasiswaId },
       attributes: ["id", "nim", "nama", "email", "angkatan", "dosen_pembimbing_skripsi_id"],
@@ -569,8 +572,8 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
             }
           : null,
         dokumen,
-        can_review: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId),
-        access_mode: Number(mahasiswa.dosen_pembimbing_skripsi_id) === Number(dosenId) ? "primary" : "secondary_read_only",
+        can_review: Number(supervisorRoleMap.get(mahasiswaId)?.urutan) === 1,
+        access_mode: Number(supervisorRoleMap.get(mahasiswaId)?.urutan) === 1 ? "primary" : "active_co_supervisor",
       },
     });
   } catch (error) {
@@ -609,21 +612,20 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
       });
     }
 
-    const mahasiswa = await Mahasiswa.findOne({
-      where: {
-        id: mahasiswaId,
-        dosen_pembimbing_skripsi_id: dosenId,
-      },
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosenId, transaction);
+    const canReview = Number(supervisorRoleMap.get(mahasiswaId)?.urutan) === 1;
+    const mahasiswa = canReview ? await Mahasiswa.findOne({
+      where: { id: mahasiswaId },
       attributes: ["id"],
       transaction,
       lock: transaction.LOCK.UPDATE,
-    });
+    }) : null;
 
     if (!mahasiswa) {
       await transaction.rollback();
       return res.status(404).json({
         success: false,
-        message: "Mahasiswa bimbingan tidak ditemukan",
+        message: "Keputusan dokumen hanya dapat diproses oleh Pembimbing 1.",
       });
     }
 

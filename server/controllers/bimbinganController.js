@@ -9,8 +9,13 @@ const {
   PeriodePenjaluran,
   sequelize,
 } = require("../models");
-const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
-const { getSupervisedMahasiswaIdsWithLegacyFallback } = require("../services/supervisorAccessService");
+const {
+  getExistingSupervisionPermission,
+  canContinueExistingSupervision,
+} = require("../services/dosenStatusService");
+const {
+  getSupervisedMahasiswaIdsWithLegacyFallback,
+} = require("../services/supervisorAccessService");
 const {
   getMahasiswaSupervisionAccess,
   sendSupervisionAccessDenied,
@@ -359,6 +364,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
     const pesan = String(req.body?.pesan || "").trim();
     const tanggal = normalizeDateOnly(req.body?.tanggal);
     const jam = String(req.body?.jam || "").trim();
+    const targetSupervisorId = Number(req.body?.dosen_pembimbing_id || 0);
 
     if (!pesan || pesan.length < 10) {
       await transaction.rollback();
@@ -410,18 +416,31 @@ exports.createMahasiswaBimbingan = async (req, res) => {
       });
     }
 
-    if (!mahasiswa.dosen_pembimbing_skripsi_id) {
-      await transaction.rollback();
-      return res.status(409).json({
-        success: false,
-        message: "Anda belum memiliki dosen pembimbing skripsi aktif",
-      });
-    }
-
     const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswa_id, transaction);
     if (!supervisionAccess.can_create_guidance) {
       await transaction.rollback();
       return sendSupervisionAccessDenied(res, supervisionAccess, "create_guidance");
+    }
+    const activeSupervisorIds = new Set(
+      (supervisionAccess.current_supervisors || []).map((item) => Number(item.id)).filter(Boolean)
+    );
+    if (!targetSupervisorId || !activeSupervisorIds.has(targetSupervisorId)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pilih salah satu dosen pembimbing aktif sebagai tujuan bimbingan.",
+        detail: { field: "dosen_pembimbing_id" },
+      });
+    }
+    const targetSupervisor = (supervisionAccess.current_supervisors || [])
+      .find((item) => Number(item.id) === targetSupervisorId);
+    if (!canContinueExistingSupervision(targetSupervisor)) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Dosen tujuan sedang tidak dapat melanjutkan bimbingan.",
+        detail: { field: "dosen_pembimbing_id" },
+      });
     }
 
     const pendaftaranAktif = await getLatestPendaftaranForBimbingan(mahasiswa_id, transaction);
@@ -493,7 +512,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
     const newRow = await BimbinganSkripsi.create(
       {
         mahasiswa_id,
-        dosen_id: mahasiswa.dosen_pembimbing_skripsi_id,
+        dosen_id: targetSupervisorId,
         pengajuan_id: pengajuanApproved?.id || null,
         permintaan_pesan: pesan,
         permintaan_tanggal: tanggal,
@@ -630,6 +649,7 @@ exports.getDosenBimbingan = async (req, res) => {
 
     const view = String(req.query?.view || "").trim().toLowerCase();
     const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const supervisedMahasiswaIdSet = new Set(supervisedMahasiswaIds.map(Number));
     const where = {
       [Op.or]: [
         { dosen_id },
@@ -670,13 +690,19 @@ exports.getDosenBimbingan = async (req, res) => {
       data: {
         view: view || "all",
         stats,
-        rows: serializedRows.map((item) => ({
-          ...item,
-          can_review: Number(item.dosen_id) === Number(dosen_id) || Number(item.reviewer_dosen_id) === Number(dosen_id),
-          access_mode: Number(item.reviewer_dosen_id) === Number(dosen_id)
-            ? "reassigned_reviewer"
-            : Number(item.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
-        })),
+        rows: serializedRows.map((item) => {
+          const directReviewer = Number(item.reviewer_dosen_id) === Number(dosen_id);
+          const originalReviewer = Number(item.dosen_id) === Number(dosen_id);
+          const activeSupervisor = supervisedMahasiswaIdSet.has(Number(item.mahasiswa_id));
+          return {
+            ...item,
+            can_review: directReviewer || originalReviewer,
+            can_view: directReviewer || originalReviewer || activeSupervisor,
+            access_mode: directReviewer
+              ? "reassigned_reviewer"
+              : originalReviewer ? "target_supervisor" : "active_co_supervisor",
+          };
+        }),
       },
     });
   } catch (error) {
@@ -736,10 +762,12 @@ exports.getDosenBimbinganDetail = async (req, res) => {
       success: true,
       data: {
         ...serializeRow(row),
-        can_review: Number(row.dosen_id) === Number(dosen_id) || Number(row.reviewer_dosen_id) === Number(dosen_id),
+        can_review: Number(row.dosen_id) === Number(dosen_id)
+          || Number(row.reviewer_dosen_id) === Number(dosen_id),
+        can_view: true,
         access_mode: Number(row.reviewer_dosen_id) === Number(dosen_id)
           ? "reassigned_reviewer"
-          : Number(row.dosen_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+          : Number(row.dosen_id) === Number(dosen_id) ? "target_supervisor" : "active_co_supervisor",
       },
     });
   } catch (error) {
@@ -820,7 +848,7 @@ exports.approveDosenBimbingan = async (req, res) => {
     }
 
     const row = await BimbinganSkripsi.findOne({
-      where: { id: req.params.id, dosen_id },
+      where: { id: req.params.id },
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
@@ -831,6 +859,11 @@ exports.approveDosenBimbingan = async (req, res) => {
         success: false,
         message: "Data bimbingan tidak ditemukan",
       });
+    }
+    if (!(Number(row.dosen_id) === Number(dosen_id)
+      || Number(row.reviewer_dosen_id) === Number(dosen_id))) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: "Permohonan ini ditujukan kepada pembimbing lain." });
     }
 
     if (row.status_permohonan !== "pending") {
@@ -907,7 +940,7 @@ exports.rejectDosenBimbingan = async (req, res) => {
     }
 
     const row = await BimbinganSkripsi.findOne({
-      where: { id: req.params.id, dosen_id },
+      where: { id: req.params.id },
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
@@ -918,6 +951,11 @@ exports.rejectDosenBimbingan = async (req, res) => {
         success: false,
         message: "Data bimbingan tidak ditemukan",
       });
+    }
+    if (!(Number(row.dosen_id) === Number(dosen_id)
+      || Number(row.reviewer_dosen_id) === Number(dosen_id))) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: "Permohonan ini ditujukan kepada pembimbing lain." });
     }
 
     if (row.status_permohonan !== "pending") {
@@ -997,10 +1035,7 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
     }
 
     const row = await BimbinganSkripsi.findOne({
-      where: {
-        id: req.params.id,
-        [Op.or]: [{ dosen_id }, { reviewer_dosen_id: dosen_id }],
-      },
+      where: { id: req.params.id },
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
@@ -1011,6 +1046,11 @@ exports.reviewResumeDosenBimbingan = async (req, res) => {
         success: false,
         message: "Data bimbingan tidak ditemukan",
       });
+    }
+    if (!(Number(row.dosen_id) === Number(dosen_id)
+      || Number(row.reviewer_dosen_id) === Number(dosen_id))) {
+      await transaction.rollback();
+      return res.status(403).json({ success: false, message: "Resume ini ditujukan kepada pembimbing lain." });
     }
 
     if (!["approved", "rescheduled"].includes(row.status_permohonan)) {

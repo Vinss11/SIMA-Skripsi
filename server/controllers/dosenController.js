@@ -22,6 +22,7 @@ const {
 const { fetchMahasiswaMasterData } = require("../services/mahasiswaMasterService");
 const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
+  getActiveSupervisorRoleMap,
   isActiveSupervisor,
 } = require("../services/supervisorAccessService");
 const {
@@ -2684,6 +2685,7 @@ exports.getIzinLanjutSubmissions = async (req, res) => {
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
     const status = String(req.query?.status || "").trim().toLowerCase();
     const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
     const where = { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } };
     if (status && ["pending", "approved", "rejected"].includes(status)) {
       where.status = status;
@@ -2719,11 +2721,14 @@ exports.getIzinLanjutSubmissions = async (req, res) => {
 
     return res.json({
       success: true,
-      data: rows.map((item) => ({
-        ...formatIzinLanjutItem(item),
-        can_review: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id),
-        access_mode: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
-      })),
+      data: rows.map((item) => {
+        const canReview = Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
+        return {
+          ...formatIzinLanjutItem(item),
+          can_review: canReview,
+          access_mode: canReview ? "primary" : "active_co_supervisor",
+        };
+      }),
       total: rows.length,
     });
   } catch (error) {
@@ -2793,13 +2798,15 @@ exports.getIzinLanjutDetail = async (req, res) => {
         message: "Anda tidak memiliki akses ke data izin lanjut ini.",
       });
     }
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
+    const canReview = Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
 
     return res.json({
       success: true,
       data: {
         ...formatIzinLanjutItem(item),
-        can_review: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id),
-        access_mode: Number(item.dosen_pembimbing_skripsi_id) === Number(dosen_id) ? "primary" : "secondary_read_only",
+        can_review: canReview,
+        access_mode: canReview ? "primary" : "active_co_supervisor",
       },
     });
   } catch (error) {
@@ -2855,11 +2862,12 @@ exports.approveIzinLanjut = async (req, res) => {
       });
     }
 
-    if (item.dosen_pembimbing_skripsi_id !== dosen_id) {
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id, t);
+    if (Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) !== 1) {
       await t.rollback();
       return res.status(403).json({
         success: false,
-        message: "Anda tidak memiliki akses untuk menyetujui izin lanjut ini.",
+        message: "Izin lanjut hanya dapat disetujui oleh Pembimbing 1.",
       });
     }
 
@@ -2986,11 +2994,12 @@ exports.rejectIzinLanjut = async (req, res) => {
       });
     }
 
-    if (item.dosen_pembimbing_skripsi_id !== dosen_id) {
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id, t);
+    if (Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) !== 1) {
       await t.rollback();
       return res.status(403).json({
         success: false,
-        message: "Anda tidak memiliki akses untuk menolak izin lanjut ini.",
+        message: "Izin lanjut hanya dapat ditolak oleh Pembimbing 1.",
       });
     }
 
@@ -3086,6 +3095,7 @@ exports.getPamitMahasiswa = async (req, res) => {
 
     // Cari mahasiswa yang dosen pembimbing skripsinya adalah dosen ini
     const mahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
 
     if (mahasiswaIds.length === 0) {
       return res.json({
@@ -3130,7 +3140,15 @@ exports.getPamitMahasiswa = async (req, res) => {
 
     res.json({
       success: true,
-      data: pamits,
+      data: pamits.map((pamit) => {
+        const item = pamit.toJSON ? pamit.toJSON() : pamit;
+        const canReview = Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
+        return {
+          ...item,
+          can_review: canReview,
+          access_mode: canReview ? "primary" : "active_co_supervisor",
+        };
+      }),
       total: pamits.length,
       message: "Ini adalah daftar pamit mahasiswa bimbingan Anda untuk review dosen pembimbing skripsi.",
     });
@@ -3187,17 +3205,23 @@ exports.getPamitMahasiswaDetail = async (req, res) => {
       });
     }
 
-    // Validasi: Pastikan dosen ini adalah dosen pembimbing skripsi mahasiswa tersebut
-    if (pamit.mahasiswa.dosen_pembimbing_skripsi_id !== dosen_id) {
+    // Penetapan aktif adalah sumber akses, termasuk untuk Pembimbing 2.
+    if (!(await isActiveSupervisor(dosen_id, pamit.mahasiswa.id))) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses untuk melihat pamit ini",
       });
     }
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
+    const canReview = Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) === 1;
 
     res.json({
       success: true,
-      data: pamit,
+      data: {
+        ...(pamit.toJSON ? pamit.toJSON() : pamit),
+        can_review: canReview,
+        access_mode: canReview ? "primary" : "active_co_supervisor",
+      },
       message: "Detail pamit mahasiswa untuk review dosen pembimbing skripsi.",
     });
   } catch (error) {
@@ -3250,11 +3274,12 @@ exports.approvePamitMahasiswa = async (req, res) => {
       });
     }
 
-    if (!(await isActiveSupervisor(dosen_id, pamit.mahasiswa.id))) {
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id, t);
+    if (Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) !== 1) {
       await t.rollback();
       return res.status(403).json({
         success: false,
-        message: "Anda tidak memiliki akses untuk menyetujui pamit ini",
+        message: "Pamit hanya dapat disetujui oleh Pembimbing 1.",
       });
     }
 
@@ -3427,11 +3452,12 @@ exports.rejectPamitMahasiswa = async (req, res) => {
       });
     }
 
-    if (pamit.mahasiswa.dosen_pembimbing_skripsi_id !== dosen_id) {
+    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id, t);
+    if (Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) !== 1) {
       await t.rollback();
       return res.status(403).json({
         success: false,
-        message: "Anda tidak memiliki akses untuk menolak pamit ini",
+        message: "Pamit hanya dapat ditolak oleh Pembimbing 1.",
       });
     }
 
@@ -4429,11 +4455,16 @@ exports.getMahasiswaMasterReadOnly = async (req, res) => {
       angkatan: req.query.angkatan,
     });
     const mahasiswaBimbinganIds = new Set(await getSupervisedMahasiswaIdsWithLegacyFallback(dosenId));
-    const scopedData = data.filter(
-      (mahasiswa) =>
-        Number(mahasiswa.dosen_pembimbing_akademik_id) === Number(dosenId) ||
-        mahasiswaBimbinganIds.has(Number(mahasiswa.id))
-    );
+    const scopedData = data
+      .filter(
+        (mahasiswa) =>
+          Number(mahasiswa.dosen_pembimbing_akademik_id) === Number(dosenId) ||
+          mahasiswaBimbinganIds.has(Number(mahasiswa.id))
+      )
+      .map((mahasiswa) => ({
+        ...mahasiswa,
+        is_mahasiswa_bimbingan: mahasiswaBimbinganIds.has(Number(mahasiswa.id)),
+      }));
 
     return res.json({
       success: true,

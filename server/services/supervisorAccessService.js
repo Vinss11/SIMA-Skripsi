@@ -69,6 +69,47 @@ async function isActiveSupervisor(dosenId, mahasiswaId, transaction = null) {
   return ids.includes(Number(mahasiswaId));
 }
 
+async function getActiveSupervisorRoleMap(dosenId, transaction = null) {
+  const normalizedDosenId = Number(dosenId);
+  const memberships = await PenetapanPembimbingDosen.findAll({
+    where: { dosen_id: normalizedDosenId },
+    attributes: ["urutan", "peran"],
+    include: [{
+      model: PenetapanPembimbing,
+      as: "penetapan",
+      where: { status: "active" },
+      attributes: ["mahasiswa_id"],
+      required: true,
+    }],
+    transaction,
+  });
+  const roles = new Map();
+  for (const membership of memberships) {
+    const mahasiswaId = Number(membership.penetapan?.mahasiswa_id);
+    if (!mahasiswaId) continue;
+    roles.set(mahasiswaId, {
+      urutan: Number(membership.urutan),
+      peran: membership.peran,
+      source: "assignment",
+    });
+  }
+
+  const activeHistoryRows = await PenetapanPembimbing.findAll({
+    where: { status: "active" },
+    attributes: ["mahasiswa_id"],
+    raw: true,
+    transaction,
+  });
+  const historyIds = activeHistoryRows.map((item) => Number(item.mahasiswa_id)).filter(Boolean);
+  const legacyWhere = { dosen_pembimbing_skripsi_id: normalizedDosenId };
+  if (historyIds.length > 0) legacyWhere.id = { [Op.notIn]: historyIds };
+  const legacyRows = await Mahasiswa.findAll({ attributes: ["id"], where: legacyWhere, raw: true, transaction });
+  for (const mahasiswa of legacyRows) {
+    roles.set(Number(mahasiswa.id), { urutan: 1, peran: "utama", source: "legacy_cache" });
+  }
+  return roles;
+}
+
 async function countActiveSupervisions(dosenId, transaction = null, excludeMahasiswaId = null) {
   const load = await getActiveSupervisionLoad(dosenId, transaction, excludeMahasiswaId);
   return load.total;
@@ -174,6 +215,7 @@ async function getActiveSupervisionLoad(dosenId, transaction = null, excludeMaha
 module.exports = {
   getActiveSupervisedMahasiswaIds,
   getSupervisedMahasiswaIdsWithLegacyFallback,
+  getActiveSupervisorRoleMap,
   isActiveSupervisor,
   countActiveSupervisions,
   getActiveSupervisionLoad,

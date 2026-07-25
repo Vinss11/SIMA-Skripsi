@@ -7,7 +7,11 @@
     "start": "node app.js",
     "db:reset:student-data": "node scripts/reset-student-data.js",
     "backfill:penetapan-pembimbing:dry-run": "node scripts/backfill-penetapan-pembimbing.js --dry-run",
-    "backfill:penetapan-pembimbing": "node scripts/backfill-penetapan-pembimbing.js --execute"
+    "backfill:penetapan-pembimbing": "node scripts/backfill-penetapan-pembimbing.js --execute",
+    "reconcile:dosen-follow-ups:dry-run": "node scripts/reconcile-dosen-status-follow-ups.js --dry-run",
+    "reconcile:dosen-follow-ups": "node scripts/reconcile-dosen-status-follow-ups.js --execute",
+    "reconcile:supervisor-history:dry-run": "node scripts/reconcile-supervisor-assignment-history.js --dry-run",
+    "reconcile:supervisor-history": "node scripts/reconcile-supervisor-assignment-history.js --execute"
   },
   "keywords": [],
   "author": "",

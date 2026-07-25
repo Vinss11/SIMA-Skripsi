@@ -41,8 +41,20 @@ const MAGANG_COMPANY_TYPE_OPTIONS = [
   { value: "non_partner_company", label: "Non partner Company (name not listed in the partner list)" },
 ];
 
+const MAGANG_APPLY_METHOD_OPTIONS = [
+  { value: "email", label: "Email" },
+  { value: "portal_website", label: "Portal / Website" },
+  { value: "walk_in", label: "Walk-in / Langsung" },
+];
+
 const MEGABYTE = 1024 * 1024;
 const MAGANG_FILE_RULES = {
+  bukti_apply_file_name: {
+    label: "Bukti apply",
+    extensions: [".pdf", ".jpg", ".jpeg", ".png"],
+    maxSizeMb: 5,
+    hint: "Format: PDF, JPG, JPEG, atau PNG. Maks 5 MB.",
+  },
   cv_file_name: {
     label: "CV",
     extensions: [".pdf", ".doc", ".docx"],
@@ -2203,6 +2215,7 @@ function FormSuratRekomendasiMagang({
     tanggal_apply: "",
     metode_apply: "",
     bukti_apply: "",
+    bukti_apply_file_name: "",
     internship_company_website_url: "",
     internship_vacancy_url: "",
     supporting_documents_note: "",
@@ -2356,6 +2369,12 @@ function FormSuratRekomendasiMagang({
   }, [institutionComboOpen]);
 
   const updateField = (field, value) => {
+    const resetsApplyEvidence = field === "sudah_apply_ke_mitra" && value !== true;
+    if (resetsApplyEvidence) {
+      setMagangUploadFiles((prev) => ({ ...prev, bukti_apply_file_name: null }));
+      setFileInputResetKey((prev) => prev + 1);
+    }
+
     setFormData((prev) => {
       if (field === "company_type") {
         if (value === "non_partner_company") {
@@ -2376,12 +2395,30 @@ function FormSuratRekomendasiMagang({
         };
       }
 
+      if (field === "sudah_apply_ke_mitra" && value !== true) {
+        return {
+          ...prev,
+          sudah_apply_ke_mitra: value,
+          tanggal_apply: "",
+          metode_apply: "",
+          bukti_apply: "",
+          bukti_apply_file_name: "",
+        };
+      }
+
       return { ...prev, [field]: value };
     });
     setMagangFieldErrors((prev) => {
-      if (!prev[field]) return prev;
       const next = { ...prev };
       delete next[field];
+      if (field === "bukti_apply_file_name") {
+        delete next.bukti_apply_evidence;
+      }
+      if (resetsApplyEvidence) {
+        delete next.bukti_apply;
+        delete next.bukti_apply_file_name;
+        delete next.bukti_apply_evidence;
+      }
       return next;
     });
     setSubmitError("");
@@ -2400,6 +2437,9 @@ function FormSuratRekomendasiMagang({
       const next = { ...prev };
       if (fileError) next[field] = fileError;
       else delete next[field];
+      if (!fileError && field === "bukti_apply_file_name" && selectedFile) {
+        delete next.bukti_apply_evidence;
+      }
       return next;
     });
     setMagangUploadFiles((prev) => ({
@@ -2496,6 +2536,7 @@ function FormSuratRekomendasiMagang({
       tanggal_apply: "",
       metode_apply: "",
       bukti_apply: "",
+      bukti_apply_file_name: "",
       internship_company_website_url: "",
       internship_vacancy_url: "",
       supporting_documents_note: "",
@@ -2523,15 +2564,27 @@ function FormSuratRekomendasiMagang({
 
     if (formData.sudah_apply_ke_mitra === null) {
       errors.sudah_apply_ke_mitra = "Konfirmasi apply ke mitra magang wajib dipilih.";
+    } else if (formData.sudah_apply_ke_mitra === false) {
+      errors.sudah_apply_ke_mitra = "Anda harus sudah apply ke mitra magang sebelum mengirim form.";
     }
     if (formData.sudah_apply_ke_mitra === true && !formData.tanggal_apply.trim()) {
       errors.tanggal_apply = "Tanggal apply wajib diisi.";
     }
-    if (formData.sudah_apply_ke_mitra === true && !formData.metode_apply.trim()) {
-      errors.metode_apply = "Metode apply wajib diisi.";
-    }
-    if (formData.sudah_apply_ke_mitra === true && !formData.bukti_apply.trim()) {
-      errors.bukti_apply = "Bukti apply wajib diisi.";
+    if (formData.sudah_apply_ke_mitra === true) {
+      if (!formData.metode_apply.trim()) {
+        errors.metode_apply = "Metode apply wajib dipilih terlebih dahulu.";
+      } else if (!MAGANG_APPLY_METHOD_OPTIONS.some((option) => option.value === formData.metode_apply)) {
+        errors.metode_apply = "Metode apply tidak valid.";
+      } else {
+        const proofFile = magangUploadFiles.bukti_apply_file_name;
+        if (!formData.bukti_apply_file_name.trim()) {
+          errors.bukti_apply_file_name = "File bukti apply wajib diunggah.";
+        } else {
+          const proofFileError = validateMagangFile("bukti_apply_file_name", proofFile);
+          if (proofFileError) errors.bukti_apply_file_name = proofFileError;
+        }
+      }
+
     }
 
     if (!formData.phone_number.trim()) errors.phone_number = "Phone number wajib diisi.";
@@ -2606,6 +2659,7 @@ function FormSuratRekomendasiMagang({
       tanggal_apply: normalizeText(formData.tanggal_apply),
       metode_apply: normalizeText(formData.metode_apply),
       bukti_apply: normalizeText(formData.bukti_apply),
+      bukti_apply_file_name: normalizeText(formData.bukti_apply_file_name),
       internship_company_website_url: normalizeText(formData.internship_company_website_url),
       internship_vacancy_url: normalizeText(formData.internship_vacancy_url),
       supporting_documents_note: normalizeText(formData.supporting_documents_note),
@@ -2704,18 +2758,23 @@ function FormSuratRekomendasiMagang({
     if (formData.sudah_apply_ke_mitra === null) {
       return "Konfirmasi status apply ke mitra wajib dipilih terlebih dahulu.";
     }
+    if (formData.sudah_apply_ke_mitra === false) {
+      return "Form hanya dapat dikirim setelah Anda melakukan apply ke mitra magang.";
+    }
     if (
       formData.sudah_apply_ke_mitra === true &&
-      (!formData.tanggal_apply.trim() || !formData.metode_apply.trim() || !formData.bukti_apply.trim())
+      (!formData.tanggal_apply.trim() ||
+        !formData.metode_apply.trim() ||
+        !formData.bukti_apply_file_name.trim())
     ) {
-      return "Lengkapi tanggal apply, metode apply, dan bukti apply sebelum mengirim permintaan.";
+      return "Lengkapi tanggal apply, metode apply, dan upload file bukti apply.";
     }
     return "";
   }, [
     formData.sudah_apply_ke_mitra,
     formData.tanggal_apply,
     formData.metode_apply,
-    formData.bukti_apply,
+    formData.bukti_apply_file_name,
   ]);
 
   const submitIsDisabled = disabled || submitLoading;
@@ -3216,7 +3275,7 @@ function FormSuratRekomendasiMagang({
         </div>
         <FieldError message={magangFieldErrors.sudah_apply_ke_mitra} />
 
-        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
               Tanggal apply <RequiredMark />
@@ -3226,7 +3285,9 @@ function FormSuratRekomendasiMagang({
               value={formData.tanggal_apply}
               onChange={(event) => updateField("tanggal_apply", event.target.value)}
               disabled={disabled || formData.sudah_apply_ke_mitra !== true}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.tanggal_apply ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled || formData.sudah_apply_ke_mitra !== true
                   ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
                   : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
@@ -3238,40 +3299,70 @@ function FormSuratRekomendasiMagang({
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
               Metode apply <RequiredMark />
             </label>
-            <input
-              type="text"
-              placeholder="Contoh: Email / Website / LinkedIn / Walk-in"
+            <select
               value={formData.metode_apply}
               onChange={(event) => updateField("metode_apply", event.target.value)}
               disabled={disabled || formData.sudah_apply_ke_mitra !== true}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.metode_apply ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
+              } ${
+                disabled || formData.sudah_apply_ke_mitra !== true
+                  ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                  : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            >
+              <option value="">Pilih metode apply</option>
+              {MAGANG_APPLY_METHOD_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <FieldError message={magangFieldErrors.metode_apply} />
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
+              Upload bukti apply <RequiredMark />
+            </label>
+            <input
+              key={`bukti-apply-${fileInputResetKey}`}
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png"
+              onChange={(event) => updateFileField("bukti_apply_file_name", event)}
+              disabled={disabled || formData.sudah_apply_ke_mitra !== true}
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.bukti_apply_file_name
+                  ? "border-[#dc4b4b] bg-[#fff7f7]"
+                  : "border-[#d0dbf4] bg-white"
+              } ${
                 disabled || formData.sudah_apply_ke_mitra !== true
                   ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
                   : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
-            <FieldError message={magangFieldErrors.metode_apply} />
+            <p className="mt-1 text-xs text-[#6b789d]">{MAGANG_FILE_RULES.bukti_apply_file_name.hint}</p>
+            <FieldError message={magangFieldErrors.bukti_apply_file_name} />
           </div>
+
           <div>
-            <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Bukti apply <RequiredMark />
-            </label>
+            <label className="mb-2 block text-sm font-semibold text-[#324c86]">Catatan tambahan</label>
             <input
               type="text"
-              placeholder="Nama file / URL / catatan bukti"
+              placeholder="Tambahkan catatan pelengkap"
               value={formData.bukti_apply}
               onChange={(event) => updateField("bukti_apply", event.target.value)}
               disabled={disabled || formData.sudah_apply_ke_mitra !== true}
               className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
                 disabled || formData.sudah_apply_ke_mitra !== true
                   ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-                  : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                  : "bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
-            <FieldError message={magangFieldErrors.bukti_apply} />
           </div>
         </div>
-
         {applyGateReason ? (
           <div className="mt-3 rounded-md border border-[#ffe0a8] bg-[#fff8e7] px-3 py-2 text-xs font-semibold text-[#9d6a00]">
             {applyGateReason}

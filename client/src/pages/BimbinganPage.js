@@ -223,6 +223,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [page, setPage] = useState(1);
 
   const [form, setForm] = useState({
+    dosen_pembimbing_id: "",
     pesan: "",
     tanggal: "",
     jam: "",
@@ -326,6 +327,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const isReplacementPending = supervisionAccess?.status === "replacement_pending";
   const canCreateGuidance = supervisionAccess?.can_create_guidance !== false;
   const canSubmitResume = supervisionAccess?.can_submit_resume !== false;
+  const activeSupervisors = Array.isArray(supervisionAccess?.current_supervisors)
+    ? supervisionAccess.current_supervisors.filter((item) => item.can_continue_existing_supervision !== false)
+    : dosenPembimbing ? [dosenPembimbing] : [];
 
   const acceptedCount = useMemo(
     () =>
@@ -391,6 +395,10 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
   const validateAjukanForm = () => {
     const nextErrors = {};
+    const selectedSupervisorId = Number(form.dosen_pembimbing_id || 0);
+    if (!selectedSupervisorId || !activeSupervisors.some((item) => Number(item.id) === selectedSupervisorId)) {
+      nextErrors.dosen_pembimbing_id = "Dosen tujuan bimbingan wajib dipilih.";
+    }
     if (String(form.pesan || "").trim().length < 10) {
       nextErrors.pesan = "Pesan minimal 10 karakter.";
     }
@@ -461,10 +469,11 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           pesan: String(form.pesan || "").trim(),
           tanggal: form.tanggal,
           jam: form.jam,
+          dosen_pembimbing_id: Number(form.dosen_pembimbing_id),
         }),
       });
       showSuccessToast("Pengajuan sesi bimbingan berhasil dibuat.");
-      setForm({ pesan: "", tanggal: "", jam: "" });
+      setForm({ dosen_pembimbing_id: "", pesan: "", tanggal: "", jam: "" });
       resetFormErrors();
       setMode("list");
       await loadData();
@@ -630,9 +639,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           <p className="mt-1">
             Pembimbing Anda tidak dapat melanjutkan proses bimbingan. Sekretaris Prodi sedang menyiapkan pembimbing pengganti. Histori bimbingan sebelumnya tetap tersimpan.
           </p>
-          {supervisionAccess?.replacement?.status === "waiting_assignment_letter" ? (
-            <p className="mt-2 font-semibold">Pembimbing pengganti sudah dipilih dan sedang menunggu penerbitan surat tugas.</p>
-          ) : null}
         </div>
       ) : null}
 
@@ -965,6 +971,27 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           </div>
           <form onSubmit={handleSubmitRequest} className="grid grid-cols-1 gap-3 lg:grid-cols-3">
             <div className="lg:col-span-3">
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Dosen tujuan bimbingan</label>
+              <select
+                value={form.dosen_pembimbing_id}
+                onChange={(event) => {
+                  setForm((prev) => ({ ...prev, dosen_pembimbing_id: event.target.value }));
+                  setFormErrors((prev) => ({ ...prev, dosen_pembimbing_id: "" }));
+                }}
+                className={`w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${
+                  formErrors.dosen_pembimbing_id ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
+                }`}
+              >
+                <option value="">Pilih Pembimbing 1 atau Pembimbing 2</option>
+                {activeSupervisors.map((supervisor, index) => (
+                  <option key={supervisor.id} value={supervisor.id}>
+                    {`Pembimbing ${supervisor.urutan || index + 1} - ${[supervisor.nama, supervisor.gelar].filter(Boolean).join(", ")}`}
+                  </option>
+                ))}
+              </select>
+              {formErrors.dosen_pembimbing_id ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.dosen_pembimbing_id}</p> : null}
+            </div>
+            <div className="lg:col-span-3">
               <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Pesan ke dosen</label>
               <textarea
                 value={form.pesan}
@@ -1013,7 +1040,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
             <div className="flex items-end justify-end">
               <button
                 type="submit"
-                disabled={submittingRequest || !dosenPembimbing || !canCreateGuidance}
+                disabled={submittingRequest || activeSupervisors.length === 0 || !canCreateGuidance}
                 className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
               >
                 <Send className="h-4 w-4" />

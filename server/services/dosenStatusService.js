@@ -157,6 +157,46 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
   return rows.length;
 }
 
+async function markActiveAvailabilityReadyAfterFollowUp(
+  dosenId,
+  sekretarisId = null,
+  transaction = null
+) {
+  const dosen = await Dosen.findByPk(dosenId, {
+    attributes: ["id", "status_keaktifan"],
+    transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+  });
+  if (!dosen || dosen.status_keaktifan !== "active") return 0;
+
+  const rows = await DosenKetersediaanPeriode.findAll({
+    where: {
+      dosen_id: dosen.id,
+      configuration_status: "needs_review",
+    },
+    include: [{
+      model: PeriodePenjaluran,
+      as: "periode",
+      where: { status: "active" },
+      attributes: [],
+      required: true,
+    }],
+    transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+  });
+  const now = new Date();
+  for (const row of rows) {
+    await row.update({
+      configuration_status: "ready",
+      reviewed_at: now,
+      reviewed_by_sekretaris_id: sekretarisId || null,
+      updated_by_sekretaris_id: sekretarisId || null,
+      review_note: "Tindak lanjut reaktivasi telah diselesaikan; nilai ketersediaan tetap dipertahankan.",
+    }, { transaction });
+  }
+  return rows.length;
+}
+
 function canContinueExistingSupervision(dosen) {
   if (!dosen) return false;
   const status = String(dosen.status_keaktifan || "active");
@@ -166,6 +206,51 @@ function canContinueExistingSupervision(dosen) {
     return dosen.continue_existing_supervision === true;
   }
   return false;
+}
+
+function evaluateDosenStatusFollowUp({
+  statusBaru,
+  statusLama,
+  continueExisting,
+  impact = {},
+}) {
+  const nextStatus = String(statusBaru || "active");
+  const previousStatus = String(statusLama || nextStatus);
+  const becomesUnavailable = nextStatus !== "active";
+  const isReactivation = nextStatus === "active" && previousStatus !== "active";
+
+  const replacementRequired = becomesUnavailable
+    && continueExisting === false
+    && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
+  const roleAdjustmentRequired = becomesUnavailable && [
+    impact.tugas_ketua_cluster_aktif,
+    impact.tugas_periode_aktif,
+    impact.tugas_master_penanggung_jawab,
+  ].some((value) => Number(value || 0) > 0);
+  const defenseAdjustmentRequired = becomesUnavailable
+    && Number(impact.jadwal_sidang_mendatang || 0) > 0;
+  const reviewTransferRequired = becomesUnavailable && [
+    impact.pengajuan_penjaluran_pending,
+    impact.review_paralel_pending,
+    impact.calon_pembimbing_mandiri_pending,
+  ].some((value) => Number(value || 0) > 0);
+
+  const reasons = [];
+  if (isReactivation) reasons.push("reactivation");
+  if (replacementRequired) reasons.push("supervisor_replacement");
+  if (roleAdjustmentRequired) reasons.push("role_adjustment");
+  if (defenseAdjustmentRequired) reasons.push("defense_adjustment");
+  if (reviewTransferRequired) reasons.push("review_transfer");
+
+  return {
+    required: reasons.length > 0,
+    reasons,
+    replacement_required: replacementRequired,
+    role_adjustment_required: roleAdjustmentRequired,
+    defense_adjustment_required: defenseAdjustmentRequired,
+    review_transfer_required: reviewTransferRequired,
+    reactivation_required: isReactivation,
+  };
 }
 
 function assertDosenCanContinueExistingSupervision(dosen, activityLabel = "memproses bimbingan lama") {
@@ -470,7 +555,7 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
       transaction,
     }),
     IzinLanjutSkripsi.count({
-      where: { dosen_pembimbing_skripsi_id: dosenId, status: "pending" },
+      where: { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds }, status: "pending" },
       transaction,
     }),
     DokumenSidang.count({
@@ -484,7 +569,7 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
       include: [{
         model: Mahasiswa,
         as: "mahasiswa",
-        where: { dosen_pembimbing_skripsi_id: dosenId },
+        where: { id: { [Op.in]: supervisedMahasiswaIds } },
         attributes: [],
         required: true,
       }],
@@ -528,6 +613,8 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
     review_pending: Number(pendingSubmissions || 0) + Number(pendingGuidance || 0)
       + Number(parallelReviews || 0) + Number(prospectiveReviews || 0)
       + Number(extendRequests || 0) + Number(pendingDocuments || 0),
+    pengajuan_penjaluran_pending: Number(pendingSubmissions || 0),
+    bimbingan_lama_pending: Number(pendingGuidance || 0),
     review_paralel_pending: Number(parallelReviews || 0),
     calon_pembimbing_mandiri_pending: Number(prospectiveReviews || 0),
     permohonan_extend_pending: Number(extendRequests || 0),
@@ -545,12 +632,14 @@ module.exports = {
   isDosenAcademicallyActive,
   assertDosenCanReceiveNewAssignment,
   canContinueExistingSupervision,
+  evaluateDosenStatusFollowUp,
   assertDosenCanContinueExistingSupervision,
   getExistingSupervisionPermission,
   validateDosenForNewAssignment,
   initializeAvailabilityForDosen,
   initializeAvailabilityForPeriod,
   syncAvailabilityForMasterStatusChange,
+  markActiveAvailabilityReadyAfterFollowUp,
   toEffectiveAvailability,
   copyAvailabilityFromPreviousPeriod,
   getJakartaDateOnly,

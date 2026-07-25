@@ -821,7 +821,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
               {selectedRow.can_review === false ? (
                 <div className="rounded-lg border border-[#cfdcf6] bg-[#f3f7ff] p-4 text-sm font-semibold text-[#34549b]">
-                  Anda tercatat sebagai Pembimbing 2. Detail tetap dapat dilihat, tetapi keputusan saat ini hanya dapat diproses Pembimbing 1.
+                  Detail tetap dapat dilihat, tetapi keputusan hanya dapat diproses oleh dosen tujuan permohonan bimbingan.
                 </div>
               ) : null}
 
