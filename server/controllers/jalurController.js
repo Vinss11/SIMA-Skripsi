@@ -149,6 +149,7 @@ const MAGANG_DOCUMENT_KEY_LABELS = {
   transcript: "Transkrip",
   other_supporting_documents: "Dokumen Pendukung Lain",
   supporting_documents_note: "Catatan Dokumen Pendukung",
+  dokumen_pendukung: "Dokumen Pendukung",
 };
 
 function resolveNonPenelitianUploadPath(fileMetadata) {
@@ -816,6 +817,18 @@ function normalizeOptionalSubmissionText(value) {
   return text || null;
 }
 
+function validateNonResearchText(value, label, { multiline = false } = {}) {
+  const text = String(value || "").trim();
+  if (!text) return `${label} wajib diisi.`;
+  const maximumLength = multiline ? 2000 : 150;
+  if (text.length > maximumLength) return `${label} maksimal ${maximumLength} karakter.`;
+  if (multiline && text.length < 10) return `${label} minimal 10 karakter.`;
+  if (!multiline && text.length < 2) return `${label} minimal 2 karakter.`;
+  if (!/[\p{L}\p{N}]/u.test(text)) return `${label} tidak boleh hanya berisi simbol.`;
+  if (/[<>\u0000-\u001F\u007F]/u.test(text)) return `${label} mengandung karakter yang tidak diperbolehkan.`;
+  return "";
+}
+
 async function getKelompokPerintisanByPendaftaranId(pendaftaranId, transaction, lock = false) {
   const membership = await AnggotaKelompokPerintisan.findOne({
     where: { pendaftaran_penjaluran_id: pendaftaranId },
@@ -1000,10 +1013,25 @@ async function normalizeKelompokNonPenelitianPayload({
       ["rencana_kegiatan", "Rencana kegiatan"],
       ["target_luaran", "Target atau luaran"],
     ];
+    const multilineFields = new Set([
+      "deskripsi_bisnis",
+      "masalah_yang_diselesaikan",
+      "produk_layanan",
+      "target_konsumen",
+      "model_bisnis",
+      "tahap_perkembangan",
+      "rencana_kegiatan",
+      "target_luaran",
+    ]);
     for (const [field, label] of requiredFields) {
-      if (!String(rawPayload[field] || "").trim()) {
-        return { error: `${label} wajib diisi.` };
-      }
+      const error = validateNonResearchText(rawPayload[field], label, {
+        multiline: multilineFields.has(field),
+      });
+      if (error) return { error };
+    }
+    const tautanBisnis = String(rawPayload.tautan_bisnis || "").trim();
+    if (tautanBisnis && !isHttpUrl(tautanBisnis)) {
+      return { error: "Tautan bisnis atau media sosial harus berupa URL valid yang diawali http:// atau https://." };
     }
 
     return {
@@ -1041,12 +1069,26 @@ async function normalizeKelompokNonPenelitianPayload({
     ["target_luaran", "Target atau luaran"],
     ["indikator_keberhasilan", "Indikator keberhasilan"],
   ];
+  const multilineFields = new Set([
+    "permasalahan_mitra",
+    "solusi_ditawarkan",
+    "deskripsi_kegiatan",
+    "penerima_manfaat",
+    "rencana_pelaksanaan",
+    "target_luaran",
+    "indikator_keberhasilan",
+  ]);
   for (const [field, label] of requiredFields) {
-    if (!String(rawPayload[field] || "").trim()) {
-      return { error: `${label} wajib diisi.` };
-    }
+    const error = validateNonResearchText(rawPayload[field], label, {
+      multiline: multilineFields.has(field),
+    });
+    if (error) return { error };
   }
-  if (new Date(rawPayload.periode_mulai).getTime() > new Date(rawPayload.periode_selesai).getTime()) {
+  const periodeMulaiTime = new Date(rawPayload.periode_mulai).getTime();
+  const periodeSelesaiTime = new Date(rawPayload.periode_selesai).getTime();
+  if (Number.isNaN(periodeMulaiTime)) return { error: "Tanggal mulai kegiatan tidak valid." };
+  if (Number.isNaN(periodeSelesaiTime)) return { error: "Tanggal selesai kegiatan tidak valid." };
+  if (periodeMulaiTime > periodeSelesaiTime) {
     return { error: "Tanggal selesai kegiatan tidak boleh sebelum tanggal mulai." };
   }
 
@@ -2116,6 +2158,22 @@ exports.submitFormNonPenelitian = async (req, res) => {
         });
       }
       payloadToSave = normalizedKelompok.payload;
+      const dokumenPendukung = buildUploadedFileMetadata(
+        getUploadedFile(req, "dokumen_pendukung_file")
+      );
+      if (Number(dokumenPendukung?.size || 0) > 5 * 1024 * 1024) {
+        return rollbackAndRespond(400, {
+          success: false,
+          message: "Ukuran Dokumen Pendukung maksimal 5 MB.",
+        });
+      }
+      if (dokumenPendukung) {
+        payloadToSave.dokumen_pendukung = dokumenPendukung.original_name;
+        payloadToSave.uploaded_documents = {
+          ...(payloadToSave.uploaded_documents || {}),
+          dokumen_pendukung: dokumenPendukung,
+        };
+      }
     }
 
     const now = new Date();
@@ -2505,10 +2563,9 @@ exports.getMagangReviewQueueForDosen = async (req, res) =>
 exports.getMagangReviewDetailForDosen = async (req, res) =>
   getNonPenelitianReviewDetailForDosenByJalur(req, res, "magang");
 
-// GET /api/dosen/non-penelitian/magang/reviews/:id/documents/:documentKey
-exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
+async function downloadNonPenelitianReviewDocumentForDosen(req, res, targetJalur) {
   try {
-    const config = getDosenNonPenelitianReviewConfig("magang");
+    const config = getDosenNonPenelitianReviewConfig(targetJalur);
     const dosenId = Number(req.user?.id || 0);
     const id = Number(req.params?.id || 0);
     const documentKey = String(req.params?.documentKey || "").trim();
@@ -2516,7 +2573,7 @@ exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
     if (!dosenId || !id || !MAGANG_DOCUMENT_KEY_LABELS[documentKey]) {
       return res.status(400).json({
         success: false,
-        message: "Parameter download dokumen magang tidak valid.",
+        message: "Parameter download dokumen tidak valid.",
       });
     }
 
@@ -2524,15 +2581,15 @@ exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
     if (!row) {
       return res.status(404).json({
         success: false,
-        message: "Data form magang tidak ditemukan.",
+        message: "Data form non-penelitian tidak ditemukan.",
       });
     }
 
     const reviewable = ensureReviewableNonPenelitian(row);
-    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+    if (!reviewable.ok || reviewable.selectedJalur !== targetJalur) {
       return res.status(reviewable.statusCode || 409).json({
         success: false,
-        message: reviewable.message || "Data bukan pengajuan magang.",
+        message: reviewable.message || "Jalur pengajuan tidak sesuai.",
       });
     }
 
@@ -2564,14 +2621,22 @@ exports.downloadMagangReviewDocumentForDosen = async (req, res) => {
     const fileName = documentMetadata.original_name || path.basename(absolutePath);
     return res.download(absolutePath, fileName);
   } catch (error) {
-    console.error("Error di downloadMagangReviewDocumentForDosen:", error);
+    console.error("Error di downloadNonPenelitianReviewDocumentForDosen:", error);
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
       error: error.message,
     });
   }
-};
+}
+
+// GET /api/dosen/non-penelitian/magang/reviews/:id/documents/:documentKey
+exports.downloadMagangReviewDocumentForDosen = async (req, res) =>
+  downloadNonPenelitianReviewDocumentForDosen(req, res, "magang");
+
+// GET /api/dosen/non-penelitian/perintisan-bisnis/reviews/:id/documents/:documentKey
+exports.downloadPerintisanBisnisReviewDocumentForDosen = async (req, res) =>
+  downloadNonPenelitianReviewDocumentForDosen(req, res, "perintisan_bisnis");
 
 // POST /api/dosen/non-penelitian/magang/reviews/:id/approve
 exports.approveMagangReviewByDosen = async (req, res) =>
@@ -2741,10 +2806,10 @@ exports.downloadNonPenelitianReviewDocumentForSekretaris = async (req, res) => {
     }
 
     const reviewable = ensureReviewableNonPenelitian(row);
-    if (!reviewable.ok || reviewable.selectedJalur !== "magang") {
+    if (!reviewable.ok || !["magang", "pengabdian", "perintisan_bisnis"].includes(reviewable.selectedJalur)) {
       return res.status(reviewable.statusCode || 409).json({
         success: false,
-        message: reviewable.message || "Dokumen ini hanya tersedia untuk pengajuan magang.",
+        message: reviewable.message || "Dokumen tidak tersedia untuk jalur pengajuan ini.",
       });
     }
 

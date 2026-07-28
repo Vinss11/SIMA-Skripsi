@@ -40,6 +40,7 @@ const MAGANG_DOCUMENT_KEY_LABELS = {
   transcript: "Transkrip",
   other_supporting_documents: "Dokumen Pendukung Lain",
   supporting_documents_note: "Catatan Dokumen Pendukung",
+  dokumen_pendukung: "Dokumen Pendukung",
 };
 
 function resolveNonPenelitianUploadPath(fileMetadata) {
@@ -1478,10 +1479,10 @@ exports.downloadSubmissionDocumentById = async (req, res) => {
 
     const payload = toObjectPayload(registration.form_lanjutan_payload);
     const selectedJalur = String(payload.jalur || resolveSelectedJalurFromPendaftaran(registration) || "").toLowerCase();
-    if (selectedJalur !== "magang") {
+    if (!["magang", "pengabdian", "perintisan_bisnis"].includes(selectedJalur)) {
       return res.status(409).json({
         success: false,
-        message: "Dokumen ini hanya tersedia untuk pengajuan magang.",
+        message: "Dokumen tidak tersedia untuk jalur pengajuan ini.",
       });
     }
 

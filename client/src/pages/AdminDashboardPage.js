@@ -533,7 +533,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [dosenEditGelarError, setDosenEditGelarError] = useState("");
   const [savingDosenStatus, setSavingDosenStatus] = useState(false);
   const [dosenStatusHistory, setDosenStatusHistory] = useState([]);
-  const [savingDosenEdit, setSavingDosenEdit] = useState(false);
   const [dosenActionMessage, setDosenActionMessage] = useState("");
   const [dosenActionError, setDosenActionError] = useState("");
   const [isEditingJabatanStruktural, setIsEditingJabatanStruktural] = useState(false);
@@ -1465,8 +1464,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const gelarError = validateDosenTitleInput(dosenEditForm.gelar);
     setDosenEditGelarError(gelarError);
     if (gelarError) return;
-    setSavingDosenEdit(true);
-
     try {
       const response = await fetch(`${apiBaseUrl}/api/admin/dosen/${selectedDosen.id}/profil`, {
         method: "PUT",
@@ -1527,11 +1524,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       showSuccessToast(payload.message || "Data dosen berhasil disimpan.");
     } catch (saveError) {
       setDosenActionError(saveError.message || "Terjadi kesalahan saat menyimpan.");
-    } finally {
-      setSavingDosenEdit(false);
     }
   };
-
   const findDosenByDraftValue = (selectedValue) => {
     const normalizedValue = String(selectedValue || "").trim();
     if (!normalizedValue) return null;
@@ -2443,15 +2437,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         </div>
                       </div>
 
-                      <div className="md:col-span-2">
-                        <button
-                          type="submit"
-                          disabled={savingDosenEdit}
-                          className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {savingDosenEdit ? "Menyimpan..." : "Simpan Perubahan"}
-                        </button>
-                      </div>
                     </form>
 
                     {dosenActionError ? (

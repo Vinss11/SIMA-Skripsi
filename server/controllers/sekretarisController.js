@@ -42,7 +42,6 @@ const {
   resolveResearchSubmissionRegistration,
   initializeAvailabilityForPeriod,
   copyAvailabilityFromPreviousPeriod,
-  markActiveAvailabilityReadyAfterFollowUp,
   getJakartaDateOnly,
   toEffectiveAvailability,
 } = require("../services/dosenStatusService");
@@ -2724,7 +2723,10 @@ async function buildPeriodeAvailabilityReadiness(periodeId, transaction = null) 
   const counts = { total: availabilityRows.length, ready: 0, needs_review: 0, locked_by_master_status: 0 };
   const needsReviewDosens = [];
   for (const row of availabilityRows) {
-    const status = row.configuration_status || "needs_review";
+    const masterActive = row.dosen?.status_keaktifan === "active";
+    const status = masterActive
+      ? row.configuration_status || "needs_review"
+      : "locked_by_master_status";
     if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
     if (status === "needs_review") {
       needsReviewDosens.push({
@@ -2828,8 +2830,11 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
 
     const mapped = await Promise.all(dosens.map(async (dosen) => {
       const saved = dosen.ketersediaanPeriodes?.[0] || null;
-      const configurationStatus = saved?.configuration_status
-        || (dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status");
+      const masterActive = dosen.status_keaktifan === "active";
+      const configurationStatus = !masterActive
+        ? "locked_by_master_status"
+        : saved?.configuration_status || "needs_review";
+      const tersediaMembimbing = masterActive && Boolean(saved?.tersedia_membimbing);
       const storedAvailability = {
         tersedia_membimbing: Boolean(saved?.tersedia_membimbing),
       };
@@ -2844,7 +2849,7 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
         email: dosen.email,
         status_keaktifan: dosen.status_keaktifan,
         continue_existing_supervision: dosen.continue_existing_supervision,
-        ...storedAvailability,
+        tersedia_membimbing: tersediaMembimbing,
         kuota: Number(capacity.total || dosen.kuota_bimbingan || 0),
         terpakai: Number(capacity.terpakai || 0),
         sisa: Number(capacity.sisa || 0),
@@ -2853,10 +2858,15 @@ exports.getDosenKetersediaanPeriode = async (req, res) => {
         configuration_status: configurationStatus,
         reviewed_at: saved?.reviewed_at || null,
         reviewed_by_sekretaris_id: saved?.reviewed_by_sekretaris_id || null,
-        review_note: saved?.review_note || "",
+        review_note: !masterActive
+          ? "Dikunci oleh status master dosen"
+          : saved?.review_note || "",
         stored_availability: storedAvailability,
         effective_availability: effectiveAvailability,
-        can_edit: periode.status !== "closed" && configurationStatus !== "locked_by_master_status",
+        can_edit: periode.status === "active"
+          && periode.is_active === true
+          && masterActive
+          && configurationStatus !== "locked_by_master_status",
         updatedAt: saved?.updatedAt || null,
       };
     }));
@@ -3360,11 +3370,6 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
       });
     }
     const row = await TindakLanjutStatusDosen.findByPk(req.params.id, {
-      include: [{
-        model: Dosen,
-        as: "dosen",
-        attributes: ["id", "status_keaktifan", "continue_existing_supervision"],
-      }],
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
@@ -3376,10 +3381,19 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({ success: false, message: "Tindak lanjut ini sudah diselesaikan." });
     }
+    const dosen = await Dosen.findByPk(row.dosen_id, {
+      attributes: ["id", "status_keaktifan", "continue_existing_supervision"],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!dosen) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Dosen pada tindak lanjut tidak ditemukan." });
+    }
 
     const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id, transaction);
     if (
-      row.dosen?.continue_existing_supervision === false
+      dosen.continue_existing_supervision === false
       && Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0
     ) {
       await transaction.rollback();
@@ -3401,16 +3415,11 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
       resolved_by_sekretaris_id: actorId,
       resolved_at: new Date(),
     }, { transaction });
-    const availabilityReadyCount = await markActiveAvailabilityReadyAfterFollowUp(
-      row.dosen_id,
-      actorId,
-      transaction
-    );
     await transaction.commit();
     return res.json({
       success: true,
       message: "Tindak lanjut ditandai selesai.",
-      data: { ...row.toJSON(), availability_ready_count: availabilityReadyCount },
+      data: row,
     });
   } catch (error) {
     if (!transaction.finished) await transaction.rollback();

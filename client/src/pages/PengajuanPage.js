@@ -189,6 +189,18 @@ function FieldError({ message }) {
   return message ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{message}</p> : null;
 }
 
+function isInvalidGenericTextCharacter(character) {
+  const code = character.charCodeAt(0);
+  return character === "<" || character === ">" || code < 32 || code === 127;
+}
+
+function sanitizeGenericTextInput(value) {
+  return String(value || "")
+    .split("")
+    .filter((character) => !isInvalidGenericTextCharacter(character))
+    .join("");
+}
+
 function statusBadge(item) {
   if (getTopikStatusKey(item) === "tersedia") {
     return {
@@ -1854,12 +1866,71 @@ function FormNonPenelitianGeneric({
   );
   const [formData, setFormData] = useState(initialForm);
   const [submitLoading, setSubmitLoading] = useState(false);
-  const [submitError, setSubmitError] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [dokumenPendukungFile, setDokumenPendukungFile] = useState(null);
+  const dokumenPendukungInputRef = useRef(null);
   const isBisnis = jalur === "perintisan_bisnis";
+
+  const getGenericFieldError = (field, label, value, { required = true, multiline = false } = {}) => {
+    const text = String(value || "").trim();
+    if (!text) return required ? `${label} wajib diisi.` : "";
+    if (["anggota_1_nim", "anggota_2_nim"].includes(field)) {
+      return /^\d{8}$/.test(text) ? "" : `${label} wajib terdiri dari tepat 8 digit angka.`;
+    }
+    if (["periode_mulai", "periode_selesai"].includes(field)) {
+      return Number.isNaN(new Date(text).getTime()) ? `${label} tidak valid.` : "";
+    }
+    if (field === "tautan_bisnis") {
+      return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
+    }
+    const maximumLength = multiline ? 2000 : field === "dokumen_pendukung" ? 255 : 150;
+    if (text.length > maximumLength) return `${label} maksimal ${maximumLength} karakter.`;
+    if (multiline && text.length < 10) return `${label} minimal 10 karakter.`;
+    if (!multiline && required && text.length < 2) return `${label} minimal 2 karakter.`;
+    if (!/[\p{L}\p{N}]/u.test(text)) return `${label} tidak boleh hanya berisi simbol.`;
+    if (text.split("").some(isInvalidGenericTextCharacter)) {
+      return `${label} mengandung karakter yang tidak diperbolehkan.`;
+    }
+    return "";
+  };
 
   const updateField = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      return { ...prev, [field]: "" };
+    });
+  };
+
+  const handleDokumenPendukungChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) {
+      setDokumenPendukungFile(null);
+      updateField("dokumen_pendukung", "");
+      return;
+    }
+    const extension = `.${String(file.name || "").split(".").pop().toLowerCase()}`;
+    const allowedExtensions = [".pdf", ".doc", ".docx"];
+    if (!allowedExtensions.includes(extension) || file.size > 5 * 1024 * 1024) {
+      event.target.value = "";
+      setDokumenPendukungFile(null);
+      updateField("dokumen_pendukung", "");
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "error",
+        title: allowedExtensions.includes(extension)
+          ? "Ukuran Dokumen Pendukung maksimal 5 MB."
+          : "Dokumen Pendukung hanya boleh berformat PDF, DOC, atau DOCX.",
+        showConfirmButton: false,
+        timer: 3000,
+        timerProgressBar: true,
+      });
+      return;
+    }
+    setDokumenPendukungFile(file);
+    updateField("dokumen_pendukung", file.name);
   };
 
   const validateForm = () => {
@@ -1899,28 +1970,65 @@ function FormNonPenelitianGeneric({
           ["indikator_keberhasilan", "Indikator keberhasilan"],
         ];
 
+    const nextErrors = {};
     for (const [field, label] of [...commonRequired, ...specificRequired]) {
-      if (!String(formData[field] || "").trim()) return `${label} wajib diisi.`;
+      const multiline = [
+        "deskripsi_bisnis",
+        "masalah_yang_diselesaikan",
+        "produk_layanan",
+        "target_konsumen",
+        "model_bisnis",
+        "tahap_perkembangan",
+        "rencana_kegiatan",
+        "target_luaran",
+        "permasalahan_mitra",
+        "solusi_ditawarkan",
+        "deskripsi_kegiatan",
+        "penerima_manfaat",
+        "rencana_pelaksanaan",
+        "indikator_keberhasilan",
+      ].includes(field);
+      const fieldError = getGenericFieldError(field, label, formData[field], { multiline });
+      if (fieldError) nextErrors[field] = fieldError;
+    }
+    const optionalFields = isBisnis
+      ? [
+          ["tautan_bisnis", "Tautan bisnis atau media sosial", false],
+          ["dokumen_pendukung", "Dokumen pendukung", false],
+          ["catatan", "Catatan tambahan", true],
+        ]
+      : [
+          ["anggota_2_nim", "NIM Anggota 2", false],
+          ["kontak_mitra", "Kontak mitra", false],
+          ["dokumen_pendukung", "Dokumen pendukung", false],
+          ["catatan", "Catatan tambahan", true],
+        ];
+    for (const [field, label, multiline] of optionalFields) {
+      const fieldError = getGenericFieldError(field, label, formData[field], {
+        required: false,
+        multiline,
+      });
+      if (fieldError) nextErrors[field] = fieldError;
     }
     if (!isBisnis) {
-      for (const field of ["anggota_1_nim", "anggota_2_nim"]) {
-        const nim = String(formData[field] || "").trim();
-        if (nim && !/^\d{8}$/.test(nim)) return "NIM anggota wajib terdiri dari tepat 8 digit angka.";
-      }
       if (
         formData.anggota_2_nim &&
         String(formData.anggota_1_nim).trim() === String(formData.anggota_2_nim).trim()
       ) {
-        return "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama.";
+        nextErrors.anggota_2_nim = "Anggota 1 dan Anggota 2 tidak boleh mahasiswa yang sama.";
       }
-    } else if (!initialTeam?.is_ketua || initialTeam?.anggota?.length !== 3) {
-      return "Data kelompok Perintisan Bisnis belum lengkap atau akun ini bukan ketua kelompok.";
     }
     if (!isBisnis && new Date(formData.periode_mulai).getTime() > new Date(formData.periode_selesai).getTime()) {
-      return "Tanggal selesai kegiatan tidak boleh sebelum tanggal mulai.";
+      nextErrors.periode_selesai = "Tanggal selesai tidak boleh sebelum tanggal mulai.";
     }
     if (!isBisnis && !formData.persetujuan_anggota) {
-      return "Pastikan seluruh anggota telah menyetujui keikutsertaan.";
+      nextErrors.persetujuan_anggota = "Persetujuan seluruh anggota wajib dikonfirmasi.";
+    }
+    setFieldErrors(nextErrors);
+    const firstFieldError = Object.values(nextErrors)[0];
+    if (firstFieldError) return firstFieldError;
+    if (isBisnis && (!initialTeam?.is_ketua || initialTeam?.anggota?.length !== 3)) {
+      return "Data kelompok Perintisan Bisnis belum lengkap atau akun ini bukan ketua kelompok.";
     }
     return "";
   };
@@ -1929,7 +2037,6 @@ function FormNonPenelitianGeneric({
     if (disabled) return;
     const validationMessage = validateForm();
     if (validationMessage) {
-      setSubmitError(validationMessage);
       return;
     }
 
@@ -1945,20 +2052,21 @@ function FormNonPenelitianGeneric({
     if (!confirm.isConfirmed) return;
 
     setSubmitLoading(true);
-    setSubmitError("");
     setSubmitSuccess("");
 
     try {
+      const requestBody = new FormData();
+      requestBody.append("jalur", jalur);
+      requestBody.append("payload", JSON.stringify(formData));
+      if (dokumenPendukungFile) {
+        requestBody.append("dokumen_pendukung_file", dokumenPendukungFile);
+      }
       const response = await fetch(`${apiBaseUrl}/api/jalur/non-penelitian/submit`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
         },
-        body: JSON.stringify({
-          jalur,
-          payload: formData,
-        }),
+        body: requestBody,
       });
 
       const data = await response.json().catch(() => null);
@@ -1981,51 +2089,96 @@ function FormNonPenelitianGeneric({
       setSubmitSuccess(successMessage);
       showSubmissionSuccessToast(successMessage);
       setFormData(initialForm);
+      setFieldErrors({});
+      setDokumenPendukungFile(null);
+      if (dokumenPendukungInputRef.current) dokumenPendukungInputRef.current.value = "";
       onSubmitted?.();
     } catch (error) {
-      setSubmitError(error.message || "Submit form jalur gagal.");
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "error",
+        title: error.message || "Submit form jalur gagal.",
+        showConfirmButton: false,
+        timer: 3200,
+        timerProgressBar: true,
+      });
     } finally {
       setSubmitLoading(false);
     }
   };
 
-  const inputClass = `w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
-    disabled
-      ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-      : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-  }`;
-  const renderInput = (field, label, options = {}) => (
-    <label className={options.wide ? "md:col-span-2" : ""}>
-      <span className="mb-2 block text-sm font-semibold text-[#324c86]">
-        {label}
-        {options.required === false ? "" : " *"}
-      </span>
-      <input
-        type={options.type || "text"}
-        value={formData[field]}
-        onChange={(event) => updateField(field, event.target.value)}
-        disabled={disabled}
-        placeholder={options.placeholder || ""}
-        className={inputClass}
-      />
-    </label>
-  );
-  const renderTextarea = (field, label, options = {}) => (
-    <label className={options.wide === false ? "" : "md:col-span-2"}>
-      <span className="mb-2 block text-sm font-semibold text-[#324c86]">
-        {label}
-        {options.required === false ? "" : " *"}
-      </span>
-      <textarea
-        rows={options.rows || 3}
-        value={formData[field]}
-        onChange={(event) => updateField(field, event.target.value)}
-        disabled={disabled}
-        placeholder={options.placeholder || ""}
-        className={inputClass}
-      />
-    </label>
-  );
+  const getInputClass = (field) => `w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+    fieldErrors[field]
+      ? "border-[#dc4c4c] bg-[#fff8f8] focus:border-[#dc4c4c] focus:ring-2 focus:ring-[#dc4c4c]/15"
+      : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+  } ${disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : ""}`;
+  const renderInput = (field, label, options = {}) => {
+    const required = options.required !== false;
+    const isNim = ["anggota_1_nim", "anggota_2_nim"].includes(field);
+    const maximumLength = isNim ? 8 : field === "dokumen_pendukung" ? 255 : 150;
+    return (
+      <label className={options.wide ? "md:col-span-2" : ""}>
+        <span className="mb-2 block text-sm font-semibold text-[#324c86]">
+          {label}
+          {required ? <span className="ml-1 text-[#c23737]">*</span> : null}
+        </span>
+        <input
+          type={options.type || (field === "tautan_bisnis" ? "url" : "text")}
+          inputMode={isNim ? "numeric" : undefined}
+          maxLength={maximumLength}
+          value={formData[field]}
+          onChange={(event) => {
+            const value = isNim
+              ? event.target.value.replace(/\D/g, "").slice(0, 8)
+              : sanitizeGenericTextInput(event.target.value);
+            updateField(field, value);
+          }}
+          onBlur={() => {
+            const error = getGenericFieldError(field, label, formData[field], { required });
+            setFieldErrors((prev) => ({ ...prev, [field]: error }));
+          }}
+          disabled={disabled}
+          placeholder={options.placeholder || ""}
+          aria-invalid={Boolean(fieldErrors[field])}
+          className={getInputClass(field)}
+        />
+        <FieldError message={fieldErrors[field]} />
+      </label>
+    );
+  };
+  const renderTextarea = (field, label, options = {}) => {
+    const required = options.required !== false;
+    return (
+      <label className={options.wide === false ? "" : "md:col-span-2"}>
+        <span className="mb-2 block text-sm font-semibold text-[#324c86]">
+          {label}
+          {required ? <span className="ml-1 text-[#c23737]">*</span> : null}
+        </span>
+        <textarea
+          rows={options.rows || 3}
+          maxLength={2000}
+          value={formData[field]}
+          onChange={(event) => updateField(
+            field,
+            sanitizeGenericTextInput(event.target.value)
+          )}
+          onBlur={() => {
+            const error = getGenericFieldError(field, label, formData[field], {
+              required,
+              multiline: true,
+            });
+            setFieldErrors((prev) => ({ ...prev, [field]: error }));
+          }}
+          disabled={disabled}
+          placeholder={options.placeholder || ""}
+          aria-invalid={Boolean(fieldErrors[field])}
+          className={getInputClass(field)}
+        />
+        <FieldError message={fieldErrors[field]} />
+      </label>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -2125,14 +2278,28 @@ function FormNonPenelitianGeneric({
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">Dokumen dan Pernyataan</h3>
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-          {renderInput("dokumen_pendukung", "Dokumen Pendukung", {
-            wide: true,
-            required: false,
-            placeholder: "Nama file atau tautan dokumen (opsional)",
-          })}
+          <label className="md:col-span-2">
+            <span className="mb-2 block text-sm font-semibold text-[#324c86]">Dokumen Pendukung</span>
+            <input
+              ref={dokumenPendukungInputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              onChange={handleDokumenPendukungChange}
+              disabled={disabled}
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                disabled
+                  ? "cursor-not-allowed border-[#d0dbf4] bg-[#f3f5fb] text-[#8b97b6]"
+                  : "border-[#d0dbf4] bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+              }`}
+            />
+            <p className="mt-1 text-xs text-[#6b789d]">Format: PDF, DOC, atau DOCX. Maks 5 MB.</p>
+          </label>
           {renderTextarea("catatan", "Catatan Tambahan", { required: false })}
           {!isBisnis ? (
-            <label className="md:col-span-2 flex items-start gap-3 rounded-lg border border-[#dce5f7] bg-[#f8fbff] p-4">
+            <label className={`md:col-span-2 rounded-lg border bg-[#f8fbff] p-4 ${
+              fieldErrors.persetujuan_anggota ? "border-[#dc4c4c]" : "border-[#dce5f7]"
+            }`}>
+              <span className="flex items-start gap-3">
               <input
                 type="checkbox"
                 checked={formData.persetujuan_anggota}
@@ -2142,17 +2309,14 @@ function FormNonPenelitianGeneric({
               />
               <span className="text-sm font-semibold leading-relaxed text-[#405070]">
                 Saya memastikan seluruh anggota telah menyetujui keikutsertaan dan data pengajuan dapat
-                dipertanggungjawabkan.
+                dipertanggungjawabkan.<span className="ml-1 text-[#c23737]">*</span>
               </span>
+              </span>
+              <FieldError message={fieldErrors.persetujuan_anggota} />
             </label>
           ) : null}
         </div>
 
-        {submitError ? (
-          <div className="mt-4 rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
-            {submitError}
-          </div>
-        ) : null}
         {submitSuccess ? (
           <div className="mt-4 rounded-lg border border-[#d2efdf] bg-[#effcf5] px-3 py-2 text-sm font-semibold text-[#1b7a49]">
             {submitSuccess}
@@ -2164,7 +2328,9 @@ function FormNonPenelitianGeneric({
             type="button"
             onClick={() => {
               setFormData(initialForm);
-              setSubmitError("");
+              setFieldErrors({});
+              setDokumenPendukungFile(null);
+              if (dokumenPendukungInputRef.current) dokumenPendukungInputRef.current.value = "";
               setSubmitSuccess("");
             }}
             disabled={disabled}

@@ -4,6 +4,7 @@ require("dotenv").config();
 const { Op } = require("sequelize");
 const {
   sequelize,
+  Mahasiswa,
   PenetapanPembimbing,
   PenetapanPembimbingDosen,
 } = require("../models");
@@ -29,7 +30,7 @@ async function reconcile(transaction = null) {
     include: [{
       model: PenetapanPembimbingDosen,
       as: "pembimbings",
-      attributes: ["dosen_id", "urutan"],
+      attributes: ["id", "dosen_id", "urutan", "status", "tanggal_mulai", "tanggal_selesai"],
     }],
     order: [["mahasiswa_id", "ASC"], ["createdAt", "ASC"], ["id", "ASC"]],
     transaction,
@@ -44,12 +45,41 @@ async function reconcile(transaction = null) {
     semester_updated: 0,
     source_updated: 0,
     extension_reason_updated: 0,
+    active_conflicts: 0,
+    missing_primary: 0,
+    cache_mismatches: 0,
+    cache_updated: 0,
+    member_metadata_updated: 0,
   };
   const previousByMahasiswa = new Map();
+  const activeByMahasiswa = new Map();
 
   for (const row of rows) {
     const previous = previousByMahasiswa.get(Number(row.mahasiswa_id)) || null;
     const updates = {};
+    const members = [...(row.pembimbings || [])].sort((left, right) => Number(left.urutan) - Number(right.urutan));
+    const primary = members.find((item) => Number(item.urutan) === 1) || null;
+    if (!primary) summary.missing_primary += 1;
+    if (row.status === "active") {
+      const existing = activeByMahasiswa.get(Number(row.mahasiswa_id));
+      if (existing) summary.active_conflicts += 1;
+      else activeByMahasiswa.set(Number(row.mahasiswa_id), { row, primary });
+    }
+    for (const member of members) {
+      const expectedStatus = row.status;
+      const startMismatch = String(member.tanggal_mulai || "") !== String(row.tanggal_mulai || "");
+      const endMismatch = String(member.tanggal_selesai || "") !== String(row.tanggal_selesai || "");
+      if (member.status !== expectedStatus || startMismatch || endMismatch) {
+        summary.member_metadata_updated += 1;
+        if (execute) {
+          await member.update({
+            status: expectedStatus,
+            tanggal_mulai: row.tanggal_mulai || null,
+            tanggal_selesai: row.tanggal_selesai || null,
+          }, { transaction });
+        }
+      }
+    }
     if (row.periode_mulai_id) {
       const semester = await resolveSemesterPenjaluranKe(
         row.mahasiswa_id,
@@ -92,6 +122,25 @@ async function reconcile(transaction = null) {
       await row.update(updates, { transaction });
     }
     previousByMahasiswa.set(Number(row.mahasiswa_id), row);
+  }
+
+  for (const [mahasiswaId, activeEntry] of activeByMahasiswa.entries()) {
+    if (!activeEntry.primary) continue;
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, {
+      attributes: ["id", "dosen_pembimbing_skripsi_id"],
+      transaction,
+      lock: transaction ? transaction.LOCK.UPDATE : undefined,
+    });
+    if (!mahasiswa) continue;
+    if (Number(mahasiswa.dosen_pembimbing_skripsi_id || 0) !== Number(activeEntry.primary.dosen_id)) {
+      summary.cache_mismatches += 1;
+      if (execute) {
+        await mahasiswa.update({
+          dosen_pembimbing_skripsi_id: activeEntry.primary.dosen_id,
+        }, { transaction });
+        summary.cache_updated += 1;
+      }
+    }
   }
 
   return summary;

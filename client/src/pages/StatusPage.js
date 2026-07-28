@@ -750,34 +750,95 @@ function NonPenelitianDetail({ detail, hideIntro = false, onOpenDocument }) {
 
   if (jalur === "perintisan_bisnis") {
     const members = Array.isArray(payload.kelompok?.anggota) ? payload.kelompok.anggota : [];
+    const uploadedDocuments =
+      payload.uploaded_documents && typeof payload.uploaded_documents === "object" && !Array.isArray(payload.uploaded_documents)
+        ? payload.uploaded_documents
+        : {};
+    const dokumenPendukung = uploadedDocuments.dokumen_pendukung || null;
+    const openDokumenPendukung =
+      dokumenPendukung && typeof onOpenDocument === "function"
+        ? () => onOpenDocument(
+            "dokumen_pendukung",
+            dokumenPendukung.original_name || payload.dokumen_pendukung || "dokumen-pendukung"
+          )
+        : undefined;
     return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <DetailField label="Nama Bisnis" value={payload.nama_bisnis || "-"} />
-          <DetailField label="Jenis Bisnis" value={payload.jenis_bisnis || "-"} />
-          <DetailField label="Lokasi Bisnis" value={payload.lokasi_bisnis || "-"} />
-          <DetailField label="Peran Anda" value={formatLabel(payload.kelompok?.current_peran_tim || "-")} />
-          <DetailField label="Model Bisnis" value={payload.model_bisnis || "-"} />
-          <DetailField label="Tahap Perkembangan" value={payload.tahap_perkembangan || "-"} />
-          <DetailField label="Target Luaran" value={payload.target_luaran || "-"} />
-          <DetailField label="Tautan Bisnis" value={payload.tautan_bisnis || "-"} />
-        </div>
-        <TextBlock label="Anggota Kelompok">
-          <div className="space-y-1">
-            {members.length > 0
-              ? members.map((member) => (
-                  <p key={`member-${member.mahasiswa_id || member.nim}`}>
-                    {member.nama || "-"} ({member.nim || "-"}) - {formatLabel(member.peran_tim || member.posisi || "-")}
+      <div className="space-y-4">
+        {!hideIntro ? (
+          <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+            <h2 className="text-xl font-black text-[#1b274b]">Form Pengajuan Perintisan Bisnis</h2>
+            <p className="mt-1 text-sm text-[#5d6c91]">
+              Tampilan read-only dari form yang telah dikirim oleh ketua kelompok.
+            </p>
+          </section>
+        ) : null}
+
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-black text-[#1b274b]">Data Kelompok</h3>
+          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+            {members.length > 0 ? members.map((member) => (
+              <div
+                key={`member-${member.mahasiswa_id || member.nim}`}
+                className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-xs font-bold uppercase text-[#7180a5]">
+                    {member.posisi === "ketua" ? "Ketua" : "Anggota"}
                   </p>
-                ))
-              : "-"}
+                  <span className="rounded-md bg-[#e7eeff] px-2 py-1 text-xs font-bold uppercase text-[#3157b7]">
+                    {member.peran_tim || "-"}
+                  </span>
+                </div>
+                <p className="mt-2 font-bold text-[#1b274b]">{member.nama || "-"}</p>
+                <p className="text-sm text-[#5d6c91]">{member.nim || "-"}</p>
+                <p className="mt-1 text-xs text-[#7180a5]">
+                  Pendaftaran {formatLabel(member.jenis_pendaftaran || "-")}
+                </p>
+              </div>
+            )) : (
+              <p className="text-sm text-[#5d6c91]">Data kelompok tidak tersedia.</p>
+            )}
           </div>
-        </TextBlock>
-        <TextBlock label="Deskripsi Bisnis">{payload.deskripsi_bisnis || "-"}</TextBlock>
-        <TextBlock label="Masalah yang Diselesaikan">{payload.masalah_yang_diselesaikan || "-"}</TextBlock>
-        <TextBlock label="Produk / Layanan">{payload.produk_layanan || "-"}</TextBlock>
-        <TextBlock label="Target Konsumen">{payload.target_konsumen || "-"}</TextBlock>
-        <TextBlock label="Rencana Kegiatan">{payload.rencana_kegiatan || "-"}</TextBlock>
+        </section>
+
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-black text-[#1b274b]">Detail Perintisan Bisnis</h3>
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <DisabledFormInput label="Nama Bisnis" value={payload.nama_bisnis || "-"} />
+            <DisabledFormInput label="Jenis Bisnis" value={payload.jenis_bisnis || "-"} />
+            <div className="md:col-span-2">
+              <DisabledFormInput label="Lokasi Bisnis" value={payload.lokasi_bisnis || "-"} />
+            </div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Deskripsi Bisnis" value={payload.deskripsi_bisnis || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Permasalahan yang Ingin Diselesaikan" value={payload.masalah_yang_diselesaikan || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Produk atau Layanan" value={payload.produk_layanan || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Target Pengguna atau Konsumen" value={payload.target_konsumen || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Model Bisnis" value={payload.model_bisnis || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Tahap Perkembangan Bisnis" value={payload.tahap_perkembangan || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Rencana Kegiatan Selama Penjaluran" value={payload.rencana_kegiatan || "-"} /></div>
+            <div className="md:col-span-2"><DisabledFormTextarea label="Target atau Luaran" value={payload.target_luaran || "-"} /></div>
+            <div className="md:col-span-2">
+              <DisabledFormInput label="Tautan Bisnis / Media Sosial" value={payload.tautan_bisnis || "-"} />
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-black text-[#1b274b]">Dokumen dan Pernyataan</h3>
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <DisabledFileField
+                label="Dokumen Pendukung"
+                value={dokumenPendukung?.original_name || payload.dokumen_pendukung || "-"}
+                onOpen={openDokumenPendukung}
+              />
+              <p className="mt-1 text-xs text-[#6b789d]">Format: PDF, DOC, atau DOCX. Maks 5 MB.</p>
+            </div>
+            <div className="md:col-span-2">
+              <DisabledFormTextarea label="Catatan Tambahan" value={payload.catatan || "-"} />
+            </div>
+          </div>
+        </section>
       </div>
     );
   }
@@ -1231,6 +1292,9 @@ function StatusPage({
   ).toLowerCase();
   const isSelectedMagangDetail =
     selectedDetail?.record_type === "non_penelitian" && selectedNonPenelitianJalur === "magang";
+  const isSelectedPerintisanDetail =
+    selectedDetail?.record_type === "non_penelitian" && selectedNonPenelitianJalur === "perintisan_bisnis";
+  const usesFullReadonlyForm = isSelectedMagangDetail || isSelectedPerintisanDetail;
   const selectedHistory = Array.isArray(selectedDetail?.riwayat_persetujuan)
     ? selectedDetail.riwayat_persetujuan
     : [];
@@ -1609,7 +1673,7 @@ function StatusPage({
               <div className="space-y-4">
               {selectedDetail.record_type !== "non_penelitian" ? (
                 <ResearchSubmissionDetailForm detail={selectedDetail} topikRows={selectedTopikRows} />
-              ) : !isSelectedMagangDetail ? (
+              ) : !usesFullReadonlyForm ? (
               <section className="rounded-lg border border-[#dfe8f7] bg-white p-4">
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
                   <div>
@@ -1645,8 +1709,8 @@ function StatusPage({
               ) : null}
 
               {selectedDetail.record_type === "non_penelitian" ? (
-              <section className={isSelectedMagangDetail ? "bg-white" : "rounded-lg border border-[#dfe8f7] bg-white p-4"}>
-                {!isSelectedMagangDetail ? (
+              <section className={usesFullReadonlyForm ? "bg-white" : "rounded-lg border border-[#dfe8f7] bg-white p-4"}>
+                {!usesFullReadonlyForm ? (
                   <div className="mb-3">
                     <h4 className="text-base font-black text-[#1a2648]">
                       {selectedDetail.record_type === "non_penelitian" ? "Detail Form Jalur" : "Detail Topik / Judul"}

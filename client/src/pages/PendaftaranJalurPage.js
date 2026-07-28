@@ -44,6 +44,7 @@ const PERAN_TIM_OPTIONS = [
 const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
 const NIM_REGEX = /^\d{2}523\d{3}$/;
 const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
+const ANGGOTA_NAMA_REGEX = /^[a-zA-Z\s]+$/;
 const getNimValidationError = (nim) => {
   const normalizedNim = String(nim || "").trim();
   if (!normalizedNim) return "NIM wajib diisi.";
@@ -60,6 +61,17 @@ const getNamaValidationError = (nama) => {
   }
   if (!NAMA_REGEX.test(normalizedNama)) {
     return "Nama hanya boleh berisi huruf, spasi, titik, apostrof, dan tanda hubung.";
+  }
+  return "";
+};
+const getAnggotaNamaValidationError = (nama) => {
+  const normalizedNama = String(nama || "").trim();
+  if (!normalizedNama) return "Nama wajib diisi.";
+  if (normalizedNama.length < 2 || normalizedNama.length > 100) {
+    return "Nama wajib 2 sampai 100 karakter.";
+  }
+  if (!ANGGOTA_NAMA_REGEX.test(normalizedNama)) {
+    return "Nama hanya boleh berisi huruf dan spasi.";
   }
   return "";
 };
@@ -136,6 +148,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [anggotaSearchLoading, setAnggotaSearchLoading] = useState([false, false]);
   const [anggotaDpaSearchQueries, setAnggotaDpaSearchQueries] = useState(["", ""]);
   const [activeAnggotaDpaIndex, setActiveAnggotaDpaIndex] = useState(null);
+  const [anggotaFieldErrors, setAnggotaFieldErrors] = useState([
+    { nim: "", nama: "" },
+    { nim: "", nama: "" },
+  ]);
+  const [anggotaNimAvailability, setAnggotaNimAvailability] = useState(["idle", "idle"]);
   const pendaftaranDitutup = !loadingPeriode && !periodeAktif;
   const selectedTargetJalur =
     formData.pendaftaran === "baru"
@@ -144,6 +161,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         ? formData.jenis_jalur_ulang
         : formData.penjaluran_baru;
   const isPerintisanBisnis = selectedTargetJalur === "perintisan_bisnis";
+  const anggotaNimValidationKey = formData.anggota_perintisan
+    .map((anggota) => `${anggota.jenis_pendaftaran}:${String(anggota.nim || "").trim()}`)
+    .join("|");
 
   useEffect(() => {
     if (step !== 2) {
@@ -197,6 +217,78 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       controller.abort();
     };
   }, [apiBaseUrl, formData.nim]);
+
+  useEffect(() => {
+    const controllers = [];
+    const timers = [];
+
+    anggotaNimValidationKey.split("|").forEach((entry, index) => {
+      const separatorIndex = entry.indexOf(":");
+      const jenisPendaftaran = separatorIndex >= 0 ? entry.slice(0, separatorIndex) : "";
+      const nim = separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : "";
+      const structuralError = getNimValidationError(nim);
+      if (!isPerintisanBisnis || jenisPendaftaran !== "baru" || structuralError) {
+        setAnggotaNimAvailability((prev) => {
+          const next = [...prev];
+          next[index] = "idle";
+          return next;
+        });
+        return;
+      }
+
+      const controller = new AbortController();
+      controllers.push(controller);
+      setAnggotaNimAvailability((prev) => {
+        const next = [...prev];
+        next[index] = "checking";
+        return next;
+      });
+      const timer = window.setTimeout(async () => {
+        try {
+          const response = await fetch(
+            `${apiBaseUrl}/api/pendaftaran/check-nim?nim=${encodeURIComponent(nim)}`,
+            { signal: controller.signal }
+          );
+          const data = await response.json().catch(() => null);
+          if (!response.ok || !data?.success) {
+            throw new Error(data?.message || "Gagal memeriksa NIM.");
+          }
+          const isAvailable = Boolean(data.data?.available);
+          setAnggotaNimAvailability((prev) => {
+            const next = [...prev];
+            next[index] = isAvailable ? "available" : "unavailable";
+            return next;
+          });
+          setAnggotaFieldErrors((prev) => {
+            const next = [...prev];
+            next[index] = {
+              ...next[index],
+              nim: isAvailable ? "" : "NIM sudah terdaftar.",
+            };
+            return next;
+          });
+        } catch (checkError) {
+          if (checkError.name === "AbortError") return;
+          setAnggotaNimAvailability((prev) => {
+            const next = [...prev];
+            next[index] = "idle";
+            return next;
+          });
+          setAnggotaFieldErrors((prev) => {
+            const next = [...prev];
+            next[index] = { ...next[index], nim: "Gagal memeriksa ketersediaan NIM." };
+            return next;
+          });
+        }
+      }, 350);
+      timers.push(timer);
+    });
+
+    return () => {
+      timers.forEach((timer) => window.clearTimeout(timer));
+      controllers.forEach((controller) => controller.abort());
+    };
+  }, [anggotaNimValidationKey, apiBaseUrl, isPerintisanBisnis]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -341,6 +433,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setAnggotaDpaSearchQueries((prev) => {
       const next = [...prev];
       next[index] = "";
+      return next;
+    });
+    setAnggotaFieldErrors((prev) => {
+      const next = [...prev];
+      next[index] = { nim: "", nama: "" };
+      return next;
+    });
+    setAnggotaNimAvailability((prev) => {
+      const next = [...prev];
+      next[index] = "idle";
       return next;
     });
   };
@@ -566,19 +668,30 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan });
     const searchValue = String(dosenSearchQueryByField?.[name] || "");
     const debouncedSearchValue = String(debouncedDosenSearchQueryByField?.[name] || "");
-    const normalizedSearch = debouncedSearchValue.trim().toLowerCase();
     const normalizedRawSearch = searchValue.trim().toLowerCase();
-    const isDebouncing = normalizedRawSearch.length > 0 && normalizedRawSearch !== normalizedSearch;
 
     const selectedDosen = findSelectedDosenByValue(value);
     const selectedLabel = formatDosenInputLabel(selectedDosen);
+    const isShowingSelectedLabel = Boolean(
+      selectedDosen &&
+      normalizedRawSearch &&
+      normalizedRawSearch === selectedLabel.trim().toLowerCase()
+    );
+    const normalizedSearch = isShowingSelectedLabel
+      ? ""
+      : debouncedSearchValue.trim().toLowerCase();
+    const isDebouncing =
+      !isShowingSelectedLabel &&
+      normalizedRawSearch.length > 0 &&
+      normalizedRawSearch !== normalizedSearch;
 
     const candidateRows = (() => {
       const rows = [];
       for (const dosen of dropdownOptions) {
         rows.push({
           id: dosen.id,
-          nama: dosen.nama,
+           nama: dosen.nama,
+          gelar: dosen.gelar || null,
           nik: dosen.nik || null,
           kode_dosen: dosen.kode_dosen || null,
           email: dosen.email || null,
@@ -586,21 +699,18 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         });
       }
 
-      return rows
-        .filter((row) => {
-          if (!normalizedSearch) return true;
-          const haystack = `${row.nama || ""} ${row.nik || ""} ${row.kode_dosen || ""} ${row.email || ""}`.toLowerCase();
-          return haystack.includes(normalizedSearch);
-        })
-        .slice(0, 8);
+      return rows.filter((row) => {
+        if (!normalizedSearch) return true;
+        const fullName = formatDosenFullName(row.nama, row.gelar);
+        const haystack = `${fullName || ""} ${row.nik || ""} ${row.kode_dosen || ""} ${row.email || ""}`.toLowerCase();
+        return haystack.includes(normalizedSearch);
+      });
     })();
 
     const inputValue = searchValue || selectedLabel;
-    const shouldShowResults =
-      activeDosenSearchField === name &&
-      searchValue.trim().length > 0 &&
-      searchValue.trim().toLowerCase() !== selectedLabel.trim().toLowerCase();
     const isDisabledField = disabled || loadingDosen;
+    const shouldShowResults = activeDosenSearchField === name && !isDisabledField;
+    const resultsId = `${name}-combobox-results`;
 
     return (
       <div>
@@ -612,9 +722,17 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         <div className="relative">
           <input
             type="text"
+            role="combobox"
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-expanded={shouldShowResults}
+            aria-controls={resultsId}
             value={inputValue}
             disabled={isDisabledField}
-            onFocus={() => handleDosenSearchFocus(name)}
+            onFocus={(event) => {
+              handleDosenSearchFocus(name);
+              if (selectedDosen) event.currentTarget.select();
+            }}
             onBlur={() => {
               handleFieldBlur(name);
               handleDosenSearchBlur(name);
@@ -630,7 +748,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             }`}
           />
           {shouldShowResults ? (
-            <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-48 overflow-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+            <div
+              id={resultsId}
+              role="listbox"
+              className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-[220px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg"
+            >
               {isDebouncing ? (
                 <p className="px-3 py-2 text-xs font-semibold text-[#7282a8]">Mencari...</p>
               ) : candidateRows.length > 0 ? (
@@ -646,14 +768,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                         handleSelectDosenOption(name, row.id);
                       }}
                       disabled={isDisabledRow}
-                      className={`flex w-full items-center justify-between border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                      role="option"
+                      aria-selected={String(row.id) === String(value)}
+                      className={`flex min-h-[44px] w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
                         isDisabledRow
                           ? "cursor-not-allowed bg-[#f8fafc] text-[#98a3c0]"
                           : "text-[#213460] hover:bg-[#f4f7ff]"
                       }`}
                     >
-                      <span className="font-semibold">{row.nama || "-"}</span>
-                      <span className="text-xs">
+                      <span className="font-semibold">{formatDosenFullName(row.nama, row.gelar) || "-"}</span>
+                      <span className="shrink-0 text-xs">
                         {isDisabledRow ? "Kuota penuh" : `NIK: ${row.nik || "-"}`}
                       </span>
                     </button>
@@ -798,6 +922,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setAnggotaSearchResults([[], []]);
     setAnggotaDpaSearchQueries(["", ""]);
     setActiveAnggotaDpaIndex(null);
+    setAnggotaFieldErrors([{ nim: "", nama: "" }, { nim: "", nama: "" }]);
+    setAnggotaNimAvailability(["idle", "idle"]);
     setFieldErrors(INITIAL_FIELD_ERRORS);
     setTouchedFields(INITIAL_TOUCHED_FIELDS);
     setNimAvailability("idle");
@@ -820,26 +946,33 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       return "Kelompok wajib memiliki tepat satu Hustler, satu Hipster, dan satu Hacker.";
     }
 
+    const nextAnggotaErrors = formData.anggota_perintisan.map(() => ({ nim: "", nama: "" }));
+    let firstAnggotaError = "";
     for (let index = 0; index < formData.anggota_perintisan.length; index += 1) {
       const anggota = formData.anggota_perintisan[index];
       const label = `Anggota ${index + 1}`;
       if (anggota.jenis_pendaftaran === "baru") {
-        if (!NIM_REGEX.test(String(anggota.nim || "").trim())) {
-          return `${label}: NIM wajib menggunakan format YY523NNN, contoh 22523001.`;
-        }
-        if (
-          String(anggota.nama || "").trim().length < 2 ||
-          !NAMA_REGEX.test(String(anggota.nama || "").trim())
-        ) {
-          return `${label}: nama mahasiswa tidak valid.`;
-        }
-        if (!anggota.dosen_pembimbing_akademik_id) {
-          return `${label}: Dosen Pembimbing Akademik wajib dipilih.`;
+        const nimError =
+          getNimValidationError(anggota.nim) ||
+          getAnggotaNimConflict(index) ||
+          (anggotaNimAvailability[index] === "unavailable" ? "NIM sudah terdaftar." : "") ||
+          (anggotaNimAvailability[index] === "checking" ? "NIM sedang diperiksa." : "") ||
+          (anggotaNimAvailability[index] !== "available" ? "Ketersediaan NIM belum berhasil diverifikasi." : "");
+        const namaError = getAnggotaNamaValidationError(anggota.nama);
+        nextAnggotaErrors[index] = { nim: nimError, nama: namaError };
+        if (!firstAnggotaError && nimError) firstAnggotaError = `${label}: ${nimError}`;
+        if (!firstAnggotaError && namaError) firstAnggotaError = `${label}: ${namaError}`;
+        if (!firstAnggotaError && !anggota.dosen_pembimbing_akademik_id) {
+          firstAnggotaError = `${label}: Dosen Pembimbing Akademik wajib dipilih.`;
         }
       } else if (!anggota.mahasiswa_id || !anggota.mahasiswa?.eligible) {
-        return `${label}: pilih mahasiswa ${anggota.jenis_pendaftaran} yang memenuhi syarat dari master data.`;
+        if (!firstAnggotaError) {
+          firstAnggotaError = `${label}: pilih mahasiswa ${anggota.jenis_pendaftaran} yang memenuhi syarat dari master data.`;
+        }
       }
     }
+    setAnggotaFieldErrors(nextAnggotaErrors);
+    if (firstAnggotaError) return firstAnggotaError;
 
     const nims = [
       formData.nim,
@@ -1417,6 +1550,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                   {formData.anggota_perintisan.map((anggota, index) => {
                     const isBaru = anggota.jenis_pendaftaran === "baru";
                     const nimConflict = getAnggotaNimConflict(index);
+                    const nimFieldError = nimConflict || anggotaFieldErrors[index]?.nim || "";
+                    const namaFieldError = anggotaFieldErrors[index]?.nama || "";
                     const roleConflict = getPeranTimConflict(index, anggota.peran_tim);
                     const selectedDpa = dosenOptions.find(
                       (dosen) =>
@@ -1487,18 +1622,48 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                   inputMode="numeric"
                                   maxLength={8}
                                   value={anggota.nim}
-                                  onChange={(event) =>
-                                    updateAnggotaPerintisan(index, {
-                                      nim: event.target.value.replace(/\D/g, "").slice(0, 8),
-                                    })
+                                   onChange={(event) =>
+                                    {
+                                      const nim = event.target.value.replace(/\D/g, "").slice(0, 8);
+                                      updateAnggotaPerintisan(index, { nim });
+                                      setAnggotaFieldErrors((prev) => {
+                                        const next = [...prev];
+                                        next[index] = {
+                                          ...next[index],
+                                          nim: nim.length === 8 ? getNimValidationError(nim) : "",
+                                        };
+                                        return next;
+                                      });
+                                    }
                                   }
+                                  onBlur={() => {
+                                    setAnggotaFieldErrors((prev) => {
+                                      const next = [...prev];
+                                      next[index] = {
+                                        ...next[index],
+                                        nim:
+                                          getNimValidationError(anggota.nim) ||
+                                          getAnggotaNimConflict(index) ||
+                                          (anggotaNimAvailability[index] === "unavailable"
+                                            ? "NIM sudah terdaftar."
+                                            : next[index]?.nim || ""),
+                                      };
+                                      return next;
+                                    });
+                                  }}
+                                  aria-invalid={Boolean(nimFieldError)}
                                   className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
-                                    nimConflict ? "border-[#d95c5c]" : "border-[#d0dbf4]"
+                                    nimFieldError ? "border-[#d95c5c] bg-[#fff8f8]" : "border-[#d0dbf4]"
                                   }`}
                                 />
-                                {nimConflict ? (
+                                {anggotaNimAvailability[index] === "checking" && !nimFieldError ? (
+                                  <span className="mt-1 block text-xs font-semibold text-[#6477a8]">
+                                    Memeriksa ketersediaan NIM...
+                                  </span>
+                                ) : null}
+                                {nimFieldError ? (
                                   <span className="mt-1 block text-xs font-semibold text-[#b33f3f]">
-                                    {nimConflict}
+                                    {nimFieldError}
                                   </span>
                                 ) : null}
                               </label>
@@ -1508,11 +1673,41 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                   type="text"
                                   maxLength={100}
                                   value={anggota.nama}
-                                  onChange={(event) =>
-                                    updateAnggotaPerintisan(index, { nama: event.target.value.slice(0, 100) })
-                                  }
-                                  className="mt-1 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm"
+                                  onChange={(event) => {
+                                    const nama = event.target.value.slice(0, 100);
+                                    updateAnggotaPerintisan(index, { nama });
+                                    setAnggotaFieldErrors((prev) => {
+                                      const next = [...prev];
+                                      next[index] = {
+                                        ...next[index],
+                                        nama:
+                                          nama && !ANGGOTA_NAMA_REGEX.test(nama)
+                                            ? "Nama hanya boleh berisi huruf dan spasi."
+                                            : "",
+                                      };
+                                      return next;
+                                    });
+                                  }}
+                                  onBlur={() => {
+                                    setAnggotaFieldErrors((prev) => {
+                                      const next = [...prev];
+                                      next[index] = {
+                                        ...next[index],
+                                        nama: getAnggotaNamaValidationError(anggota.nama),
+                                      };
+                                      return next;
+                                    });
+                                  }}
+                                  aria-invalid={Boolean(namaFieldError)}
+                                  className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm ${
+                                    namaFieldError ? "border-[#d95c5c] bg-[#fff8f8]" : "border-[#d0dbf4]"
+                                  }`}
                                 />
+                                {namaFieldError ? (
+                                  <span className="mt-1 block text-xs font-semibold text-[#b33f3f]">
+                                    {namaFieldError}
+                                  </span>
+                                ) : null}
                               </label>
                               <div className="relative">
                                 <label className="block text-sm font-semibold text-[#324c86]">

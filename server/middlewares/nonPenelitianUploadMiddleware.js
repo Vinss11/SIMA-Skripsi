@@ -29,6 +29,7 @@ const allowedExtensionsByField = {
   transcript_file_name: [".pdf", ".jpg", ".jpeg", ".png"],
   other_supporting_documents_file_name: defaultAllowedExtensions,
   supporting_documents_note: defaultAllowedExtensions,
+  dokumen_pendukung_file: [".pdf", ".doc", ".docx"],
 };
 const allowedMimePrefixes = ["application/", "image/"];
 

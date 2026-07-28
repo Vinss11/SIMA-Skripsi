@@ -252,6 +252,9 @@ async function createDraftSupervisorAssignment({
       dosen_id: dosenId,
       urutan: index + 1,
       peran: index === 0 ? "utama" : "pendamping",
+      status: "draft",
+      tanggal_mulai: null,
+      tanggal_selesai: null,
     })), { transaction: t });
     return PenetapanPembimbing.findByPk(penetapan.id, { include: assignmentInclude, transaction: t });
   });
@@ -266,7 +269,17 @@ async function activateSupervisorAssignment({
   return withTransaction(transaction, async (t) => {
     const penetapan = await PenetapanPembimbing.findByPk(penetapanId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!penetapan) throw new SupervisorAssignmentError("Penetapan pembimbing tidak ditemukan.", 404);
-    if (penetapan.status === "active") return getActiveSupervisorAssignment(penetapan.mahasiswa_id, t);
+    if (penetapan.status === "active") {
+      const active = await getActiveSupervisorAssignment(penetapan.mahasiswa_id, t);
+      const activePrimaryId = active.penetapan?.pembimbings?.find((item) => Number(item.urutan) === 1)?.dosen_id;
+      if (activePrimaryId) {
+        await Mahasiswa.update(
+          { dosen_pembimbing_skripsi_id: activePrimaryId },
+          { where: { id: penetapan.mahasiswa_id }, transaction: t }
+        );
+      }
+      return active;
+    }
     if (penetapan.status !== "draft") throw new SupervisorAssignmentError("Hanya penetapan draft yang dapat diaktifkan.", 409);
 
     const mahasiswa = await Mahasiswa.findByPk(penetapan.mahasiswa_id, { transaction: t, lock: t.LOCK.UPDATE });
@@ -308,6 +321,13 @@ async function activateSupervisorAssignment({
           ? "Diperbarui untuk periode penjaluran berikutnya."
           : `Komposisi pembimbing diperbarui melalui penetapan #${penetapan.id}.`,
       }, { transaction: t });
+      await PenetapanPembimbingDosen.update({
+        status: "ended",
+        tanggal_selesai: replacementDate,
+      }, {
+        where: { penetapan_pembimbing_id: oldActive.id },
+        transaction: t,
+      });
     }
     await penetapan.update({
       status: "active",
@@ -315,6 +335,14 @@ async function activateSupervisorAssignment({
       tanggal_selesai: null,
       alasan_berakhir: null,
     }, { transaction: t });
+    await PenetapanPembimbingDosen.update({
+      status: "active",
+      tanggal_mulai: startedAt,
+      tanggal_selesai: null,
+    }, {
+      where: { penetapan_pembimbing_id: penetapan.id },
+      transaction: t,
+    });
     await mahasiswa.update({ dosen_pembimbing_skripsi_id: primary.dosen_id }, { transaction: t });
     if (oldActive && removedSupervisorIds.length > 0) {
       await handleGuidanceAfterSupervisorReplacement({
@@ -355,6 +383,13 @@ async function endActiveSupervisorAssignment({
         tanggal_selesai: endedAt,
         alasan_berakhir: String(alasanBerakhir || "Penetapan pembimbing diakhiri").trim(),
       }, { transaction: t });
+      await PenetapanPembimbingDosen.update({
+        status: "ended",
+        tanggal_selesai: endedAt,
+      }, {
+        where: { penetapan_pembimbing_id: active.id },
+        transaction: t,
+      });
     }
     if (clearLegacyCache) await mahasiswa.update({ dosen_pembimbing_skripsi_id: null }, { transaction: t });
     return active;
@@ -371,6 +406,7 @@ async function replaceSupervisorAssignment({
   createdBySekretarisId = null,
   tanggalMulai = new Date(),
   transaction = null,
+  notificationCreator = createSupervisorAssignmentNotifications,
 }) {
   return withTransaction(transaction, async (t) => {
     const dosenIds = normalizePositiveIds(dosenPembimbingIds);
@@ -416,7 +452,7 @@ async function replaceSupervisorAssignment({
       attributes: ["id", "nim", "nama"],
       transaction: t,
     });
-    await createSupervisorAssignmentNotifications({
+    await notificationCreator({
       assignmentId: draft.id,
       mahasiswa,
       previousMembers: current.penetapan?.pembimbings || [],
@@ -454,6 +490,7 @@ function toAssignmentResponse(penetapan) {
     tanggal_penetapan: isLegacy ? null : plain.createdAt || null,
     pendaftaran: plain.pendaftaran || null,
     pembimbings,
+    mahasiswa: plain.mahasiswa || null,
   };
 }
 

@@ -124,7 +124,12 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
     include: [{
       model: PeriodePenjaluran,
       as: "periode",
-      where: { status: "active" },
+      where: {
+        [Op.or]: [
+          { status: "active" },
+          { is_active: true },
+        ],
+      },
       attributes: [],
       required: true,
     }],
@@ -133,7 +138,7 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
   const configurationStatus = dosen.status_keaktifan === "active" ? "needs_review" : "locked_by_master_status";
   for (const row of rows) {
     const previousValue = Boolean(row.tersedia_membimbing);
-    const nextValue = dosen.status_keaktifan === "active" ? previousValue : false;
+    const nextValue = false;
     await row.update({
       tersedia_membimbing: nextValue,
       configuration_status: configurationStatus,
@@ -153,46 +158,6 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
         sumber_perubahan: "master_status_change",
       }, { transaction });
     }
-  }
-  return rows.length;
-}
-
-async function markActiveAvailabilityReadyAfterFollowUp(
-  dosenId,
-  sekretarisId = null,
-  transaction = null
-) {
-  const dosen = await Dosen.findByPk(dosenId, {
-    attributes: ["id", "status_keaktifan"],
-    transaction,
-    lock: transaction ? transaction.LOCK.UPDATE : undefined,
-  });
-  if (!dosen || dosen.status_keaktifan !== "active") return 0;
-
-  const rows = await DosenKetersediaanPeriode.findAll({
-    where: {
-      dosen_id: dosen.id,
-      configuration_status: "needs_review",
-    },
-    include: [{
-      model: PeriodePenjaluran,
-      as: "periode",
-      where: { status: "active" },
-      attributes: [],
-      required: true,
-    }],
-    transaction,
-    lock: transaction ? transaction.LOCK.UPDATE : undefined,
-  });
-  const now = new Date();
-  for (const row of rows) {
-    await row.update({
-      configuration_status: "ready",
-      reviewed_at: now,
-      reviewed_by_sekretaris_id: sekretarisId || null,
-      updated_by_sekretaris_id: sekretarisId || null,
-      review_note: "Tindak lanjut reaktivasi telah diselesaikan; nilai ketersediaan tetap dipertahankan.",
-    }, { transaction });
   }
   return rows.length;
 }
@@ -639,7 +604,6 @@ module.exports = {
   initializeAvailabilityForDosen,
   initializeAvailabilityForPeriod,
   syncAvailabilityForMasterStatusChange,
-  markActiveAvailabilityReadyAfterFollowUp,
   toEffectiveAvailability,
   copyAvailabilityFromPreviousPeriod,
   getJakartaDateOnly,

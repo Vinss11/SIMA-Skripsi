@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:supervisor-assignment": "node --test --test-concurrency=1 tests/penetapanPembimbing.integration.test.js",
     "start": "node app.js",
     "db:reset:student-data": "node scripts/reset-student-data.js",
     "backfill:penetapan-pembimbing:dry-run": "node scripts/backfill-penetapan-pembimbing.js --dry-run",

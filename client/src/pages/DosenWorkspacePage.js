@@ -70,8 +70,21 @@ const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
   { key: "ketersediaan-periode", label: "Ketersediaan per Periode" },
+  { key: "riwayat-penetapan", label: "Riwayat Pembimbing" },
   { key: "tindak-lanjut", label: "Tindak Lanjut" },
 ];
+const SUPERVISOR_ASSIGNMENT_SOURCE_LABELS = {
+  penjaluran: "Penjaluran",
+  perpanjangan: "Perpanjangan",
+  pergantian: "Pergantian",
+  legacy_backfill: "Data Lama",
+};
+const SUPERVISOR_ASSIGNMENT_STATUS_LABELS = {
+  draft: "Draft",
+  active: "Aktif",
+  ended: "Berakhir",
+  cancelled: "Dibatalkan",
+};
 const DOSEN_MASTER_STATUS_LABELS = {
   active: "Aktif",
   inactive: "Nonaktif Sementara",
@@ -1056,6 +1069,129 @@ function MagangReadonlyDetailForm({ detail, onOpenDocument }) {
   );
 }
 
+function PerintisanReadonlyDetailForm({ detail, onOpenDocument }) {
+  const payload = getMagangPayload(detail);
+  const members = Array.isArray(payload.kelompok?.anggota)
+    ? payload.kelompok.anggota
+    : [payload.ketua, ...(Array.isArray(payload.anggota) ? payload.anggota : [])].filter(Boolean);
+  const uploadedDocuments =
+    payload.uploaded_documents && typeof payload.uploaded_documents === "object" && !Array.isArray(payload.uploaded_documents)
+      ? payload.uploaded_documents
+      : {};
+  const dokumenPendukung = uploadedDocuments.dokumen_pendukung || null;
+  const openDokumenPendukung =
+    dokumenPendukung && typeof onOpenDocument === "function"
+      ? () => onOpenDocument(
+          "dokumen_pendukung",
+          dokumenPendukung.original_name || payload.dokumen_pendukung || "dokumen-pendukung"
+        )
+      : undefined;
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-black text-[#1b274b]">Form Pengajuan Perintisan Bisnis</h2>
+        <p className="mt-1 text-sm text-[#5d6c91]">
+          Tampilan read-only dari form yang telah dikirim oleh ketua kelompok.
+        </p>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">Data Kelompok</h3>
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+          {members.length > 0 ? members.map((member) => (
+            <div
+              key={`readonly-perintisan-member-${member.mahasiswa_id || member.nim}`}
+              className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-bold uppercase text-[#7180a5]">
+                  {member.posisi === "ketua" ? "Ketua" : "Anggota"}
+                </p>
+                <span className="rounded-md bg-[#e7eeff] px-2 py-1 text-xs font-bold uppercase text-[#3157b7]">
+                  {member.peran_tim || "-"}
+                </span>
+              </div>
+              <p className="mt-2 font-bold text-[#1b274b]">{member.nama || "-"}</p>
+              <p className="text-sm text-[#5d6c91]">{member.nim || "-"}</p>
+              <p className="mt-1 text-xs text-[#7180a5]">
+                Pendaftaran {formatLabel(member.jenis_pendaftaran || "-")}
+              </p>
+            </div>
+          )) : (
+            <p className="text-sm text-[#5d6c91]">Data kelompok tidak tersedia.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">Detail Perintisan Bisnis</h3>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <ReadonlyMagangInput label="Nama Bisnis" value={payload.nama_bisnis || "-"} />
+          <ReadonlyMagangInput label="Jenis Bisnis" value={payload.jenis_bisnis || "-"} />
+          <div className="md:col-span-2"><ReadonlyMagangInput label="Lokasi Bisnis" value={payload.lokasi_bisnis || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Deskripsi Bisnis" value={payload.deskripsi_bisnis || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Permasalahan yang Ingin Diselesaikan" value={payload.masalah_yang_diselesaikan || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Produk atau Layanan" value={payload.produk_layanan || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Target Pengguna atau Konsumen" value={payload.target_konsumen || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Model Bisnis" value={payload.model_bisnis || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Tahap Perkembangan Bisnis" value={payload.tahap_perkembangan || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Rencana Kegiatan Selama Penjaluran" value={payload.rencana_kegiatan || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangTextarea label="Target atau Luaran" value={payload.target_luaran || "-"} /></div>
+          <div className="md:col-span-2"><ReadonlyMagangInput label="Tautan Bisnis / Media Sosial" value={payload.tautan_bisnis || "-"} /></div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+        <h3 className="text-lg font-black text-[#1b274b]">Dokumen dan Pernyataan</h3>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="md:col-span-2">
+            <ReadonlyMagangFileField
+              label="Dokumen Pendukung"
+              value={dokumenPendukung?.original_name || payload.dokumen_pendukung || "-"}
+              onOpen={openDokumenPendukung}
+            />
+            <p className="mt-1 text-xs text-[#6b789d]">Format: PDF, DOC, atau DOCX. Maks 5 MB.</p>
+          </div>
+          <div className="md:col-span-2">
+            <ReadonlyMagangTextarea label="Catatan Tambahan" value={payload.catatan || "-"} />
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function NonPenelitianDecisionResultSection({ detail }) {
+  const payload = getMagangPayload(detail);
+  const reviewDosen = payload.review_dosen_pengampu || null;
+  const reviewFinal = payload.review_result || null;
+  const dosenPembimbing = payload.dosen_pembimbing || detail?.dosen_pembimbing || null;
+
+  return (
+    <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+      <div className="mb-3">
+        <h3 className="text-lg font-black text-[#1b274b]">Hasil Keputusan</h3>
+        <p className="mt-1 text-sm text-[#5d6c91]">
+          Ringkasan keputusan dosen pengampu dan keputusan final Sekretaris Prodi.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <ReadonlyMagangInput label="Keputusan Dosen Pengampu" value={reviewDosen?.status ? formatLabel(reviewDosen.status) : "Belum ada keputusan"} />
+        <ReadonlyMagangInput label="Keputusan Final Sekprodi" value={reviewFinal?.status ? formatLabel(reviewFinal.status) : "Belum ada keputusan"} />
+        <ReadonlyMagangInput
+          label="Dosen Pembimbing"
+          value={formatDosenFullName(dosenPembimbing?.nama, dosenPembimbing?.gelar) || dosenPembimbing?.nama || "Belum ditetapkan"}
+        />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        <ReadonlyMagangTextarea label="Catatan Dosen Pengampu" value={reviewDosen?.note || "-"} rows={2} />
+        <ReadonlyMagangTextarea label="Catatan Sekretaris Prodi" value={reviewFinal?.note || "-"} rows={2} />
+      </div>
+    </section>
+  );
+}
+
 function getPengampuReviewStatus(row) {
   return row?.workflow_status || row?.form_lanjutan_status || "-";
 }
@@ -1437,6 +1573,18 @@ function showErrorToast(message) {
     toast: true,
     position: "top-end",
     icon: "error",
+    title: message,
+    showConfirmButton: false,
+    timer: 2600,
+    timerProgressBar: true,
+  });
+}
+
+function showInfoToast(message) {
+  Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "info",
     title: message,
     showConfirmButton: false,
     timer: 2600,
@@ -1976,6 +2124,29 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [dosenPeriodAvailabilityQuery, setDosenPeriodAvailabilityQuery] = useState("");
   const [dosenPeriodAvailabilityPage, setDosenPeriodAvailabilityPage] = useState(1);
   const [savingBulkAvailability, setSavingBulkAvailability] = useState(false);
+  const [supervisorAssignmentMonitoring, setSupervisorAssignmentMonitoring] = useState({
+    rows: [],
+    pagination: { page: 1, limit: 20, total: 0, total_pages: 1 },
+    filter_options: { periodes: [], dosens: [] },
+  });
+  const [supervisorAssignmentFilters, setSupervisorAssignmentFilters] = useState({
+    q: "",
+    periode_id: "",
+    dosen_id: "",
+    status: "",
+    sumber_data: "",
+  });
+  const [supervisorAssignmentPage, setSupervisorAssignmentPage] = useState(1);
+  const [loadingSupervisorAssignments, setLoadingSupervisorAssignments] = useState(false);
+  const [refreshingDosenPeriodAvailability, setRefreshingDosenPeriodAvailability] = useState(false);
+  const selectedDosenAvailabilityPeriodIdRef = useRef(null);
+  const dirtyAvailabilityDosenIdsRef = useRef([]);
+  const availabilityRefreshInFlightRef = useRef(false);
+  const availabilityRefreshPromptOpenRef = useRef(false);
+  const lastAvailabilityAutoRefreshAtRef = useRef(0);
+  useEffect(() => {
+    dirtyAvailabilityDosenIdsRef.current = dirtyAvailabilityDosenIds;
+  }, [dirtyAvailabilityDosenIds]);
   const filteredDosenPeriodAvailabilityRows = useMemo(() => {
     const keyword = dosenPeriodAvailabilityQuery.trim().toLowerCase();
     if (!keyword) return dosenPeriodAvailability.dosens;
@@ -2589,6 +2760,56 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     [apiBaseUrl, onSessionExpired, session.token]
   );
 
+  const applyPeriodeOverview = useCallback((payload = {}) => {
+    setPeriodeOverview({
+      active_periode: payload.active_periode || null,
+      draft_periode: payload.draft_periode || null,
+      periodes: Array.isArray(payload.periodes) ? payload.periodes : [],
+      dosen_options: Array.isArray(payload.dosen_options) ? payload.dosen_options : [],
+      dosen_pembimbing_options: Array.isArray(payload.dosen_pembimbing_options)
+        ? payload.dosen_pembimbing_options
+        : [],
+      ketua_klaster_options: Array.isArray(payload.ketua_klaster_options)
+        ? payload.ketua_klaster_options
+        : [],
+      master_penanggung_jawab: payload.master_penanggung_jawab || null,
+      penanggung_jawab_lock: payload.penanggung_jawab_lock || null,
+    });
+  }, []);
+
+  const loadPeriodeOverview = useCallback(async () => {
+    const payload = await fetchWithAuth("/api/sekretaris/periode");
+    applyPeriodeOverview(payload || {});
+    return payload;
+  }, [applyPeriodeOverview, fetchWithAuth]);
+
+  const loadSupervisorAssignmentMonitoring = useCallback(async ({ page = 1, filters = {} } = {}) => {
+    setLoadingSupervisorAssignments(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: "20" });
+      Object.entries(filters).forEach(([key, value]) => {
+        if (String(value || "").trim()) params.set(key, String(value).trim());
+      });
+      const payload = await fetchWithAuth(`/api/sekretaris/penetapan-pembimbing?${params.toString()}`);
+      setSupervisorAssignmentMonitoring({
+        rows: Array.isArray(payload?.rows) ? payload.rows : [],
+        pagination: payload?.pagination || { page, limit: 20, total: 0, total_pages: 1 },
+        filter_options: {
+          periodes: Array.isArray(payload?.filter_options?.periodes) ? payload.filter_options.periodes : [],
+          dosens: Array.isArray(payload?.filter_options?.dosens) ? payload.filter_options.dosens : [],
+        },
+      });
+      return true;
+    } catch (monitoringError) {
+      if (monitoringError.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(monitoringError.message || "Gagal memuat riwayat penetapan pembimbing.");
+      }
+      return false;
+    } finally {
+      setLoadingSupervisorAssignments(false);
+    }
+  }, [fetchWithAuth]);
+
   const handleOpenFinalResearchDetail = (submission) => {
     const approvedTopics = Array.isArray(submission?.topik_lolos_cluster)
       ? [...submission.topik_lolos_cluster].sort((left, right) => Number(left.slot) - Number(right.slot))
@@ -2854,32 +3075,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
 
       if (periodeResult?.status === "fulfilled") {
-        const periodPayload = periodeResult.value || {};
-        setPeriodeOverview({
-          active_periode: periodPayload.active_periode || null,
-          draft_periode: periodPayload.draft_periode || null,
-          periodes: Array.isArray(periodPayload.periodes) ? periodPayload.periodes : [],
-          dosen_options: Array.isArray(periodPayload.dosen_options) ? periodPayload.dosen_options : [],
-          dosen_pembimbing_options: Array.isArray(periodPayload.dosen_pembimbing_options)
-            ? periodPayload.dosen_pembimbing_options
-            : [],
-          ketua_klaster_options: Array.isArray(periodPayload.ketua_klaster_options)
-            ? periodPayload.ketua_klaster_options
-            : [],
-          master_penanggung_jawab: periodPayload.master_penanggung_jawab || null,
-          penanggung_jawab_lock: periodPayload.penanggung_jawab_lock || null,
-        });
+        applyPeriodeOverview(periodeResult.value || {});
       } else {
-        setPeriodeOverview({
-          active_periode: null,
-          draft_periode: null,
-          periodes: [],
-          dosen_options: [],
-          dosen_pembimbing_options: [],
-          ketua_klaster_options: [],
-          master_penanggung_jawab: null,
-          penanggung_jawab_lock: null,
-        });
+        applyPeriodeOverview();
         issues.push(periodeResult?.reason?.message || "Gagal memuat data periode.");
       }
 
@@ -2909,6 +3107,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
       if (dosenAvailabilityResult?.status === "fulfilled") {
         const payload = dosenAvailabilityResult.value || {};
+        selectedDosenAvailabilityPeriodIdRef.current = payload.periode?.id || null;
         setDosenPeriodAvailability({
           periodes: Array.isArray(payload.periodes) ? payload.periodes : [],
           periode: payload.periode || null,
@@ -2918,6 +3117,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         });
         setSelectedAvailabilityDosenIds([]);
       } else {
+        selectedDosenAvailabilityPeriodIdRef.current = null;
         setDosenPeriodAvailability({ periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false });
         setSelectedAvailabilityDosenIds([]);
         issues.push(dosenAvailabilityResult?.reason?.message || "Gagal memuat ketersediaan dosen per periode.");
@@ -2937,16 +3137,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     } else {
       setFinalResearchRows([]);
       setMasterTopikRows([]);
-      setPeriodeOverview({
-        active_periode: null,
-        draft_periode: null,
-        periodes: [],
-        dosen_options: [],
-        dosen_pembimbing_options: [],
-        ketua_klaster_options: [],
-        master_penanggung_jawab: null,
-        penanggung_jawab_lock: null,
-      });
+      applyPeriodeOverview();
       setMasterDosenKuotaOverview({ summary: null, dosens: [] });
       setMitraMagangRows([]);
       setKetuaKlasterOverview({
@@ -2967,11 +3158,38 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }))];
     setError(visibleIssues.join(" "));
     setLoading(false);
-  }, [fetchWithAuth, isSekretaris, mitraMagangStatusFilter]);
+  }, [applyPeriodeOverview, fetchWithAuth, isSekretaris, mitraMagangStatusFilter]);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "approval-penelitian") return;
+    loadPeriodeOverview().catch((overviewError) => {
+      if (overviewError.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(overviewError.message || "Gagal memperbarui daftar pembimbing.");
+      }
+    });
+  }, [activeTab, isSekretaris, loadPeriodeOverview]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "master-dosen" || masterDosenTab !== "riwayat-penetapan") return undefined;
+    const timer = window.setTimeout(() => {
+      loadSupervisorAssignmentMonitoring({
+        page: supervisorAssignmentPage,
+        filters: supervisorAssignmentFilters,
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [
+    activeTab,
+    isSekretaris,
+    loadSupervisorAssignmentMonitoring,
+    masterDosenTab,
+    supervisorAssignmentFilters,
+    supervisorAssignmentPage,
+  ]);
 
   const resetMitraMagangForm = useCallback(() => {
     setMitraMagangForm(MITRA_MAGANG_FORM_INITIAL);
@@ -4038,6 +4256,43 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     () => new Map(periodeDosenPembimbingOptions.map((item) => [Number(item.id), item])),
     [periodeDosenPembimbingOptions]
   );
+  useEffect(() => {
+    const validIds = new Set(periodeDosenPembimbingOptions.map((dosen) => Number(dosen.id)));
+    let removedSelection = false;
+
+    if (
+      finalNonPenelitianDosenPembimbingId
+      && !validIds.has(Number(finalNonPenelitianDosenPembimbingId))
+    ) {
+      setFinalNonPenelitianDosenPembimbingId("");
+      setFinalNonPenelitianDosenQuery("");
+      removedSelection = true;
+    }
+    if (
+      finalNonPenelitianDosenPembimbing2Id
+      && !validIds.has(Number(finalNonPenelitianDosenPembimbing2Id))
+    ) {
+      setFinalNonPenelitianDosenPembimbing2Id("");
+      setFinalNonPenelitianDosen2Query("");
+      removedSelection = true;
+    }
+    if (
+      finalResearchSecondarySupervisorId
+      && !validIds.has(Number(finalResearchSecondarySupervisorId))
+    ) {
+      setFinalResearchSecondarySupervisorId("");
+      removedSelection = true;
+    }
+
+    if (removedSelection) {
+      showInfoToast("Pilihan pembimbing dihapus karena dosen tidak lagi tersedia pada periode aktif.");
+    }
+  }, [
+    finalNonPenelitianDosenPembimbing2Id,
+    finalNonPenelitianDosenPembimbingId,
+    finalResearchSecondarySupervisorId,
+    periodeDosenPembimbingOptions,
+  ]);
   const selectedFinalNonPenelitianDosen = useMemo(
     () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbingId || 0)) || null,
     [finalNonPenelitianDosenPembimbingId, periodeDosenMap]
@@ -5122,6 +5377,55 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
     } finally {
       setLoadingPengampuReviewDetail(false);
+    }
+  };
+
+  const handleOpenPengampuReviewDocument = async (documentKey, fileName) => {
+    const id = selectedPengampuReviewId || pengampuReviewDetail?.id;
+    if (!id || !documentKey || !activePengampuReviewConfig?.endpointSlug) {
+      showErrorToast("Dokumen proposal tidak valid.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/api/dosen/non-penelitian/${activePengampuReviewConfig.endpointSlug}/reviews/${id}/documents/${documentKey}`,
+        { headers: { Authorization: `Bearer ${session.token}` } }
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        const message = String(payload?.message || "Gagal membuka dokumen proposal.");
+        const lowerMessage = message.toLowerCase();
+        const isTokenError =
+          lowerMessage.includes("token tidak valid") ||
+          lowerMessage.includes("token tidak ditemukan") ||
+          lowerMessage.includes("kadaluarsa");
+        if (response.status === 401 || (response.status === 403 && isTokenError)) {
+          if (!sessionExpiredRef.current) {
+            sessionExpiredRef.current = true;
+            onSessionExpired?.();
+          }
+          throw new Error("__SESSION_EXPIRED__");
+        }
+        throw new Error(message);
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const openedWindow = window.open(url, "_blank", "noopener,noreferrer");
+      if (!openedWindow) {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = fileName || "dokumen-proposal";
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (documentError) {
+      if (documentError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(documentError.message || "Gagal membuka dokumen proposal.");
+      }
     }
   };
 
@@ -6247,10 +6551,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     });
   };
 
-  const loadDosenPeriodAvailability = async (periodeId) => {
+  const loadDosenPeriodAvailability = useCallback(async (periodeId) => {
+    if (availabilityRefreshInFlightRef.current) return false;
+    availabilityRefreshInFlightRef.current = true;
+    setRefreshingDosenPeriodAvailability(true);
     try {
       const suffix = periodeId ? `?periode_penjaluran_id=${encodeURIComponent(periodeId)}` : "";
       const payload = await fetchWithAuth(`/api/sekretaris/master-dosen/ketersediaan${suffix}`);
+      selectedDosenAvailabilityPeriodIdRef.current = payload?.periode?.id || null;
       setDosenPeriodAvailability({
         periodes: Array.isArray(payload?.periodes) ? payload.periodes : [],
         periode: payload?.periode || null,
@@ -6259,21 +6567,97 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         is_readonly: payload?.is_readonly === true,
       });
       setSelectedAvailabilityDosenIds([]);
+      dirtyAvailabilityDosenIdsRef.current = [];
       setDirtyAvailabilityDosenIds([]);
       setDosenPeriodAvailabilityPage(1);
+      return true;
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal memuat ketersediaan dosen.");
+      return false;
+    } finally {
+      availabilityRefreshInFlightRef.current = false;
+      setRefreshingDosenPeriodAvailability(false);
     }
-  };
+  }, [fetchWithAuth]);
+
+  const requestDosenPeriodAvailabilityRefresh = useCallback(async ({
+    periodeId = selectedDosenAvailabilityPeriodIdRef.current,
+    manual = false,
+  } = {}) => {
+    if (availabilityRefreshPromptOpenRef.current || availabilityRefreshInFlightRef.current) return false;
+    if (dirtyAvailabilityDosenIdsRef.current.length > 0) {
+      availabilityRefreshPromptOpenRef.current = true;
+      const confirmation = await Swal.fire({
+        title: "Perubahan belum disimpan",
+        text: "Muat ulang akan membuang perubahan ketersediaan yang belum disimpan.",
+        icon: "warning",
+        showCancelButton: true,
+        confirmButtonText: "Muat Ulang",
+        cancelButtonText: "Batal",
+        confirmButtonColor: "#2f63e3",
+      });
+      availabilityRefreshPromptOpenRef.current = false;
+      if (!confirmation.isConfirmed) return false;
+    }
+    const refreshed = await loadDosenPeriodAvailability(periodeId);
+    if (refreshed && manual) showSuccessToast("Status dosen berhasil diperbarui.");
+    return refreshed;
+  }, [loadDosenPeriodAvailability]);
+
+  const confirmAvailabilityDraftDiscard = useCallback(async () => {
+    const leavingAvailability = activeTab === "master-dosen"
+      && masterDosenTab === "ketersediaan-periode";
+    if (!leavingAvailability || dirtyAvailabilityDosenIdsRef.current.length === 0) return true;
+
+    const confirmation = await Swal.fire({
+      title: "Perubahan belum disimpan",
+      text: "Perubahan ketersediaan belum disimpan. Tetap pindah halaman dan buang perubahan?",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Tetap Pindah",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#b5473c",
+    });
+    if (!confirmation.isConfirmed) return false;
+
+    return loadDosenPeriodAvailability(selectedDosenAvailabilityPeriodIdRef.current);
+  }, [activeTab, loadDosenPeriodAvailability, masterDosenTab]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "master-dosen" || masterDosenTab !== "ketersediaan-periode") return;
+    lastAvailabilityAutoRefreshAtRef.current = Date.now();
+    requestDosenPeriodAvailabilityRefresh();
+  }, [activeTab, isSekretaris, masterDosenTab, requestDosenPeriodAvailabilityRefresh]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "master-dosen" || masterDosenTab !== "ketersediaan-periode") return undefined;
+    const refreshWhenActive = () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastAvailabilityAutoRefreshAtRef.current < 1000) return;
+      lastAvailabilityAutoRefreshAtRef.current = now;
+      requestDosenPeriodAvailabilityRefresh();
+    };
+    document.addEventListener("visibilitychange", refreshWhenActive);
+    window.addEventListener("focus", refreshWhenActive);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshWhenActive);
+      window.removeEventListener("focus", refreshWhenActive);
+    };
+  }, [activeTab, isSekretaris, masterDosenTab, requestDosenPeriodAvailabilityRefresh]);
 
   const updateDosenAvailabilityDraft = (dosenId, changes) => {
     setDosenPeriodAvailability((prev) => ({
       ...prev,
       dosens: prev.dosens.map((row) => Number(row.id) === Number(dosenId) ? { ...row, ...changes } : row),
     }));
-    setDirtyAvailabilityDosenIds((previous) => previous.some((id) => Number(id) === Number(dosenId))
-      ? previous
-      : [...previous, Number(dosenId)]);
+    setDirtyAvailabilityDosenIds((previous) => {
+      const next = previous.some((id) => Number(id) === Number(dosenId))
+        ? previous
+        : [...previous, Number(dosenId)];
+      dirtyAvailabilityDosenIdsRef.current = next;
+      return next;
+    });
   };
 
   const handleSaveDosenAvailabilityChanges = async () => {
@@ -6295,7 +6679,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           })),
         }),
       });
-      await loadDosenPeriodAvailability(periodeId);
+      await Promise.all([
+        loadDosenPeriodAvailability(periodeId),
+        loadPeriodeOverview(),
+      ]);
       showSuccessToast(`Perubahan ketersediaan ${rows.length} dosen berhasil disimpan.`);
     } catch (availabilityError) {
       showErrorToast(availabilityError.message || "Gagal menyimpan ketersediaan dosen.");
@@ -6338,9 +6725,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           }
         : row),
     }));
-    setDirtyAvailabilityDosenIds((previous) => [
-      ...new Set([...previous.map(Number), ...selectedIds]),
-    ]);
+    setDirtyAvailabilityDosenIds((previous) => {
+      const next = [...new Set([...previous.map(Number), ...selectedIds])];
+      dirtyAvailabilityDosenIdsRef.current = next;
+      return next;
+    });
     setSelectedAvailabilityDosenIds([]);
   };
 
@@ -7501,7 +7890,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <button
                           key={item.id}
                           type="button"
-                          onClick={() => setActiveTab(item.id)}
+                          onClick={async () => {
+                            if (item.id === activeTab || await confirmAvailabilityDraftDiscard()) {
+                              setActiveTab(item.id);
+                            }
+                          }}
                           className={`flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left text-sm font-semibold transition ${
                             isActive ? "bg-[#2f63e3] text-white" : "text-[#405070] hover:bg-[#f2f6ff]"
                           }`}
@@ -8500,6 +8893,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               detail={finalNonPenelitianDetail}
                               onOpenDocument={handleOpenSekprodiNonPenelitianDocument}
                             />
+                          ) : String(finalNonPenelitianDetail.jalur || "").toLowerCase() === "perintisan_bisnis" ? (
+                            <PerintisanReadonlyDetailForm
+                              detail={finalNonPenelitianDetail}
+                              onOpenDocument={handleOpenSekprodiNonPenelitianDocument}
+                            />
                           ) : (
                             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
                               {getPengampuReviewDetailFields(
@@ -8519,6 +8917,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         </div>
                       ) : null}
                     </div>
+
+                    {!loadingFinalNonPenelitianDetail &&
+                    finalNonPenelitianDetail &&
+                    String(finalNonPenelitianDetail.jalur || "").toLowerCase() === "perintisan_bisnis" ? (
+                      <NonPenelitianDecisionResultSection detail={finalNonPenelitianDetail} />
+                    ) : null}
 
                     {!loadingFinalNonPenelitianDetail && finalNonPenelitianDetail ? (
                       <FinalDecisionDetailSection detail={finalNonPenelitianDetail} />
@@ -10103,20 +10507,40 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     ) : null}
 
                     {!loadingPengampuReviewDetail && pengampuReviewDetail ? (
-                      <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-                        {getPengampuReviewDetailFields(pengampuReviewDetail, activePengampuReviewConfig).map(([label, value]) => (
-                          <div key={`pengampu-review-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
-                            <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
-                            <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
-                              {formatMagangPayloadValue(value)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
+                      activePengampuReviewConfig.jalur === "perintisan_bisnis" ? (
+                        <div className="mt-4">
+                          <PerintisanReadonlyDetailForm
+                            detail={pengampuReviewDetail}
+                            onOpenDocument={handleOpenPengampuReviewDocument}
+                          />
+                        </div>
+                      ) : (
+                        <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                          {getPengampuReviewDetailFields(pengampuReviewDetail, activePengampuReviewConfig).map(([label, value]) => (
+                            <div key={`pengampu-review-field-${label}`} className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                              <p className="text-xs font-black uppercase text-[#64749d]">{label}</p>
+                              <p className="mt-1 break-words text-sm font-semibold text-[#203665]">
+                                {formatMagangPayloadValue(value)}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )
                     ) : null}
                   </div>
 
-                  {!loadingPengampuReviewDetail && pengampuReviewDetail ? (
+                  {!loadingPengampuReviewDetail &&
+                  pengampuReviewDetail &&
+                  activePengampuReviewConfig.jalur === "perintisan_bisnis" ? (
+                    <>
+                      <NonPenelitianDecisionResultSection detail={pengampuReviewDetail} />
+                      <FinalDecisionDetailSection detail={pengampuReviewDetail} />
+                    </>
+                  ) : null}
+
+                  {!loadingPengampuReviewDetail &&
+                  pengampuReviewDetail &&
+                  activePengampuReviewConfig.jalur !== "perintisan_bisnis" ? (
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <h3 className="text-lg font-black text-[#1b274b]">Timeline Workflow</h3>
                       <div className="mt-3 space-y-2">
@@ -11195,7 +11619,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       <button
                         key={`master-dosen-tab-${item.key}`}
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
+                          if (item.key !== masterDosenTab && !(await confirmAvailabilityDraftDiscard())) return;
                           if (item.key !== "tindak-lanjut" && dosenStatusFollowUpDetailRow) {
                             handleBackFromDosenStatusFollowUpPage();
                           }
@@ -11222,12 +11647,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow) {
                           handleBackFromDosenStatusFollowUpPage();
                         } else if (masterDosenTab !== "penanggung-jawab") {
+                          if (!(await confirmAvailabilityDraftDiscard())) return;
                           setMasterDosenTab("penanggung-jawab");
                         } else {
+                          if (!(await confirmAvailabilityDraftDiscard())) return;
                           setActiveTab("dashboard");
                         }
                       }}
@@ -11239,9 +11666,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </button>
                     <button
                       type="button"
-                      onClick={() => masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow
-                        ? loadDosenStatusFollowUpPage(dosenStatusFollowUpDetailRow)
-                        : loadAllData()}
+                      onClick={() => {
+                        if (masterDosenTab === "tindak-lanjut" && dosenStatusFollowUpDetailRow) {
+                          loadDosenStatusFollowUpPage(dosenStatusFollowUpDetailRow);
+                        } else if (masterDosenTab === "ketersediaan-periode") {
+                          requestDosenPeriodAvailabilityRefresh({ manual: true });
+                        } else if (masterDosenTab === "riwayat-penetapan") {
+                          loadSupervisorAssignmentMonitoring({
+                            page: supervisorAssignmentPage,
+                            filters: supervisorAssignmentFilters,
+                          });
+                        } else {
+                          loadAllData();
+                        }
+                      }}
                       disabled={Boolean(dosenStatusFollowUpDetailRow && loadingDosenStatusFollowUpDetail)}
                       className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -11681,17 +12119,34 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           <h3 className="text-lg font-black text-[#1b274b]">Ketersediaan Dosen per Periode Penjaluran</h3>
                           <p className="text-sm text-[#5d6c91]">Status master tetap ditetapkan Admin. Pengaturan ini hanya berlaku pada periode yang dipilih.</p>
                         </div>
-                        <div>
-                          <label className="mb-1 block text-xs font-bold text-[#526184]">Periode penjaluran</label>
-                          <select
-                            value={dosenPeriodAvailability.periode?.id || ""}
-                            onChange={(event) => loadDosenPeriodAvailability(event.target.value)}
-                            className="min-w-[260px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div>
+                            <label className="mb-1 block text-xs font-bold text-[#526184]">Periode penjaluran</label>
+                            <select
+                              value={dosenPeriodAvailability.periode?.id || ""}
+                              onChange={(event) => requestDosenPeriodAvailabilityRefresh({
+                                periodeId: event.target.value,
+                              })}
+                              disabled={refreshingDosenPeriodAvailability}
+                              className="min-w-[260px] rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {dosenPeriodAvailability.periodes.map((periode) => (
+                                <option key={periode.id} value={periode.id}>{periode.label_periode} · {formatLabel(periode.status)}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => requestDosenPeriodAvailabilityRefresh({
+                              periodeId: dosenPeriodAvailability.periode?.id,
+                              manual: true,
+                            })}
+                            disabled={refreshingDosenPeriodAvailability}
+                            className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-wait disabled:opacity-60"
                           >
-                            {dosenPeriodAvailability.periodes.map((periode) => (
-                              <option key={periode.id} value={periode.id}>{periode.label_periode} · {formatLabel(periode.status)}</option>
-                            ))}
-                          </select>
+                            <RefreshCcw className={`h-4 w-4 ${refreshingDosenPeriodAvailability ? "animate-spin" : ""}`} />
+                            Refresh Status Dosen
+                          </button>
                         </div>
                       </div>
                       {dosenPeriodAvailability.is_readonly ? (
@@ -11861,6 +12316,81 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         {dosenStatusFollowUps.length === 0 ? <p className="text-sm font-semibold text-[#6f7c9c]">Tidak ada tindak lanjut terbuka.</p> : null}
                       </div>
                     </div> : null}
+                  </div>
+                ) : null}
+
+                {masterDosenTab === "riwayat-penetapan" ? (
+                  <div className="space-y-4">
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="mb-4">
+                        <h3 className="text-lg font-black text-[#1b274b]">Riwayat Penetapan Pembimbing</h3>
+                        <p className="text-sm text-[#5d6c91]">Monitoring read-only seluruh penetapan P1 dan P2. Perubahan hanya dilakukan melalui keputusan final atau tindak lanjut pergantian.</p>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                        <div className="relative xl:col-span-1">
+                          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                          <input
+                            type="search"
+                            value={supervisorAssignmentFilters.q}
+                            onChange={(event) => {
+                              setSupervisorAssignmentFilters((previous) => ({ ...previous, q: event.target.value }));
+                              setSupervisorAssignmentPage(1);
+                            }}
+                            placeholder="Cari mahasiswa atau NIM..."
+                            className="w-full rounded-lg border border-[#d3dbef] py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                          />
+                        </div>
+                        <select value={supervisorAssignmentFilters.periode_id} onChange={(event) => { setSupervisorAssignmentFilters((previous) => ({ ...previous, periode_id: event.target.value })); setSupervisorAssignmentPage(1); }} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]">
+                          <option value="">Semua periode</option>
+                          {supervisorAssignmentMonitoring.filter_options.periodes.map((periode) => <option key={`history-period-${periode.id}`} value={periode.id}>{periode.label_periode}</option>)}
+                        </select>
+                        <select value={supervisorAssignmentFilters.dosen_id} onChange={(event) => { setSupervisorAssignmentFilters((previous) => ({ ...previous, dosen_id: event.target.value })); setSupervisorAssignmentPage(1); }} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]">
+                          <option value="">Semua dosen</option>
+                          {supervisorAssignmentMonitoring.filter_options.dosens.map((dosen) => <option key={`history-dosen-${dosen.id}`} value={dosen.id}>{formatDosenFullName(dosen.nama, dosen.gelar)}</option>)}
+                        </select>
+                        <select value={supervisorAssignmentFilters.status} onChange={(event) => { setSupervisorAssignmentFilters((previous) => ({ ...previous, status: event.target.value })); setSupervisorAssignmentPage(1); }} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]">
+                          <option value="">Semua status</option>
+                          {Object.entries(SUPERVISOR_ASSIGNMENT_STATUS_LABELS).map(([value, label]) => <option key={`history-status-${value}`} value={value}>{label}</option>)}
+                        </select>
+                        <select value={supervisorAssignmentFilters.sumber_data} onChange={(event) => { setSupervisorAssignmentFilters((previous) => ({ ...previous, sumber_data: event.target.value })); setSupervisorAssignmentPage(1); }} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]">
+                          <option value="">Semua sumber</option>
+                          {Object.entries(SUPERVISOR_ASSIGNMENT_SOURCE_LABELS).map(([value, label]) => <option key={`history-source-${value}`} value={value}>{label}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                      <div className="overflow-auto rounded-lg border border-[#e6ecf8]">
+                        <table className="w-full min-w-[1320px] text-left text-sm">
+                          <thead><tr className="border-b border-[#e6ecf8] text-[#4d5e89]"><th className="bg-[#f8fbff] px-3 py-2">Mahasiswa</th><th className="bg-[#f8fbff] px-3 py-2">Periode Mulai</th><th className="bg-[#f8fbff] px-3 py-2 text-center">Semester Ke-</th><th className="bg-[#f8fbff] px-3 py-2">Pembimbing 1</th><th className="bg-[#f8fbff] px-3 py-2">Pembimbing 2</th><th className="bg-[#f8fbff] px-3 py-2">Tanggal Mulai</th><th className="bg-[#f8fbff] px-3 py-2">Tanggal Selesai</th><th className="bg-[#f8fbff] px-3 py-2">Status</th><th className="bg-[#f8fbff] px-3 py-2">Sumber</th><th className="bg-[#f8fbff] px-3 py-2">Ditetapkan Oleh</th></tr></thead>
+                          <tbody>
+                            {supervisorAssignmentMonitoring.rows.map((row) => {
+                              const primary = (row.pembimbings || []).find((member) => Number(member.urutan) === 1);
+                              const secondary = (row.pembimbings || []).find((member) => Number(member.urutan) === 2);
+                              const active = row.status === "active";
+                              return <tr key={`supervisor-history-${row.id}`} className="border-b border-[#eff3fb] last:border-b-0">
+                                <td className="px-3 py-3"><p className="font-bold text-[#1f3160]">{row.mahasiswa?.nama || "-"}</p><p className="text-xs text-[#6a779a]">{row.mahasiswa?.nim || "-"}</p></td>
+                                <td className="px-3 py-3 font-semibold text-[#344a7a]">{row.periode_mulai?.label_periode || row.periode || "Tidak tercatat"}</td>
+                                <td className="px-3 py-3 text-center font-bold text-[#344a7a]">{row.semester_penjaluran_ke || "-"}</td>
+                                <td className="px-3 py-3 font-semibold text-[#263a6b]">{formatDosenFullName(primary?.dosen?.nama, primary?.dosen?.gelar) || "-"}</td>
+                                <td className="px-3 py-3 text-[#42527c]">{formatDosenFullName(secondary?.dosen?.nama, secondary?.dosen?.gelar) || "-"}</td>
+                                <td className="whitespace-nowrap px-3 py-3 text-[#42527c]">{row.tanggal_mulai ? formatDateTime(row.tanggal_mulai) : "Tidak tercatat"}</td>
+                                <td className="whitespace-nowrap px-3 py-3 text-[#42527c]">{row.tanggal_selesai ? formatDateTime(row.tanggal_selesai) : "-"}</td>
+                                <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-xs font-bold ${active ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#edf0f6] text-[#596887]"}`}>{SUPERVISOR_ASSIGNMENT_STATUS_LABELS[row.status] || row.status}</span></td>
+                                <td className="px-3 py-3"><span className="rounded-full bg-[#eef3ff] px-2 py-1 text-xs font-bold text-[#34549b]">{SUPERVISOR_ASSIGNMENT_SOURCE_LABELS[row.sumber_data] || row.sumber_data}</span></td>
+                                <td className="px-3 py-3"><p className="font-semibold text-[#344a7a]">{row.ditetapkan_oleh?.nama || (row.sumber_data === "legacy_backfill" ? "Migrasi data lama" : "-")}</p><p className="text-xs text-[#6a779a]">{row.tanggal_penetapan ? formatDateTime(row.tanggal_penetapan) : "-"}</p></td>
+                              </tr>;
+                            })}
+                          </tbody>
+                        </table>
+                        {!loadingSupervisorAssignments && supervisorAssignmentMonitoring.rows.length === 0 ? <p className="p-8 text-center text-sm font-semibold text-[#7b88ab]">Belum ada riwayat penetapan yang sesuai filter.</p> : null}
+                        {loadingSupervisorAssignments ? <p className="p-8 text-center text-sm font-semibold text-[#60709a]">Memuat riwayat penetapan...</p> : null}
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                        <p className="text-sm text-[#4f5e86]">Total {Number(supervisorAssignmentMonitoring.pagination.total || 0)} penetapan.</p>
+                        <div className="flex items-center gap-2"><button type="button" onClick={() => setSupervisorAssignmentPage((previous) => Math.max(1, previous - 1))} disabled={supervisorAssignmentPage <= 1 || loadingSupervisorAssignments} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Sebelumnya</button><span className="text-sm font-semibold text-[#314778]">Halaman {supervisorAssignmentMonitoring.pagination.page || 1} / {supervisorAssignmentMonitoring.pagination.total_pages || 1}</span><button type="button" onClick={() => setSupervisorAssignmentPage((previous) => Math.min(supervisorAssignmentMonitoring.pagination.total_pages || 1, previous + 1))} disabled={supervisorAssignmentPage >= (supervisorAssignmentMonitoring.pagination.total_pages || 1) || loadingSupervisorAssignments} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Berikutnya</button></div>
+                      </div>
+                    </div>
                   </div>
                 ) : null}
 

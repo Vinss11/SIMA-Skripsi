@@ -14,6 +14,13 @@ module.exports = (sequelize, DataTypes) => {
     dosen_id: { type: DataTypes.INTEGER, allowNull: false },
     urutan: { type: DataTypes.INTEGER, allowNull: false, validate: { isIn: [[1, 2]] } },
     peran: { type: DataTypes.ENUM("utama", "pendamping"), allowNull: false },
+    status: {
+      type: DataTypes.ENUM("draft", "active", "ended", "cancelled"),
+      allowNull: false,
+      defaultValue: "draft",
+    },
+    tanggal_mulai: DataTypes.DATE,
+    tanggal_selesai: DataTypes.DATE,
   }, {
     sequelize,
     modelName: "PenetapanPembimbingDosen",

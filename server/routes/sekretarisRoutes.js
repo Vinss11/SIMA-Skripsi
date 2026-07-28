@@ -15,6 +15,7 @@ router.post("/pendaftaran/:id/reject", authenticateToken, authorizeRole("sekreta
 router.get("/mahasiswa/master", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMahasiswaMasterData);
 router.get("/mahasiswa/master/export", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.exportMahasiswaMasterData);
 router.get("/mahasiswa/:id/penetapan-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.getSupervisorAssignmentHistoryForSekretaris);
+router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.getSupervisorAssignmentMonitoring);
 router.get("/periode", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeOverview);
 router.post("/periode/master-penanggung-jawab", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterPenanggungJawabPeriode);
 router.get("/periode/setup-template", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeSetupTemplate);

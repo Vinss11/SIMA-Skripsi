@@ -12,6 +12,7 @@ const nonPenelitianUploadFields = nonPenelitianUpload.fields([
   { name: "transcript_file_name", maxCount: 1 },
   { name: "other_supporting_documents_file_name", maxCount: 1 },
   { name: "supporting_documents_note", maxCount: 1 },
+  { name: "dokumen_pendukung_file", maxCount: 1 },
 ]);
 
 const handleNonPenelitianUpload = (req, res, next) => {

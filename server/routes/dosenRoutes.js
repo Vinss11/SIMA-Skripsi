@@ -107,6 +107,12 @@ router.get(
   authorizeRole("dosen"),
   jalurController.getPerintisanBisnisReviewDetailForDosen
 );
+router.get(
+  "/non-penelitian/perintisan-bisnis/reviews/:id/documents/:documentKey",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.downloadPerintisanBisnisReviewDocumentForDosen
+);
 router.post(
   "/non-penelitian/perintisan-bisnis/reviews/:id/approve",
   authenticateToken,

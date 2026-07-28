@@ -608,10 +608,13 @@ async function createKelompokPerintisanRegistration({
       if (!NIM_MAHASISWA_REGEX.test(participant.nim)) {
         return { error: "NIM mahasiswa jalur Baru wajib menggunakan format YY523NNN, contoh 22523001." };
       }
+      const namaPattern = participant.posisi === "anggota"
+        ? /^[a-zA-Z\s]+$/
+        : /^[a-zA-Z\s'.-]+$/;
       if (
         participant.nama.length < 2 ||
         participant.nama.length > 100 ||
-        !/^[a-zA-Z\s'.-]+$/.test(participant.nama)
+        !namaPattern.test(participant.nama)
       ) {
         return { error: `Nama mahasiswa dengan NIM ${participant.nim} tidak valid.` };
       }
