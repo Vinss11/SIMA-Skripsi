@@ -113,6 +113,7 @@ function serializeRow(row) {
     dosen_id: item.dosen_id,
     reviewer_dosen_id: item.reviewer_dosen_id,
     pengajuan_id: item.pengajuan_id,
+    pendaftaran_penjaluran_id: item.pendaftaran_penjaluran_id,
     permintaan_pesan: item.permintaan_pesan,
     permintaan_tanggal: item.permintaan_tanggal,
     permintaan_jam: item.permintaan_jam,
@@ -488,6 +489,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
       pengajuanApproved = await Pengajuan.findOne({
         where: {
           mahasiswa_id,
+          pendaftaran_penjaluran_id: pendaftaranAktif.id,
           status: "approved",
           tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
         },
@@ -514,6 +516,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
         mahasiswa_id,
         dosen_id: targetSupervisorId,
         pengajuan_id: pengajuanApproved?.id || null,
+        pendaftaran_penjaluran_id: pendaftaranAktif?.id || null,
         permintaan_pesan: pesan,
         permintaan_tanggal: tanggal,
         permintaan_jam: jam,

@@ -7,6 +7,14 @@ const NOTIFICATION_TYPES = Object.freeze({
   SUPERVISION_ASSIGNED_LECTURER: "supervision_assigned_lecturer",
   SUPERVISION_UPDATED_LECTURER: "supervision_updated_lecturer",
   SUPERVISION_ENDED_LECTURER: "supervision_ended_lecturer",
+  PENJALURAN_FORM_SUBMITTED_STUDENT: "penjaluran_form_submitted_student",
+  PENJALURAN_PATH_REVIEW_LECTURER: "penjaluran_path_review_lecturer",
+  PENJALURAN_PATH_DECIDED_STUDENT: "penjaluran_path_decided_student",
+  PENJALURAN_FINAL_QUEUE_STUDENT: "penjaluran_final_queue_student",
+  PENJALURAN_FINAL_REJECTED_STUDENT: "penjaluran_final_rejected_student",
+  CHANGE_PAMIT_REQUESTED_LECTURER: "change_pamit_requested_lecturer",
+  CHANGE_PAMIT_DECIDED_STUDENT: "change_pamit_decided_student",
+  CHANGE_REGISTRATION_CREATED_STUDENT: "change_registration_created_student",
 });
 
 const NOTIFICATION_TITLES = Object.freeze({
@@ -16,6 +24,14 @@ const NOTIFICATION_TITLES = Object.freeze({
   [NOTIFICATION_TYPES.SUPERVISION_ASSIGNED_LECTURER]: "Mahasiswa Bimbingan Baru",
   [NOTIFICATION_TYPES.SUPERVISION_UPDATED_LECTURER]: "Penugasan Pembimbing Diperbarui",
   [NOTIFICATION_TYPES.SUPERVISION_ENDED_LECTURER]: "Penugasan Pembimbing Berakhir",
+  [NOTIFICATION_TYPES.PENJALURAN_FORM_SUBMITTED_STUDENT]: "Form Penjaluran Terkirim",
+  [NOTIFICATION_TYPES.PENJALURAN_PATH_REVIEW_LECTURER]: "Review Penjaluran Baru",
+  [NOTIFICATION_TYPES.PENJALURAN_PATH_DECIDED_STUDENT]: "Keputusan Penanggung Jawab Jalur",
+  [NOTIFICATION_TYPES.PENJALURAN_FINAL_QUEUE_STUDENT]: "Menunggu Keputusan Final",
+  [NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT]: "Penjaluran Ditolak",
+  [NOTIFICATION_TYPES.CHANGE_PAMIT_REQUESTED_LECTURER]: "Permohonan Pamit Ulang/Alih Jalur",
+  [NOTIFICATION_TYPES.CHANGE_PAMIT_DECIDED_STUDENT]: "Keputusan Pamit Ulang/Alih Jalur",
+  [NOTIFICATION_TYPES.CHANGE_REGISTRATION_CREATED_STUDENT]: "Siklus Penjaluran Baru Dibuat",
 });
 
 module.exports = { NOTIFICATION_TYPES, NOTIFICATION_TITLES };

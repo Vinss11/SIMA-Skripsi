@@ -23,6 +23,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pengajuan_id",
         as: "pengajuan",
       });
+      BimbinganSkripsi.belongsTo(models.PendaftaranPenjaluran, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "siklusPenjaluran",
+      });
     }
   }
 
@@ -37,6 +41,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       pengajuan_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      pendaftaran_penjaluran_id: {
         type: DataTypes.INTEGER,
         allowNull: true,
       },

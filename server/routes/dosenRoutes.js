@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
 const dosenController = require("../controllers/dosenController");
+const changeController = require("../controllers/penjaluranChangeController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
@@ -141,8 +142,9 @@ router.post("/izin-lanjut/:id/reject", authenticateToken, authorizeRole("dosen",
 // Dosen pembimbing skripsi mereview pamit mahasiswa bimbingannya (approve/reject tahap 1)
 router.get("/pamit-mahasiswa", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getPamitMahasiswa);
 router.get("/pamit-mahasiswa/:id", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getPamitMahasiswaDetail);
-router.post("/pamit-mahasiswa/:id/approve", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.approvePamitMahasiswa);
-router.post("/pamit-mahasiswa/:id/reject", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.rejectPamitMahasiswa);
+router.post("/pamit-mahasiswa/:id/approve", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), changeController.approvePamit);
+router.post("/pamit-mahasiswa/:id/reject", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), changeController.rejectPamit);
+router.post("/pamit/:id/decision", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), changeController.decidePamit);
 
 // ========== PAMIT ULANG ==========
 // Approval pamit hanya oleh dosen pembimbing skripsi (endpoint DPA dinonaktifkan).

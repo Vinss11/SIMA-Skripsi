@@ -6,6 +6,8 @@ const {
   KelompokPerintisanBisnis,
   AnggotaKelompokPerintisan,
   Mahasiswa,
+  Pengajuan,
+  RiwayatPersetujuan,
 } = require("../models");
 const { validateDosenForNewAssignment } = require("./dosenStatusService");
 const {
@@ -39,7 +41,108 @@ function sameIds(left, right) {
   return left.length === right.length && left.every((value, index) => Number(value) === Number(right[index]));
 }
 
-async function resolveAuthoritativeAssignmentTargets({ registration, track, transaction }) {
+function assertRegistrationReadyForFinalization(registration, track) {
+  if (resolveRegistrationTrack(registration) !== track) {
+    throw new PenjaluranFinalizationError(
+      `Jalur pendaftaran tidak sesuai dengan finalisasi ${track}.`,
+      409,
+      "REGISTRATION_TRACK_MISMATCH"
+    );
+  }
+  if (String(registration.status || "").toLowerCase() !== "approved") {
+    throw new PenjaluranFinalizationError(
+      "Pendaftaran harus disetujui sebelum keputusan final Sekretaris Prodi.",
+      409,
+      "REGISTRATION_NOT_APPROVED"
+    );
+  }
+}
+
+async function lockAndValidateDecisionSource({
+  registration,
+  track,
+  decisionSource,
+  currentDecisionStatus,
+  transaction,
+}) {
+  const expectedStatus = String(currentDecisionStatus || "").trim().toLowerCase();
+  if (track === "penelitian") {
+    const sourceId = Number(decisionSource?.id || 0);
+    if (!sourceId) {
+      throw new PenjaluranFinalizationError(
+        "Sumber keputusan Penelitian wajib tersedia.",
+        409,
+        "DECISION_SOURCE_MISSING"
+      );
+    }
+    const source = await Pengajuan.findByPk(sourceId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!source || Number(source.pendaftaran_penjaluran_id) !== Number(registration.id)) {
+      throw new PenjaluranFinalizationError(
+        "Sumber keputusan Penelitian tidak sesuai dengan pendaftaran.",
+        409,
+        "DECISION_SOURCE_MISMATCH"
+      );
+    }
+    const rawStatus = String(source.status || "").trim().toLowerCase();
+    if (rawStatus !== expectedStatus) {
+      throw new PenjaluranFinalizationError(
+        "Status sumber keputusan Penelitian berubah. Muat ulang data sebelum memutuskan.",
+        409,
+        "DECISION_SOURCE_STALE"
+      );
+    }
+    const hasPendingFinalDecision = rawStatus === "pending"
+      ? await RiwayatPersetujuan.count({
+          where: { pengajuan_id: source.id, tipe_approval: "sekprodi", status: "pending" },
+          transaction,
+        }) > 0
+      : rawStatus === "menunggu_approval_sekprodi";
+    if (!["approved", "rejected"].includes(rawStatus) && !hasPendingFinalDecision) {
+      throw new PenjaluranFinalizationError(
+        "Workflow Penelitian belum menunggu keputusan final Sekretaris Prodi.",
+        409,
+        "INVALID_WORKFLOW_STAGE"
+      );
+    }
+    return source;
+  }
+
+  const rawStatus = String(registration.form_lanjutan_status || "").trim().toLowerCase();
+  if (rawStatus !== expectedStatus) {
+    throw new PenjaluranFinalizationError(
+      "Status sumber keputusan berubah. Muat ulang data sebelum memutuskan.",
+      409,
+      "DECISION_SOURCE_STALE"
+    );
+  }
+  if (!["review_sekprodi", "approved", "rejected"].includes(rawStatus)) {
+    throw new PenjaluranFinalizationError(
+      "Workflow belum menunggu keputusan final Sekretaris Prodi.",
+      409,
+      "INVALID_WORKFLOW_STAGE"
+    );
+  }
+  return registration;
+}
+
+function resolveFinalAssignmentMetadata(registration) {
+  const registrationType = String(registration?.jalur || "").trim().toLowerCase();
+  const startsNewCycle = ["baru", "ulang", "alih"].includes(registrationType);
+  return {
+    sumberData: startsNewCycle ? "penjaluran" : "pergantian",
+    semesterPenjaluranKe: startsNewCycle ? 1 : null,
+  };
+}
+
+async function resolveAuthoritativeAssignmentTargets({
+  registration,
+  track,
+  transaction,
+  validateFinalReadiness = true,
+}) {
   if (!registration?.id || !transaction) {
     throw new PenjaluranFinalizationError("Pendaftaran dan transaksi finalisasi wajib tersedia.", 500);
   }
@@ -51,6 +154,8 @@ async function resolveAuthoritativeAssignmentTargets({ registration, track, tran
   if (!lockedSource) {
     throw new PenjaluranFinalizationError("Pendaftaran penjaluran tidak ditemukan.", 404, "REGISTRATION_NOT_FOUND");
   }
+
+  assertRegistrationReadyForFinalization(lockedSource, track);
 
   if (track !== "perintisan_bisnis") return [lockedSource];
 
@@ -81,11 +186,50 @@ async function resolveAuthoritativeAssignmentTargets({ registration, track, tran
     transaction,
     lock: transaction.LOCK.UPDATE,
   });
-  if (memberships.length === 0) {
-    throw new PenjaluranFinalizationError("Kelompok Perintisan Bisnis tidak memiliki anggota.", 409, "EMPTY_GROUP");
+  if (!["submitted", "approved"].includes(String(group.status || "").toLowerCase())) {
+    throw new PenjaluranFinalizationError(
+      "Kelompok Perintisan Bisnis belum siap untuk keputusan final.",
+      409,
+      "GROUP_NOT_READY"
+    );
+  }
+  if (memberships.length !== 3) {
+    throw new PenjaluranFinalizationError(
+      "Kelompok Perintisan Bisnis wajib terdiri dari tepat tiga anggota.",
+      409,
+      "INVALID_GROUP_SIZE"
+    );
+  }
+  const mahasiswaIds = memberships.map((item) => Number(item.mahasiswa_id));
+  const registrationIds = memberships.map((item) => Number(item.pendaftaran_penjaluran_id));
+  if (new Set(mahasiswaIds).size !== memberships.length
+    || new Set(registrationIds).size !== memberships.length) {
+    throw new PenjaluranFinalizationError(
+      "Kelompok memuat mahasiswa atau pendaftaran ganda.",
+      409,
+      "DUPLICATE_GROUP_MEMBER"
+    );
+  }
+  const leaders = memberships.filter((item) => item.posisi === "ketua");
+  const members = memberships.filter((item) => item.posisi === "anggota");
+  if (leaders.length !== 1 || members.length !== 2
+    || Number(leaders[0]?.mahasiswa_id) !== Number(group.ketua_mahasiswa_id)) {
+    throw new PenjaluranFinalizationError(
+      "Kelompok wajib memiliki satu ketua dan dua anggota yang konsisten.",
+      409,
+      "INVALID_GROUP_COMPOSITION"
+    );
+  }
+  const teamRoles = memberships.map((item) => String(item.peran_tim || "").toLowerCase());
+  if (new Set(teamRoles).size !== 3
+    || !["hustler", "hipster", "hacker"].every((role) => teamRoles.includes(role))) {
+    throw new PenjaluranFinalizationError(
+      "Kelompok wajib memiliki tepat satu Hustler, Hipster, dan Hacker.",
+      409,
+      "INVALID_GROUP_ROLES"
+    );
   }
 
-  const registrationIds = memberships.map((item) => Number(item.pendaftaran_penjaluran_id));
   const registrations = await PendaftaranPenjaluran.findAll({
     where: { id: { [Op.in]: registrationIds } },
     order: [["id", "ASC"]],
@@ -104,6 +248,7 @@ async function resolveAuthoritativeAssignmentTargets({ registration, track, tran
     memberships.map((item) => [Number(item.pendaftaran_penjaluran_id), Number(item.mahasiswa_id)])
   );
   for (const item of registrations) {
+    assertRegistrationReadyForFinalization(item, track);
     if (Number(item.periode_penjaluran_id) !== Number(group.periode_penjaluran_id)
       || Number(item.periode_penjaluran_id) !== Number(lockedSource.periode_penjaluran_id)) {
       throw new PenjaluranFinalizationError(
@@ -126,6 +271,23 @@ async function resolveAuthoritativeAssignmentTargets({ registration, track, tran
         "GROUP_MEMBER_MISMATCH"
       );
     }
+    const membershipRow = memberships.find((member) => Number(member.pendaftaran_penjaluran_id) === Number(item.id));
+    if (String(membershipRow?.jenis_pendaftaran || "") !== String(item.jalur || "")) {
+      throw new PenjaluranFinalizationError(
+        "Jenis pendaftaran anggota kelompok tidak konsisten.",
+        409,
+        "GROUP_REGISTRATION_TYPE_MISMATCH"
+      );
+    }
+  }
+  const workflowStatuses = new Set(registrations.map((item) => String(item.form_lanjutan_status || "").toLowerCase()));
+  if (workflowStatuses.size !== 1 || (validateFinalReadiness
+    && !["review_sekprodi", "approved"].includes([...workflowStatuses][0]))) {
+    throw new PenjaluranFinalizationError(
+      "Workflow seluruh anggota kelompok harus konsisten dan siap difinalisasi.",
+      409,
+      "GROUP_WORKFLOW_MISMATCH"
+    );
   }
   return registrations;
 }
@@ -150,6 +312,7 @@ async function finalizePenjaluranDecision({
   track,
   supervisorIds,
   currentDecisionStatus,
+  decisionSource = null,
   createdBySekretarisId = null,
   transaction,
 }) {
@@ -170,6 +333,13 @@ async function finalizePenjaluranDecision({
   const targets = await resolveAuthoritativeAssignmentTargets({
     registration,
     track: normalizedTrack,
+    transaction,
+  });
+  await lockAndValidateDecisionSource({
+    registration: targets.find((item) => Number(item.id) === Number(registration.id)) || targets[0],
+    track: normalizedTrack,
+    decisionSource,
+    currentDecisionStatus,
     transaction,
   });
   const status = String(currentDecisionStatus || "").trim().toLowerCase();
@@ -207,12 +377,15 @@ async function finalizePenjaluranDecision({
   }
 
   for (const target of targets) {
+    const assignmentMetadata = resolveFinalAssignmentMetadata(target);
     await replaceSupervisorAssignment({
       mahasiswaId: target.mahasiswa_id,
       pendaftaranPenjaluranId: target.id,
       periodeMulaiId: target.periode_penjaluran_id,
       dosenPembimbingIds: normalizedSupervisorIds,
-      sumberData: target.jalur === "baru" ? "penjaluran" : "pergantian",
+      sumberData: assignmentMetadata.sumberData,
+      semesterPenjaluranKe: assignmentMetadata.semesterPenjaluranKe,
+      preserveRequestedSource: true,
       createdBySekretarisId,
       tanggalMulai: new Date(),
       transaction,
@@ -236,6 +409,7 @@ async function finalizePenjaluranDecision({
 module.exports = {
   PenjaluranFinalizationError,
   resolveRegistrationTrack,
+  resolveFinalAssignmentMetadata,
   resolveAuthoritativeAssignmentTargets,
   finalizePenjaluranDecision,
 };

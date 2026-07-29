@@ -31,7 +31,8 @@ const {
   replaceSupervisorAssignment,
   toAssignmentResponse,
 } = require("../services/penetapanPembimbingService");
-const { createSupervisorReplacementNotifications } = require("../services/notificationService");
+const { createSupervisorReplacementNotifications, createSystemNotification } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { finalizePenjaluranDecision } = require("../services/penjaluranFinalizationService");
 const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
 const {
@@ -4050,6 +4051,7 @@ exports.approvePenelitianFinal = async (req, res) => {
       const replay = await finalizePenjaluranDecision({
         registration: assignmentRegistration,
         track: "penelitian",
+        decisionSource: submission,
         supervisorIds,
         currentDecisionStatus: submission.status,
         createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
@@ -4136,6 +4138,7 @@ exports.approvePenelitianFinal = async (req, res) => {
     await finalizePenjaluranDecision({
       registration: assignmentRegistration,
       track: "penelitian",
+      decisionSource: submission,
       supervisorIds,
       currentDecisionStatus: submission.status,
       createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
@@ -4308,6 +4311,18 @@ exports.rejectPenelitianFinal = async (req, res) => {
             { status_jalur_saat_ini: fallbackStatus, pengajuan_aktif_id: null },
             { transaction: t }
           );
+          await createSystemNotification({
+            recipientType: "mahasiswa",
+            recipientId: mahasiswa.id,
+            type: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
+            message: `Keputusan final Penelitian ditolak: ${reason}`,
+            referenceType: "pengajuan_penelitian",
+            referenceId: submission.id,
+            actionKey: "student_path_status",
+            metadata: { jalur: "penelitian", decision: "rejected" },
+            deduplicationKey: `penjaluran:penelitian:${submission.id}:notification:final-rejected`,
+            transaction: t,
+          });
         }
       } else {
         await submission.update(
@@ -4371,6 +4386,18 @@ exports.rejectPenelitianFinal = async (req, res) => {
         },
         { transaction: t }
       );
+      await createSystemNotification({
+        recipientType: "mahasiswa",
+        recipientId: mahasiswa.id,
+        type: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
+        message: `Keputusan final Penelitian ditolak: ${reason}`,
+        referenceType: "pengajuan_penelitian",
+        referenceId: submission.id,
+        actionKey: "student_path_status",
+        metadata: { jalur: "penelitian", decision: "rejected" },
+        deduplicationKey: `penjaluran:penelitian:${submission.id}:notification:final-rejected`,
+        transaction: t,
+      });
     }
 
     await t.commit();

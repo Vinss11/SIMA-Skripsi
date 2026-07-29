@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const jalurController = require("../controllers/jalurController");
+const changeController = require("../controllers/penjaluranChangeController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 const nonPenelitianUpload = require("../middlewares/nonPenelitianUploadMiddleware");
@@ -33,6 +34,10 @@ const handleNonPenelitianUpload = (req, res, next) => {
 
 router.get("/status", authenticateToken, authorizeRole("mahasiswa"), jalurController.checkStatusJalur);
 router.get("/eligibility", authenticateToken, authorizeRole("mahasiswa"), jalurController.getJalurEligibility);
+router.get("/change/eligibility", authenticateToken, authorizeRole("mahasiswa"), changeController.getEligibility);
+router.post("/change/pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.submitPamit);
+router.get("/change/pamit/:id", authenticateToken, authorizeRole("mahasiswa"), changeController.getPamit);
+router.get("/change/history", authenticateToken, authorizeRole("mahasiswa"), changeController.getHistory);
 router.get("/izin-lanjut/status", authenticateToken, authorizeRole("mahasiswa"), jalurController.getIzinLanjutStatus);
 router.post("/izin-lanjut", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitIzinLanjutSemester);
 router.get(
@@ -50,7 +55,7 @@ router.post(
 );
 
 // ========== JALUR ULANG - PAMIT ==========
-router.post("/ulang/pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitPamit);
+router.post("/ulang/pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.submitPamit);
 router.get("/ulang/status-pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.getStatusPamit);
 router.get("/ulang/history-pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.getHistoryPamit);
 

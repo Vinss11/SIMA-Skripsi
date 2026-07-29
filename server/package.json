@@ -14,7 +14,9 @@
     "reconcile:supervisor-history:dry-run": "node scripts/reconcile-supervisor-assignment-history.js --dry-run",
     "reconcile:supervisor-history": "node scripts/reconcile-supervisor-assignment-history.js --execute",
     "reconcile:stage2-registrations:dry-run": "node scripts/reconcile-stage2-registrations.js --dry-run",
-    "reconcile:stage2-registrations": "node scripts/reconcile-stage2-registrations.js --execute"
+    "reconcile:stage2-registrations": "node scripts/reconcile-stage2-registrations.js --execute",
+    "reconcile:stage3-change-cycles:dry-run": "node scripts/reconcile-stage3-change-cycles.js --dry-run",
+    "reconcile:stage3-change-cycles": "node scripts/reconcile-stage3-change-cycles.js --execute"
   },
   "keywords": [],
   "author": "",

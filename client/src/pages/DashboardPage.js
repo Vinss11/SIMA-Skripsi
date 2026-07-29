@@ -415,6 +415,7 @@ function UlangAlihJalurCard({
   profile,
   jalurStatus,
   jalurEligibility,
+  changeEligibility,
   dosenOptions,
   onSubmit,
   onSubmitPamit,
@@ -440,11 +441,14 @@ function UlangAlihJalurCard({
   });
   const periodeAktif = jalurEligibility?.periode_aktif || null;
   const access = getUlangAlihAccess({ jalurEligibility, jalurStatus });
-  const canOpenForm = access.isAllowed;
+  const changeHardBlockers = (changeEligibility?.blockers || []).filter(
+    (item) => !String(item).toLowerCase().includes("pamit")
+  );
+  const canOpenForm = changeEligibility ? changeHardBlockers.length === 0 : access.isAllowed;
   const isFormDisabled = !canOpenForm || isSubmitting;
   const disabledReason = access.reason;
-  const activePamit = jalurStatus?.active_pamit || null;
-  const activePamitStatus = String(activePamit?.status_dospem || "").toLowerCase();
+  const activePamit = changeEligibility?.pamit || jalurStatus?.active_pamit || null;
+  const activePamitStatus = String(activePamit?.status || activePamit?.status_dospem || "").toLowerCase();
   const activeRegistration = jalurEligibility?.pendaftaran_aktif || null;
   const hasUlangPenelitianRegistration =
     activeRegistration?.jalur === "ulang" && activeRegistration?.selected_jalur === "penelitian";
@@ -496,6 +500,104 @@ function UlangAlihJalurCard({
         Alih Jalur
       </button>
     </div>
+  );
+
+  const sourceTrack = changeEligibility?.source_track || "";
+  const targetTrack = activeFlow === "ulang" ? sourceTrack : form.penjaluran_baru;
+  const requiresPamit = changeEligibility?.requires_pamit !== false;
+  const canCommitChange = canOpenForm && !activeRegistration && (
+    !requiresPamit || activePamitStatus === "approved"
+  );
+  const availableTargets = JALUR_OPTIONS.filter((item) => item.value !== sourceTrack);
+
+  useEffect(() => {
+    if (!sourceTrack || form.penjaluran_baru !== sourceTrack) return;
+    const fallbackTarget = JALUR_OPTIONS.find((item) => item.value !== sourceTrack)?.value || "";
+    setForm((prev) => ({ ...prev, penjaluran_baru: fallbackTarget }));
+  }, [sourceTrack, form.penjaluran_baru]);
+
+  if (changeEligibility) return (
+    <section className="rounded-xl border border-[#dbe6fb] bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-2xl font-black text-[#1a2648]">Ulang / Alih Jalur</h3>
+          <p className="mt-1 text-sm text-[#5f6b89]">
+            Jalur asal ditentukan sistem dari keputusan final terakhir. Pembimbing baru ditetapkan pada keputusan final siklus baru.
+          </p>
+        </div>
+        {changeEligibility?.periode ? (
+          <span className="rounded-full bg-[#e9f2ff] px-3 py-1 text-xs font-bold text-[#2551b8]">
+            {changeEligibility.periode.label_periode}
+          </span>
+        ) : null}
+      </div>
+      {flowTabs}
+      <div className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+          <p className="text-xs font-bold uppercase text-[#7180a5]">Jalur asal (server)</p>
+          <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "Belum tersedia"}</p>
+        </div>
+        <label className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+          <span className="text-xs font-bold uppercase text-[#7180a5]">Jalur tujuan</span>
+          {activeFlow === "alih" ? (
+            <select
+              value={form.penjaluran_baru}
+              onChange={(event) => setField("penjaluran_baru", event.target.value)}
+              className="mt-2 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
+            >
+              {availableTargets.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          ) : (
+            <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "-"}</p>
+          )}
+        </label>
+      </div>
+
+      {changeEligibility?.blockers?.filter((item) => !String(item).toLowerCase().includes("pamit")).map((item) => (
+        <div key={item} className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm font-semibold text-[#7a5a00]">{item}</div>
+      ))}
+
+      {requiresPamit && !activePamit ? (
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          onSubmitPamit?.({ ...pamitForm, target_track: targetTrack });
+        }} className="mt-5 grid gap-4 rounded-lg border border-[#e3eaf8] p-5">
+          <h4 className="text-lg font-black text-[#1a2648]">Pamit kepada Pembimbing 1</h4>
+          <textarea rows={3} value={pamitForm.alasan_ulang} onChange={(event) => setPamitForm((prev) => ({ ...prev, alasan_ulang: event.target.value }))} placeholder="Alasan ulang/alih jalur" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
+          <textarea rows={3} value={pamitForm.pesan_ke_dosen_pembimbing} onChange={(event) => setPamitForm((prev) => ({ ...prev, pesan_ke_dosen_pembimbing: event.target.value }))} placeholder="Pesan kepada Pembimbing 1" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
+          <button disabled={isSubmitting || pamitForm.alasan_ulang.trim().length < 10 || pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10} className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Kirim Pamit</button>
+        </form>
+      ) : null}
+
+      {activePamit ? (
+        <div className="mt-5 rounded-lg border border-[#e3eaf8] p-5">
+          <p className="font-black text-[#1a2648]">Status pamit: <span className="capitalize">{activePamitStatus}</span></p>
+          {activePamit.keterangan_dospem ? <p className="mt-2 text-sm text-[#5f6b89]">{activePamit.keterangan_dospem}</p> : null}
+        </div>
+      ) : null}
+
+      {canCommitChange ? (
+        <div className="mt-5 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-5">
+          <label className="block text-sm font-semibold text-[#324c86]">Alasan pendaftaran</label>
+          <textarea rows={3} value={form.alasan_pengajuan} onChange={(event) => setField("alasan_pengajuan", event.target.value)} className="mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
+          <button
+            type="button"
+            disabled={isSubmitting || form.alasan_pengajuan.trim().length < 10 || !targetTrack}
+            onClick={() => onRegisterUlang?.({
+              pendaftaran: activeFlow,
+              target_track: targetTrack,
+              pamit_id: activePamit?.id || null,
+              alasan_pengajuan: form.alasan_pengajuan,
+            })}
+            className="mt-3 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+          >
+            {isSubmitting ? "Memproses..." : `Daftar ${activeFlow === "ulang" ? "Ulang" : "Alih"} Jalur`}
+          </button>
+        </div>
+      ) : null}
+      {submitError ? <div className="mt-4 rounded-lg bg-[#fff2f2] p-3 text-sm font-semibold text-[#a03f3f]">{submitError}</div> : null}
+      {submitSuccess ? <div className="mt-4 rounded-lg bg-[#effcf5] p-3 text-sm font-semibold text-[#1b7a49]">{submitSuccess}</div> : null}
+    </section>
   );
 
   if (activeFlow === "alih") {
@@ -1348,6 +1450,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [profile, setProfile] = useState(null);
   const [jalurStatus, setJalurStatus] = useState(null);
   const [jalurEligibility, setJalurEligibility] = useState(null);
+  const [changeEligibility, setChangeEligibility] = useState(null);
   const [submissions, setSubmissions] = useState([]);
   const [bimbinganSummary, setBimbinganSummary] = useState(null);
   const [dosenOptions, setDosenOptions] = useState([]);
@@ -1442,11 +1545,12 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       setLoading(true);
       setError("");
 
-      const [profileResult, jalurResult, jalurEligibilityResult, submissionsResult, bimbinganResult, dosenResult, supervisorHistoryResult] =
+      const [profileResult, jalurResult, jalurEligibilityResult, changeEligibilityResult, submissionsResult, bimbinganResult, dosenResult, supervisorHistoryResult] =
         await Promise.allSettled([
         fetchWithAuth("/api/mahasiswa/profile"),
         fetchWithAuth("/api/jalur/status"),
         fetchWithAuth("/api/jalur/eligibility"),
+        fetchWithAuth("/api/jalur/change/eligibility"),
         fetchWithAuth("/api/submissions"),
         fetchWithAuth("/api/mahasiswa/bimbingan?summary_only=1"),
         fetchWithAuth("/api/pendaftaran/dosen"),
@@ -1477,6 +1581,12 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       } else {
         setJalurEligibility(null);
         issues.push(jalurEligibilityResult.reason?.message || "Gagal memuat eligibility jalur.");
+      }
+
+      if (changeEligibilityResult.status === "fulfilled") {
+        setChangeEligibility(changeEligibilityResult.value);
+      } else {
+        setChangeEligibility(null);
       }
 
       if (submissionsResult.status === "fulfilled") {
@@ -1784,6 +1894,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         body: JSON.stringify({
           alasan_ulang: alasan,
           pesan_ke_dosen_pembimbing: pesan,
+          target_track: form?.target_track || null,
         }),
       });
 
@@ -1843,7 +1954,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         return;
       }
 
-      setUlangAlihSuccess(data?.message || "Pendaftaran Ulang Penelitian berhasil.");
+      setUlangAlihSuccess(data?.message || "Pendaftaran ulang/alih berhasil.");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");
     } catch (requestError) {
@@ -2016,6 +2127,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 profile={profile}
                 jalurStatus={jalurStatus}
                 jalurEligibility={jalurEligibility}
+                changeEligibility={changeEligibility}
                 dosenOptions={Array.isArray(dosenOptions) ? dosenOptions : []}
                 onSubmitPamit={handleSubmitPamitUlang}
                 onRegisterUlang={handleRegisterUlangPenelitian}

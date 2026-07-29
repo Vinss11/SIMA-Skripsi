@@ -53,6 +53,24 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pendaftaran_penjaluran_id",
         as: "penetapanPembimbings",
       });
+
+      PendaftaranPenjaluran.hasMany(models.RiwayatWorkflowPenjaluran, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "workflowHistory",
+      });
+
+      PendaftaranPenjaluran.belongsTo(models.PendaftaranPenjaluran, {
+        foreignKey: "pendaftaran_asal_id",
+        as: "pendaftaranAsal",
+      });
+      PendaftaranPenjaluran.hasMany(models.PendaftaranPenjaluran, {
+        foreignKey: "pendaftaran_asal_id",
+        as: "siklusBerikutnya",
+      });
+      PendaftaranPenjaluran.hasMany(models.BimbinganSkripsi, {
+        foreignKey: "pendaftaran_penjaluran_id",
+        as: "bimbinganSiklus",
+      });
     }
   }
 
@@ -66,6 +84,10 @@ module.exports = (sequelize, DataTypes) => {
       mahasiswa_id: {
         type: DataTypes.INTEGER,
         allowNull: false,
+      },
+      pendaftaran_asal_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
       },
       periode_penjaluran_id: {
         type: DataTypes.INTEGER,

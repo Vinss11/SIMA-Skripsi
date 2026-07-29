@@ -3107,7 +3107,11 @@ exports.getPamitMahasiswa = async (req, res) => {
     }
 
     const where = {
-      mahasiswa_id: mahasiswaIds,
+      [Op.or]: [
+        { mahasiswa_id: mahasiswaIds },
+        { reviewer_p1_id: dosen_id },
+        { metadata: { reviewer_p2_id: dosen_id } },
+      ],
     };
 
     if (status) {
@@ -3142,7 +3146,8 @@ exports.getPamitMahasiswa = async (req, res) => {
       success: true,
       data: pamits.map((pamit) => {
         const item = pamit.toJSON ? pamit.toJSON() : pamit;
-        const canReview = Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
+        const canReview = Number(item.reviewer_p1_id) === Number(dosen_id)
+          || Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
         return {
           ...item,
           can_review: canReview,
@@ -3206,14 +3211,17 @@ exports.getPamitMahasiswaDetail = async (req, res) => {
     }
 
     // Penetapan aktif adalah sumber akses, termasuk untuk Pembimbing 2.
-    if (!(await isActiveSupervisor(dosen_id, pamit.mahasiswa.id))) {
+    const isLockedReviewer = Number(pamit.reviewer_p1_id) === Number(dosen_id)
+      || Number(pamit.metadata?.reviewer_p2_id) === Number(dosen_id);
+    if (!isLockedReviewer && !(await isActiveSupervisor(dosen_id, pamit.mahasiswa.id))) {
       return res.status(403).json({
         success: false,
         message: "Anda tidak memiliki akses untuk melihat pamit ini",
       });
     }
     const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
-    const canReview = Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) === 1;
+    const canReview = Number(pamit.reviewer_p1_id) === Number(dosen_id)
+      || Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) === 1;
 
     res.json({
       success: true,

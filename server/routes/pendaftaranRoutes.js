@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const pendaftaranController = require("../controllers/pendaftaranController");
+const changeController = require("../controllers/penjaluranChangeController");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
 // Public endpoint untuk mahasiswa yang belum memiliki akun
@@ -14,7 +15,13 @@ router.post(
   "/ulang-alih",
   authenticateToken,
   authorizeRole("mahasiswa"),
-  pendaftaranController.submitPendaftaranUlangAlih
+  changeController.createRegistration
+);
+router.post(
+  "/change",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  changeController.createRegistration
 );
 
 module.exports = router;

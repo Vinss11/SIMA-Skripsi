@@ -407,6 +407,7 @@ async function replaceSupervisorAssignment({
   tanggalMulai = new Date(),
   transaction = null,
   notificationCreator = createSupervisorAssignmentNotifications,
+  preserveRequestedSource = false,
 }) {
   return withTransaction(transaction, async (t) => {
     const dosenIds = normalizePositiveIds(dosenPembimbingIds);
@@ -425,7 +426,9 @@ async function replaceSupervisorAssignment({
       && currentPeriodId === newPeriodId;
     if (current.penetapan && sameComposition && (sameRegistration || samePeriod)) return current;
 
-    const resolvedSource = sumberData === "legacy_backfill"
+    const resolvedSource = preserveRequestedSource
+      ? sumberData
+      : sumberData === "legacy_backfill"
       ? "legacy_backfill"
       : !current.penetapan
       ? "penjaluran"

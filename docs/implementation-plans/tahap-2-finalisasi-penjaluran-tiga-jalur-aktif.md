@@ -1,5 +1,7 @@
 # Rancangan Pengerjaan Tahap 2 — Finalisasi Penjaluran Tiga Jalur Aktif
 
+> **Status implementasi 2026-07-30:** koreksi kontrak workflow, invariant finalizer, siklus ulang/alih, invariant kelompok, notifikasi, histori otoritatif, migration/backfill, dan integration test controller telah diterapkan. Catatan gap lama pada bagian 7 dipertahankan sebagai arsip baseline.
+
 ## 1. Tujuan
 
 Menstabilkan penjaluran baru untuk Penelitian, Magang, dan Perintisan Bisnis mulai dari pendaftaran pada periode aktif, pengiriman form, review penanggung jawab jalur, keputusan final Sekretaris Prodi, sampai terbentuknya penetapan P1/P2 aktif yang langsung membuka bimbingan tanpa surat tugas.
@@ -258,7 +260,23 @@ Implementasi saat ini sudah memenuhi fondasi bisnis berikut dan perilaku ini waj
 - model pendaftaran, pengajuan Penelitian, kelompok, anggota kelompok, penetapan, dan anggota penetapan sudah tersedia;
 - unique active assignment per mahasiswa dan deduplication key pemberitahuan sudah tersedia.
 
-### 7.2 Lima koreksi prioritas
+### 7.2 Status koreksi implementasi 2026-07-30
+
+1. Kamus `workflow_stage` sudah mengikuti kontrak bagian 5.3: `draft`, `under_path_review`, `waiting_final_decision`, `approved`, `rejected`, `completed`, dan `cancelled`.
+2. Finalizer mengunci ulang sumber keputusan dan pendaftaran, lalu memvalidasi jalur akademik, approval pendaftaran, tahap workflow, serta konsistensi sumber sebelum membuat penetapan.
+3. Pendaftaran `baru`, `ulang`, dan `alih` diperlakukan sebagai siklus baru dengan `sumber_data = penjaluran` dan `semester_penjaluran_ke = 1`.
+4. Finalisasi Perintisan memvalidasi tepat tiga anggota, satu ketua dan dua anggota, komposisi Hustler/Hipster/Hacker, keunikan mahasiswa/pendaftaran, periode, jalur, approval, status kelompok, dan konsistensi workflow dari tabel yang dikunci.
+5. Histori Magang dan Perintisan tersimpan pada `RiwayatWorkflowPenjalurans`. JSON hanya menjadi snapshot/fallback dan timeline lama dibackfill dengan deduplication key.
+6. Notifikasi workflow tersedia untuk form terkirim, antrean review, keputusan penanggung jawab, antrean final, penolakan final, dan penetapan pembimbing.
+7. Integration test controller mencakup final Penelitian, Magang, dan Perintisan, salah program, salah cluster, status dosen berubah, kuota penuh, request paralel, idempotensi, histori, dan notifikasi.
+
+Pengujian tersebut memakai controller dengan request/response recorder dan database nyata. Pengujian black-box melalui server HTTP lengkap beserta seluruh middleware tetap dapat ditambahkan ketika proyek menyediakan HTTP test harness.
+
+### 7.2.1 Baseline sebelum koreksi (arsip)
+
+Bagian berikut mempertahankan catatan audit awal sebagai histori rancangan; seluruh butir prioritasnya telah ditutup oleh implementasi pada bagian 7.2.
+
+#### Sumber anggota final Perintisan belum aman
 
 #### 7.2.1 Sumber anggota final Perintisan belum aman
 
@@ -305,7 +323,9 @@ Kontrak yang dituju:
 
 Status mentah masih berbeda antarjalur dan frontend masih perlu memahami detail enum internal. Seluruh endpoint list, detail, aksi, dan status mahasiswa harus mengembalikan `workflow_stage` serta `raw_workflow_status` sesuai bagian 5.3.
 
-### 7.3 Gap lain yang harus ditutup
+### 7.3 Gap baseline sebelum koreksi (arsip)
+
+Daftar berikut adalah temuan sebelum implementasi koreksi dan tidak lagi menjadi status source terkini.
 
 1. Endpoint pendaftaran umum masih menerima `ulang`/`alih`; scope tersebut harus dipindahkan penuh ke flow authenticated Tahap 3.
 2. Pendaftaran baru masih menerima dan menyimpan pilihan dosen pembimbing TA dari mahasiswa, padahal P1/P2 diputuskan Sekprodi saat final.

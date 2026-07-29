@@ -21,6 +21,12 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "pamit_ulang_id",
         as: "pengajuanBaru",
       });
+      PamitUlang.belongsTo(models.PeriodePenjaluran, { foreignKey: "periode_tujuan_id", as: "periodeTujuan" });
+      PamitUlang.belongsTo(models.PendaftaranPenjaluran, { foreignKey: "pendaftaran_lama_id", as: "pendaftaranLama" });
+      PamitUlang.belongsTo(models.PendaftaranPenjaluran, { foreignKey: "pendaftaran_baru_id", as: "pendaftaranBaru" });
+      PamitUlang.belongsTo(models.PenetapanPembimbing, { foreignKey: "penetapan_lama_id", as: "penetapanLama" });
+      PamitUlang.belongsTo(models.Dosen, { foreignKey: "reviewer_p1_id", as: "reviewerP1" });
+      PamitUlang.hasMany(models.RiwayatPamitPenjaluran, { foreignKey: "pamit_ulang_id", as: "riwayatStatus" });
     }
   }
 
@@ -41,12 +47,31 @@ module.exports = (sequelize, DataTypes) => {
       },
       pengajuan_sebelumnya_id: {
         type: DataTypes.INTEGER,
-        allowNull: false,
+        allowNull: true,
         references: {
           model: "Pengajuans",
           key: "id",
         },
       },
+      periode_tujuan_id: DataTypes.INTEGER,
+      pendaftaran_lama_id: DataTypes.INTEGER,
+      pendaftaran_baru_id: DataTypes.INTEGER,
+      penetapan_lama_id: DataTypes.INTEGER,
+      reviewer_p1_id: DataTypes.INTEGER,
+      jenis_perubahan: DataTypes.STRING(16),
+      jalur_asal: DataTypes.STRING(40),
+      jalur_tujuan: DataTypes.STRING(40),
+      status: {
+        type: DataTypes.ENUM("pending", "approved", "rejected", "consumed", "cancelled"),
+        allowNull: false,
+        defaultValue: "pending",
+      },
+      submitted_at: DataTypes.DATE,
+      decided_at: DataTypes.DATE,
+      consumed_at: DataTypes.DATE,
+      cancellation_reason: DataTypes.TEXT,
+      idempotency_key: DataTypes.STRING(255),
+      metadata: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
       pengajuan_baru_id: {
         type: DataTypes.INTEGER,
         allowNull: true,

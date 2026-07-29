@@ -14,14 +14,21 @@ const {
   KelompokPerintisanBisnis,
   AnggotaKelompokPerintisan,
   Dosen,
+  DosenKlaster,
+  Klaster,
+  Pengajuan,
   DosenKetersediaanPeriode,
   PenetapanPembimbing,
   PenetapanPembimbingDosen,
   Notifikasi,
+  RiwayatWorkflowPenjaluran,
 } = require("../models");
 const pendaftaranController = require("../controllers/pendaftaranController");
+const jalurController = require("../controllers/jalurController");
+const sekretarisController = require("../controllers/sekretarisController");
 const {
   resolveAuthoritativeAssignmentTargets,
+  resolveFinalAssignmentMetadata,
   finalizePenjaluranDecision,
 } = require("../services/penjaluranFinalizationService");
 const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
@@ -42,6 +49,9 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
   const mahasiswaIds = [];
   const registrationIds = [];
   const dosenIds = [];
+  const submissionIds = [];
+  const createdClusterIds = [];
+  const additionalPeriodIds = [];
   let periodId = null;
   let groupId = null;
 
@@ -64,12 +74,16 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
       await PenetapanPembimbingDosen.destroy({ where: { penetapan_pembimbing_id: assignments.map((item) => item.id) }, force: true });
       await PenetapanPembimbing.destroy({ where: { id: assignments.map((item) => item.id) }, force: true });
     }
+    if (submissionIds.length) await Pengajuan.destroy({ where: { id: submissionIds }, force: true });
+    if (dosenIds.length) await DosenKlaster.destroy({ where: { dosen_id: dosenIds }, force: true });
     if (groupId) await AnggotaKelompokPerintisan.destroy({ where: { kelompok_id: groupId }, force: true });
     if (groupId) await KelompokPerintisanBisnis.destroy({ where: { id: groupId }, force: true });
     if (registrationIds.length) await PendaftaranPenjaluran.destroy({ where: { id: registrationIds }, force: true });
     if (dosenIds.length) await DosenKetersediaanPeriode.destroy({ where: { dosen_id: dosenIds }, force: true });
     if (mahasiswaIds.length) await Mahasiswa.destroy({ where: { id: mahasiswaIds }, force: true });
     if (dosenIds.length) await Dosen.destroy({ where: { id: dosenIds }, force: true });
+    if (createdClusterIds.length) await Klaster.destroy({ where: { id: createdClusterIds }, force: true });
+    if (additionalPeriodIds.length) await PeriodePenjaluran.destroy({ where: { id: additionalPeriodIds }, force: true });
     if (periodId) await PeriodePenjaluran.destroy({ where: { id: periodId }, force: true });
     await sequelize.close();
   });
@@ -101,9 +115,12 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
       actor: "sekretaris_prodi",
       allowedActions: ["approve", "reject"],
     });
-    assert.equal(result.workflow_stage, "final_review_sekprodi");
+    assert.equal(result.workflow_stage, "waiting_final_decision");
     assert.equal(result.raw_workflow_status, "review_sekprodi");
     assert.deepEqual(result.allowed_actions, ["approve", "reject"]);
+    assert.equal(normalizeWorkflow({ status: "draft" }).workflow_stage, "draft");
+    assert.equal(normalizeWorkflow({ status: "submitted" }).workflow_stage, "under_path_review");
+    assert.equal(normalizeWorkflow({ status: "approved" }).workflow_stage, "approved");
   });
 
   await t.test("anggota Perintisan final selalu dibaca dari tabel otoritatif, bukan snapshot JSON", async () => {
@@ -176,6 +193,82 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
         new Set(students.map((item) => Number(item.id)))
       );
     });
+
+    await registrations[1].update({ form_lanjutan_status: "submitted" });
+    await assert.rejects(
+      sequelize.transaction((transaction) => resolveAuthoritativeAssignmentTargets({
+        registration: registrations[0],
+        track: "perintisan_bisnis",
+        transaction,
+      })),
+      (error) => error?.code === "GROUP_WORKFLOW_MISMATCH"
+    );
+    await registrations[1].update({ form_lanjutan_status: "review_sekprodi" });
+
+    await group.update({ ketua_mahasiswa_id: students[1].id });
+    await assert.rejects(
+      sequelize.transaction((transaction) => resolveAuthoritativeAssignmentTargets({
+        registration: registrations[0],
+        track: "perintisan_bisnis",
+        transaction,
+      })),
+      (error) => error?.code === "INVALID_GROUP_COMPOSITION"
+    );
+    await group.update({ ketua_mahasiswa_id: students[0].id });
+
+    const groupSupervisor = await Dosen.create({
+      kode_dosen: `T2G${suffix}`,
+      nik: `7${suffix}`.slice(0, 9),
+      nama: "Dosen Kelompok Tahap 2",
+      email: `dosen.kelompok.${suffix}@test.local`,
+      password: "test-password",
+      kuota_bimbingan: 10,
+      status_keaktifan: "active",
+      account_is_active: true,
+      continue_existing_supervision: true,
+    }, { hooks: false });
+    dosenIds.push(groupSupervisor.id);
+    await DosenKetersediaanPeriode.create({
+      dosen_id: groupSupervisor.id,
+      periode_penjaluran_id: period.id,
+      tersedia_membimbing: true,
+      configuration_status: "ready",
+    });
+    const finalResponse = responseRecorder();
+    await jalurController.approveNonPenelitianReviewBySekretaris({
+      params: { id: String(registrations[0].id) },
+      body: { keterangan: "Kelompok lengkap dan layak", dosen_pembimbing_id: groupSupervisor.id },
+      user: { id: 900003, role: "sekretaris_prodi", program_kuliah: "reguler" },
+    }, finalResponse);
+    assert.equal(finalResponse.statusCode, 200, finalResponse.payload?.message);
+    assert.equal(await PenetapanPembimbing.count({
+      where: { mahasiswa_id: students.map((item) => item.id), status: "active" },
+    }), 3);
+    await group.reload();
+    assert.equal(group.status, "approved");
+  });
+
+  await t.test("finalizer menolak jalur pendaftaran dan status approval yang tidak sesuai", async () => {
+    const registration = await PendaftaranPenjaluran.findByPk(registrationIds[0]);
+    await assert.rejects(
+      sequelize.transaction((transaction) => resolveAuthoritativeAssignmentTargets({
+        registration,
+        track: "magang",
+        transaction,
+      })),
+      (error) => error?.code === "REGISTRATION_TRACK_MISMATCH"
+    );
+
+    await registration.update({ status: "submitted" });
+    await assert.rejects(
+      sequelize.transaction((transaction) => resolveAuthoritativeAssignmentTargets({
+        registration,
+        track: "perintisan_bisnis",
+        transaction,
+      })),
+      (error) => error?.code === "REGISTRATION_NOT_APPROVED"
+    );
+    await registration.update({ status: "approved" });
   });
 
   await t.test("finalisasi identik idempotent dan payload berbeda menghasilkan conflict", async () => {
@@ -233,6 +326,13 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     await student.reload();
     assert.equal(student.status_jalur_saat_ini, "magang");
     assert.equal(await PenetapanPembimbing.count({ where: { mahasiswa_id: student.id, status: "active" } }), 1);
+    const firstAssignment = await PenetapanPembimbing.findOne({
+      where: { mahasiswa_id: student.id, status: "active" },
+    });
+    assert.equal(firstAssignment.sumber_data, "penjaluran");
+    assert.equal(firstAssignment.semester_penjaluran_ke, 1);
+
+    await registration.update({ form_lanjutan_status: "approved" });
 
     const replay = await sequelize.transaction((transaction) => finalizePenjaluranDecision({
       registration,
@@ -254,5 +354,273 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
       })),
       (error) => error?.code === "IDEMPOTENCY_CONFLICT"
     );
+
+    const nextPeriod = await PeriodePenjaluran.create({
+      tahun_akademik: "2197/2198",
+      semester: "genap",
+      label_periode: `Siklus Ulang Tahap 2 ${suffix}`,
+      tanggal_mulai: new Date("2198-02-01T00:00:00.000Z"),
+      tanggal_selesai: new Date("2198-02-28T00:00:00.000Z"),
+      status: "closed",
+      is_active: false,
+    });
+    additionalPeriodIds.push(nextPeriod.id);
+    await DosenKetersediaanPeriode.create({
+      dosen_id: supervisors[0].id,
+      periode_penjaluran_id: nextPeriod.id,
+      tersedia_membimbing: true,
+      configuration_status: "ready",
+    });
+    const repeatRegistration = await PendaftaranPenjaluran.create({
+      mahasiswa_id: student.id,
+      periode_penjaluran_id: nextPeriod.id,
+      jalur: "ulang",
+      program_kuliah: "reguler",
+      semester_mahasiswa: 8,
+      status: "approved",
+      jenis_jalur_diambil: "magang",
+      penjaluran_sebelumnya: "magang",
+      form_lanjutan_status: "review_sekprodi",
+    });
+    registrationIds.push(repeatRegistration.id);
+    await sequelize.transaction((transaction) => finalizePenjaluranDecision({
+      registration: repeatRegistration,
+      track: "magang",
+      supervisorIds: [supervisors[0].id],
+      currentDecisionStatus: "review_sekprodi",
+      transaction,
+    }));
+    const repeatAssignment = await PenetapanPembimbing.findOne({
+      where: { mahasiswa_id: student.id, status: "active" },
+    });
+    assert.equal(repeatAssignment.pendaftaran_penjaluran_id, repeatRegistration.id);
+    assert.equal(repeatAssignment.sumber_data, "penjaluran");
+    assert.equal(repeatAssignment.semester_penjaluran_ke, 1);
+  });
+
+  await t.test("metadata penetapan memperlakukan baru, ulang, dan alih sebagai awal siklus", () => {
+    for (const jalur of ["baru", "ulang", "alih"]) {
+      assert.deepEqual(resolveFinalAssignmentMetadata({ jalur }), {
+        sumberData: "penjaluran",
+        semesterPenjaluranKe: 1,
+      });
+    }
+  });
+
+  await t.test("endpoint final Penelitian menolak cluster salah lalu mengaktifkan penetapan yang valid", async () => {
+    const student = await Mahasiswa.create({
+      nim: `T2P${suffix}`,
+      nama: "Mahasiswa Penelitian Tahap 2",
+      email: `mahasiswa.penelitian.${suffix}@test.local`,
+      password: "test-password",
+      status_jalur_saat_ini: "sedang_mengajukan",
+    }, { hooks: false });
+    mahasiswaIds.push(student.id);
+    const registration = await PendaftaranPenjaluran.create({
+      mahasiswa_id: student.id,
+      periode_penjaluran_id: periodId,
+      jalur: "baru",
+      program_kuliah: "reguler",
+      semester_mahasiswa: 7,
+      status: "approved",
+      jenis_jalur_diambil: "penelitian",
+      form_lanjutan_status: "draft",
+    });
+    registrationIds.push(registration.id);
+    const supervisor = await Dosen.create({
+      kode_dosen: `T2P${suffix}`,
+      nik: `6${suffix}`.slice(0, 9),
+      nama: "Dosen Penelitian Tahap 2",
+      email: `dosen.penelitian.${suffix}@test.local`,
+      password: "test-password",
+      kuota_bimbingan: 10,
+      status_keaktifan: "active",
+      account_is_active: true,
+      continue_existing_supervision: true,
+    }, { hooks: false });
+    dosenIds.push(supervisor.id);
+    await DosenKetersediaanPeriode.create({
+      dosen_id: supervisor.id,
+      periode_penjaluran_id: periodId,
+      tersedia_membimbing: true,
+      configuration_status: "ready",
+    });
+    const submission = await Pengajuan.create({
+      mahasiswa_id: student.id,
+      pendaftaran_penjaluran_id: registration.id,
+      jenis_jalur: "baru",
+      tipe_pengajuan: "judul_mandiri",
+      judul_mandiri: "Riset sistem informasi terintegrasi",
+      deskripsi_mandiri: "Penelitian integrasi workflow akademik.",
+      keyword_mandiri: "workflow, akademik",
+      cluster_mandiri: "ITSC",
+      prospective_supervisor_id: supervisor.id,
+      is_approved_by_supervisor: true,
+      status: "menunggu_approval_sekprodi",
+    });
+    submissionIds.push(submission.id);
+    const makeRequest = () => ({
+      params: { id: String(submission.id) },
+      body: { keterangan: "Layak difinalisasi", dosen_pembimbing_1_id: supervisor.id },
+      user: { id: 900004, role: "sekretaris_prodi", program_kuliah: "reguler" },
+    });
+    const crossProgramResponse = responseRecorder();
+    await sekretarisController.approvePenelitianFinal({
+      ...makeRequest(),
+      user: { id: 900005, role: "sekretaris_prodi", program_kuliah: "internasional" },
+    }, crossProgramResponse);
+    assert.equal(crossProgramResponse.statusCode, 404);
+    const wrongClusterResponse = responseRecorder();
+    await sekretarisController.approvePenelitianFinal(makeRequest(), wrongClusterResponse);
+    assert.equal(wrongClusterResponse.statusCode, 409);
+    assert.equal(wrongClusterResponse.payload?.code, "SUPERVISOR_CLUSTER_MISMATCH");
+    assert.equal(await PenetapanPembimbing.count({ where: { mahasiswa_id: student.id } }), 0);
+
+    let cluster = await Klaster.findOne({ where: { kode: "ITSC" } });
+    if (!cluster) {
+      cluster = await Klaster.create({ kode: "ITSC", nama: "Informatika Teori & Sistem Cerdas" });
+      createdClusterIds.push(cluster.id);
+    }
+    await DosenKlaster.create({ dosen_id: supervisor.id, klaster_id: cluster.id });
+    const successResponse = responseRecorder();
+    await sekretarisController.approvePenelitianFinal(makeRequest(), successResponse);
+    assert.equal(successResponse.statusCode, 200, successResponse.payload?.message);
+    await submission.reload();
+    assert.equal(submission.status, "approved");
+    assert.equal(await PenetapanPembimbing.count({ where: { mahasiswa_id: student.id, status: "active" } }), 1);
+  });
+
+  await t.test("endpoint final Magang idempotent terhadap request paralel dan membuat satu penetapan", async () => {
+    const student = await Mahasiswa.create({
+      nim: `T2E${suffix}`,
+      nama: "Mahasiswa Endpoint Magang Tahap 2",
+      email: `mahasiswa.endpoint.magang.${suffix}@test.local`,
+      password: "test-password",
+      status_jalur_saat_ini: "sedang_mengajukan",
+    }, { hooks: false });
+    mahasiswaIds.push(student.id);
+    const registration = await PendaftaranPenjaluran.create({
+      mahasiswa_id: student.id,
+      periode_penjaluran_id: periodId,
+      jalur: "baru",
+      program_kuliah: "reguler",
+      semester_mahasiswa: 7,
+      status: "approved",
+      jenis_jalur_diambil: "magang",
+      form_lanjutan_status: "review_sekprodi",
+      form_lanjutan_payload: {
+        jalur: "magang",
+        workflow_status: "review_sekprodi",
+        workflow_timeline: [],
+      },
+    });
+    registrationIds.push(registration.id);
+    const supervisor = await Dosen.create({
+      kode_dosen: `T2E${suffix}`,
+      nik: `8${suffix}`.slice(0, 9),
+      nama: "Dosen Endpoint Magang",
+      email: `dosen.endpoint.magang.${suffix}@test.local`,
+      password: "test-password",
+      kuota_bimbingan: 10,
+      status_keaktifan: "active",
+      account_is_active: true,
+      continue_existing_supervision: true,
+    }, { hooks: false });
+    dosenIds.push(supervisor.id);
+    await DosenKetersediaanPeriode.create({
+      dosen_id: supervisor.id,
+      periode_penjaluran_id: periodId,
+      tersedia_membimbing: true,
+      configuration_status: "ready",
+    });
+
+    const makeRequest = () => ({
+      params: { id: String(registration.id) },
+      body: { keterangan: "Disetujui melalui pengujian endpoint", dosen_pembimbing_id: supervisor.id },
+      user: { id: 900001, role: "sekretaris_prodi", program_kuliah: "reguler" },
+    });
+    const firstResponse = responseRecorder();
+    const secondResponse = responseRecorder();
+    await supervisor.update({ status_keaktifan: "study_leave" });
+    const staleModalResponse = responseRecorder();
+    await jalurController.approveNonPenelitianReviewBySekretaris(makeRequest(), staleModalResponse);
+    assert.equal(staleModalResponse.statusCode, 409);
+    assert.equal(staleModalResponse.payload?.code, "SUPERVISOR_NOT_ELIGIBLE");
+    assert.equal(await PenetapanPembimbing.count({ where: { mahasiswa_id: student.id } }), 0);
+    await supervisor.update({ status_keaktifan: "active", kuota_bimbingan: 0 });
+    const fullQuotaResponse = responseRecorder();
+    await jalurController.approveNonPenelitianReviewBySekretaris(makeRequest(), fullQuotaResponse);
+    assert.equal(fullQuotaResponse.statusCode, 409);
+    assert.equal(fullQuotaResponse.payload?.code, "SUPERVISOR_NOT_ELIGIBLE");
+    await supervisor.update({ kuota_bimbingan: 10 });
+    await Promise.all([
+      jalurController.approveNonPenelitianReviewBySekretaris(makeRequest(), firstResponse),
+      jalurController.approveNonPenelitianReviewBySekretaris(makeRequest(), secondResponse),
+    ]);
+
+    assert.equal(firstResponse.statusCode, 200, firstResponse.payload?.message);
+    assert.equal(secondResponse.statusCode, 200, secondResponse.payload?.message);
+    assert.equal([firstResponse.payload?.replayed, secondResponse.payload?.replayed].filter(Boolean).length, 1);
+    await registration.reload();
+    assert.equal(registration.form_lanjutan_status, "approved");
+    const assignments = await PenetapanPembimbing.findAll({ where: { mahasiswa_id: student.id } });
+    assert.equal(assignments.length, 1);
+    assert.equal(assignments[0].status, "active");
+    assert.equal(assignments[0].sumber_data, "penjaluran");
+    assert.equal(assignments[0].semester_penjaluran_ke, 1);
+    assert.equal(await Notifikasi.count({
+      where: { recipient_type: "mahasiswa", recipient_id: student.id },
+    }), 1);
+    const workflowHistory = await RiwayatWorkflowPenjaluran.findAll({
+      where: { pendaftaran_penjaluran_id: registration.id },
+    });
+    assert.equal(workflowHistory.length, 1);
+    assert.equal(workflowHistory[0].event_type, "final_decision");
+    assert.equal(workflowHistory[0].workflow_stage, "approved");
+  });
+
+  await t.test("penolakan final nonpenelitian mencatat histori dan notifikasi tepat satu kali", async () => {
+    const student = await Mahasiswa.create({
+      nim: `T2R${suffix}`,
+      nama: "Mahasiswa Penolakan Tahap 2",
+      email: `mahasiswa.penolakan.${suffix}@test.local`,
+      password: "test-password",
+      status_jalur_saat_ini: "sedang_mengajukan",
+    }, { hooks: false });
+    mahasiswaIds.push(student.id);
+    const registration = await PendaftaranPenjaluran.create({
+      mahasiswa_id: student.id,
+      periode_penjaluran_id: periodId,
+      jalur: "baru",
+      program_kuliah: "reguler",
+      semester_mahasiswa: 7,
+      status: "approved",
+      jenis_jalur_diambil: "magang",
+      form_lanjutan_status: "review_sekprodi",
+      form_lanjutan_payload: { jalur: "magang", workflow_status: "review_sekprodi", workflow_timeline: [] },
+    });
+    registrationIds.push(registration.id);
+    const request = {
+      params: { id: String(registration.id) },
+      body: { keterangan: "Dokumen magang belum memenuhi ketentuan" },
+      user: { id: 900002, role: "sekretaris_prodi", program_kuliah: "reguler" },
+    };
+    const firstResponse = responseRecorder();
+    await jalurController.rejectNonPenelitianReviewBySekretaris(request, firstResponse);
+    assert.equal(firstResponse.statusCode, 200, firstResponse.payload?.message);
+    const replayResponse = responseRecorder();
+    await jalurController.rejectNonPenelitianReviewBySekretaris(request, replayResponse);
+    assert.equal(replayResponse.statusCode, 200, replayResponse.payload?.message);
+    assert.equal(replayResponse.payload?.replayed, true);
+    assert.equal(await RiwayatWorkflowPenjaluran.count({
+      where: { pendaftaran_penjaluran_id: registration.id, event_type: "final_decision" },
+    }), 1);
+    assert.equal(await Notifikasi.count({
+      where: {
+        recipient_type: "mahasiswa",
+        recipient_id: student.id,
+        type: "penjaluran_final_rejected_student",
+      },
+    }), 1);
   });
 });

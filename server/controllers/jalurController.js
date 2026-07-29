@@ -14,6 +14,7 @@ const {
   KelompokPerintisanBisnis,
   AnggotaKelompokPerintisan,
   DosenKetersediaanPeriode,
+  RiwayatWorkflowPenjaluran,
   sequelize,
 } = require("../models");
 const fs = require("fs");
@@ -39,7 +40,13 @@ const {
   resolveAuthoritativeAssignmentTargets,
   finalizePenjaluranDecision,
 } = require("../services/penjaluranFinalizationService");
-const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
+const {
+  normalizeWorkflow,
+  recordWorkflowTransition,
+  serializeWorkflowHistory,
+} = require("../services/penjaluranWorkflowService");
+const { createSystemNotification } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -1174,6 +1181,7 @@ async function updatePerintisanGroupWorkflow({
     registration: sourceRow,
     track: "perintisan_bisnis",
     transaction,
+    validateFinalReadiness: false,
   });
   for (const row of rows) {
     const currentPayload = toObjectPayload(row.form_lanjutan_payload);
@@ -1247,6 +1255,7 @@ function toNonPenelitianReviewResponse(item) {
   const assignedPengampu = resolveNonPenelitianPengampuByJalur(item.periode, jalur);
 
   const rawStatus = payload.workflow_status || item.form_lanjutan_status;
+  const authoritativeTimeline = serializeWorkflowHistory(item.workflowHistory || []);
   return {
     id: item.id,
     program_kuliah: item.program_kuliah,
@@ -1282,7 +1291,7 @@ function toNonPenelitianReviewResponse(item) {
     },
     ...normalizeWorkflow({
       status: rawStatus,
-      timeline: payload.workflow_timeline,
+      timeline: authoritativeTimeline.length > 0 ? authoritativeTimeline : payload.workflow_timeline,
       actor: rawStatus === "review_sekprodi" ? "sekretaris_prodi" : assignedPengampu.role,
       allowedActions: ["submitted", "review_dosen_magang", "review_sekprodi"].includes(rawStatus)
         ? ["approve", "reject"]
@@ -1362,6 +1371,13 @@ async function getNonPenelitianSubmissionForReview(id, transaction, lock = false
           "pengawas_perintisan_bisnis_dosen_id",
         ],
         required: true,
+      },
+      {
+        model: RiwayatWorkflowPenjaluran,
+        as: "workflowHistory",
+        required: false,
+        separate: true,
+        order: [["occurred_at", "ASC"], ["id", "ASC"]],
       },
     ],
   });
@@ -2288,6 +2304,71 @@ exports.submitFormNonPenelitian = async (req, res) => {
       );
     }
 
+    const submittedTargets = requestedJalur === "perintisan_bisnis"
+      ? (payloadToSave.kelompok?.anggota || []).map((member) => ({
+          registrationId: Number(member.pendaftaran_id),
+          mahasiswaId: Number(member.mahasiswa_id),
+        })).filter((item) => item.registrationId && item.mahasiswaId)
+      : [{ registrationId: Number(gate.pendaftaranAktif.id), mahasiswaId: Number(mahasiswa.id) }];
+    const notificationPeriod = await PeriodePenjaluran.findByPk(gate.pendaftaranAktif.periode_penjaluran_id, {
+      attributes: ["pengawas_magang_dosen_id", "pengawas_pengabdian_dosen_id", "pengawas_perintisan_bisnis_dosen_id"],
+      transaction: t,
+    });
+    const pathReviewer = resolveNonPenelitianPengampuByJalur(notificationPeriod, requestedJalur);
+    for (const { registrationId, mahasiswaId } of submittedTargets) {
+      await recordWorkflowTransition({
+        registrationId,
+        track: requestedJalur,
+        status: "submitted",
+        eventType: "form_submitted",
+        actorType: "mahasiswa",
+        actorId: mahasiswa.id,
+        note: "Form penjaluran dikirim oleh mahasiswa.",
+        occurredAt: now,
+        deduplicationKey: `penjaluran:${registrationId}:form-submitted:${now.toISOString()}`,
+        transaction: t,
+      });
+      await recordWorkflowTransition({
+        registrationId,
+        track: requestedJalur,
+        status: workflowStatus,
+        eventType: "entered_path_review_queue",
+        actorType: "system",
+        note: requestedJalur === "magang"
+          ? "Masuk antrean Pengawas Magang."
+          : "Masuk antrean Pengampu Perintisan Bisnis.",
+        occurredAt: now,
+        deduplicationKey: `penjaluran:${registrationId}:path-review-queue:${now.toISOString()}`,
+        transaction: t,
+      });
+      await createSystemNotification({
+        recipientType: "mahasiswa",
+        recipientId: mahasiswaId,
+        type: NOTIFICATION_TYPES.PENJALURAN_FORM_SUBMITTED_STUDENT,
+        message: `Form ${requestedJalur.replace(/_/g, " ")} berhasil dikirim dan masuk proses review.`,
+        referenceType: "pendaftaran_penjaluran",
+        referenceId: registrationId,
+        actionKey: "student_path_status",
+        metadata: { jalur: requestedJalur, workflow_status: workflowStatus },
+        deduplicationKey: `penjaluran:${registrationId}:notification:form-submitted`,
+        transaction: t,
+      });
+      if (pathReviewer.dosen_id) {
+        await createSystemNotification({
+          recipientType: "dosen",
+          recipientId: pathReviewer.dosen_id,
+          type: NOTIFICATION_TYPES.PENJALURAN_PATH_REVIEW_LECTURER,
+          message: `Form ${requestedJalur.replace(/_/g, " ")} baru menunggu review Anda.`,
+          referenceType: "pendaftaran_penjaluran",
+          referenceId: registrationId,
+          actionKey: "lecturer_path_review",
+          metadata: { jalur: requestedJalur, mahasiswa_id: mahasiswaId },
+          deduplicationKey: `penjaluran:${registrationId}:notification:path-review`,
+          transaction: t,
+        });
+      }
+    }
+
     await t.commit();
 
     return res.status(201).json({
@@ -2562,6 +2643,65 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
       nextPayload,
       transaction: t,
     });
+    const historyTargets = await resolveAuthoritativeAssignmentTargets({
+      registration: row,
+      track: targetJalur,
+      transaction: t,
+      validateFinalReadiness: false,
+    });
+    for (const target of historyTargets) {
+      await recordWorkflowTransition({
+        registrationId: target.id,
+        track: targetJalur,
+        status: decision,
+        eventType: "path_review_decided",
+        actorType: config.actor,
+        actorId: dosenId,
+        note: note || (decision === "approved" ? config.defaultApproveNote : config.defaultRejectNote),
+        occurredAt: now,
+        deduplicationKey: `penjaluran:${target.id}:path-decision:${decision}:${now.toISOString()}`,
+        transaction: t,
+      });
+      await createSystemNotification({
+        recipientType: "mahasiswa",
+        recipientId: target.mahasiswa_id,
+        type: NOTIFICATION_TYPES.PENJALURAN_PATH_DECIDED_STUDENT,
+        message: decision === "approved"
+          ? "Penanggung jawab jalur menyetujui form Anda."
+          : `Penanggung jawab jalur menolak form Anda: ${note || config.defaultRejectNote}`,
+        referenceType: "pendaftaran_penjaluran",
+        referenceId: target.id,
+        actionKey: "student_path_status",
+        metadata: { jalur: targetJalur, decision },
+        deduplicationKey: `penjaluran:${target.id}:notification:path-decision:${decision}`,
+        transaction: t,
+      });
+      if (nextStatus === "review_sekprodi") {
+        await recordWorkflowTransition({
+          registrationId: target.id,
+          track: targetJalur,
+          status: nextStatus,
+          eventType: "entered_final_decision_queue",
+          actorType: "system",
+          note: "Masuk antrean keputusan final Sekretaris Prodi.",
+          occurredAt: now,
+          deduplicationKey: `penjaluran:${target.id}:final-decision-queue:${now.toISOString()}`,
+          transaction: t,
+        });
+        await createSystemNotification({
+          recipientType: "mahasiswa",
+          recipientId: target.mahasiswa_id,
+          type: NOTIFICATION_TYPES.PENJALURAN_FINAL_QUEUE_STUDENT,
+          message: "Form Anda masuk antrean keputusan final Sekretaris Prodi.",
+          referenceType: "pendaftaran_penjaluran",
+          referenceId: target.id,
+          actionKey: "student_path_status",
+          metadata: { jalur: targetJalur },
+          deduplicationKey: `penjaluran:${target.id}:notification:final-queue`,
+          transaction: t,
+        });
+      }
+    }
     await row.reload({ transaction: t });
 
     await t.commit();
@@ -3008,6 +3148,7 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     }
 
     let finalization = null;
+    let workflowTargets = null;
     if (decision === "approved") {
       finalization = await finalizePenjaluranDecision({
         registration: row,
@@ -3026,6 +3167,13 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
           data: toNonPenelitianReviewResponse(row),
         });
       }
+      workflowTargets = finalization.targets;
+    } else {
+      workflowTargets = await resolveAuthoritativeAssignmentTargets({
+        registration: row,
+        track: reviewable.selectedJalur,
+        transaction: t,
+      });
     }
 
     const now = new Date();
@@ -3081,6 +3229,34 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       nextPayload,
       transaction: t,
     });
+    for (const target of workflowTargets || [row]) {
+      await recordWorkflowTransition({
+        registrationId: target.id,
+        track: reviewable.selectedJalur,
+        status: decision,
+        eventType: "final_decision",
+        actorType: "sekretaris_prodi",
+        actorId: sekretarisId,
+        note: note || (decision === "approved" ? "Disetujui final." : "Ditolak final."),
+        occurredAt: now,
+        deduplicationKey: `penjaluran:${target.id}:final-decision:${decision}`,
+        transaction: t,
+      });
+      if (decision === "rejected") {
+        await createSystemNotification({
+          recipientType: "mahasiswa",
+          recipientId: target.mahasiswa_id,
+          type: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
+          message: `Keputusan final Sekretaris Prodi menolak form Anda: ${note}`,
+          referenceType: "pendaftaran_penjaluran",
+          referenceId: target.id,
+          actionKey: "student_path_status",
+          metadata: { jalur: reviewable.selectedJalur, decision },
+          deduplicationKey: `penjaluran:${target.id}:notification:final-rejected`,
+          transaction: t,
+        });
+      }
+    }
     await row.reload({ transaction: t });
 
     await t.commit();
