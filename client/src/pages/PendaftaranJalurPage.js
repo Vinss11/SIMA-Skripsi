@@ -8,21 +8,10 @@ const PENDAFTARAN_OPTIONS = [
     label: "Baru",
     description: "Pendaftaran pertama kali untuk menentukan jalur skripsi.",
   },
-  {
-    value: "ulang",
-    label: "Ulang",
-    description: "Mengajukan kembali jalur yang sama karena pengajuan sebelumnya belum dilanjutkan.",
-  },
-  {
-    value: "alih",
-    label: "Alih",
-    description: "Berpindah dari jalur sebelumnya ke jalur skripsi yang berbeda.",
-  },
 ];
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
-  { value: "pengabdian", label: "Pengabdian kepada Masyarakat" },
   { value: "perintisan_bisnis", label: "Perintisan Bisnis" },
   { value: "magang", label: "Magang" },
 ];
@@ -79,6 +68,7 @@ const buildMahasiswaEmailFromNim = (nim) =>
   nim && nim.length > 0 ? `${nim}@${MAHASISWA_EMAIL_DOMAIN}`.toLowerCase() : "";
 const INITIAL_FIELD_ERRORS = {
   nim: "",
+  account_password: "",
   nama: "",
   dosen_pembimbing_akademik_id: "",
   program_kuliah: "",
@@ -86,6 +76,7 @@ const INITIAL_FIELD_ERRORS = {
 };
 const INITIAL_TOUCHED_FIELDS = {
   nim: false,
+  account_password: false,
   nama: false,
   dosen_pembimbing_akademik_id: false,
   program_kuliah: false,
@@ -125,8 +116,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [formData, setFormData] = useState({
     email: "",
     nim: "",
+    account_password: "",
     nama: "",
     dosen_pembimbing_akademik_id: "",
+    dosen_pembimbing_akademik_nama: "",
     program_kuliah: "",
     pendaftaran: "baru",
     jenis_jalur_diambil: "",
@@ -197,13 +190,30 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         }
         if (data.data?.available) {
           setNimAvailability("available");
+          const master = data.data?.mahasiswa;
+          if (master) {
+            setFormData((prev) => ({
+              ...prev,
+              nama: master.nama || "",
+              email: master.email || buildMahasiswaEmailFromNim(nim),
+              dosen_pembimbing_akademik_id: master.dosen_pembimbing_akademik_id || "",
+              dosen_pembimbing_akademik_nama: master.dosen_pembimbing_akademik
+                ? formatDosenFullName(master.dosen_pembimbing_akademik.nama, master.dosen_pembimbing_akademik.gelar)
+                : "",
+            }));
+          }
           setFieldErrors((prev) => ({
             ...prev,
-            nim: prev.nim === "NIM sudah terdaftar." ? "" : prev.nim,
+            nim: "",
           }));
         } else {
           setNimAvailability("unavailable");
-          setFieldErrors((prev) => ({ ...prev, nim: "NIM sudah terdaftar." }));
+          setFieldErrors((prev) => ({
+            ...prev,
+            nim: data.data?.already_registered
+              ? "NIM sudah terdaftar pada periode aktif."
+              : "NIM belum tersedia pada master mahasiswa.",
+          }));
         }
       } catch (checkError) {
         if (checkError.name !== "AbortError") {
@@ -254,6 +264,21 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             throw new Error(data?.message || "Gagal memeriksa NIM.");
           }
           const isAvailable = Boolean(data.data?.available);
+          const master = data.data?.mahasiswa;
+          if (isAvailable && master) {
+            setFormData((prev) => ({
+              ...prev,
+              anggota_perintisan: prev.anggota_perintisan.map((anggota, memberIndex) =>
+                memberIndex === index ? {
+                  ...anggota,
+                  mahasiswa_id: master.id,
+                  nama: master.nama || "",
+                  dosen_pembimbing_akademik_id: master.dosen_pembimbing_akademik_id || "",
+                  mahasiswa: master,
+                } : anggota
+              ),
+            }));
+          }
           setAnggotaNimAvailability((prev) => {
             const next = [...prev];
             next[index] = isAvailable ? "available" : "unavailable";
@@ -263,7 +288,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             const next = [...prev];
             next[index] = {
               ...next[index],
-              nim: isAvailable ? "" : "NIM sudah terdaftar.",
+              nim: isAvailable
+                ? ""
+                : data.data?.already_registered
+                  ? "NIM sudah terdaftar pada periode aktif."
+                  : "NIM belum tersedia pada master mahasiswa.",
             };
             return next;
           });
@@ -468,24 +497,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       next[index] = [];
       return next;
     });
-  };
-
-  const clearDosenSearchField = (fieldName) => {
-    setDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: "" }));
-    setDebouncedDosenSearchQueryByField((prev) => ({ ...prev, [fieldName]: "" }));
-    setActiveDosenSearchField((prev) => (prev === fieldName ? "" : prev));
-  };
-
-  const handleDosenPembimbingTaModeChange = (mode) => {
-    setFormData((prev) => ({
-      ...prev,
-      dosen_pembimbing_ta_mode: mode,
-      dosen_pembimbing_ta_id: mode === "belum_dapat" ? "" : prev.dosen_pembimbing_ta_id,
-    }));
-    setFieldErrors((prev) => ({ ...prev, dosen_pembimbing_ta_id: "" }));
-    if (mode === "belum_dapat") {
-      clearDosenSearchField("dosen_pembimbing_ta_id");
-    }
   };
 
   const handleChange = (event) => {
@@ -900,8 +911,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setFormData({
       email: "",
       nim: "",
+      account_password: "",
       nama: "",
       dosen_pembimbing_akademik_id: "",
+      dosen_pembimbing_akademik_nama: "",
       program_kuliah: "",
       pendaftaran: "baru",
       jenis_jalur_diambil: "",
@@ -988,8 +1001,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const nim = formData.nim.trim();
     const nama = formData.nama.trim();
     const nimError =
-      nimAvailability === "unavailable" ? "NIM sudah terdaftar." : getNimValidationError(nim);
+      nimAvailability === "unavailable"
+        ? fieldErrors.nim || "NIM belum memenuhi syarat pendaftaran."
+        : getNimValidationError(nim);
     const namaError = getNamaValidationError(nama);
+    const passwordError = formData.account_password ? "" : "Password akun master wajib diisi.";
     const dpaError = formData.dosen_pembimbing_akademik_id
       ? ""
       : "Dosen Pembimbing Akademik wajib diisi.";
@@ -997,29 +1013,25 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setTouchedFields((prev) => ({
       ...prev,
       nim: true,
+      account_password: true,
       nama: true,
       dosen_pembimbing_akademik_id: true,
       program_kuliah: true,
     }));
     setFieldErrors({
       nim: nimError,
+      account_password: passwordError,
       nama: namaError,
       dosen_pembimbing_akademik_id: dpaError,
       program_kuliah: programError,
     });
 
-    if (nimError || namaError || dpaError || programError) {
+    if (nimError || passwordError || namaError || dpaError || programError) {
       return "Periksa kembali informasi umum.";
     }
     if (nimAvailability === "checking") {
       return "Tunggu sebentar, NIM sedang diperiksa.";
     }
-    const expectedEmail = buildMahasiswaEmailFromNim(nim);
-    const email = formData.email.trim().toLowerCase();
-    if (email !== expectedEmail) {
-      return `Email otomatis harus sesuai format ${expectedEmail}.`;
-    }
-
     return "";
   };
 
@@ -1077,18 +1089,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         setError("Lengkapi field lanjutan untuk jalur baru.");
         return;
       }
-      if (
-        !isPerintisanBisnis &&
-        formData.dosen_pembimbing_ta_mode !== "belum_dapat" &&
-        !formData.dosen_pembimbing_ta_id
-      ) {
-        setFieldErrors((prev) => ({
-          ...prev,
-          dosen_pembimbing_ta_id:
-            "Pilih dosen pembimbing TA sementara atau pilih opsi belum mendapatkan dosen pembimbing.",
-        }));
-        return;
-      }
     } else if (formData.pendaftaran === "ulang") {
       if (
         !formData.jenis_jalur_ulang ||
@@ -1120,12 +1120,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       }
     }
 
-    const parseOptionalDosenId = (rawValue) => {
-      if (!rawValue) return null;
-      const parsed = Number(rawValue);
-      return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-    };
-
     try {
       setIsSubmitting(true);
       const normalizedNim = formData.nim.trim();
@@ -1138,15 +1132,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         body: JSON.stringify({
           email: generatedEmail,
           nim: normalizedNim,
+          account_password: formData.account_password,
           nama: formData.nama.trim(),
           program_kuliah: formData.program_kuliah,
           pendaftaran: formData.pendaftaran,
           dosen_pembimbing_akademik_id: Number(formData.dosen_pembimbing_akademik_id),
           jenis_jalur_diambil: formData.jenis_jalur_diambil,
           jenis_jalur_ulang: formData.jenis_jalur_ulang,
-          dosen_pembimbing_ta_id: parseOptionalDosenId(formData.dosen_pembimbing_ta_id),
-          dosen_pembimbing_ta_sebelumnya_id: parseOptionalDosenId(formData.dosen_pembimbing_ta_sebelumnya_id),
-          dosen_pembimbing_ta_baru_id: parseOptionalDosenId(formData.dosen_pembimbing_ta_baru_id),
+          dosen_pembimbing_ta_id: null,
+          dosen_pembimbing_ta_sebelumnya_id: null,
+          dosen_pembimbing_ta_baru_id: null,
           penjaluran_sebelumnya: formData.penjaluran_sebelumnya,
           penjaluran_baru: formData.penjaluran_baru,
           ketua_peran_tim: formData.ketua_peran_tim,
@@ -1287,6 +1282,26 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     ) : null}
                   </div>
                   <div>
+                    <RequiredLabel>Password Akun Master</RequiredLabel>
+                    <input
+                      name="account_password"
+                      type="password"
+                      value={formData.account_password}
+                      onChange={handleChange}
+                      onBlur={() => handleFieldBlur("account_password")}
+                      autoComplete="current-password"
+                      placeholder="Password akun mahasiswa"
+                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
+                        fieldErrors.account_password
+                          ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
+                          : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+                      }`}
+                    />
+                    {fieldErrors.account_password ? (
+                      <p className="mt-1 text-xs font-semibold text-[#c43f3f]">{fieldErrors.account_password}</p>
+                    ) : null}
+                  </div>
+                  <div>
                     <RequiredLabel>Nama</RequiredLabel>
                     <input
                       name="nama"
@@ -1310,13 +1325,19 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       </p>
                     ) : null}
                   </div>
-                  {renderDosenSelect({
-                    name: "dosen_pembimbing_akademik_id",
-                    label: "Dosen Pembimbing Akademik",
-                    value: formData.dosen_pembimbing_akademik_id,
-                    error: fieldErrors.dosen_pembimbing_akademik_id,
-                    required: true,
-                  })}
+                  <div>
+                    <RequiredLabel>Dosen Pembimbing Akademik</RequiredLabel>
+                    <input
+                      type="text"
+                      readOnly
+                      value={formData.dosen_pembimbing_akademik_nama}
+                      placeholder="Mengikuti master mahasiswa"
+                      className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
+                    />
+                    {fieldErrors.dosen_pembimbing_akademik_id ? (
+                      <p className="mt-1 text-xs font-semibold text-[#c43f3f]">{fieldErrors.dosen_pembimbing_akademik_id}</p>
+                    ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-4">
@@ -1373,60 +1394,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     options: JALUR_OPTIONS,
                   })}
                 </div>
-                {!isPerintisanBisnis ? (
-                  <>
-                    <div className="mt-4">
-                      <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Status Dosen Pembimbing TA</RequiredLabel>
-                      <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                        {[
-                          {
-                            value: "pilih_dosen",
-                            label: "Sudah memiliki calon dosen pembimbing",
-                          },
-                          {
-                            value: "belum_dapat",
-                            label: "Belum mendapatkan dosen pembimbing",
-                          },
-                        ].map((option) => (
-                          <label
-                            key={`dosen-ta-mode-${option.value}`}
-                            className={`flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
-                              formData.dosen_pembimbing_ta_mode === option.value
-                                ? "border-[#2f63e3] bg-[#eff4ff] text-[#173d9f]"
-                                : "border-[#d8e0f3] bg-white text-[#2d3f6f]"
-                            }`}
-                          >
-                            <input
-                              type="radio"
-                              name="dosen_pembimbing_ta_mode"
-                              value={option.value}
-                              checked={formData.dosen_pembimbing_ta_mode === option.value}
-                              onChange={(event) => handleDosenPembimbingTaModeChange(event.target.value)}
-                              className="h-4 w-4 border-[#9cb0dc] text-[#2f63e3] focus:ring-[#2f63e3]"
-                            />
-                            <span>{option.label}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      {renderDosenSelect({
-                        name: "dosen_pembimbing_ta_id",
-                        label: "Dosen Pembimbing TA Sementara",
-                        value: formData.dosen_pembimbing_ta_id,
-                        disabled: formData.dosen_pembimbing_ta_mode === "belum_dapat",
-                        prioritizeNoBimbingan: true,
-                        disableKuotaPenuh: true,
-                        error: fieldErrors.dosen_pembimbing_ta_id,
-                        required: formData.dosen_pembimbing_ta_mode !== "belum_dapat",
-                      })}
-                    </div>
-                  </>
-                ) : (
-                  <p className="mt-4 rounded-lg border border-[#d8e3fb] bg-[#f5f8ff] px-3 py-2 text-sm text-[#40598f]">
-                    Dosen pembimbing kelompok akan ditetapkan pada proses Perintisan Bisnis berikutnya.
-                  </p>
-                )}
+                <p className="mt-4 rounded-lg border border-[#d8e3fb] bg-[#f5f8ff] px-3 py-2 text-sm text-[#40598f]">
+                  Pembimbing 1 wajib dan Pembimbing 2 opsional akan ditetapkan pada keputusan final Sekprodi.
+                </p>
               </section>
             ) : null}
 

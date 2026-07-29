@@ -135,7 +135,17 @@ module.exports = (sequelize, DataTypes) => {
         },
       },
       status_jalur_saat_ini: {
-        type: DataTypes.ENUM("belum_mengajukan", "sedang_mengajukan", "baru", "ulang", "ekstensi", "selesai"),
+        type: DataTypes.ENUM(
+          "belum_mengajukan",
+          "sedang_mengajukan",
+          "baru",
+          "ulang",
+          "ekstensi",
+          "penelitian",
+          "magang",
+          "perintisan_bisnis",
+          "selesai"
+        ),
         allowNull: false,
         defaultValue: "belum_mengajukan",
       },

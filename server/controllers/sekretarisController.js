@@ -32,6 +32,8 @@ const {
   toAssignmentResponse,
 } = require("../services/penetapanPembimbingService");
 const { createSupervisorReplacementNotifications } = require("../services/notificationService");
+const { finalizePenjaluranDecision } = require("../services/penjaluranFinalizationService");
+const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
 const {
   ACTIVE_DOSEN_WHERE,
   canContinueExistingSupervision,
@@ -117,6 +119,7 @@ const PERIODE_ROLE_FIELD_DEFINITIONS = [
     field: "pengawas_pengabdian_dosen_id",
     label: "Dosen pengampu jalur pengabdian masyarakat",
     association: "pengawasPengabdianDosen",
+    requiredForRelease: false,
   },
   {
     field: "pengawas_perintisan_bisnis_dosen_id",
@@ -124,6 +127,9 @@ const PERIODE_ROLE_FIELD_DEFINITIONS = [
     association: "pengawasPerintisanBisnisDosen",
   },
 ];
+const PERIODE_REQUIRED_ROLE_FIELD_DEFINITIONS = PERIODE_ROLE_FIELD_DEFINITIONS.filter(
+  (item) => item.requiredForRelease !== false
+);
 
 const MASTER_PENANGGUNG_JAWAB_INCLUDE = PERIODE_ROLE_FIELD_DEFINITIONS.map((item) => ({
   model: Dosen,
@@ -180,29 +186,6 @@ function mergeRolePayloadWithMaster(payload, masterRow) {
     }
   }
   return merged;
-}
-
-function buildDuplicateRoleFieldErrors(rolePayload = {}) {
-  const duplicateErrors = {};
-  const assignmentByDosenId = new Map();
-
-  for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
-    const dosenId = parsePositiveId(rolePayload[item.field]);
-    if (!dosenId) continue;
-    if (!assignmentByDosenId.has(dosenId)) {
-      assignmentByDosenId.set(dosenId, []);
-    }
-    assignmentByDosenId.get(dosenId).push(item.field);
-  }
-
-  for (const fieldKeys of assignmentByDosenId.values()) {
-    if (!Array.isArray(fieldKeys) || fieldKeys.length < 2) continue;
-    for (const fieldKey of fieldKeys) {
-      duplicateErrors[fieldKey] = "Dosen yang sama tidak boleh dipilih untuk lebih dari satu peran.";
-    }
-  }
-
-  return duplicateErrors;
 }
 
 function isRolePayloadDifferent(masterRow, rolePayload = {}) {
@@ -1853,12 +1836,11 @@ exports.saveMasterPenanggungJawabPeriode = async (req, res) => {
     const rolePayload = buildRolePayloadFromRequest(req.body || {});
     const fieldErrors = {};
 
-    for (const item of PERIODE_ROLE_FIELD_DEFINITIONS) {
+    for (const item of PERIODE_REQUIRED_ROLE_FIELD_DEFINITIONS) {
       if (!parsePositiveId(rolePayload[item.field])) {
         fieldErrors[item.field] = `${item.label} wajib dipilih.`;
       }
     }
-    Object.assign(fieldErrors, buildDuplicateRoleFieldErrors(rolePayload));
 
     const latestMaster = await MasterPenanggungJawabPenjaluran.findOne({
       order: [["updatedAt", "DESC"]],
@@ -2465,7 +2447,7 @@ async function validatePeriodeSetupPayload(body, options = {}) {
   const lock = options.lock || undefined;
   const normalized = normalizePeriodeSetupPayload(body);
   const { periode, rolePayload, availabilityRows } = normalized;
-  const fieldErrors = { ...buildDuplicateRoleFieldErrors(rolePayload) };
+  const fieldErrors = {};
 
   const tahunError = getTahunAkademikValidationMessage(periode.tahun_akademik);
   if (tahunError) fieldErrors.tahun_akademik = tahunError;
@@ -2480,7 +2462,7 @@ async function validatePeriodeSetupPayload(body, options = {}) {
   if (!periode.label_periode) fieldErrors.label_periode = "Label periode wajib diisi.";
   const labelPeriode = periode.label_periode;
 
-  for (const definition of PERIODE_ROLE_FIELD_DEFINITIONS) {
+  for (const definition of PERIODE_REQUIRED_ROLE_FIELD_DEFINITIONS) {
     if (!parsePositiveId(rolePayload[definition.field])) fieldErrors[definition.field] = `${definition.label} wajib dipilih.`;
   }
 
@@ -2781,7 +2763,6 @@ async function buildPeriodeAvailabilityReadiness(periodeId, transaction = null) 
     assertRoleReady(mapping?.dosen_id, `Ketua Cluster ${code}`);
   }
   assertRoleReady(periode.pengawas_magang_dosen_id, "Dosen pengawas magang");
-  assertRoleReady(periode.pengawas_pengabdian_dosen_id, "Dosen pengampu pengabdian masyarakat");
   assertRoleReady(periode.pengawas_perintisan_bisnis_dosen_id, "Dosen pengampu perintisan bisnis");
 
   return {
@@ -3001,7 +2982,6 @@ function buildFollowUpResolutionContext(row, remainingImpact) {
   if (evaluation.review_transfer_required) requiredCategories.push("review_pending");
   if (evaluation.role_adjustment_required) requiredCategories.push("penugasan_periode");
   if (evaluation.defense_adjustment_required) requiredCategories.push("jadwal_sidang");
-  if (evaluation.reactivation_required) requiredCategories.push("reaktivasi");
   return { remainingImpact, requiredCategories, evaluation };
 }
 
@@ -3101,6 +3081,13 @@ exports.getTindakLanjutStatusDosenCurrentImpact = async (req, res) => {
       ? affectedWithAccess.filter((mahasiswa) => mahasiswa.supervision_status !== "active").length
       : 0;
     const hasOtherImpacts = context.requiredCategories.some((category) => category !== "mahasiswa_bimbingan");
+    const canResolve = context.requiredCategories.length === 0 && blockingReplacementCount === 0;
+    const blockingLabels = {
+      mahasiswa_bimbingan: "penggantian pembimbing mahasiswa",
+      review_pending: "pengalihan review/pengajuan",
+      penugasan_periode: "penggantian penanggung jawab periode",
+      jadwal_sidang: "penyesuaian jadwal sidang",
+    };
     return res.json({
       success: true,
       data: {
@@ -3116,12 +3103,13 @@ exports.getTindakLanjutStatusDosenCurrentImpact = async (req, res) => {
           candidates: [],
         },
         resolution_status: {
-          can_resolve: blockingReplacementCount === 0,
+          can_resolve: canResolve,
           blocking_count: blockingReplacementCount,
           has_other_impacts: hasOtherImpacts,
-          blocking_message: blockingReplacementCount > 0
-            ? "Masih ada mahasiswa yang menunggu pembimbing pengganti aktif."
-            : null,
+          blocking_categories: context.requiredCategories,
+          blocking_message: canResolve
+            ? null
+            : `Masih ada dampak yang harus diselesaikan: ${context.requiredCategories.map((category) => blockingLabels[category] || category).join(", ")}.`,
         },
       },
     });
@@ -3392,16 +3380,20 @@ exports.resolveTindakLanjutStatusDosen = async (req, res) => {
     }
 
     const remainingImpact = await analyzeDosenStatusImpact(row.dosen_id, transaction);
-    if (
-      dosen.continue_existing_supervision === false
-      && Number(remainingImpact.mahasiswa_bimbingan_aktif || 0) > 0
-    ) {
+    const resolutionContext = buildFollowUpResolutionContext({
+      ...row.toJSON(),
+      dosen: dosen.toJSON(),
+    }, remainingImpact);
+    if (resolutionContext.evaluation.required) {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        code: "SUPERVISOR_REPLACEMENT_INCOMPLETE",
-        message: "Tindak lanjut belum dapat diselesaikan karena masih ada mahasiswa aktif yang menunggu penggantian pembimbing.",
-        detail: { remaining_impact: remainingImpact },
+        code: "FOLLOW_UP_IMPACT_REMAINS",
+        message: "Tindak lanjut belum dapat diselesaikan karena masih ada dampak operasional yang belum selesai.",
+        detail: {
+          remaining_impact: remainingImpact,
+          required_categories: resolutionContext.requiredCategories,
+        },
       });
     }
     const actorId = req.user.sekretaris_prodi_id
@@ -3830,6 +3822,21 @@ function formatPenelitianFinalRow(submission) {
           },
         ];
 
+  const workflow = normalizeWorkflow({
+    status: submission.status,
+    timeline: riwayat.map((item) => ({
+      status: item.status,
+      actor: item.tipe_approval,
+      actor_id: item.dosen_id || item.sekretaris_prodi_id || null,
+      note: item.keterangan || null,
+      at: item.tanggal_keputusan || item.createdAt,
+    })),
+    actor: submission.status === "menunggu_approval_sekprodi" ? "sekretaris_prodi" : "ketua_cluster",
+    allowedActions: ["pending", "menunggu_approval_sekprodi"].includes(submission.status)
+      ? ["approve", "reject"]
+      : [],
+    blockingReasons: submission.status === "rejected" ? [submission.alasan_penolakan || "Pengajuan ditolak."] : [],
+  });
   return {
     id: submission.id,
     jenis_jalur: submission.jenis_jalur,
@@ -3862,6 +3869,7 @@ function formatPenelitianFinalRow(submission) {
       dosen: item.dosen || null,
       sekretaris_prodi: item.sekretarisProdi || null,
     })),
+    ...workflow,
   };
 }
 
@@ -3870,7 +3878,7 @@ async function loadPenelitianFinalSubmission(id, programKuliah, transaction = nu
 
   const where = {
     id,
-    status: { [Op.in]: ["pending", "menunggu_approval_sekprodi"] },
+    status: { [Op.in]: ["pending", "menunggu_approval_sekprodi", "approved", "rejected"] },
     tipe_pengajuan: { [Op.in]: ["topik_dosen", "judul_mandiri"] },
   };
 
@@ -3888,6 +3896,34 @@ async function loadPenelitianFinalSubmission(id, programKuliah, transaction = nu
     include: getPenelitianFinalIncludes(programKuliah),
     transaction: transaction || undefined,
   });
+}
+
+async function assertResearchSupervisorCluster(supervisorIds, clusterCode, transaction) {
+  const normalizedCode = normalizeTopikClusterCode(clusterCode);
+  if (!normalizedCode || !RESEARCH_CLUSTER_CODES.includes(normalizedCode)) {
+    const error = new Error("Klaster penelitian final belum dapat ditentukan.");
+    error.statusCode = 409;
+    error.code = "RESEARCH_CLUSTER_NOT_RESOLVED";
+    throw error;
+  }
+  const memberships = await DosenKlaster.findAll({
+    where: { dosen_id: { [Op.in]: supervisorIds } },
+    include: [{ model: Klaster, as: "klaster", attributes: ["kode", "nama"], required: true }],
+    transaction,
+  });
+  const validDosenIds = new Set(
+    memberships
+      .filter((item) => resolveResearchClusterCode(item.klaster) === normalizedCode)
+      .map((item) => Number(item.dosen_id))
+  );
+  const invalidIds = supervisorIds.filter((id) => !validDosenIds.has(Number(id)));
+  if (invalidIds.length > 0) {
+    const error = new Error(`Seluruh pembimbing wajib merupakan anggota klaster ${normalizedCode}.`);
+    error.statusCode = 409;
+    error.code = "SUPERVISOR_CLUSTER_MISMATCH";
+    error.detail = { cluster: normalizedCode, dosen_ids: invalidIds };
+    throw error;
+  }
 }
 
 // GET /api/sekretaris/penelitian/final
@@ -3943,7 +3979,8 @@ exports.approvePenelitianFinal = async (req, res) => {
         message: "Pengajuan tidak ditemukan atau sudah diproses.",
       });
     }
-    if (submission.tipe_pengajuan === "judul_mandiri" && submission.status !== "menunggu_approval_sekprodi") {
+    if (submission.tipe_pengajuan === "judul_mandiri"
+      && !["menunggu_approval_sekprodi", "approved", "rejected"].includes(submission.status)) {
       await t.rollback();
       return res.status(409).json({ success: false, message: "Pengajuan belum siap direview Sekprodi." });
     }
@@ -3952,6 +3989,79 @@ exports.approvePenelitianFinal = async (req, res) => {
     if (!note) {
       await t.rollback();
       return res.status(400).json({ success: false, message: "Catatan keputusan wajib diisi." });
+    }
+
+    const primarySupervisorId = Number(req.body?.dosen_pembimbing_1_id || 0);
+    const secondarySupervisorRaw = req.body?.dosen_pembimbing_2_id;
+    const secondarySupervisorId = secondarySupervisorRaw ? Number(secondarySupervisorRaw) : null;
+    if (!Number.isInteger(primarySupervisorId) || primarySupervisorId <= 0) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pembimbing 1 wajib dipilih oleh sekretaris prodi.",
+      });
+    }
+    if (secondarySupervisorRaw && (!Number.isInteger(secondarySupervisorId) || secondarySupervisorId <= 0)) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
+    }
+    const supervisorIds = [primarySupervisorId, secondarySupervisorId].filter(Boolean);
+    if (new Set(supervisorIds).size !== supervisorIds.length) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Pembimbing 1 dan Pembimbing 2 harus merupakan dosen yang berbeda.",
+      });
+    }
+    const assignmentRegistration = await resolveResearchSubmissionRegistration(submission, t);
+    if (!assignmentRegistration) {
+      await t.rollback();
+      return res.status(409).json({ success: false, message: "Pendaftaran penelitian tidak ditemukan." });
+    }
+    if (["approved", "rejected"].includes(submission.status)) {
+      if (submission.status === "rejected") {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "IDEMPOTENCY_CONFLICT",
+          message: "Pengajuan yang sudah ditolak tidak dapat disetujui melalui retry.",
+        });
+      }
+      if (String(submission.alasan_persetujuan || "").trim() !== note) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "IDEMPOTENCY_CONFLICT",
+          message: "Retry finalisasi memiliki catatan yang berbeda dari keputusan tersimpan.",
+        });
+      }
+      if (submission.tipe_pengajuan === "topik_dosen") {
+        const storedWinner = getFinalResearchWinner(submission);
+        const requestedSlot = Number(req.body?.topik_slot || 0);
+        if (!storedWinner?.slot || requestedSlot !== Number(storedWinner.slot)) {
+          await t.rollback();
+          return res.status(409).json({
+            success: false,
+            code: "IDEMPOTENCY_CONFLICT",
+            message: "Retry finalisasi memilih topik yang berbeda dari keputusan tersimpan.",
+          });
+        }
+      }
+      const replay = await finalizePenjaluranDecision({
+        registration: assignmentRegistration,
+        track: "penelitian",
+        supervisorIds,
+        currentDecisionStatus: submission.status,
+        createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
+        transaction: t,
+      });
+      await t.commit();
+      return res.json({
+        success: true,
+        replayed: replay.replayed,
+        message: "Keputusan final yang sama sudah tersimpan sebelumnya.",
+        data: { id: submission.id, status: submission.status },
+      });
     }
 
     let winner = getFinalResearchWinner(submission);
@@ -4003,54 +4113,41 @@ exports.approvePenelitianFinal = async (req, res) => {
         }
       );
     }
-    if (!winner?.dosen_id) {
+    if (!winner) {
       await t.rollback();
       return res.status(409).json({
         success: false,
-        message: "Topik atau dosen pembimbing final belum dapat ditentukan.",
+        message: "Topik penelitian final belum dapat ditentukan.",
       });
     }
 
-    const assignmentRegistration = await resolveResearchSubmissionRegistration(submission, t);
-    const secondarySupervisorRaw = req.body?.dosen_pembimbing_2_id;
-    const secondarySupervisorId = secondarySupervisorRaw ? Number(secondarySupervisorRaw) : null;
-    if (secondarySupervisorRaw && (!Number.isInteger(secondarySupervisorId) || secondarySupervisorId <= 0)) {
-      await t.rollback();
-      return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
-    }
-    const supervisorIds = [Number(winner.dosen_id), secondarySupervisorId].filter(Boolean);
-    if (new Set(supervisorIds).size !== supervisorIds.length) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Pembimbing 1 dan Pembimbing 2 harus merupakan dosen yang berbeda.",
+    let clusterCode = await resolveSubmissionClusterCode(submission, t);
+    if (winner.kode) {
+      const winningTopic = await Topik.findOne({
+        where: { kode: winner.kode },
+        attributes: ["kode", "cluster"],
+        transaction: t,
       });
+      clusterCode = normalizeTopikClusterCode(winningTopic?.cluster)
+        || normalizeTopikClusterCode(String(winner.kode).replace(/[0-9].*$/, ""))
+        || clusterCode;
     }
-    for (let index = 0; index < supervisorIds.length; index += 1) {
-      const validation = await validateDosenForNewAssignment(
-        supervisorIds[index],
-        assignmentRegistration?.periode_penjaluran_id || null,
-        {
-          transaction: t,
-          activityLabel: `menerima penetapan sebagai Pembimbing ${index + 1}`,
-          availabilityField: "tersedia_membimbing",
-        }
-      );
-      if (!validation.allowed) {
-        await t.rollback();
-        return res.status(409).json({
-          success: false,
-          message: validation.message,
-        });
-      }
-    }
+    await assertResearchSupervisorCluster(supervisorIds, clusterCode, t);
+    await finalizePenjaluranDecision({
+      registration: assignmentRegistration,
+      track: "penelitian",
+      supervisorIds,
+      currentDecisionStatus: submission.status,
+      createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
+      transaction: t,
+    });
 
     await submission.update(
       {
         status: "approved",
         alasan_persetujuan: note || "Disetujui final oleh sekretaris prodi.",
         alasan_penolakan: null,
-        dosen_saat_ini: winner.dosen_id,
+        dosen_saat_ini: primarySupervisorId,
       },
       { transaction: t }
     );
@@ -4071,31 +4168,7 @@ exports.approvePenelitianFinal = async (req, res) => {
       }
     }
 
-    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    if (mahasiswa) {
-      await replaceSupervisorAssignment({
-        mahasiswaId: mahasiswa.id,
-        pendaftaranPenjaluranId: assignmentRegistration?.id || null,
-        periodeMulaiId: assignmentRegistration?.periode_penjaluran_id || null,
-        dosenPembimbingIds: supervisorIds,
-        sumberData: assignmentRegistration?.jalur === "baru" ? "penjaluran" : "pergantian",
-        createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
-        tanggalMulai: new Date(),
-        transaction: t,
-      });
-      await mahasiswa.update(
-        {
-          status_jalur_saat_ini: submission.jenis_jalur,
-          pengajuan_aktif_id: null,
-        },
-        { transaction: t }
-      );
-    }
-
-    const dosenPembimbing = await Dosen.findByPk(winner.dosen_id, { transaction: t });
+    const dosenPembimbing = await Dosen.findByPk(primarySupervisorId, { transaction: t });
     const kuotaInfo =
       dosenPembimbing && typeof dosenPembimbing.getKuotaInfo === "function"
         ? await dosenPembimbing.getKuotaInfo(t)
@@ -4104,7 +4177,7 @@ exports.approvePenelitianFinal = async (req, res) => {
       await Topik.update(
         { status: "unavailable" },
         {
-          where: { dosen_id: winner.dosen_id, status: "available" },
+          where: { dosen_id: primarySupervisorId, status: "available" },
           transaction: t,
         }
       );
@@ -4113,6 +4186,7 @@ exports.approvePenelitianFinal = async (req, res) => {
     await t.commit();
     return res.json({
       success: true,
+      replayed: false,
       message: "Pengajuan penelitian berhasil disetujui final.",
       data: { id: submission.id, status: "approved" },
     });
@@ -4122,6 +4196,7 @@ exports.approvePenelitianFinal = async (req, res) => {
     return res.status(error.statusCode || 500).json({
       success: false,
       message: error.statusCode ? error.message : "Gagal menyetujui pengajuan penelitian.",
+      code: error.code || null,
       error: error.message,
       detail: error.detail || null,
     });

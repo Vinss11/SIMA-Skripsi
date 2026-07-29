@@ -165,6 +165,13 @@ module.exports = (sequelize, DataTypes) => {
       modelName: "PendaftaranPenjaluran",
       tableName: "PendaftaranPenjalurans",
       timestamps: true,
+      indexes: [
+        {
+          name: "pendaftaran_penjalurans_mahasiswa_periode_unique",
+          unique: true,
+          fields: ["mahasiswa_id", "periode_penjaluran_id"],
+        },
+      ],
     }
   );
 

@@ -16,12 +16,18 @@ const {
   MasterPenanggungJawabPenjaluran,
   PendaftaranPenjaluran,
 } = require("../models");
+const {
+  DOSEN_STATUSES,
+  getDosenStatusDecision,
+  canReceiveNewAssignment,
+  evaluateNewAssignmentEligibility,
+  evaluateDosenStatusFollowUp,
+} = require("./dosenStatusPolicy");
 
-const DOSEN_STATUSES = ["active", "inactive", "study_leave", "retired"];
 const ACTIVE_DOSEN_WHERE = { status_keaktifan: "active" };
 
 function isDosenAcademicallyActive(dosen) {
-  return String(dosen?.status_keaktifan || "active") === "active";
+  return getDosenStatusDecision({ statusKeaktifan: dosen?.status_keaktifan }).can_receive_new_assignment;
 }
 
 function assertDosenCanReceiveNewAssignment(dosen, activityLabel = "penugasan baru") {
@@ -164,58 +170,11 @@ async function syncAvailabilityForMasterStatusChange(dosen, transaction = null) 
 
 function canContinueExistingSupervision(dosen) {
   if (!dosen) return false;
-  const status = String(dosen.status_keaktifan || "active");
-  if (status === "active") return true;
-  if (status === "retired") return false;
-  if (["inactive", "study_leave"].includes(status)) {
-    return dosen.continue_existing_supervision === true;
-  }
-  return false;
-}
-
-function evaluateDosenStatusFollowUp({
-  statusBaru,
-  statusLama,
-  continueExisting,
-  impact = {},
-}) {
-  const nextStatus = String(statusBaru || "active");
-  const previousStatus = String(statusLama || nextStatus);
-  const becomesUnavailable = nextStatus !== "active";
-  const isReactivation = nextStatus === "active" && previousStatus !== "active";
-
-  const replacementRequired = becomesUnavailable
-    && continueExisting === false
-    && Number(impact.mahasiswa_bimbingan_aktif || 0) > 0;
-  const roleAdjustmentRequired = becomesUnavailable && [
-    impact.tugas_ketua_cluster_aktif,
-    impact.tugas_periode_aktif,
-    impact.tugas_master_penanggung_jawab,
-  ].some((value) => Number(value || 0) > 0);
-  const defenseAdjustmentRequired = becomesUnavailable
-    && Number(impact.jadwal_sidang_mendatang || 0) > 0;
-  const reviewTransferRequired = becomesUnavailable && [
-    impact.pengajuan_penjaluran_pending,
-    impact.review_paralel_pending,
-    impact.calon_pembimbing_mandiri_pending,
-  ].some((value) => Number(value || 0) > 0);
-
-  const reasons = [];
-  if (isReactivation) reasons.push("reactivation");
-  if (replacementRequired) reasons.push("supervisor_replacement");
-  if (roleAdjustmentRequired) reasons.push("role_adjustment");
-  if (defenseAdjustmentRequired) reasons.push("defense_adjustment");
-  if (reviewTransferRequired) reasons.push("review_transfer");
-
-  return {
-    required: reasons.length > 0,
-    reasons,
-    replacement_required: replacementRequired,
-    role_adjustment_required: roleAdjustmentRequired,
-    defense_adjustment_required: defenseAdjustmentRequired,
-    review_transfer_required: reviewTransferRequired,
-    reactivation_required: isReactivation,
-  };
+  return getDosenStatusDecision({
+    statusKeaktifan: dosen.status_keaktifan,
+    accountIsActive: dosen.account_is_active,
+    continueExistingSupervision: dosen.continue_existing_supervision,
+  }).can_continue_existing_supervision;
 }
 
 function assertDosenCanContinueExistingSupervision(dosen, activityLabel = "memproses bimbingan lama") {
@@ -246,30 +205,13 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
     transaction,
     lock: transaction ? transaction.LOCK.UPDATE : undefined,
   });
-  const eligibility = assertDosenCanReceiveNewAssignment(dosen, activityLabel);
-  if (!eligibility.allowed) return { ...eligibility, dosen };
+  if (!dosen) return { allowed: false, dosen, message: "Data dosen tidak ditemukan." };
 
   const availability = periodeId ? await getAvailability(dosenId, periodeId, transaction) : null;
-  if (requiresPeriodAvailability && periodeId && (!availability || availability.configuration_status !== "ready")) {
-    return {
-      allowed: false,
-      dosen,
-      availability,
-      message: "Ketersediaan dosen belum dikonfirmasi oleh Sekretaris Prodi untuk periode ini.",
-    };
-  }
-  if (requiresPeriodAvailability && periodeId && availability?.tersedia_membimbing !== true) {
-    return {
-      allowed: false,
-      dosen,
-      availability,
-      message: `${dosen.nama} tidak tersedia untuk ${activityLabel} pada periode yang dipilih.`,
-    };
-  }
 
   let capacity = null;
+  const requiredSlots = Math.max(1, Number(options.requiredSlots || 1));
   if (checkQuota) {
-    const requiredSlots = Math.max(1, Number(options.requiredSlots || 1));
     const { getActiveSupervisionLoad } = require("./supervisorAccessService");
     const supervisionLoad = await getActiveSupervisionLoad(
       dosenId,
@@ -286,20 +228,38 @@ async function validateDosenForNewAssignment(dosenId, periodeId, options = {}) {
       rincian_jalur: supervisionLoad.rincian_jalur,
       reservasi_penggantian: Number(supervisionLoad.reservasi_penggantian || 0),
     };
-    if (capacity.is_penuh || capacity.sisa < requiredSlots) {
-      return {
-        allowed: false,
-        dosen,
-        availability,
-        capacity,
-        message: capacity.sisa < requiredSlots
-          ? `Kapasitas ${dosen.nama} tersisa ${capacity.sisa}, sedangkan penugasan membutuhkan ${requiredSlots} slot.`
-          : `Kapasitas bimbingan aktif ${dosen.nama} sudah penuh (${capacity.terpakai}/${capacity.total}).`,
-      };
-    }
   }
 
-  return { allowed: true, dosen, availability, capacity };
+  const eligibility = evaluateNewAssignmentEligibility({
+    statusKeaktifan: dosen.status_keaktifan,
+    configurationStatus: requiresPeriodAvailability && periodeId
+      ? availability?.configuration_status || null
+      : undefined,
+    menerimaBimbinganBaru: requiresPeriodAvailability && periodeId
+      ? availability?.tersedia_membimbing === true
+      : undefined,
+    remainingQuota: checkQuota ? capacity?.sisa : undefined,
+    requiredSlots,
+  });
+  if (!eligibility.allowed) {
+    const messages = {
+      master_status: `${dosen.nama || "Dosen"} berstatus ${dosen.status_keaktifan} dan tidak dapat menerima ${activityLabel}.`,
+      configuration_not_ready: "Ketersediaan dosen belum dikonfirmasi oleh Sekretaris Prodi untuk periode ini.",
+      not_accepting_new_supervision: `${dosen.nama} tidak tersedia untuk ${activityLabel} pada periode yang dipilih.`,
+      insufficient_quota: capacity?.is_penuh
+        ? `Kapasitas bimbingan aktif ${dosen.nama} sudah penuh (${capacity.terpakai}/${capacity.total}).`
+        : `Kapasitas ${dosen.nama} tersisa ${capacity?.sisa || 0}, sedangkan penugasan membutuhkan ${requiredSlots} slot.`,
+    };
+    return {
+      ...eligibility,
+      dosen,
+      availability,
+      capacity,
+      message: messages[eligibility.reason] || `Dosen tidak dapat menerima ${activityLabel}.`,
+    };
+  }
+
+  return { ...eligibility, dosen, availability, capacity };
 }
 
 function toEffectiveAvailability(dosen, saved, periodeStatus) {
@@ -594,6 +554,9 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
 module.exports = {
   DOSEN_STATUSES,
   ACTIVE_DOSEN_WHERE,
+  getDosenStatusDecision,
+  canReceiveNewAssignment,
+  evaluateNewAssignmentEligibility,
   isDosenAcademicallyActive,
   assertDosenCanReceiveNewAssignment,
   canContinueExistingSupervision,

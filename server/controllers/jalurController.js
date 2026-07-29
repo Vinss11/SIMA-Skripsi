@@ -35,6 +35,11 @@ const {
   getPeriodeWindowMessage,
 } = require("../services/periodePenjaluranService");
 const { ensureParallelReviewerRows } = require("../services/topikParallelReviewService");
+const {
+  resolveAuthoritativeAssignmentTargets,
+  finalizePenjaluranDecision,
+} = require("../services/penjaluranFinalizationService");
+const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -1154,9 +1159,7 @@ async function updatePerintisanGroupWorkflow({
   transaction,
 }) {
   const sourcePayload = toObjectPayload(sourceRow?.form_lanjutan_payload);
-  const kelompok = sourcePayload?.kelompok;
-  const teamMembers = Array.isArray(kelompok?.anggota) ? kelompok.anggota : [];
-  if (sourcePayload?.jalur !== "perintisan_bisnis" || !kelompok?.id || teamMembers.length === 0) {
+  if (resolveSelectedJalurFromPendaftaran(sourceRow) !== "perintisan_bisnis") {
     await sourceRow.update(
       {
         form_lanjutan_status: nextStatus,
@@ -1167,12 +1170,10 @@ async function updatePerintisanGroupWorkflow({
     return false;
   }
 
-  const rows = await PendaftaranPenjaluran.findAll({
-    where: {
-      id: { [Op.in]: teamMembers.map((item) => item.pendaftaran_id) },
-    },
+  const rows = await resolveAuthoritativeAssignmentTargets({
+    registration: sourceRow,
+    track: "perintisan_bisnis",
     transaction,
-    lock: transaction.LOCK.UPDATE,
   });
   for (const row of rows) {
     const currentPayload = toObjectPayload(row.form_lanjutan_payload);
@@ -1194,13 +1195,19 @@ async function updatePerintisanGroupWorkflow({
       { transaction }
     );
   }
+  const authoritativeMembership = await AnggotaKelompokPerintisan.findOne({
+    where: { pendaftaran_penjaluran_id: sourceRow.id },
+    attributes: ["kelompok_id"],
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  });
   await KelompokPerintisanBisnis.update(
     {
       status: ["approved", "rejected"].includes(nextStatus)
         ? nextStatus
         : "submitted",
     },
-    { where: { id: kelompok.id }, transaction }
+    { where: { id: authoritativeMembership.kelompok_id }, transaction }
   );
   return true;
 }
@@ -1239,6 +1246,7 @@ function toNonPenelitianReviewResponse(item) {
   const jalur = resolveSelectedJalurFromPendaftaran(item);
   const assignedPengampu = resolveNonPenelitianPengampuByJalur(item.periode, jalur);
 
+  const rawStatus = payload.workflow_status || item.form_lanjutan_status;
   return {
     id: item.id,
     program_kuliah: item.program_kuliah,
@@ -1272,6 +1280,15 @@ function toNonPenelitianReviewResponse(item) {
       dosen_id: assignedPengampu.dosen_id,
       role: assignedPengampu.role,
     },
+    ...normalizeWorkflow({
+      status: rawStatus,
+      timeline: payload.workflow_timeline,
+      actor: rawStatus === "review_sekprodi" ? "sekretaris_prodi" : assignedPengampu.role,
+      allowedActions: ["submitted", "review_dosen_magang", "review_sekprodi"].includes(rawStatus)
+        ? ["approve", "reject"]
+        : [],
+      blockingReasons: rawStatus === "rejected" ? [payload.review_result?.note || "Pengajuan ditolak."] : [],
+    }),
     payload,
   };
 }
@@ -1586,6 +1603,10 @@ exports.checkStatusJalur = async (req, res) => {
               jalur_form_lanjutan: selectedJalur,
               status: pendaftaranAktif.status,
               form_lanjutan_status: pendaftaranAktif.form_lanjutan_status,
+              ...normalizeWorkflow({
+                status: pendaftaranAktif.form_lanjutan_status || pendaftaranAktif.status,
+                timeline: nonPenelitianPayload.workflow_timeline,
+              }),
               form_lanjutan_submitted_at: pendaftaranAktif.form_lanjutan_submitted_at,
               kelompok_perintisan: kelompokPerintisan,
               periode:
@@ -1611,6 +1632,10 @@ exports.checkStatusJalur = async (req, res) => {
                 timeline: Array.isArray(nonPenelitianPayload.workflow_timeline)
                   ? nonPenelitianPayload.workflow_timeline
                   : [],
+                ...normalizeWorkflow({
+                  status: nonPenelitianWorkflowStatus,
+                  timeline: nonPenelitianPayload.workflow_timeline,
+                }),
               }
             : null,
         last_submission: lastSubmission
@@ -1621,6 +1646,7 @@ exports.checkStatusJalur = async (req, res) => {
               tipe_pengajuan: lastSubmission.tipe_pengajuan,
               tanggal: lastSubmission.createdAt,
               dosen_pembimbing: lastSubmission.dosenCurrent,
+              ...normalizeWorkflow({ status: lastSubmission.status }),
             }
           : null,
         available_options: availableOptions,
@@ -2886,12 +2912,51 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       });
     }
 
-    if (String(row.form_lanjutan_status || "") !== "review_sekprodi") {
+    const currentFinalStatus = String(row.form_lanjutan_status || "");
+    if (currentFinalStatus === "rejected" && decision === "rejected") {
+      const storedNote = String(toObjectPayload(row.form_lanjutan_payload)?.review_result?.note || "").trim();
+      if (storedNote !== note) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "IDEMPOTENCY_CONFLICT",
+          message: "Retry penolakan memiliki alasan yang berbeda dari keputusan tersimpan.",
+        });
+      }
+      await t.commit();
+      return res.json({
+        success: true,
+        replayed: true,
+        message: "Keputusan penolakan sudah tersimpan sebelumnya.",
+        data: toNonPenelitianReviewResponse(row),
+      });
+    }
+    if (!["review_sekprodi", "approved"].includes(currentFinalStatus)) {
       await t.rollback();
       return res.status(409).json({
         success: false,
+        code: ["approved", "rejected"].includes(currentFinalStatus) ? "IDEMPOTENCY_CONFLICT" : "INVALID_WORKFLOW_STAGE",
         message: `Form non-penelitian ini tidak berada pada tahap review sekretaris. Status saat ini: ${row.form_lanjutan_status}`,
       });
+    }
+    if (currentFinalStatus === "approved" && decision !== "approved") {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        code: "IDEMPOTENCY_CONFLICT",
+        message: "Keputusan yang sudah disetujui tidak dapat diubah melalui retry finalisasi.",
+      });
+    }
+    if (currentFinalStatus === "approved") {
+      const storedNote = String(toObjectPayload(row.form_lanjutan_payload)?.review_result?.note || "").trim();
+      if (storedNote !== note) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "IDEMPOTENCY_CONFLICT",
+          message: "Retry finalisasi memiliki catatan yang berbeda dari keputusan tersimpan.",
+        });
+      }
     }
 
     if (decision === "approved" && !dosenPembimbingId) {
@@ -2942,53 +3007,24 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
       });
     }
 
+    let finalization = null;
     if (decision === "approved") {
-      const currentPayload = toObjectPayload(row.form_lanjutan_payload);
-      const currentTeamMembers = Array.isArray(currentPayload?.kelompok?.anggota)
-        ? currentPayload.kelompok.anggota
-        : [];
-      const requiredSlots = reviewable.selectedJalur === "perintisan_bisnis"
-        ? Math.max(1, Number(currentTeamMembers.length || 1))
-        : 1;
-      const assignmentValidation = await validateDosenForNewAssignment(
-        dosenPembimbingId,
-        row.periode_penjaluran_id,
-        {
-          transaction: t,
-          availabilityField: "tersedia_membimbing",
-           activityLabel: "menjadi pembimbing final",
-           requiredSlots,
-           excludeMahasiswaId: row.mahasiswa_id,
-        }
-      );
-      if (!assignmentValidation.allowed) {
-        await t.rollback();
-        return res.status(409).json({
-          success: false,
-          message: assignmentValidation.message,
-          detail: { capacity: assignmentValidation.capacity || null },
+      finalization = await finalizePenjaluranDecision({
+        registration: row,
+        track: reviewable.selectedJalur,
+        supervisorIds: [dosenPembimbingId, dosenPembimbing2Id].filter(Boolean),
+        currentDecisionStatus: currentFinalStatus,
+        createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
+        transaction: t,
+      });
+      if (finalization.replayed) {
+        await t.commit();
+        return res.json({
+          success: true,
+          replayed: true,
+          message: "Keputusan final yang sama sudah tersimpan sebelumnya.",
+          data: toNonPenelitianReviewResponse(row),
         });
-      }
-      if (dosenPembimbing2Id > 0) {
-        const secondaryValidation = await validateDosenForNewAssignment(
-          dosenPembimbing2Id,
-          row.periode_penjaluran_id,
-          {
-            transaction: t,
-            availabilityField: "tersedia_membimbing",
-            activityLabel: "menjadi Pembimbing 2 final",
-            requiredSlots,
-            excludeMahasiswaId: row.mahasiswa_id,
-          }
-        );
-        if (!secondaryValidation.allowed) {
-          await t.rollback();
-          return res.status(409).json({
-            success: false,
-            message: secondaryValidation.message,
-            detail: { capacity: secondaryValidation.capacity || null },
-          });
-        }
       }
     }
 
@@ -3047,47 +3083,10 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     });
     await row.reload({ transaction: t });
 
-    if (decision === "approved" && dosenPembimbing) {
-      const payload = toObjectPayload(row.form_lanjutan_payload);
-      const teamMembers = Array.isArray(payload?.kelompok?.anggota)
-        ? payload.kelompok.anggota
-        : [];
-      const mahasiswaIds =
-        reviewable.selectedJalur === "perintisan_bisnis"
-          ? teamMembers.map((item) => Number(item.mahasiswa_id)).filter(Boolean)
-          : [Number(row.mahasiswa_id)].filter(Boolean);
-      const pendaftaranIds =
-        reviewable.selectedJalur === "perintisan_bisnis"
-          ? teamMembers.map((item) => Number(item.pendaftaran_id)).filter(Boolean)
-          : [Number(row.id)].filter(Boolean);
-      for (let index = 0; index < mahasiswaIds.length; index += 1) {
-        const mahasiswaId = mahasiswaIds[index];
-        const pendaftaranId = pendaftaranIds[index] || (mahasiswaId === Number(row.mahasiswa_id) ? row.id : null);
-        await replaceSupervisorAssignment({
-          mahasiswaId,
-          pendaftaranPenjaluranId: pendaftaranId,
-          periodeMulaiId: row.periode_penjaluran_id,
-          dosenPembimbingIds: [dosenPembimbing.id, dosenPembimbing2?.id].filter(Boolean),
-          sumberData: row.jalur === "baru" ? "penjaluran" : "pergantian",
-          createdBySekretarisId: req.user?.sekretaris_prodi_id || null,
-          tanggalMulai: new Date(),
-          transaction: t,
-        });
-      }
-      if (pendaftaranIds.length > 0) {
-        await PendaftaranPenjaluran.update(
-          {
-            dosen_pembimbing_ta_id: dosenPembimbing.id,
-            dosen_pembimbing_ta_baru_id: dosenPembimbing.id,
-          },
-          { where: { id: { [Op.in]: pendaftaranIds } }, transaction: t }
-        );
-      }
-    }
-
     await t.commit();
     return res.json({
       success: true,
+      replayed: false,
       message:
         decision === "approved"
           ? "Form non-penelitian berhasil disetujui sekretaris prodi."
@@ -3100,6 +3099,7 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
     return res.status(error.statusCode || 500).json({
       success: false,
       message: error.statusCode ? error.message : "Terjadi kesalahan pada server",
+      code: error.code || null,
       error: error.message,
       detail: error.detail || null,
     });

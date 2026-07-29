@@ -5,6 +5,7 @@ const {
   isAllowedSekretarisJabatan,
   resolveProgramKuliahFromJabatan,
 } = require("../constants/sekretarisAkses");
+const { getDosenStatusDecision } = require("../services/dosenStatusPolicy");
 
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "24h";
@@ -207,7 +208,12 @@ exports.login = async (req, res) => {
       });
     }
 
-    if (role === "dosen" && user.account_is_active === false) {
+    const dosenStatusDecision = role === "dosen" ? getDosenStatusDecision({
+      statusKeaktifan: user.status_keaktifan,
+      accountIsActive: user.account_is_active,
+      continueExistingSupervision: user.continue_existing_supervision,
+    }) : null;
+    if (role === "dosen" && !dosenStatusDecision.can_login) {
       return res.status(403).json({
         success: false,
         message: "Akun dosen dinonaktifkan. Hubungi Admin Prodi untuk informasi lebih lanjut.",

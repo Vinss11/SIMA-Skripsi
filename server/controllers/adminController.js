@@ -18,6 +18,7 @@ const {
   initializeAvailabilityForDosen,
   syncAvailabilityForMasterStatusChange,
 } = require("../services/dosenStatusService");
+const { normalizeContinueExistingSupervision } = require("../services/dosenStatusPolicy");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
 const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
@@ -297,13 +298,12 @@ exports.getDosenStatusImpact = async (req, res) => {
     if (!DOSEN_STATUSES.includes(requestedStatus)) {
       return res.status(400).json({ success: false, message: "Status keaktifan tidak valid." });
     }
-    const requestedContinueExisting = requestedStatus === "active"
-      ? true
-      : requestedStatus === "retired"
-      ? false
-      : req.query.continue_existing_supervision === undefined
-      ? dosen.continue_existing_supervision !== false
-      : String(req.query.continue_existing_supervision).toLowerCase() === "true";
+    const requestedContinueExisting = normalizeContinueExistingSupervision(
+      requestedStatus,
+      req.query.continue_existing_supervision === undefined
+        ? dosen.continue_existing_supervision === true
+        : String(req.query.continue_existing_supervision).toLowerCase() === "true"
+    );
     const impact = await analyzeDosenStatusImpact(dosen.id);
     const followUpEvaluation = evaluateDosenStatusFollowUp({
       statusBaru: requestedStatus,
@@ -382,12 +382,15 @@ exports.updateDosenStatus = async (req, res) => {
     const oldAccount = dosen.account_is_active !== false;
     const oldContinueExisting = dosen.continue_existing_supervision !== false;
     const requestedAccount = req.body?.account_is_active;
-    const newAccount = statusBaru === "retired" ? false : requestedAccount !== false;
-    const continueExisting = statusBaru === "active"
-      ? true
-      : statusBaru === "retired"
+    const newAccount = statusBaru === "retired"
       ? false
-      : req.body?.continue_existing_supervision === true;
+      : requestedAccount === undefined
+      ? oldAccount
+      : requestedAccount === true;
+    const requestedContinue = req.body?.continue_existing_supervision === undefined
+      ? oldContinueExisting
+      : req.body.continue_existing_supervision === true;
+    const continueExisting = normalizeContinueExistingSupervision(statusBaru, requestedContinue);
 
     if (oldStatus === "retired" && statusBaru !== "retired") {
       const actor = await Admin.findByPk(req.user.id, { attributes: ["id", "role"], transaction });

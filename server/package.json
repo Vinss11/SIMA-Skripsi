@@ -12,7 +12,9 @@
     "reconcile:dosen-follow-ups:dry-run": "node scripts/reconcile-dosen-status-follow-ups.js --dry-run",
     "reconcile:dosen-follow-ups": "node scripts/reconcile-dosen-status-follow-ups.js --execute",
     "reconcile:supervisor-history:dry-run": "node scripts/reconcile-supervisor-assignment-history.js --dry-run",
-    "reconcile:supervisor-history": "node scripts/reconcile-supervisor-assignment-history.js --execute"
+    "reconcile:supervisor-history": "node scripts/reconcile-supervisor-assignment-history.js --execute",
+    "reconcile:stage2-registrations:dry-run": "node scripts/reconcile-stage2-registrations.js --dry-run",
+    "reconcile:stage2-registrations": "node scripts/reconcile-stage2-registrations.js --execute"
   },
   "keywords": [],
   "author": "",

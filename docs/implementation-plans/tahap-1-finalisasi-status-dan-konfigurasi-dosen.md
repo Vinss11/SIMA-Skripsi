@@ -1,5 +1,7 @@
 # Rancangan Pengerjaan Tahap 1 — Finalisasi Status dan Konfigurasi Dosen
 
+> **Status review 2026-07-29:** koreksi implementasi telah diterapkan. Reaktivasi, penutupan seluruh kategori tindak lanjut, scope jalur aktif, izin peran rangkap, preservasi konfigurasi, dan sinkronisasi kandidat lintas sesi sudah selaras dengan aturan bisnis versi 1.1 serta tercakup pengujian terkait.
+
 ## 1. Tujuan
 
 Menstabilkan pengelolaan status master dosen, konfigurasi penerimaan bimbingan baru per periode, penetapan penanggung jawab jalur, dan tindak lanjut dampak perubahan status agar konsisten dengan `aturan-bisnis-simps.md`.
@@ -63,7 +65,7 @@ Pengampu Pengabdian dipertahankan sebagai data kompatibilitas, tetapi tidak waji
 
 Penanggung jawab jalur tidak wajib bernilai `menerima_bimbingan_baru = true`. Validasi ketersediaan periode dan kuota baru diterapkan apabila dosen tersebut juga dipilih sebagai P1/P2.
 
-Dokumen aturan bisnis belum menetapkan bahwa satu dosen dilarang memegang lebih dari satu peran penanggung jawab. Karena itu, validasi larangan peran rangkap tidak boleh dijadikan aturan final tanpa keputusan bisnis tambahan.
+Satu dosen boleh memegang lebih dari satu peran penanggung jawab. UI dan backend harus menerima penetapan rangkap tersebut selama dosen memenuhi status master yang diperlukan untuk peran struktural.
 
 ### 3.4 Tindak lanjut
 
@@ -80,7 +82,7 @@ Reaktivasi tidak otomatis membuat record tindak lanjut. Ketersediaan periode dap
 
 Record tindak lanjut baru boleh ditutup ketika evaluasi ulang server menunjukkan seluruh kategori dampak telah selesai. Pengecualian manual, jika nantinya dibutuhkan, harus menjadi keputusan bisnis eksplisit, beralasan, dan tercatat sebagai `resolved_with_exception`.
 
-## 4. Kondisi implementasi saat ini dan gap
+## 4. Kondisi implementasi saat ini
 
 ### 4.1 Sudah tersedia
 
@@ -92,17 +94,23 @@ Record tindak lanjut baru boleh ditutup ketika evaluasi ulang server menunjukkan
 - validasi backend untuk status master, ketersediaan periode, dan kuota saat penugasan baru;
 - setup periode tanpa status draft persisten;
 - sinkronisasi ulang tampilan ketersediaan setelah simpan serta saat tab kembali fokus;
+- refresh kandidat keputusan final ketika tab dibuka, window kembali fokus, tab browser kembali terlihat, dan secara otomatis setiap 30 detik;
+- migrasi penyelarasan reaktivasi yang menandai konfigurasi periode sebagai `needs_review`;
 - satu tindak lanjut terbuka maksimum per dosen;
 - workflow penggantian pembimbing dari antrean tindak lanjut.
 
-### 4.2 Gap yang harus ditutup
+### 4.2 Koreksi review source 2026-07-29 yang telah diterapkan
 
-1. Reaktivasi masih selalu dikategorikan sebagai alasan tindak lanjut, walaupun belum tentu ada dampak operasional.
-2. Penyelesaian manual tindak lanjut baru memblokir penggantian mahasiswa yang belum selesai; kategori review, peran periode, dan jadwal sidang masih dapat ditutup walaupun dampaknya tersisa.
-3. Pembukaan periode masih mewajibkan Pengampu Pengabdian, padahal jalur tersebut berstatus hold.
-4. UI/backend masih melarang satu dosen memegang lebih dari satu peran penanggung jawab, sementara larangan tersebut belum ada di dokumen aturan bisnis.
-5. Kandidat pembimbing yang tersimpan di state halaman dapat menjadi usang ketika Admin mengubah status dari sesi lain. Validasi backend sudah menjadi pengaman, tetapi dropdown perlu melakukan re-fetch/invalidation saat dibuka atau menerima notifikasi perubahan.
-6. Test yang tersedia belum mencakup matriks status, pembuatan/penutupan tindak lanjut, pembukaan periode berdasarkan scope jalur aktif, dan sinkronisasi kandidat secara menyeluruh.
+1. Reaktivasi tidak lagi menjadi alasan mandiri untuk membuat tindak lanjut; konfigurasi periode aktif diubah menjadi `needs_review` dan tindak lanjut hanya dipertahankan jika masih ada dampak operasional.
+2. Endpoint penyelesaian mengevaluasi ulang database dan memblokir penutupan selama penggantian mahasiswa, review pending, peran periode/master, atau jadwal sidang mendatang masih terdampak.
+3. Validator kesiapan pembukaan periode hanya mewajibkan peran untuk tiga jalur aktif; Pengabdian Masyarakat tidak menjadi syarat release selama berstatus hold.
+4. Satu dosen boleh memegang beberapa peran struktural. UI dan backend tidak menerapkan larangan keunikan lintas peran, dan perilaku ini tercakup integration test.
+5. Kandidat pembimbing Penelitian, Magang, dan Perintisan Bisnis memakai sumber periode yang sama. Sumber tersebut dimuat ulang saat membuka tab, focus/visibility kembali, dan setiap 30 detik; pilihan yang tidak lagi valid langsung dibuang dari form tanpa refresh manual.
+6. Integration test mencakup preservasi akun dan izin bimbingan lama, konsolidasi serta penyelesaian tindak lanjut, blokir dampak operasional, reaktivasi `needs_review`, akses bimbingan lama, scope jalur aktif, peran rangkap, dan pembacaan kandidat tanpa cache.
+
+### 4.3 Catatan operasional
+
+Migration reaktivasi dan rekonsiliasi data lama tetap harus dijalankan serta diverifikasi pada setiap environment target sebelum Tahap 1 dinyatakan selesai secara operasional.
 
 ## 5. Rencana pengerjaan
 
@@ -247,7 +255,7 @@ Minimal skenario:
 7. Tindak lanjut tidak dapat ditutup selama review, peran periode, jadwal sidang, atau penggantian mahasiswa masih tersisa.
 8. Reaktivasi mengubah ketersediaan menjadi perlu ditinjau tanpa membuat tindak lanjut kosong.
 9. Penanggung jawab dapat ditetapkan tanpa menerima bimbingan baru.
-10. Penanggung jawab yang sama untuk lebih dari satu peran mengikuti keputusan bisnis final.
+10. Penanggung jawab yang sama dapat ditetapkan untuk lebih dari satu peran.
 11. Periode dapat dibuka tanpa Pengampu Pengabdian selama jalur hold.
 12. Finalisasi kelompok Perintisan rollback ketika kuota salah satu pembimbing tidak cukup.
 
