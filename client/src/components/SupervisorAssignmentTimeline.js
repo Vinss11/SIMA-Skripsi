@@ -9,6 +9,7 @@ function formatHistoryDate(value, fallback = "Tanggal tidak tercatat") {
 
 const STATUS_META = {
   active: ["Aktif", "bg-[#e8f8ef] text-[#127947]"],
+  scheduled: ["Terjadwal", "bg-[#fff5d9] text-[#8a6415]"],
   draft: ["Draft", "bg-[#eef3ff] text-[#34549b]"],
   ended: ["Berakhir", "bg-[#f1f3f8] text-[#596887]"],
   cancelled: ["Dibatalkan", "bg-[#fff1f1] text-[#a33f3f]"],
@@ -33,6 +34,7 @@ function AssignmentCard({ assignment }) {
             </p>
           ))}
           <p><span className="font-bold text-[#29385f]">Mulai:</span> {formatHistoryDate(assignment?.tanggal_mulai, "Tanggal mulai tidak tercatat")}</p>
+          {assignment?.status === "scheduled" ? <p><span className="font-bold text-[#29385f]">Efektif:</span> {formatHistoryDate(assignment?.effective_at)}</p> : null}
           <p><span className="font-bold text-[#29385f]">Berakhir:</span> {assignment?.tanggal_selesai ? formatHistoryDate(assignment.tanggal_selesai) : "-"}</p>
           <p><span className="font-bold text-[#29385f]">Semester penjaluran:</span> {assignment?.semester_penjaluran_ke || "-"}</p>
           <p><span className="font-bold text-[#29385f]">Dasar penetapan:</span> {assignment?.dasar_penetapan || "Keputusan Final Sekretaris Prodi"}</p>
@@ -40,6 +42,8 @@ function AssignmentCard({ assignment }) {
           <p><span className="font-bold text-[#29385f]">Tanggal penetapan:</span> {formatHistoryDate(assignment?.tanggal_penetapan, "Tidak tercatat")}</p>
           <p><span className="font-bold text-[#29385f]">Sumber:</span> {String(assignment?.sumber_data || "-").replaceAll("_", " ")}</p>
           <p><span className="font-bold text-[#29385f]">Pendaftaran:</span> {assignment?.pendaftaran?.id ? `#${assignment.pendaftaran.id}` : "Tidak tercatat"}</p>
+          {assignment?.end_reason_code ? <p><span className="font-bold text-[#29385f]">Kode akhir:</span> {assignment.end_reason_code.replaceAll("_", " ")}</p> : null}
+          {assignment?.semester_outcome_code ? <p><span className="font-bold text-[#29385f]">Hasil semester:</span> {assignment.semester_outcome_code.replaceAll("_", " ")}</p> : null}
         </div>
         {assignment?.alasan_berakhir ? (
           <p className="mt-3 rounded-lg bg-[#f8faff] px-3 py-2 text-sm text-[#4f5e86]"><span className="font-bold">Alasan:</span> {assignment.alasan_berakhir}</p>
@@ -52,7 +56,11 @@ function AssignmentCard({ assignment }) {
 export default function SupervisorAssignmentTimeline({ data, loading = false, error = "", compact = false }) {
   if (loading) return <p className="py-5 text-center text-sm font-semibold text-[#6b7899]">Memuat histori pembimbing...</p>;
   if (error) return <p className="rounded-lg bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a33f3f]">{error}</p>;
-  const assignments = [data?.active, ...(Array.isArray(data?.history) ? data.history : [])].filter(Boolean);
+  const assignments = [
+    data?.active,
+    ...(Array.isArray(data?.scheduled) ? data.scheduled : []),
+    ...(Array.isArray(data?.history) ? data.history : []),
+  ].filter(Boolean);
   if (assignments.length === 0) {
     return <p className="rounded-lg bg-[#f7f9fd] px-3 py-4 text-center text-sm font-semibold text-[#6b7899]">Belum ada histori penetapan pembimbing.</p>;
   }

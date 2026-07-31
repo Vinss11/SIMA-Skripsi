@@ -9,11 +9,26 @@ const {
   PenetapanPembimbing,
   PendaftaranPenjaluran,
   SekretarisProdi,
+  AssignmentActivationAttempt,
 } = require("../models");
 const {
   getSupervisorAssignmentHistory,
   toAssignmentResponse,
 } = require("../services/penetapanPembimbingService");
+const {
+  SemesterAssignmentError,
+  previewSemesterTransitions,
+  carryForwardSemesterAssignment,
+  activateScheduledAssignments,
+} = require("../services/semesterAssignmentService");
+
+function transitionError(res, error) {
+  if (error instanceof SemesterAssignmentError) {
+    return res.status(error.statusCode).json({ success: false, message: error.message, code: error.code, detail: error.detail || null });
+  }
+  console.error("Semester assignment transition error:", error);
+  return res.status(500).json({ success: false, message: "Transisi semester gagal.", code: "INTERNAL_ERROR" });
+}
 
 async function respondHistory(res, mahasiswaId) {
   const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, { attributes: ["id", "nim", "nama"] });
@@ -50,9 +65,15 @@ exports.getSupervisorAssignmentMonitoring = async (req, res) => {
     const dosenId = Number(req.query.dosen_id || 0);
     const status = String(req.query.status || "").trim();
     const sumberData = String(req.query.sumber_data || "").trim();
+    const semester = Number(req.query.semester_penjaluran_ke || 0);
+    const endReasonCode = String(req.query.end_reason_code || "").trim();
+    const semesterOutcomeCode = String(req.query.semester_outcome_code || "").trim();
 
     if (periodeId > 0) where.periode_mulai_id = periodeId;
-    if (["draft", "active", "ended", "cancelled"].includes(status)) where.status = status;
+    if (["draft", "scheduled", "active", "ended", "cancelled"].includes(status)) where.status = status;
+    if ([1, 2, 3].includes(semester)) where.semester_penjaluran_ke = semester;
+    if (endReasonCode) where.end_reason_code = endReasonCode;
+    if (semesterOutcomeCode) where.semester_outcome_code = semesterOutcomeCode;
     if (["penjaluran", "perpanjangan", "pergantian", "legacy_backfill"].includes(sumberData)) {
       where.sumber_data = sumberData;
     }
@@ -107,6 +128,7 @@ exports.getSupervisorAssignmentMonitoring = async (req, res) => {
         as: "createdBySekretaris",
         attributes: ["id", "nik", "nama", "email"],
       },
+      { model: AssignmentActivationAttempt, as: "activationAttempt", required: false },
     ];
 
     const result = await PenetapanPembimbing.findAndCountAll({
@@ -179,5 +201,65 @@ exports.getSupervisorAssignmentHistoryForDosen = async (req, res) => {
   } catch (error) {
     console.error("Error di getSupervisorAssignmentHistoryForDosen:", error);
     return res.status(500).json({ success: false, message: "Gagal memuat histori pembimbing.", error: error.message });
+  }
+};
+
+exports.previewSemesterTransitions = async (req, res) => {
+  try {
+    const sourcePeriodId = Number(req.query.source_period_id || req.query.periode_sumber_id);
+    const targetPeriodId = Number(req.query.target_period_id || req.query.periode_tujuan_id) || null;
+    if (!sourcePeriodId) return res.status(400).json({ success: false, message: "Periode sumber wajib dipilih." });
+    return res.json({ success: true, data: await previewSemesterTransitions({ sourcePeriodId, targetPeriodId }) });
+  } catch (error) {
+    return transitionError(res, error);
+  }
+};
+
+exports.confirmSemesterTransition = async (req, res) => {
+  try {
+    const idempotencyKey = String(req.get("Idempotency-Key") || req.body?.idempotency_key || "").trim();
+    const result = await carryForwardSemesterAssignment({
+      expectedAssignmentId: Number(req.body?.expected_assignment_id),
+      targetPeriodId: Number(req.body?.target_period_id || req.body?.periode_tujuan_id) || null,
+      effectiveAt: req.body?.effective_at || null,
+      idempotencyKey,
+      actorType: "sekretaris_prodi",
+      actorId: Number(req.user?.id) || null,
+    });
+    return res.status(result.replayed ? 200 : 201).json({ success: true, data: result });
+  } catch (error) {
+    return transitionError(res, error);
+  }
+};
+
+exports.confirmSemesterTransitionsBulk = async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (!items.length) return res.status(400).json({ success: false, message: "Daftar assignment wajib tersedia." });
+  const batchKey = String(req.get("Idempotency-Key") || req.body?.idempotency_key || "").trim();
+  if (!batchKey) return res.status(400).json({ success: false, message: "Idempotency-Key wajib dikirim.", code: "IDEMPOTENCY_KEY_REQUIRED" });
+  const results = [];
+  for (const item of items) {
+    try {
+      const value = await carryForwardSemesterAssignment({
+        expectedAssignmentId: Number(item.expected_assignment_id),
+        targetPeriodId: Number(item.target_period_id || req.body?.target_period_id) || null,
+        effectiveAt: item.effective_at || req.body?.effective_at || null,
+        idempotencyKey: `${batchKey}:${Number(item.expected_assignment_id)}`,
+        actorType: "sekretaris_prodi",
+        actorId: Number(req.user?.id) || null,
+      });
+      results.push({ expected_assignment_id: Number(item.expected_assignment_id), success: true, ...value });
+    } catch (error) {
+      results.push({ expected_assignment_id: Number(item.expected_assignment_id), success: false, code: error.code || "INTERNAL_ERROR", message: error.message });
+    }
+  }
+  return res.status(207).json({ success: true, data: { results } });
+};
+
+exports.activateDueSemesterTransitions = async (req, res) => {
+  try {
+    return res.json({ success: true, data: await activateScheduledAssignments({ limit: req.body?.limit }) });
+  } catch (error) {
+    return transitionError(res, error);
   }
 };

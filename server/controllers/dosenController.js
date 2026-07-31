@@ -33,6 +33,8 @@ const {
   validateResearchSubmissionReviewer,
   resolveResearchSubmissionRegistration,
 } = require("../services/dosenStatusService");
+const { decideExtensionAndTransitionSemester } = require("../services/extensionTransitionService");
+const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -2833,6 +2835,18 @@ exports.approveIzinLanjut = async (req, res) => {
       });
     }
 
+    const transition = await decideExtensionAndTransitionSemester({
+      izinId: Number(req.params.id),
+      reviewerDosenId: dosen_id,
+      decision: "approved",
+      note: req.body?.keterangan_dosen,
+      idempotencyKey: String(req.get("Idempotency-Key") || req.body?.idempotency_key || "").trim(),
+      transaction: t,
+    });
+    await t.commit();
+    return res.json({ success: true, message: "Izin melanjutkan skripsi berhasil disetujui.", data: transition, replayed: transition.replayed });
+
+    /* istanbul ignore next -- alur legacy dipertahankan sementara untuk referensi migrasi */
     const permission = await getExistingSupervisionPermission(dosen_id, t);
     if (!permission.allowed) {
       await t.rollback();
@@ -2936,6 +2950,9 @@ exports.approveIzinLanjut = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di approveIzinLanjut:", error);
+    if (error instanceof SemesterAssignmentError) {
+      return res.status(error.statusCode).json({ success: false, message: error.message, code: error.code, detail: error.detail || null });
+    }
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
@@ -2958,6 +2975,18 @@ exports.rejectIzinLanjut = async (req, res) => {
       });
     }
 
+    const transition = await decideExtensionAndTransitionSemester({
+      izinId: Number(req.params.id),
+      reviewerDosenId: dosen_id,
+      decision: "rejected",
+      note: req.body?.keterangan_dosen,
+      idempotencyKey: String(req.get("Idempotency-Key") || req.body?.idempotency_key || "").trim(),
+      transaction: t,
+    });
+    await t.commit();
+    return res.json({ success: true, message: "Izin melanjutkan skripsi ditolak. Mahasiswa wajib melakukan penjaluran ulang.", data: transition, replayed: transition.replayed });
+
+    /* istanbul ignore next -- alur legacy dipertahankan sementara untuk referensi migrasi */
     const permission = await getExistingSupervisionPermission(dosen_id, t);
     if (!permission.allowed) {
       await t.rollback();
@@ -3069,6 +3098,9 @@ exports.rejectIzinLanjut = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di rejectIzinLanjut:", error);
+    if (error instanceof SemesterAssignmentError) {
+      return res.status(error.statusCode).json({ success: false, message: error.message, code: error.code, detail: error.detail || null });
+    }
     return res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
@@ -3347,6 +3379,10 @@ exports.approvePamitMahasiswa = async (req, res) => {
       mahasiswaId: mahasiswa.id,
       tanggalSelesai: new Date(),
       alasanBerakhir: keterangan_dospem || "Mahasiswa pamit dan melepas pembimbing skripsi",
+      endReasonCode: "pamit_approved",
+      semesterOutcomeCode: "repeated",
+      endedByActorType: "dosen",
+      endedByActorId: dosen_id,
       transaction: t,
     });
     await mahasiswa.update(
@@ -3750,6 +3786,10 @@ exports.approvePamitDPA = async (req, res) => {
       mahasiswaId: mahasiswa.id,
       tanggalSelesai: new Date(),
       alasanBerakhir: keterangan_dpa || "Mahasiswa pamit atau mengganti jalur dan pembimbing",
+      endReasonCode: "pamit_approved",
+      semesterOutcomeCode: "repeated",
+      endedByActorType: "dosen",
+      endedByActorId: dosen_id,
       transaction: t,
     });
     await mahasiswa.update(

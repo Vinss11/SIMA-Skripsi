@@ -16,7 +16,10 @@
     "reconcile:stage2-registrations:dry-run": "node scripts/reconcile-stage2-registrations.js --dry-run",
     "reconcile:stage2-registrations": "node scripts/reconcile-stage2-registrations.js --execute",
     "reconcile:stage3-change-cycles:dry-run": "node scripts/reconcile-stage3-change-cycles.js --dry-run",
-    "reconcile:stage3-change-cycles": "node scripts/reconcile-stage3-change-cycles.js --execute"
+    "reconcile:stage3-change-cycles": "node scripts/reconcile-stage3-change-cycles.js --execute",
+    "reconcile:stage4-semester-assignments:dry-run": "node scripts/reconcile-stage4-semester-assignments.js --dry-run",
+    "reconcile:stage4-semester-assignments": "node scripts/reconcile-stage4-semester-assignments.js --execute",
+    "activate:scheduled-assignments": "node scripts/activate-scheduled-assignments.js"
   },
   "keywords": [],
   "author": "",

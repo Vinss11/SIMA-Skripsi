@@ -56,8 +56,8 @@ router.post(
 
 // ========== JALUR ULANG - PAMIT ==========
 router.post("/ulang/pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.submitPamit);
-router.get("/ulang/status-pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.getStatusPamit);
-router.get("/ulang/history-pamit", authenticateToken, authorizeRole("mahasiswa"), jalurController.getHistoryPamit);
+router.get("/ulang/status-pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.getLegacyPamitStatus);
+router.get("/ulang/history-pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.getLegacyPamitHistory);
 
 // ========== JALUR BARU ==========
 router.post("/baru/topik-dosen", authenticateToken, authorizeRole("mahasiswa"), jalurController.submitBaruTopikDosen);

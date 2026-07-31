@@ -11,6 +11,7 @@ const {
   PenetapanPembimbingDosen,
   SekretarisProdi,
   BimbinganSkripsi,
+  AssignmentActivationAttempt,
 } = require("../models");
 const { validateDosenForNewAssignment } = require("./dosenStatusService");
 const { createSupervisorAssignmentNotifications } = require("./notificationService");
@@ -116,6 +117,7 @@ const assignmentInclude = [
     attributes: ["id", "periode_penjaluran_id", "jalur", "jenis_jalur_diambil", "penjaluran_baru", "semester_mahasiswa", "status"],
   },
   { model: SekretarisProdi, as: "createdBySekretaris", attributes: ["id", "nik", "nama", "email"] },
+  { model: AssignmentActivationAttempt, as: "activationAttempt", required: false },
 ];
 
 function sortAssignmentMembers(penetapan) {
@@ -126,8 +128,16 @@ function sortAssignmentMembers(penetapan) {
 }
 
 async function getActiveSupervisorAssignment(mahasiswaId, transaction = null) {
+  const now = new Date();
   const penetapan = await PenetapanPembimbing.findOne({
-    where: { mahasiswa_id: mahasiswaId, status: "active" },
+    where: {
+      mahasiswa_id: mahasiswaId,
+      status: "active",
+      [Op.and]: [
+        { [Op.or]: [{ effective_at: null }, { effective_at: { [Op.lte]: now } }] },
+        { [Op.or]: [{ tanggal_selesai: null }, { tanggal_selesai: { [Op.gt]: now } }] },
+      ],
+    },
     include: assignmentInclude,
     order: [[{ model: PenetapanPembimbingDosen, as: "pembimbings" }, "urutan", "ASC"]],
     transaction,
@@ -154,29 +164,12 @@ async function resolveSemesterPenjaluranKe(mahasiswaId, pendaftaranId, periodeMu
   }
   if (!targetPeriodId) return null;
 
-  const approvedRegistrations = await PendaftaranPenjaluran.findAll({
-    where: {
-      mahasiswa_id: mahasiswaId,
-      status: "approved",
-      periode_penjaluran_id: { [Op.ne]: null },
-    },
-    attributes: ["periode_penjaluran_id"],
-    raw: true,
+  if (!pendaftaranId) return 1;
+  const previous = await PenetapanPembimbing.max("semester_penjaluran_ke", {
+    where: { mahasiswa_id: mahasiswaId, pendaftaran_penjaluran_id: pendaftaranId, status: { [Op.ne]: "cancelled" } },
     transaction,
   });
-  const periodIds = [...new Set([
-    ...approvedRegistrations.map((item) => Number(item.periode_penjaluran_id)).filter(Boolean),
-    targetPeriodId,
-  ])];
-  const periods = await PeriodePenjaluran.findAll({
-    where: { id: { [Op.in]: periodIds } },
-    attributes: ["id", "tanggal_mulai", "createdAt"],
-    order: [["tanggal_mulai", "ASC NULLS LAST"], ["createdAt", "ASC"], ["id", "ASC"]],
-    transaction,
-  });
-  const targetIndex = periods.findIndex((item) => Number(item.id) === targetPeriodId);
-  if (targetIndex < 0) throw new SupervisorAssignmentError("Periode mulai penetapan tidak ditemukan.", 400);
-  return targetIndex + 1;
+  return Number(previous || 0) + 1;
 }
 
 async function createDraftSupervisorAssignment({
@@ -191,6 +184,10 @@ async function createDraftSupervisorAssignment({
   createdBySekretarisId = null,
   transaction = null,
   skipEligibilityValidation = false,
+  previousAssignmentId = null,
+  assignmentTransitionCode = null,
+  effectiveAt = null,
+  decisionAt = new Date(),
 }) {
   return withTransaction(transaction, async (t) => {
     const normalizedMahasiswaId = Number(mahasiswaId);
@@ -246,6 +243,10 @@ async function createDraftSupervisorAssignment({
       sumber_data: sumberData,
       catatan_pergantian: String(catatanPergantian || "").trim() || null,
       created_by_sekretaris_id: createdBySekretarisId || null,
+      previous_assignment_id: previousAssignmentId || null,
+      assignment_transition_code: assignmentTransitionCode || null,
+      effective_at: effectiveAt || null,
+      decision_at: decisionAt || new Date(),
     }, { transaction: t });
     await PenetapanPembimbingDosen.bulkCreate(dosenIds.map((dosenId, index) => ({
       penetapan_pembimbing_id: penetapan.id,
@@ -320,6 +321,9 @@ async function activateSupervisorAssignment({
         alasan_berakhir: sameComposition
           ? "Diperbarui untuk periode penjaluran berikutnya."
           : `Komposisi pembimbing diperbarui melalui penetapan #${penetapan.id}.`,
+        end_reason_code: sameComposition ? "semester_carried_forward" : "supervisor_replaced",
+        assignment_transition_code: sameComposition ? "semester_carried_forward" : "supervisor_replaced",
+        semester_outcome_code: sameComposition ? "continued" : null,
       }, { transaction: t });
       await PenetapanPembimbingDosen.update({
         status: "ended",
@@ -334,6 +338,8 @@ async function activateSupervisorAssignment({
       tanggal_mulai: startedAt,
       tanggal_selesai: null,
       alasan_berakhir: null,
+      activated_at: new Date(),
+      semester_outcome_code: "in_progress",
     }, { transaction: t });
     await PenetapanPembimbingDosen.update({
       status: "active",
@@ -359,8 +365,14 @@ async function activateSupervisorAssignment({
 
 async function endActiveSupervisorAssignment({
   mahasiswaId,
+  expectedAssignmentId = null,
   tanggalSelesai = new Date(),
   alasanBerakhir,
+  endReasonCode = "workflow_cancelled",
+  semesterOutcomeCode = "cancelled",
+  assignmentTransitionCode = null,
+  endedByActorType = null,
+  endedByActorId = null,
   clearLegacyCache = true,
   transaction = null,
 }) {
@@ -372,6 +384,13 @@ async function endActiveSupervisorAssignment({
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
+    if (expectedAssignmentId && Number(active?.id) !== Number(expectedAssignmentId)) {
+      throw new SupervisorAssignmentError(
+        "Penetapan pembimbing aktif sudah berubah.",
+        409,
+        { code: "ASSIGNMENT_CHANGED", expected_assignment_id: Number(expectedAssignmentId), active_assignment_id: active?.id || null }
+      );
+    }
     const endedAt = tanggalSelesai ? new Date(tanggalSelesai) : new Date();
     if (Number.isNaN(endedAt.getTime())) throw new SupervisorAssignmentError("Tanggal selesai tidak valid.", 400);
     if (active) {
@@ -382,6 +401,11 @@ async function endActiveSupervisorAssignment({
         status: "ended",
         tanggal_selesai: endedAt,
         alasan_berakhir: String(alasanBerakhir || "Penetapan pembimbing diakhiri").trim(),
+        end_reason_code: endReasonCode,
+        semester_outcome_code: semesterOutcomeCode,
+        assignment_transition_code: assignmentTransitionCode,
+        ended_by_actor_type: endedByActorType,
+        ended_by_actor_id: endedByActorId,
       }, { transaction: t });
       await PenetapanPembimbingDosen.update({
         status: "ended",
@@ -436,15 +460,23 @@ async function replaceSupervisorAssignment({
       ? "perpanjangan"
       : "pergantian";
 
+    const resolvedSemester = semesterPenjaluranKe == null && current.penetapan
+      ? Number(current.penetapan.semester_penjaluran_ke || 1)
+      : semesterPenjaluranKe;
+
     const draft = await createDraftSupervisorAssignment({
       mahasiswaId,
       pendaftaranPenjaluranId,
       periodeMulaiId,
-      semesterPenjaluranKe,
+      semesterPenjaluranKe: resolvedSemester,
       dosenPembimbingIds: dosenIds,
       sumberData: resolvedSource,
       createdBySekretarisId,
       transaction: t,
+      previousAssignmentId: current.penetapan?.id || null,
+      assignmentTransitionCode: current.penetapan
+        ? (resolvedSource === "pergantian" ? "supervisor_replaced" : "semester_carried_forward")
+        : null,
     });
     const activated = await activateSupervisorAssignment({
       penetapanId: draft.id,
@@ -479,6 +511,14 @@ function toAssignmentResponse(penetapan) {
     periode: plain.periodeMulai?.label_periode || null,
     periode_mulai: plain.periodeMulai || null,
     semester_penjaluran_ke: plain.semester_penjaluran_ke,
+    previous_assignment_id: plain.previous_assignment_id || null,
+    end_reason_code: plain.end_reason_code || null,
+    assignment_transition_code: plain.assignment_transition_code || null,
+    semester_outcome_code: plain.semester_outcome_code || (plain.status === "active" ? "in_progress" : null),
+    izin_lanjut_id: plain.izin_lanjut_id || null,
+    effective_at: plain.effective_at || null,
+    activated_at: plain.activated_at || null,
+    decision_at: plain.decision_at || null,
     tanggal_mulai: plain.tanggal_mulai,
     tanggal_selesai: plain.tanggal_selesai,
     createdAt: plain.createdAt,
@@ -494,6 +534,7 @@ function toAssignmentResponse(penetapan) {
     pendaftaran: plain.pendaftaran || null,
     pembimbings,
     mahasiswa: plain.mahasiswa || null,
+    activation_attempt: plain.activationAttempt || null,
   };
 }
 
@@ -508,7 +549,8 @@ async function getSupervisorAssignmentHistory(mahasiswaId, transaction = null) {
   const formatted = rows.map(toAssignmentResponse);
   return {
     active: formatted.find((item) => item.status === "active") || null,
-    history: formatted.filter((item) => item.status !== "active"),
+    scheduled: formatted.filter((item) => item.status === "scheduled"),
+    history: formatted.filter((item) => !["active", "scheduled"].includes(item.status)),
   };
 }
 

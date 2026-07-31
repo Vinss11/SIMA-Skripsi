@@ -286,6 +286,15 @@ Ketika pamit disetujui:
 - mahasiswa dapat melanjutkan pendaftaran ulang/alih;
 - mahasiswa dan dosen terkait menerima pemberitahuan.
 
+### BR-PAMIT-004 — Masa berlaku pamit
+
+**Status: Final**
+
+- Pamit hanya berlaku untuk periode tujuan yang direkam saat pamit diajukan.
+- Pamit tidak dapat digunakan untuk membuat pendaftaran pada periode lain.
+- Pamit berstatus `pending` atau `approved` yang belum dikonsumsi otomatis menjadi `cancelled` ketika periode tujuan ditutup.
+- Pamit yang sudah dibatalkan karena periode berakhir tidak dapat diaktifkan kembali; mahasiswa harus mengajukan pamit baru untuk periode aktif berikutnya jika masih diwajibkan.
+
 ## 9. Penelitian
 
 ### BR-PENELITIAN-001 — Sifat pengajuan

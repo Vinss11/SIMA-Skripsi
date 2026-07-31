@@ -7,6 +7,7 @@ const {
   SekretarisProdi,
   PendaftaranPenjaluran,
   PeriodePenjaluran,
+  PenetapanPembimbingDosen,
   sequelize,
 } = require("../models");
 const {
@@ -20,6 +21,7 @@ const {
   getMahasiswaSupervisionAccess,
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
+const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbingService");
 
 async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
   return getExistingSupervisionPermission(dosenId, transaction);
@@ -444,7 +446,20 @@ exports.createMahasiswaBimbingan = async (req, res) => {
       });
     }
 
-    const pendaftaranAktif = await getLatestPendaftaranForBimbingan(mahasiswa_id, transaction);
+    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa_id, transaction);
+    if (!activeAssignment.penetapan || !activeAssignment.penetapan.pendaftaran_penjaluran_id) {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Assignment pembimbing aktif belum terikat ke siklus penjaluran.", code: "ACTIVE_ASSIGNMENT_REQUIRED" });
+    }
+    const assignmentMember = await PenetapanPembimbingDosen.findOne({
+      where: { penetapan_pembimbing_id: activeAssignment.penetapan.id, dosen_id: targetSupervisorId, status: "active" },
+      transaction,
+    });
+    if (!assignmentMember) {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Dosen tujuan bukan anggota assignment aktif.", code: "SUPERVISOR_ASSIGNMENT_MISMATCH" });
+    }
+    const pendaftaranAktif = await PendaftaranPenjaluran.findByPk(activeAssignment.penetapan.pendaftaran_penjaluran_id, { transaction });
     const selectedJalur = resolveSelectedJalurFromPendaftaran(pendaftaranAktif);
 
     const selectedJalurIsNonPenelitian =
@@ -517,6 +532,7 @@ exports.createMahasiswaBimbingan = async (req, res) => {
         dosen_id: targetSupervisorId,
         pengajuan_id: pengajuanApproved?.id || null,
         pendaftaran_penjaluran_id: pendaftaranAktif?.id || null,
+        penetapan_pembimbing_id: activeAssignment.penetapan.id,
         permintaan_pesan: pesan,
         permintaan_tanggal: tanggal,
         permintaan_jam: jam,

@@ -35,6 +35,7 @@ const { createSupervisorReplacementNotifications, createSystemNotification } = r
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { finalizePenjaluranDecision } = require("../services/penjaluranFinalizationService");
 const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
+const { cancelPamitsForClosedPeriod } = require("../services/penjaluranChangeService");
 const {
   ACTIVE_DOSEN_WHERE,
   canContinueExistingSupervision,
@@ -435,7 +436,15 @@ function getPeriodeStatusLabel(periode) {
 
 async function closeExpiredActivePeriodePenjaluran(options = {}) {
   const now = options.now instanceof Date ? options.now : new Date();
-  return PeriodePenjaluran.update(
+  const expiredPeriods = await PeriodePenjaluran.findAll({
+    where: {
+      tanggal_selesai: { [Op.lt]: now },
+      [Op.or]: [{ status: "active" }, { is_active: true }],
+    },
+    attributes: ["id"],
+    transaction: options.transaction,
+  });
+  const result = await PeriodePenjaluran.update(
     {
       status: "closed",
       is_active: false,
@@ -450,6 +459,10 @@ async function closeExpiredActivePeriodePenjaluran(options = {}) {
       transaction: options.transaction,
     }
   );
+  for (const period of expiredPeriods) {
+    await cancelPamitsForClosedPeriod(period.id, options.transaction);
+  }
+  return result;
 }
 
 function getRiwayatApprovalType(item) {
@@ -3615,6 +3628,7 @@ exports.closePeriodeById = async (req, res) => {
     periode.is_active = false;
     periode.status = "closed";
     await periode.save({ transaction: t });
+    await cancelPamitsForClosedPeriod(periode.id, t);
 
     await t.commit();
     return res.json({

@@ -1,6 +1,6 @@
 # Rancangan Pengerjaan Tahap 2 — Finalisasi Penjaluran Tiga Jalur Aktif
 
-> **Status implementasi 2026-07-30:** koreksi kontrak workflow, invariant finalizer, siklus ulang/alih, invariant kelompok, notifikasi, histori otoritatif, migration/backfill, dan integration test controller telah diterapkan. Catatan gap lama pada bagian 7 dipertahankan sebagai arsip baseline.
+> **Status implementasi 2026-07-31:** koreksi kontrak workflow, invariant finalizer, siklus ulang/alih, invariant kelompok, notifikasi, histori otoritatif, migration/backfill, integration test controller, alur endpoint Perintisan lengkap, dan audit rekonsiliasi operasional telah diterapkan. Dry-run terakhir masih menemukan data lama yang perlu direkonsiliasi manual; rincian ada pada bagian 7.2. Catatan gap lama pada bagian 7 dipertahankan sebagai arsip baseline.
 
 ## 1. Tujuan
 
@@ -269,6 +269,10 @@ Implementasi saat ini sudah memenuhi fondasi bisnis berikut dan perilaku ini waj
 5. Histori Magang dan Perintisan tersimpan pada `RiwayatWorkflowPenjalurans`. JSON hanya menjadi snapshot/fallback dan timeline lama dibackfill dengan deduplication key.
 6. Notifikasi workflow tersedia untuk form terkirim, antrean review, keputusan penanggung jawab, antrean final, penolakan final, dan penetapan pembimbing.
 7. Integration test controller mencakup final Penelitian, Magang, dan Perintisan, salah program, salah cluster, status dosen berubah, kuota penuh, request paralel, idempotensi, histori, dan notifikasi.
+8. Skenario Perintisan tidak lagi hanya menguji resolver: test menjalankan submit ketua, review Pengampu, final Sekprodi, lalu memverifikasi tiga penetapan P1 aktif, histori final, notifikasi, dan status kelompok.
+9. `reconcile-stage2-registrations.js` memeriksa duplikat pendaftaran, jalur tidak valid, final approved tanpa penetapan, penetapan tanpa pendaftaran, cache P1 berbeda, histori workflow hilang, kelompok Perintisan tidak konsisten, finalisasi tanpa notifikasi, dan lebih dari satu penetapan aktif.
+
+Dry-run pada 2026-07-31 berhasil dijalankan dan menemukan empat anomali data lama. Dua pendaftaran Penelitian tanpa histori dikonfirmasi melalui `Pengajuans` otoritatif—masing-masing mempunyai Pengajuan `pending` dan `approved` dari sebelum fitur histori—bukan lagi dipilih karena `form_lanjutan_status`. Dua finalisasi tanpa notifikasi diklasifikasikan sebagai `legacy_before_notification_feature` berdasarkan batas migration `20260724090000`; kategori `missing_notification_current_flow` berjumlah nol. Mode `--execute` tetap fail-safe dan tidak membuat ulang notifikasi lama, karena pemberitahuan terlambat dapat membingungkan pengguna dan memerlukan keputusan operasional manual.
 
 Pengujian tersebut memakai controller dengan request/response recorder dan database nyata. Pengujian black-box melalui server HTTP lengkap beserta seluruh middleware tetap dapat ditambahkan ketika proyek menyediakan HTTP test harness.
 

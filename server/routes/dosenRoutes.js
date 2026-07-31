@@ -128,15 +128,15 @@ router.post(
 );
 
 // ==========  SEMESTER 3 ==========
-router.get("/permohonan-extend", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getIzinLanjutSubmissions);
-router.get("/permohonan-extend/:id", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getIzinLanjutDetail);
-router.post("/permohonan-extend/:id/approve", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.approveIzinLanjut);
-router.post("/permohonan-extend/:id/reject", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.rejectIzinLanjut);
+router.get("/permohonan-extend", authenticateToken, authorizeRole("dosen"), dosenController.getIzinLanjutSubmissions);
+router.get("/permohonan-extend/:id", authenticateToken, authorizeRole("dosen"), dosenController.getIzinLanjutDetail);
+router.post("/permohonan-extend/:id/approve", authenticateToken, authorizeRole("dosen"), dosenController.approveIzinLanjut);
+router.post("/permohonan-extend/:id/reject", authenticateToken, authorizeRole("dosen"), dosenController.rejectIzinLanjut);
 // Backward-compatibility alias (nama endpoint lama)
-router.get("/izin-lanjut", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getIzinLanjutSubmissions);
-router.get("/izin-lanjut/:id", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.getIzinLanjutDetail);
-router.post("/izin-lanjut/:id/approve", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.approveIzinLanjut);
-router.post("/izin-lanjut/:id/reject", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), dosenController.rejectIzinLanjut);
+router.get("/izin-lanjut", authenticateToken, authorizeRole("dosen"), dosenController.getIzinLanjutSubmissions);
+router.get("/izin-lanjut/:id", authenticateToken, authorizeRole("dosen"), dosenController.getIzinLanjutDetail);
+router.post("/izin-lanjut/:id/approve", authenticateToken, authorizeRole("dosen"), dosenController.approveIzinLanjut);
+router.post("/izin-lanjut/:id/reject", authenticateToken, authorizeRole("dosen"), dosenController.rejectIzinLanjut);
 
 // ========== PAMIT MAHASISWA (DOSEN PEMBIMBING SKRIPSI) ==========
 // Dosen pembimbing skripsi mereview pamit mahasiswa bimbingannya (approve/reject tahap 1)

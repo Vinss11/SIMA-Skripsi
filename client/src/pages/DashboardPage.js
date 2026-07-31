@@ -152,6 +152,16 @@ function formatJalurLabel(jalur) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function resolveIdempotencyKey(ref, prefix, payload) {
+  const fingerprint = JSON.stringify(payload || {});
+  if (ref.current?.fingerprint !== fingerprint) {
+    const randomPart = window.crypto?.randomUUID?.()
+      || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    ref.current = { fingerprint, key: `${prefix}-${randomPart}` };
+  }
+  return ref.current.key;
+}
+
 function getUlangAlihAccess({ jalurEligibility, jalurStatus }) {
   const periodeAktif = jalurEligibility?.periode_aktif || null;
   const pendaftaranAktif = jalurEligibility?.pendaftaran_aktif || null;
@@ -1471,6 +1481,9 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const sessionExpiredRef = useRef(false);
+  const pamitIdempotencyRef = useRef(null);
+  const changeRegistrationIdempotencyRef = useRef(null);
+  const extensionIdempotencyRef = useRef(null);
   const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const mustChangePassword = Boolean(session?.user?.role === "mahasiswa" && session?.prompt_change_password);
   const semesterLanjutanGate = jalurStatus?.semester_lanjutan_gate || null;
@@ -1828,14 +1841,17 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
 
     try {
       setIzinLanjutSubmitting(true);
+      const requestPayload = { alasan_pengajuan: alasan };
+      const idempotencyKey = resolveIdempotencyKey(extensionIdempotencyRef, "extension", requestPayload);
 
       const response = await fetch(`${apiBaseUrl}/api/jalur/izin-lanjut`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
         },
-        body: JSON.stringify({ alasan_pengajuan: alasan }),
+        body: JSON.stringify(requestPayload),
       });
 
       const data = await response.json().catch(() => null);
@@ -1853,11 +1869,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       }
 
       if (!response.ok || !data?.success) {
+        extensionIdempotencyRef.current = null;
         setIzinLanjutError(data?.message || "Gagal mengajukan izin lanjut.");
         return;
       }
 
       setIzinLanjutReason("");
+      extensionIdempotencyRef.current = null;
       setIzinLanjutSuccess(data?.message || "Permintaan izin lanjut berhasil dikirim.");
       setRefreshTick((prev) => prev + 1);
     } catch (requestError) {
@@ -1885,17 +1903,20 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
 
     try {
       setUlangAlihSubmitting(true);
+      const requestPayload = {
+        alasan_ulang: alasan,
+        pesan_ke_dosen_pembimbing: pesan,
+        target_track: form?.target_track || null,
+      };
+      const idempotencyKey = resolveIdempotencyKey(pamitIdempotencyRef, "pamit", requestPayload);
       const response = await fetch(`${apiBaseUrl}/api/jalur/ulang/pamit`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
         },
-        body: JSON.stringify({
-          alasan_ulang: alasan,
-          pesan_ke_dosen_pembimbing: pesan,
-          target_track: form?.target_track || null,
-        }),
+        body: JSON.stringify(requestPayload),
       });
 
       const data = await response.json().catch(() => null);
@@ -1906,15 +1927,22 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         lowerMessage.includes("kadaluarsa");
 
       if (response.status === 401 || (response.status === 403 && isTokenError)) {
+        pamitIdempotencyRef.current = null;
         onSessionExpired?.();
         return;
       }
 
-      if (!response.ok || !data?.success) {
+      if (!response.ok || data?.success === false) {
+        pamitIdempotencyRef.current = null;
         setUlangAlihError(data?.message || "Gagal mengirim permohonan pamit.");
         return;
       }
+      if (!data?.success) {
+        setUlangAlihError("Respons server tidak dapat diverifikasi. Silakan coba lagi.");
+        return;
+      }
 
+      pamitIdempotencyRef.current = null;
       setUlangAlihSuccess(data?.message || "Permohonan pamit berhasil dikirim.");
       setRefreshTick((prev) => prev + 1);
     } catch (requestError) {
@@ -1930,11 +1958,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
 
     try {
       setUlangAlihSubmitting(true);
+      const idempotencyKey = resolveIdempotencyKey(changeRegistrationIdempotencyRef, "change", form);
       const response = await fetch(`${apiBaseUrl}/api/pendaftaran/ulang-alih`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${session.token}`,
           "Content-Type": "application/json",
+          "Idempotency-Key": idempotencyKey,
         },
         body: JSON.stringify(form),
       });
@@ -1946,14 +1976,21 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
         lowerMessage.includes("kadaluarsa");
 
       if (response.status === 401 || (response.status === 403 && isTokenError)) {
+        changeRegistrationIdempotencyRef.current = null;
         onSessionExpired?.();
         return;
       }
-      if (!response.ok || !data?.success) {
+      if (!response.ok || data?.success === false) {
+        changeRegistrationIdempotencyRef.current = null;
         setUlangAlihError(data?.message || "Pendaftaran Ulang Penelitian gagal.");
         return;
       }
+      if (!data?.success) {
+        setUlangAlihError("Respons server tidak dapat diverifikasi. Silakan coba lagi.");
+        return;
+      }
 
+      changeRegistrationIdempotencyRef.current = null;
       setUlangAlihSuccess(data?.message || "Pendaftaran ulang/alih berhasil.");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");

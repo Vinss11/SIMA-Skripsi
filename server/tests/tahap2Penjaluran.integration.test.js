@@ -80,11 +80,11 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     if (groupId) await KelompokPerintisanBisnis.destroy({ where: { id: groupId }, force: true });
     if (registrationIds.length) await PendaftaranPenjaluran.destroy({ where: { id: registrationIds }, force: true });
     if (dosenIds.length) await DosenKetersediaanPeriode.destroy({ where: { dosen_id: dosenIds }, force: true });
+    if (additionalPeriodIds.length) await PeriodePenjaluran.destroy({ where: { id: additionalPeriodIds }, force: true });
+    if (periodId) await PeriodePenjaluran.destroy({ where: { id: periodId }, force: true });
     if (mahasiswaIds.length) await Mahasiswa.destroy({ where: { id: mahasiswaIds }, force: true });
     if (dosenIds.length) await Dosen.destroy({ where: { id: dosenIds }, force: true });
     if (createdClusterIds.length) await Klaster.destroy({ where: { id: createdClusterIds }, force: true });
-    if (additionalPeriodIds.length) await PeriodePenjaluran.destroy({ where: { id: additionalPeriodIds }, force: true });
-    if (periodId) await PeriodePenjaluran.destroy({ where: { id: periodId }, force: true });
     await sequelize.close();
   });
 
@@ -123,17 +123,38 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     assert.equal(normalizeWorkflow({ status: "approved" }).workflow_stage, "approved");
   });
 
-  await t.test("anggota Perintisan final selalu dibaca dari tabel otoritatif, bukan snapshot JSON", async () => {
+  await t.test("endpoint Perintisan menjalankan submit, review Pengampu, dan final Sekprodi untuk seluruh anggota", async () => {
+    const reviewer = await Dosen.create({
+      kode_dosen: `T2R${suffix}`,
+      nik: `5${suffix}`.slice(0, 9),
+      nama: "Pengampu Perintisan Tahap 2",
+      email: `pengampu.perintisan.${suffix}@test.local`,
+      password: "test-password",
+      kuota_bimbingan: 10,
+      status_keaktifan: "active",
+      account_is_active: true,
+      continue_existing_supervision: true,
+    }, { hooks: false });
+    dosenIds.push(reviewer.id);
+
+    const now = Date.now();
     const period = await PeriodePenjaluran.create({
-      tahun_akademik: "2196/2197",
+      tahun_akademik: "2026/2027",
       semester: "ganjil",
       label_periode: `Tahap 2 ${suffix}`,
-      tanggal_mulai: new Date("2196-08-01T00:00:00.000Z"),
-      tanggal_selesai: new Date("2196-08-31T00:00:00.000Z"),
-      status: "closed",
-      is_active: false,
+      tanggal_mulai: new Date(now - 24 * 60 * 60 * 1000),
+      tanggal_selesai: new Date(now + 24 * 60 * 60 * 1000),
+      status: "active",
+      is_active: true,
+      pengawas_perintisan_bisnis_dosen_id: reviewer.id,
     });
     periodId = period.id;
+    await DosenKetersediaanPeriode.create({
+      dosen_id: reviewer.id,
+      periode_penjaluran_id: period.id,
+      tersedia_membimbing: true,
+      configuration_status: "ready",
+    });
 
     const students = [];
     for (let index = 1; index <= 3; index += 1) {
@@ -157,11 +178,7 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
         semester_mahasiswa: 7,
         status: "approved",
         jenis_jalur_diambil: "perintisan_bisnis",
-        form_lanjutan_status: "review_sekprodi",
-        form_lanjutan_payload: {
-          jalur: "perintisan_bisnis",
-          kelompok: { id: -1, anggota: [{ mahasiswa_id: student.id }] },
-        },
+        form_lanjutan_status: "draft",
       });
       registrations.push(registration);
       registrationIds.push(registration.id);
@@ -169,7 +186,7 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     const group = await KelompokPerintisanBisnis.create({
       periode_penjaluran_id: period.id,
       ketua_mahasiswa_id: students[0].id,
-      status: "submitted",
+      status: "draft",
     });
     groupId = group.id;
     await AnggotaKelompokPerintisan.bulkCreate(registrations.map((registration, index) => ({
@@ -181,9 +198,51 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
       jenis_pendaftaran: "baru",
     })));
 
+    const submitResponse = responseRecorder();
+    await jalurController.submitFormNonPenelitian({
+      body: {
+        jalur: "perintisan_bisnis",
+        payload: {
+          nama_bisnis: "SIMA Venture",
+          jenis_bisnis: "Teknologi pendidikan",
+          lokasi_bisnis: "Bandung",
+          deskripsi_bisnis: "Platform kolaborasi akademik untuk mempercepat proses tugas akhir.",
+          masalah_yang_diselesaikan: "Proses akademik masih tersebar dan sulit dipantau oleh pengguna.",
+          produk_layanan: "Layanan pengelolaan workflow akademik terintegrasi untuk perguruan tinggi.",
+          target_konsumen: "Mahasiswa, dosen, dan pengelola program studi di perguruan tinggi.",
+          model_bisnis: "Berlangganan perangkat lunak per program studi setiap semester akademik.",
+          tahap_perkembangan: "Purwarupa sudah diuji oleh kelompok pada lingkungan pengembangan.",
+          rencana_kegiatan: "Validasi kebutuhan, pengujian pengguna, dan penyempurnaan model bisnis.",
+          target_luaran: "Purwarupa tervalidasi dan laporan pengujian pengguna yang terdokumentasi.",
+        },
+      },
+      user: { id: students[0].id, role: "mahasiswa" },
+      files: {},
+    }, submitResponse);
+    assert.equal(submitResponse.statusCode, 201, submitResponse.payload?.message);
+    assert.equal(await PendaftaranPenjaluran.count({
+      where: { id: registrations.map((item) => item.id), form_lanjutan_status: "submitted" },
+    }), 3);
+    assert.equal(await RiwayatWorkflowPenjaluran.count({
+      where: { pendaftaran_penjaluran_id: registrations.map((item) => item.id), event_type: "form_submitted" },
+    }), 3);
+
+    const reviewResponse = responseRecorder();
+    await jalurController.approvePerintisanBisnisReviewByDosen({
+      params: { id: String(registrations[0].id) },
+      body: { keterangan: "Model bisnis dan pembagian peran kelompok layak." },
+      user: { id: reviewer.id, role: "dosen" },
+    }, reviewResponse);
+    assert.equal(reviewResponse.statusCode, 200, reviewResponse.payload?.message);
+    assert.equal(await PendaftaranPenjaluran.count({
+      where: { id: registrations.map((item) => item.id), form_lanjutan_status: "review_sekprodi" },
+    }), 3);
+    await Promise.all(registrations.map((registration) => registration.reload()));
+
     await sequelize.transaction(async (transaction) => {
+      const leaderRegistration = await PendaftaranPenjaluran.findByPk(registrations[0].id, { transaction });
       const targets = await resolveAuthoritativeAssignmentTargets({
-        registration: registrations[0],
+        registration: leaderRegistration,
         track: "perintisan_bisnis",
         transaction,
       });
@@ -244,6 +303,15 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     assert.equal(await PenetapanPembimbing.count({
       where: { mahasiswa_id: students.map((item) => item.id), status: "active" },
     }), 3);
+    assert.equal(await PenetapanPembimbingDosen.count({
+      where: { dosen_id: groupSupervisor.id, urutan: 1, status: "active" },
+    }), 3);
+    assert.equal(await RiwayatWorkflowPenjaluran.count({
+      where: { pendaftaran_penjaluran_id: registrations.map((item) => item.id), event_type: "final_decision" },
+    }), 3);
+    assert.equal(await Notifikasi.count({
+      where: { recipient_type: "mahasiswa", recipient_id: students.map((item) => item.id) },
+    }) >= 12, true);
     await group.reload();
     assert.equal(group.status, "approved");
   });

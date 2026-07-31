@@ -49,7 +49,11 @@ exports.submitPamit = async (req, res) => {
       note: req.body?.note || req.body?.catatan_tambahan,
       idempotencyKey: req.get("Idempotency-Key") || req.body?.idempotency_key || null,
     });
-    return res.status(201).json({ success: true, message: "Pamit berhasil diajukan kepada Pembimbing 1.", data });
+    return res.status(data.replayed ? 200 : 201).json({
+      success: true,
+      message: data.replayed ? "Request pamit identik diputar ulang tanpa membuat data baru." : "Pamit berhasil diajukan kepada Pembimbing 1.",
+      data,
+    });
   } catch (error) { return respondError(res, error); }
 };
 
@@ -71,7 +75,15 @@ exports.decidePamit = async (req, res) => {
       note: req.body?.note || req.body?.keterangan_dospem,
     });
     if (data.status === "cancelled") {
-      return res.status(409).json({ success: false, code: "PAMIT_PERIOD_EXPIRED", message: data.cancellation_reason, data });
+      const assignmentChanged = data.cancellation_reason === "assignment_changed";
+      return res.status(409).json({
+        success: false,
+        code: assignmentChanged ? "PAMIT_ASSIGNMENT_CHANGED" : "PAMIT_PERIOD_EXPIRED",
+        message: assignmentChanged
+          ? "Pamit dibatalkan karena penetapan pembimbing telah berubah. Ajukan pamit baru kepada Pembimbing 1 aktif."
+          : data.cancellation_reason,
+        data,
+      });
     }
     return res.json({ success: true, message: `Pamit berhasil ${decision === "approved" ? "disetujui" : "ditolak"}.`, data });
   } catch (error) { return respondError(res, error); }
@@ -94,8 +106,15 @@ exports.createRegistration = async (req, res) => {
       targetTrack: normalizeTarget(req.body),
       reason: req.body?.reason || req.body?.alasan_pengajuan || req.body?.alasan_ulang,
       pamitId: req.body?.pamit_id || null,
+      idempotencyKey: req.get("Idempotency-Key") || req.body?.idempotency_key || null,
     });
-    return res.status(201).json({ success: true, message: "Pendaftaran ulang/alih berhasil dibuat.", data });
+    return res.status(data.replayed ? 200 : 201).json({
+      success: true,
+      message: data.replayed
+        ? "Request pendaftaran identik diputar ulang tanpa membuat siklus baru."
+        : "Pendaftaran ulang/alih berhasil dibuat.",
+      data,
+    });
   } catch (error) { return respondError(res, error); }
 };
 
@@ -103,5 +122,19 @@ exports.getHistory = async (req, res) => {
   try {
     const data = await changeService.getChangeHistory(req.user.id);
     return res.json({ success: true, data });
+  } catch (error) { return respondError(res, error); }
+};
+
+exports.getLegacyPamitStatus = async (req, res) => {
+  try {
+    const data = await changeService.getLatestPamitStatus(req.user.id);
+    return res.json({ success: true, data });
+  } catch (error) { return respondError(res, error); }
+};
+
+exports.getLegacyPamitHistory = async (req, res) => {
+  try {
+    const data = await changeService.getPamitHistory(req.user.id);
+    return res.json({ success: true, data, total: data.length });
   } catch (error) { return respondError(res, error); }
 };

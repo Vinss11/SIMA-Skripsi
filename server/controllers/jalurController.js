@@ -47,6 +47,8 @@ const {
 } = require("../services/penjaluranWorkflowService");
 const { createSystemNotification } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+const { submitExtensionRequest } = require("../services/extensionTransitionService");
+const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -1939,6 +1941,23 @@ exports.submitIzinLanjutSemester = async (req, res) => {
   const t = await sequelize.transaction();
 
   try {
+    const transition = await submitExtensionRequest({
+      mahasiswaId: req.user.id,
+      alasanPengajuan: req.body?.alasan_pengajuan,
+      idempotencyKey: String(req.get("Idempotency-Key") || req.body?.idempotency_key || "").trim(),
+      transaction: t,
+    });
+    await t.commit();
+    return res.status(transition.replayed ? 200 : 201).json({
+      success: true,
+      message: transition.replayed
+        ? "Permintaan izin yang sama sudah diterima sebelumnya."
+        : "Permintaan izin melanjutkan skripsi berhasil dikirim.",
+      data: toIzinResponse(transition.izin),
+      replayed: transition.replayed,
+    });
+
+    /* istanbul ignore next -- alur legacy dipertahankan sementara untuk referensi migrasi */
     const mahasiswa_id = req.user.id;
     const alasan_pengajuan = String(req.body?.alasan_pengajuan || "").trim();
 
@@ -2032,6 +2051,10 @@ exports.submitIzinLanjutSemester = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di submitIzinLanjutSemester:", error);
+
+    if (error instanceof SemesterAssignmentError) {
+      return res.status(error.statusCode).json({ success: false, message: error.message, code: error.code, detail: error.detail || null });
+    }
 
     if (error?.name === "SequelizeUniqueConstraintError") {
       return res.status(409).json({

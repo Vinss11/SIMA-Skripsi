@@ -51,41 +51,19 @@ async function getReferencePeriode(transaction = null) {
 }
 
 async function getSemesterPenjaluranAktif(mahasiswaId, transaction = null) {
-  const referencePeriode = await getReferencePeriode(transaction);
-  const referenceRank = getPeriodeRank(referencePeriode?.tahun_akademik, referencePeriode?.semester);
-
-  const riwayatPendaftaran = await PendaftaranPenjaluran.findAll({
-    where: { mahasiswa_id: mahasiswaId },
-    attributes: ["id", "createdAt"],
-    include: [
-      {
-        model: PeriodePenjaluran,
-        as: "periode",
-        attributes: ["id", "tahun_akademik", "semester", "label_periode"],
-        required: false,
-      },
-    ],
-    order: [["createdAt", "ASC"]],
-    transaction: transaction || undefined,
-  });
-
-  let firstRank = null;
-  let firstPeriode = null;
-
-  for (const item of riwayatPendaftaran) {
-    const rank = getPeriodeRank(item.periode?.tahun_akademik, item.periode?.semester);
-    if (rank === null) continue;
-    if (firstRank === null || rank < firstRank) {
-      firstRank = rank;
-      firstPeriode = item.periode || null;
-    }
-  }
-
-  let semesterAktif = 1;
-  if (firstRank !== null && referenceRank !== null) {
-    const diff = referenceRank - firstRank;
-    semesterAktif = diff >= 0 ? diff + 1 : 1;
-  }
+  const active = await getActiveSupervisorAssignment(mahasiswaId, transaction);
+  const assignment = active.penetapan;
+  const referencePeriode = assignment?.periodeMulai || null;
+  const firstAssignment = assignment?.pendaftaran_penjaluran_id
+    ? await require("../models").PenetapanPembimbing.findOne({
+        where: { pendaftaran_penjaluran_id: assignment.pendaftaran_penjaluran_id, semester_penjaluran_ke: 1 },
+        include: [{ model: PeriodePenjaluran, as: "periodeMulai" }],
+        order: [["createdAt", "ASC"]],
+        transaction: transaction || undefined,
+      })
+    : null;
+  const firstPeriode = firstAssignment?.periodeMulai || null;
+  const semesterAktif = Number(assignment?.semester_penjaluran_ke || 0);
 
   return {
     semester_penjaluran_aktif: semesterAktif,
@@ -141,12 +119,19 @@ function toIzinResponse(izin) {
       : null,
     createdAt: izin.createdAt,
     updatedAt: izin.updatedAt,
+    pendaftaran_penjaluran_id: izin.pendaftaran_penjaluran_id || null,
+    penetapan_asal_id: izin.penetapan_asal_id || null,
+    reviewer_p1_id: izin.reviewer_p1_id || null,
+    penetapan_hasil_id: izin.penetapan_hasil_id || null,
   };
 }
 
-async function getLatestIzinByMahasiswa(mahasiswaId, transaction = null) {
+async function getLatestIzinByMahasiswa(mahasiswaId, transaction = null, pendaftaranId = null) {
   const izin = await IzinLanjutSkripsi.findOne({
-    where: { mahasiswa_id: mahasiswaId },
+    where: {
+      mahasiswa_id: mahasiswaId,
+      ...(pendaftaranId ? { pendaftaran_penjaluran_id: pendaftaranId } : {}),
+    },
     include: [
       {
         model: Dosen,
@@ -170,11 +155,15 @@ async function getLatestIzinByMahasiswa(mahasiswaId, transaction = null) {
 
 async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
   const mahasiswaId = typeof mahasiswa === "object" ? mahasiswa?.id : mahasiswa;
-  const [semesterData, latestIzin, activeAssignment] = await Promise.all([
+  const [semesterData, activeAssignment] = await Promise.all([
     getSemesterPenjaluranAktif(mahasiswaId, transaction),
-    getLatestIzinByMahasiswa(mahasiswaId, transaction),
     getActiveSupervisorAssignment(mahasiswaId, transaction),
   ]);
+  const latestIzin = await getLatestIzinByMahasiswa(
+    mahasiswaId,
+    transaction,
+    activeAssignment.penetapan?.pendaftaran_penjaluran_id || null
+  );
   const dospemId = Number(
     activeAssignment.pembimbing_1?.id
       || (typeof mahasiswa === "object" ? mahasiswa?.dosen_pembimbing_skripsi_id : null)
@@ -182,7 +171,7 @@ async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
   ) || null;
 
   const semesterAktif = semesterData.semester_penjaluran_aktif || 1;
-  const isSemesterTigaPlus = semesterAktif >= 3;
+  const isSemesterTigaPlus = semesterAktif >= 2;
 
   if (!isSemesterTigaPlus) {
     return {
@@ -191,8 +180,8 @@ async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
       must_ulang_jalur: false,
       can_submit_izin: false,
       semester_penjaluran_aktif: semesterAktif,
-      reason: "semester_masih_aman",
-      message: "Belum masuk semester penjaluran ke-3.",
+      reason: semesterAktif ? "semester_masih_aman" : "assignment_aktif_tidak_tersedia",
+      message: semesterAktif ? "Belum memerlukan izin semester penjaluran ke-3." : "Assignment pembimbing aktif belum tersedia.",
       latest_izin: toIzinResponse(latestIzin),
       reference_periode: semesterData.reference_periode,
       first_periode: semesterData.first_periode,

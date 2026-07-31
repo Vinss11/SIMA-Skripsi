@@ -42,7 +42,7 @@ Aturan inti:
 - pembimbing baru dipilih Sekprodi pada keputusan final;
 - ulang/alih memulai progres baru dan progres jalur lama tidak otomatis dihitung pada jalur baru.
 
-Keputusan kerja yang belum tercantum eksplisit pada aturan bisnis adalah masa berlaku pamit. Rancangan ini menggunakan kontrak sementara: pamit mengikat satu `periode_tujuan_id`, hanya dapat dikonsumsi selama periode tersebut masih aktif, dan menjadi `cancelled` ketika periode ditutup. Kontrak ini wajib ditambahkan sebagai BR baru atau revisi BR-PAMIT sebelum migration pamit generik diterapkan. Jika pemilik aturan memilih masa berlaku lintas periode, kontrak data, lifecycle, eligibility, notifikasi, dan seluruh test kedaluwarsa pamit harus direvisi bersama.
+Aturan final masa berlaku pamit: pamit hanya berlaku untuk satu `periode_tujuan_id` yang direkam ketika diajukan. Pamit `pending` atau `approved` yang belum dikonsumsi otomatis berubah menjadi `cancelled` saat periode tujuan ditutup dan tidak dapat digunakan lintas periode.
 
 ## 3. Batas tahap
 
@@ -835,7 +835,7 @@ Pada setiap skenario, verifikasi pendaftaran lama, penetapan lama, bimbingan lam
 | Urutan | Pekerjaan | Dependensi | Risiko |
 | --- | --- | --- | --- |
 | 1 | Stabilkan finalizer Tahap 2 dan jalankan Paket 0 | Tahap 1–2 stabil | Tinggi |
-| 2 | Sahkan BR masa berlaku pamit dan binding anggota Perintisan | Keputusan pemilik aturan | Tinggi; memblokir kontrak final |
+| 2 | Terapkan BR masa berlaku pamit dan binding anggota Perintisan | Selesai; pamit scoped ke periode tujuan | Selesai |
 | 3 | Migration additive pamit generik (Paket 2) | Urutan 1–2 | Tinggi karena data legacy |
 | 4 | Tambah referensi pendaftaran pada progres (Paket 3) | Urutan 1 | Tinggi karena backfill |
 | 5 | Bangun resolver jalur asal dan eligibility (Paket 1) | Urutan 3–4 | Tinggi |
@@ -905,7 +905,7 @@ Tahap dinyatakan selesai apabila:
 | --- | --- |
 | Sekprodi boleh override keputusan pamit atau tidak | Tidak diasumsikan; gunakan P1 aktif/pengganti sampai aturan berubah |
 | Pamit pending ketika assignment/P1 berganti | Batalkan pamit lama dengan alasan `assignment_changed`; mahasiswa membuat pamit baru terhadap assignment pengganti |
-| Masa berlaku pamit approved | Direkomendasikan scoped ke `periode_tujuan_id`; menjadi cancelled saat periode ditutup dan tidak dapat digunakan lintas periode. Wajib disahkan sebagai BR sebelum migrasi |
+| Masa berlaku pamit approved | Final: scoped ke `periode_tujuan_id`; menjadi `cancelled` saat periode ditutup dan tidak dapat digunakan lintas periode. |
 | Pelepasan topik lama setelah pamit | Snapshot dan status `taken` dipertahankan; pelepasan hanya boleh dilakukan setelah ada BR akademik eksplisit |
 | Binding anggota Perintisan | Minimum: pilih pendaftaran valid dari database, lock seluruh anggota, unique kelompok aktif, dan visibilitas ke anggota. Lifecycle undangan ditambahkan bila persetujuan anggota diwajibkan aturan akademik |
 | Pendaftaran sebagai root siklus atau membuat tabel siklus khusus | Gunakan pendaftaran sebagai root kecuali kebutuhan lintas semester Tahap 4 membuktikan perlunya entitas terpisah |
@@ -918,3 +918,7 @@ Keputusan baru wajib memperbarui `aturan-bisnis-simps.md`, BPMN, kontrak API, mi
 Kontrak backend Tahap 3 telah diimplementasikan secara additive. Sumber jalur dibaca dari pendaftaran approved terakhir secara deterministik; pamit generik dikunci ke periode, pendaftaran lama, penetapan lama, dan Pembimbing 1; approval memutus assignment serta jadwal mendatang dalam satu transaksi; dan pamit baru dikonsumsi ketika pendaftaran ulang/alih berhasil dibuat. Pendaftaran baru menjadi root siklus melalui `pendaftaran_asal_id`, sedangkan bimbingan baru ditautkan melalui `pendaftaran_penjaluran_id`.
 
 Endpoint utama tersedia pada `/api/jalur/change/*`, `/api/pendaftaran/change`, dan `/api/dosen/pamit/:id/decision`. Endpoint lama pendaftaran/pamit tetap menjadi adapter kompatibilitas. UI mahasiswa sudah menggunakan eligibility generik untuk tiga jalur aktif dan tidak lagi menerima jalur asal atau calon pembimbing sebagai sumber keputusan. Migrasi `20260730100000-generalize-change-cycle.js`, rekonsiliasi `reconcile:stage3-change-cycles:*`, histori otoritatif, notifikasi, serta integration test lifecycle disertakan.
+
+Hardening 31 Juli 2026 menambahkan verifikasi snapshot assignment sebelum keputusan pamit, pembatalan bimbingan yang dibatasi ke permohonan `pending` pada siklus lama, fingerprint dan `Idempotency-Key` wajib untuk pamit serta pendaftaran, pemeriksaan workflow nonterminal dan gate semester, notifikasi view-only untuk Pembimbing 2, pembatalan pamit saat periode ditutup, dan adapter lifecycle untuk endpoint status/history lama. Migrasi tambahannya adalah `20260731100000-strengthen-stage3-idempotency.js`.
+
+Koreksi blocker 31 Juli 2026 memastikan keputusan terminal diperiksa sebelum snapshot assignment sehingga retry approval tetap `approved` dan ditandai replay, sedangkan keputusan terminal berbeda menghasilkan `409 PAMIT_DECISION_CONFLICT`. Pamit approved hanya mengecualikan `PAMIT_PENDING` dan gate semester akibat assignment yang sengaja diakhiri; workflow Penelitian, Magang/Perintisan, dan kelompok Perintisan aktif tetap memblokir. Replay pendaftaran merekonstruksi fingerprint dari pamit yang terhubung ke pendaftaran hasil, dan frontend mereset idempotency key hanya setelah hasil pasti sambil mempertahankannya pada kegagalan jaringan atau respons yang tidak dapat diverifikasi.

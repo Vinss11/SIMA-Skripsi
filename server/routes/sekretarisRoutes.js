@@ -16,6 +16,10 @@ router.get("/mahasiswa/master", authenticateToken, authorizeRole("sekretaris_pro
 router.get("/mahasiswa/master/export", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.exportMahasiswaMasterData);
 router.get("/mahasiswa/:id/penetapan-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.getSupervisorAssignmentHistoryForSekretaris);
 router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.getSupervisorAssignmentMonitoring);
+router.get("/semester-transition/preview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.previewSemesterTransitions);
+router.post("/semester-transition/confirm", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.confirmSemesterTransition);
+router.post("/semester-transition/confirm-bulk", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.confirmSemesterTransitionsBulk);
+router.post("/semester-transition/activate-due", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, penetapanPembimbingController.activateDueSemesterTransitions);
 router.get("/periode", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeOverview);
 router.post("/periode/master-penanggung-jawab", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterPenanggungJawabPeriode);
 router.get("/periode/setup-template", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeSetupTemplate);

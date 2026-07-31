@@ -18,6 +18,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "periode_penjaluran_id",
         as: "periode",
       });
+      IzinLanjutSkripsi.belongsTo(models.PendaftaranPenjaluran, { foreignKey: "pendaftaran_penjaluran_id", as: "pendaftaran" });
+      IzinLanjutSkripsi.belongsTo(models.PenetapanPembimbing, { foreignKey: "penetapan_asal_id", as: "penetapanAsal" });
+      IzinLanjutSkripsi.belongsTo(models.PenetapanPembimbing, { foreignKey: "penetapan_hasil_id", as: "penetapanHasil" });
+      IzinLanjutSkripsi.belongsTo(models.Dosen, { foreignKey: "reviewer_p1_id", as: "reviewerP1" });
     }
   }
 
@@ -66,6 +70,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      pendaftaran_penjaluran_id: DataTypes.INTEGER,
+      penetapan_asal_id: DataTypes.INTEGER,
+      reviewer_p1_id: DataTypes.INTEGER,
+      penetapan_hasil_id: DataTypes.INTEGER,
+      idempotency_key: DataTypes.STRING(160),
+      request_fingerprint: DataTypes.STRING(64),
+      decided_by_actor_type: DataTypes.STRING(40),
+      decided_by_actor_id: DataTypes.INTEGER,
     },
     {
       sequelize,
@@ -77,4 +89,3 @@ module.exports = (sequelize, DataTypes) => {
 
   return IzinLanjutSkripsi;
 };
-

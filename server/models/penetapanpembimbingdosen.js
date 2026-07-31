@@ -15,7 +15,7 @@ module.exports = (sequelize, DataTypes) => {
     urutan: { type: DataTypes.INTEGER, allowNull: false, validate: { isIn: [[1, 2]] } },
     peran: { type: DataTypes.ENUM("utama", "pendamping"), allowNull: false },
     status: {
-      type: DataTypes.ENUM("draft", "active", "ended", "cancelled"),
+      type: DataTypes.ENUM("draft", "scheduled", "active", "ended", "cancelled"),
       allowNull: false,
       defaultValue: "draft",
     },
