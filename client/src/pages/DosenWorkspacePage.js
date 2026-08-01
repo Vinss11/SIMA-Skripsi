@@ -39,6 +39,7 @@ import DosenBimbinganReviewPage from "./DosenBimbinganReviewPage";
 import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
 import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
 import SekretarisSidangManagementPage from "./SekretarisSidangManagementPage";
+import AcademicDataPanel from "../components/AcademicDataPanel";
 
 const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
@@ -1814,6 +1815,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
       label: "Mahasiswa",
       items: [
         { id: "master-mahasiswa", label: "Master Mahasiswa", icon: GraduationCap },
+        { id: "akademik", label: "Monitoring Akademik", icon: FileSpreadsheet },
         { id: "monitoring-mahasiswa", label: "Mahasiswa Bimbingan", icon: GraduationCap },
         { id: "mahasiswa-dpa", label: "Mahasiswa DPA", icon: UserCircle2 },
         { id: "mahasiswa-bimbingan", label: "Riwayat Bimbingan", icon: ListChecks },
@@ -1954,6 +1956,11 @@ function buildTabHeaders(isSekretaris) {
       icon: GraduationCap,
       title: "Master Data Mahasiswa",
       subtitle: "Lihat histori penjaluran mahasiswa secara lengkap dalam mode baca.",
+    },
+    akademik: {
+      icon: FileSpreadsheet,
+      title: "Monitoring Akademik",
+      subtitle: "Pantau status Metodologi, SKS, mata kuliah wajib, dan kualitas data secara readonly.",
     },
     "master-dosen": {
       icon: Users,
@@ -2149,6 +2156,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [semesterTransitionPreview, setSemesterTransitionPreview] = useState(null);
   const [selectedSemesterTransitions, setSelectedSemesterTransitions] = useState([]);
   const [loadingSemesterTransition, setLoadingSemesterTransition] = useState(false);
+  const semesterTransitionBatchKeyRef = useRef(null);
+  const semesterTransitionBatchPayloadRef = useRef(null);
   const [refreshingDosenPeriodAvailability, setRefreshingDosenPeriodAvailability] = useState(false);
   const selectedDosenAvailabilityPeriodIdRef = useRef(null);
   const dirtyAvailabilityDosenIdsRef = useRef([]);
@@ -2756,7 +2765,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           sessionExpiredRef.current = true;
           onSessionExpired?.();
         }
-        throw new Error("__SESSION_EXPIRED__");
+        const sessionError = new Error("__SESSION_EXPIRED__");
+        sessionError.status = response.status;
+        throw sessionError;
       }
 
       if (!response.ok || !data?.success) {
@@ -2849,25 +2860,69 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
     setLoadingSemesterTransition(true);
     try {
-      const key = `semester-transition-bulk-${window.crypto?.randomUUID?.() || Date.now()}`;
+      const requestBody = JSON.stringify({
+        effective_at: semesterTransitionForm.effective_at || null,
+        items: readyRows.map((row) => ({ expected_assignment_id: row.expected_assignment_id, target_period_id: row.target_period_id })),
+      });
+      if (semesterTransitionBatchPayloadRef.current && semesterTransitionBatchPayloadRef.current !== requestBody) {
+        semesterTransitionBatchKeyRef.current = null;
+      }
+      const key = semesterTransitionBatchKeyRef.current
+        || `semester-transition-bulk-${window.crypto?.randomUUID?.() || Date.now()}`;
+      semesterTransitionBatchKeyRef.current = key;
+      semesterTransitionBatchPayloadRef.current = requestBody;
       const payload = await fetchWithAuth("/api/sekretaris/semester-transition/confirm-bulk", {
         method: "POST",
         headers: { "Idempotency-Key": key },
-        body: JSON.stringify({
-          effective_at: semesterTransitionForm.effective_at || null,
-          items: readyRows.map((row) => ({ expected_assignment_id: row.expected_assignment_id, target_period_id: row.target_period_id })),
-        }),
+        body: requestBody,
       });
+      // Response keputusan sudah diterima; aksi bulk berikutnya harus memakai intent baru.
+      semesterTransitionBatchKeyRef.current = null;
+      semesterTransitionBatchPayloadRef.current = null;
       const failed = (payload?.results || []).filter((row) => !row.success).length;
       showSuccessToast(failed ? `Transisi diproses dengan ${failed} item memerlukan tindak lanjut.` : "Transisi semester berhasil diproses.");
       await loadSemesterTransitionPreview();
       await loadSupervisorAssignmentMonitoring({ page: supervisorAssignmentPage, filters: supervisorAssignmentFilters });
     } catch (error) {
+      // HTTP/business response berarti server telah menjawab. Network/unknown error mempertahankan key untuk retry aman.
+      if (Number.isInteger(error?.status)) {
+        semesterTransitionBatchKeyRef.current = null;
+        semesterTransitionBatchPayloadRef.current = null;
+      }
       if (error.message !== "__SESSION_EXPIRED__") showErrorToast(error.message || "Gagal mengonfirmasi transisi semester.");
     } finally {
       setLoadingSemesterTransition(false);
     }
   }, [fetchWithAuth, loadSemesterTransitionPreview, loadSupervisorAssignmentMonitoring, selectedSemesterTransitions, semesterTransitionForm.effective_at, semesterTransitionPreview, supervisorAssignmentFilters, supervisorAssignmentPage]);
+
+  const retrySemesterTransition = useCallback(async (row) => {
+    setLoadingSemesterTransition(true);
+    try {
+      await fetchWithAuth("/api/sekretaris/semester-transition/confirm", {
+        method: "POST",
+        headers: { "Idempotency-Key": `semester-transition-retry-${window.crypto?.randomUUID?.() || Date.now()}` },
+        body: JSON.stringify({
+          expected_assignment_id: row.expected_assignment_id,
+          target_period_id: row.target_period_id,
+          effective_at: semesterTransitionForm.effective_at || null,
+        }),
+      });
+      showSuccessToast("Kelompok berhasil divalidasi dan transisi diproses ulang.");
+      await loadSemesterTransitionPreview();
+      await loadSupervisorAssignmentMonitoring({ page: 1, filters: supervisorAssignmentFilters });
+    } catch (error) {
+      if (error.message !== "__SESSION_EXPIRED__") showErrorToast(error.message || "Kelompok masih memerlukan tindak lanjut.");
+    } finally {
+      setLoadingSemesterTransition(false);
+    }
+  }, [fetchWithAuth, loadSemesterTransitionPreview, loadSupervisorAssignmentMonitoring, semesterTransitionForm.effective_at, supervisorAssignmentFilters]);
+
+  const openSemesterTransitionFollowUp = useCallback((row) => {
+    const query = row.mahasiswa?.nim || row.mahasiswa?.nama || "";
+    setSupervisorAssignmentFilters((previous) => ({ ...previous, q: query }));
+    setSupervisorAssignmentPage(1);
+    setTimeout(() => document.getElementById("supervisor-assignment-history")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }, []);
 
   const handleOpenFinalResearchDetail = async (submission) => {
     try {
@@ -8649,6 +8704,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 onSessionExpired={onSessionExpired}
               />
             ) : null}
+            {!loading && isSekretaris && activeTab === "akademik" ? (
+              <AcademicDataPanel mode="secretary" session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
+            ) : null}
 
             {!loading && isSekretaris && activeTab === "approval-penelitian" ? (
               <div
@@ -12373,7 +12431,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <div className="space-y-4">
                     <div className="rounded-xl border border-[#dbe5fb] bg-[#f8fbff] p-4 shadow-sm">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div><h3 className="text-lg font-black text-[#1b274b]">Carry-forward Semester 1 ke 2</h3><p className="text-sm text-[#5d6c91]">Preview tidak mengubah data; konfirmasi memvalidasi ulang assignment dan status dosen.</p></div>
+                        <div><h3 className="text-lg font-black text-[#1b274b]">Carry-forward Semester Berikutnya</h3><p className="text-sm text-[#5d6c91]">Preview mencakup semester 1→2 dan tindak lanjut kelompok semester 2→3; konfirmasi selalu memvalidasi ulang assignment, izin, dan status dosen.</p></div>
                         {semesterTransitionPreview?.target_period ? <span className="rounded-full bg-[#e9f0ff] px-3 py-1 text-xs font-bold text-[#34549b]">Tujuan: {semesterTransitionPreview.target_period.label_periode}</span> : null}
                       </div>
                       <div className="mt-4 grid gap-3 md:grid-cols-3">
@@ -12383,11 +12441,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
                       {semesterTransitionPreview ? <div className="mt-4 space-y-3">
                         <div className="flex flex-wrap gap-2 text-xs font-bold text-[#42527c]">{Object.entries(semesterTransitionPreview.summary || {}).map(([key, count]) => <span key={key} className="rounded-full border border-[#d9e2f5] bg-white px-2 py-1">{key.replaceAll("_", " ")}: {count}</span>)}</div>
-                        <div className="max-h-56 overflow-auto rounded-lg border border-[#dde5f5] bg-white">{(semesterTransitionPreview.rows || []).map((row) => <label key={`transition-${row.expected_assignment_id}`} className="flex items-center gap-3 border-b border-[#edf1f8] px-3 py-2 text-sm last:border-b-0"><input type="checkbox" disabled={row.classification !== "ready"} checked={selectedSemesterTransitions.includes(row.expected_assignment_id)} onChange={(event) => setSelectedSemesterTransitions((previous) => event.target.checked ? [...previous, row.expected_assignment_id] : previous.filter((id) => id !== row.expected_assignment_id))} /><span className="min-w-0 flex-1"><b className="text-[#253965]">{row.mahasiswa?.nama || "Mahasiswa"}</b> <span className="text-[#6a779a]">{row.mahasiswa?.nim || ""}</span></span><span className={`rounded-full px-2 py-1 text-xs font-bold ${row.classification === "ready" ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1e7] text-[#9b5b22]"}`}>{row.classification.replaceAll("_", " ")}</span></label>)}</div>
+                        <div className="max-h-72 overflow-auto rounded-lg border border-[#dde5f5] bg-white">{(semesterTransitionPreview.rows || []).map((row) => <div key={`transition-${row.expected_assignment_id}`} className="border-b border-[#edf1f8] px-3 py-2 text-sm last:border-b-0"><div className="flex items-center gap-3"><input type="checkbox" disabled={row.classification !== "ready"} checked={selectedSemesterTransitions.includes(row.expected_assignment_id)} onChange={(event) => setSelectedSemesterTransitions((previous) => event.target.checked ? [...previous, row.expected_assignment_id] : previous.filter((id) => id !== row.expected_assignment_id))} /><span className="min-w-0 flex-1"><b className="text-[#253965]">{row.mahasiswa?.nama || "Mahasiswa"}</b> <span className="text-[#6a779a]">{row.mahasiswa?.nim || ""}</span>{row.group_review ? <span className="mt-1 block text-xs text-[#6a779a]">{row.group_review.group_name} · {row.reason_code || row.group_review.reason_code || "siap divalidasi ulang"}</span> : null}</span><span className={`rounded-full px-2 py-1 text-xs font-bold ${row.classification === "ready" ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#fff1e7] text-[#9b5b22]"}`}>{row.classification.replaceAll("_", " ")}</span></div>{row.group_review && row.classification !== "group_member" ? <div className="mt-2 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => openSemesterTransitionFollowUp(row)} className="rounded-md border border-[#b9c7e5] px-2.5 py-1 text-xs font-bold text-[#34549b]">Buka Tindak Lanjut</button><button type="button" onClick={() => retrySemesterTransition(row)} disabled={loadingSemesterTransition || row.group_review.retry_available === false} className="rounded-md bg-[#315fc5] px-2.5 py-1 text-xs font-bold text-white disabled:opacity-50">Coba Proses Ulang</button></div> : null}</div>)}</div>
                         <button type="button" onClick={confirmSemesterTransitions} disabled={loadingSemesterTransition || selectedSemesterTransitions.length === 0} className="rounded-lg bg-[#137748] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Konfirmasi {selectedSemesterTransitions.length} kandidat</button>
                       </div> : null}
                     </div>
-                    <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <div id="supervisor-assignment-history" className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
                       <div className="mb-4">
                         <h3 className="text-lg font-black text-[#1b274b]">Riwayat Penetapan Pembimbing</h3>
                         <p className="text-sm text-[#5d6c91]">Monitoring read-only seluruh penetapan P1 dan P2. Perubahan hanya dilakukan melalui keputusan final atau tindak lanjut pergantian.</p>

@@ -21,6 +21,7 @@ const { getActiveSupervisorAssignment, endActiveSupervisorAssignment } = require
 const { createSystemNotification } = require("./notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { buildSemesterLanjutanGate } = require("./semesterLanjutanService");
+const { evaluateEligibility: evaluateAcademicEligibility } = require("./academicDataService");
 
 const ACTIVE_TRACKS = Object.freeze(["penelitian", "magang", "perintisan_bisnis"]);
 
@@ -246,6 +247,11 @@ async function getEligibility(mahasiswaId, { targetTrack = null, transaction = n
   if (requiresPamit && !openPamit) blockerDetails.push({ code: "PAMIT_REQUIRED", message: "Pamit kepada Pembimbing 1 belum diajukan." });
   if (requiresPamit && openPamit?.status === "pending") blockerDetails.push({ code: "PAMIT_PENDING", message: "Pamit masih menunggu keputusan Pembimbing 1." });
   const blockers = blockerDetails.map((item) => item.message);
+  const academicEligibility = await evaluateAcademicEligibility({
+    mahasiswaId,
+    context: "change_track",
+    transaction,
+  });
   return {
     eligible: blockers.length === 0,
     blockers,
@@ -256,6 +262,7 @@ async function getEligibility(mahasiswaId, { targetTrack = null, transaction = n
     reviewer_p2: plain(assignment.pembimbing_2), pamit: plain(openPamit),
     blocker_details: blockerDetails,
     semester_gate: workflow.semesterGate,
+    academic_eligibility: academicEligibility,
   };
 }
 
@@ -554,6 +561,14 @@ async function createChangeRegistration({ mahasiswaId, targetTrack, reason, pami
       dosen_pembimbing_ta_sebelumnya_id: eligibility.reviewer_p1?.id || null,
       catatan: String(reason || "").trim() || null,
     }, { transaction });
+    eligibility.academic_eligibility = await evaluateAcademicEligibility({
+      mahasiswaId,
+      context: "change_track",
+      referenceType: "pendaftaran_penjaluran",
+      referenceId: registration.id,
+      persist: true,
+      transaction,
+    });
     if (pamit) {
       await pamit.update({ status: "consumed", pendaftaran_baru_id: registration.id, consumed_at: new Date() }, { transaction });
       await appendHistory(pamit, "approved", "consumed", "registration_created", "mahasiswa", mahasiswaId, reason, transaction);

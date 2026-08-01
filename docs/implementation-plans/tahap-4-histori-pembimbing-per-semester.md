@@ -314,7 +314,9 @@ Dengan dua foreign key tersebut, pendaftaran tetap menjadi root siklus dan assig
 - keputusan izin lanjut sudah memakai transaction dan row lock pada record izin;
 - hanya P1 aktif yang dapat memutus izin pada controller sekarang.
 
-### 7.2 Gap kritis
+### 7.2 Gap kritis pada baseline sebelum implementasi
+
+> Bagian 7.2 adalah hasil audit kondisi awal sebelum Tahap 4 diimplementasikan. Pernyataan “belum ada” di bawah ini tidak menggambarkan status repository saat ini. Status implementasi final dan hardening tercatat pada bagian akhir dokumen.
 
 #### 7.2.1 Nomor semester masih dapat dihitung lintas siklus
 
@@ -980,7 +982,7 @@ Tahap dinyatakan selesai apabila:
 | Aktor pelaksana carry-forward | Belum final; rancangan menyediakan operasi Sekprodi terotorisasi, tetapi aktornya wajib disahkan di BR |
 | Tanggal efektif semester baru | Gunakan tanggal efektif dari kalender/keputusan yang disahkan dan dikonfirmasi aktor resmi, bukan tanggal tutup pendaftaran |
 | Status sebelum tanggal efektif | Gunakan `scheduled`; tidak memberi akses dan tidak mengakhiri assignment lama sampai aktivasi atomik |
-| Carry-forward kelompok Perintisan | Wajib diputuskan: satu transaksi per kelompok atau per anggota, aturan anggota selesai/berhenti, dan perubahan komposisi |
+| Carry-forward kelompok Perintisan | Final: satu transaksi per kelompok; tiga anggota dan komposisi P1/P2 dikunci, seluruh anggota berhasil bersama atau rollback dan kelompok menjadi `needs_review` |
 | Semester ke-4 dan seterusnya | Diblokir dengan `SEMESTER_LIMIT_UNDEFINED` sampai batas maksimal diputuskan |
 | Periode tujuan belum mempunyai record | Blokir dan minta perbaikan konfigurasi; jangan membuat periode implisit |
 | Pergantian bersamaan dengan carry-forward | Catat sebagai operasi/audit pergantian terpisah agar alasan dan intent tidak hilang |
@@ -989,3 +991,20 @@ Tahap dinyatakan selesai apabila:
 | Surat tugas | Metadata opsional; tidak menjadi syarat aktivasi |
 
 Keputusan baru wajib memperbarui `aturan-bisnis-simps.md`, kontrak API, migrasi, service, frontend, test, dan dokumen ini dalam perubahan yang sama.
+
+## 15. Status hardening 1 Agustus 2026
+
+Gate semester membedakan assignment tidak tersedia (`0`), semester kedua, dan semester ketiga. Semester kedua tetap membuka bimbingan serta pengajuan izin; penguncian izin baru berlaku pada semester ketiga tanpa izin approved. Penolakan izin membatalkan permohonan pending berdasarkan identitas assignment dan siklus, bukan tanggal permohonan.
+
+Keputusan izin menyimpan idempotency key dan fingerprint payload terpisah. Replay hanya diterima untuk key dan payload identik, sementara konflik menghasilkan `409`; race pengajuan pada unique index diambil ulang secara aman. Notifikasi lifecycle izin mencakup mahasiswa, P1, dan P2 dengan deduplication key per fase.
+
+Carry-forward Perintisan diproses atomik per kelompok sesuai BR-PERINTISAN-004. Migrasi lifecycle hanya mengabaikan error object yang memang sudah ada, memverifikasi constraint/index wajib, dan tidak lagi mengasumsikan seluruh semester legacy null sebagai semester pertama. Migration dan berkas utama Tahap 4 sudah tracked oleh Git.
+
+### Status hardening lanjutan — 1 Agustus 2026
+
+- Izin Perintisan diajukan dan diputus per anggota. Transisi kelompok semester ketiga hanya dibuat setelah ketiga izin `approved`; setiap assignment menunjuk izin, mahasiswa, pendaftaran, assignment asal, dan assignment hasil milik anggota yang sama.
+- Izin dibuka tepat 30 hari sebelum `tanggal_mulai` periode akademik berikutnya dan divalidasi di server.
+- Kegagalan kelompok menghasilkan `success: false`/HTTP 409, menyimpan reason/detail `needs_review`, memberi notifikasi kepada Sekprodi, serta menyediakan aksi tindak lanjut dan retry. Validasi retry yang berhasil mengembalikan kelompok ke `approved`.
+- Migration `20260801100000-verify-and-repair-stage4-constraints.js` memperbaiki serta memverifikasi constraint/index pada database yang telah menandai migration lifecycle lama sebagai `up`.
+- Rekonsiliasi memeriksa identitas izin-assignment, kelengkapan tiga anggota, konsistensi P1/P2, serta kelompok `needs_review` tanpa tindak lanjut.
+- Anchor jendela izin memakai `PeriodeAkademik.tanggal_mulai`, bukan tanggal jendela `PeriodePenjaluran`. Migration additive membentuk periode akademik dan relasinya sebagai dependency awal Paket 1 Tahap 5; tanggal hasil backfill sengaja tetap kosong dan harus direview agar sistem tidak menganggap tanggal pendaftaran sebagai kalender akademik.

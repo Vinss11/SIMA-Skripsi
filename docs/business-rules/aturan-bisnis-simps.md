@@ -431,6 +431,20 @@ Jumlah anggota mengikuti ketentuan akademik yang berlaku pada form. Jika ketentu
 
 Jika satu anggota gagal diproses, seluruh keputusan final kelompok dibatalkan/rollback.
 
+### BR-PERINTISAN-004 — Carry-forward kelompok per semester
+
+**Status: Final**
+
+- Carry-forward Perintisan Bisnis selalu diproses per kelompok, bukan per mahasiswa.
+- Sistem mengunci kelompok, seluruh anggota, assignment sumber, dan komposisi P1/P2 sebelum transisi dibuat.
+- Seluruh anggota berpindah bersama dengan komposisi P1/P2 yang sama, atau seluruh perubahan assignment di-rollback.
+- Jika satu anggota atau pembimbing tidak memenuhi syarat, tidak ada anggota yang diproses sebagian dan status kelompok menjadi `needs_review`.
+- Aktivasi assignment terjadwal kelompok juga bersifat atomik.
+- Setiap anggota wajib mengajukan izin semester ketiga sendiri dan P1 memutus setiap izin secara individual.
+- Carry-forward semester ketiga baru dijalankan setelah seluruh anggota mempunyai izin `approved` yang terikat pada mahasiswa, pendaftaran, dan assignment asal masing-masing.
+- Satu izin tidak boleh menjadi dasar assignment anggota lain; setiap izin mencatat assignment hasil milik pemohon yang sama.
+- Jika satu izin ditolak atau satu anggota gagal divalidasi, tidak boleh ada assignment semester ketiga yang diproses sebagian dan kelompok masuk `needs_review`.
+
 ## 13. Penetapan dan histori pembimbing
 
 ### BR-PENETAPAN-001 — Dasar penetapan
@@ -497,6 +511,7 @@ Masa penjaluran normal adalah dua semester:
 - semester penjaluran ke-2.
 
 Perpindahan semester membuat rekam penetapan semester baru agar histori dapat dibaca per semester, walaupun komposisi pembimbing tetap sama.
+Assignment semester kedua tetap membuka akses bimbingan. Jendela izin semester ketiga dibuka 30 hari sebelum `tanggal_mulai` periode akademik berikutnya dan wajib divalidasi oleh server. Sebelum tanggal tersebut, izin belum dapat diajukan. Penguncian karena izin hanya berlaku ketika semester ketiga efektif tetapi izin approved tidak tersedia.
 
 ### BR-SEMESTER-002 — Semester ketiga
 
@@ -542,6 +557,42 @@ Data menyimpan periode, nilai jika tersedia, sumber data, dan waktu perubahan. S
 **Status: Sementara**
 
 Sebelum integrasi akademik tersedia, data dapat dimasukkan Admin melalui import dengan preview, validasi, dan laporan error. Integrasi akademik dapat menggantikan input manual tanpa mengubah aturan bisnis.
+
+### BR-AKADEMIK-003 — Data kosong dan kelengkapan dataset
+
+**Status: Final**
+
+Tidak adanya record akademik berarti data belum tersedia, bukan otomatis `belum_mengambil` atau `tidak_lulus`. Kesimpulan berbasis absensi hanya sah jika sumber mendeklarasikan cakupan dataset lengkap untuk mahasiswa, periode, dan jenis dataset terkait. Deklarasi aktif yang tumpang tindih atau bertentangan menghasilkan status data `conflicted`.
+
+### BR-AKADEMIK-004 — Semester akademik kanonik
+
+**Status: Final**
+
+Data akademik menggunakan `PeriodeAkademik` dengan rentang tahun mulai–selesai dan semester. `PeriodePenjaluran` hanya merupakan jendela pendaftaran dan wajib mereferensikan semester akademik secara eksplisit. Tanggal jendela penjaluran tidak boleh digunakan sebagai tanggal mulai semester akademik.
+
+### BR-AKADEMIK-005 — Versioning, koreksi, dan sumber efektif
+
+**Status: Final untuk mekanisme; prioritas antarsumber menunggu keputusan**
+
+Attempt, histori Metodologi, dan koreksi tidak diubah atau dihapus secara in-place. Koreksi Admin membuat versi baru, menyimpan before/after, alasan, aktor, waktu, serta hubungan ke versi sebelumnya. Import tidak boleh menimpa koreksi aktif secara diam-diam dan harus masuk antrean konflik.
+
+### BR-AKADEMIK-006 — Snapshot dan kualitas data
+
+**Status: Final**
+
+Total SKS, mata kuliah wajib, dan status Metodologi untuk konsumsi workflow berasal dari snapshot akademik berversi. Status proses kalkulasi dipisahkan dari kualitas data. Snapshot `failed` atau `stale` tidak dianggap sebagai data lengkap.
+
+### BR-AKADEMIK-007 — Keputusan eligibility
+
+**Status: Final untuk kontrak; threshold dan enforcement menunggu keputusan**
+
+Evaluasi akademik selalu membedakan `evaluated_result` (`eligible`, `blocked`, atau `undetermined`) dari `effective_decision` (`allow`, `warn`, atau `block`). Rule yang belum disahkan hanya boleh berjalan dalam mode informational/shadow; hasil shadow tidak memblokir workflow utama.
+
+### BR-AKADEMIK-008 — Alias, ekuivalensi, dan pengakuan kredit
+
+**Status: Final untuk mekanisme**
+
+Alias menunjuk satu mata kuliah kanonik yang sama, sedangkan ekuivalensi merupakan pengakuan substitusi berversi. Kredit transfer, konversi, MBKM, waived, atau exempted hanya dihitung setelah status pengakuannya sah. Mata kuliah dalam kelompok ekuivalensi tidak boleh menggandakan total SKS.
 
 ## 16. Akun dan password
 

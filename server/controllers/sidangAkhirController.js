@@ -20,6 +20,7 @@ const {
   getMahasiswaSupervisionAccess,
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
+const { evaluateEligibility: evaluateAcademicEligibility } = require("../services/academicDataService");
 
 const TARGET_MINIMUM_BIMBINGAN = 8;
 const DOKUMEN_APPROVAL_FIELDS = [
@@ -182,11 +183,15 @@ async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) 
   return summary;
 }
 
-async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null) {
-  const countedSessions = await getCountedBimbingan(mahasiswaId, transaction);
-  const dokumen = await getDokumenSidangApprovalSummary(mahasiswaId, transaction);
+async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null, { persistAcademic = false } = {}) {
+  const [countedSessions, dokumen, academicEligibility] = await Promise.all([
+    getCountedBimbingan(mahasiswaId, transaction),
+    getDokumenSidangApprovalSummary(mahasiswaId, transaction),
+    evaluateAcademicEligibility({ mahasiswaId, context: "defense_verification", persist: persistAcademic, transaction }),
+  ]);
   const bimbinganReady = countedSessions >= TARGET_MINIMUM_BIMBINGAN;
-  const eligible = bimbinganReady && dokumen.all_approved;
+  const academicAllows = academicEligibility.effective_decision !== "block";
+  const eligible = bimbinganReady && dokumen.all_approved && academicAllows;
   return {
     counted_sessions: countedSessions,
     target_minimum: TARGET_MINIMUM_BIMBINGAN,
@@ -194,6 +199,12 @@ async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null) {
     dokumen_approved_count: dokumen.approved_count,
     dokumen_total_required: DOKUMEN_APPROVAL_FIELDS.length,
     dokumen_ready: dokumen.all_approved,
+    academic: academicEligibility,
+    checklist: [
+      { code: "MINIMUM_GUIDANCE", status: bimbinganReady ? "valid" : "invalid", facts: { counted: countedSessions, required: TARGET_MINIMUM_BIMBINGAN } },
+      { code: "TRANSCRIPT_DOCUMENT", status: dokumen.all_approved ? "valid" : "pending", facts: { approved: dokumen.approved_count, required: DOKUMEN_APPROVAL_FIELDS.length } },
+      { code: "STRUCTURED_ACADEMIC_DATA", status: academicEligibility.evaluated_result === "eligible" ? "valid" : academicEligibility.evaluated_result === "blocked" ? "invalid" : "undetermined", reason_codes: academicEligibility.reason_codes },
+    ],
     eligible,
   };
 }
@@ -485,7 +496,7 @@ exports.registerMahasiswaSidang = async (req, res) => {
     }
     const primarySupervisorId = Number(supervisionAccess.current_supervisor?.id || 0) || null;
 
-    const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction);
+    const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction, { persistAcademic: true });
     if (!eligibility.eligible) {
       await transaction.rollback();
       return res.status(409).json({

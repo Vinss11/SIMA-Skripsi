@@ -37,10 +37,13 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
       status: {
-        type: DataTypes.ENUM("draft", "submitted", "approved", "rejected"),
+        type: DataTypes.ENUM("draft", "submitted", "approved", "rejected", "needs_review"),
         allowNull: false,
         defaultValue: "draft",
       },
+      review_reason_code: DataTypes.STRING(80),
+      review_detail: DataTypes.JSON,
+      review_requested_at: DataTypes.DATE,
     },
     {
       sequelize,

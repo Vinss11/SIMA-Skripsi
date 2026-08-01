@@ -5,6 +5,7 @@ import {
   Bell,
   Download,
   FileSpreadsheet,
+  GraduationCap,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -23,6 +24,7 @@ import MenuSectionHeader from "../components/MenuSectionHeader";
 import NotificationMenuBadge from "../components/NotificationMenuBadge";
 import NotificationPage from "./NotificationPage";
 import useNotifications from "../hooks/useNotifications";
+import AcademicDataPanel from "../components/AcademicDataPanel";
 
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -31,6 +33,7 @@ const NAV_ITEMS = [
   { id: "upload-dosen", label: "Manajemen Dosen", icon: FileSpreadsheet },
   { id: "upload-mahasiswa", label: "Upload Mahasiswa", icon: Upload },
   { id: "pengajuan", label: "Data Pengajuan", icon: ListChecks },
+  { id: "akademik", label: "Data Akademik", icon: GraduationCap },
 ];
 
 const TAB_HEADERS = {
@@ -63,6 +66,11 @@ const TAB_HEADERS = {
     icon: ListChecks,
     title: "Data Pengajuan",
     subtitle: "Pantau seluruh riwayat pengajuan mahasiswa dari semua jalur.",
+  },
+  akademik: {
+    icon: GraduationCap,
+    title: "Data Akademik",
+    subtitle: "Kelola sumber, template, preview, commit, dan lineage import akademik.",
   },
 };
 
@@ -1764,6 +1772,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
         {!loading && activeTab === "notifications" ? (
           <NotificationPage notificationState={notificationState} onNavigate={() => setActiveTab("dashboard")} />
+        ) : null}
+
+        {!loading && activeTab === "akademik" ? (
+          <AcademicDataPanel mode="admin" session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
         ) : null}
 
         {!loading && activeTab === "statistik" ? (

@@ -1,5 +1,7 @@
-const { Dosen, IzinLanjutSkripsi, PendaftaranPenjaluran, PeriodePenjaluran } = require("../models");
+const { Dosen, IzinLanjutSkripsi, PendaftaranPenjaluran, PeriodePenjaluran, PeriodeAkademik } = require("../models");
 const { getActiveSupervisorAssignment } = require("./penetapanPembimbingService");
+
+const EXTENSION_WINDOW_DAYS = 30;
 
 function parseAcademicYearStart(tahunAkademik) {
   const match = String(tahunAkademik || "").match(/(\d{4})/);
@@ -48,6 +50,41 @@ async function getReferencePeriode(transaction = null) {
   }
 
   return latestPeriode;
+}
+
+async function getExtensionWindowForAssignment(assignment, transaction = null) {
+  const sourceRank = getPeriodeRank(assignment?.periodeMulai?.tahun_akademik, assignment?.periodeMulai?.semester);
+  if (sourceRank === null) return { is_open: false, opens_at: null, target_period_id: null };
+  const periods = await PeriodePenjaluran.findAll({
+    attributes: ["id", "tahun_akademik", "semester", "label_periode", "periode_akademik_id"],
+    include: [{
+      model: PeriodeAkademik,
+      as: "periodeAkademik",
+      attributes: ["id", "kode", "tanggal_mulai", "tanggal_selesai", "status"],
+      required: false,
+    }],
+    transaction: transaction || undefined,
+  });
+  const target = periods.find((item) => getPeriodeRank(item.tahun_akademik, item.semester) === sourceRank + 1) || null;
+  const targetStart = target?.periodeAkademik?.tanggal_mulai ? new Date(target.periodeAkademik.tanggal_mulai) : null;
+  if (!targetStart || Number.isNaN(targetStart.getTime())) {
+    return {
+      is_open: false, opens_at: null, target_period_id: target?.id || null,
+      periode_akademik_id: target?.periode_akademik_id || null,
+      reason: "academic_period_start_date_required",
+    };
+  }
+  const opensAt = new Date(targetStart.getTime() - EXTENSION_WINDOW_DAYS * 86400000);
+  return {
+    is_open: new Date() >= opensAt,
+    opens_at: opensAt,
+    target_starts_at: targetStart,
+    target_period_id: target.id,
+    periode_akademik_id: target.periode_akademik_id,
+    academic_period_code: target.periodeAkademik?.kode || null,
+    target_period_label: target.label_periode,
+    window_days: EXTENSION_WINDOW_DAYS,
+  };
 }
 
 async function getSemesterPenjaluranAktif(mahasiswaId, transaction = null) {
@@ -170,8 +207,39 @@ async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
       || 0
   ) || null;
 
-  const semesterAktif = semesterData.semester_penjaluran_aktif || 1;
-  const isSemesterTigaPlus = semesterAktif >= 2;
+  const semesterAktif = Number(semesterData.semester_penjaluran_aktif || 0);
+  const isSemesterTigaPlus = semesterAktif >= 3;
+  const extensionWindow = semesterAktif >= 2
+    ? await getExtensionWindowForAssignment(activeAssignment.penetapan, transaction)
+    : { is_open: false, opens_at: null, target_period_id: null, window_days: EXTENSION_WINDOW_DAYS };
+
+  if (semesterAktif === 2) {
+    const pending = latestIzin?.status === "pending";
+    const approved = latestIzin?.status === "approved";
+    return {
+      is_semester_tiga_plus: false,
+      is_locked: false,
+      must_ulang_jalur: false,
+      can_submit_izin: Boolean(dospemId) && extensionWindow.is_open && !pending && !approved,
+      semester_penjaluran_aktif: semesterAktif,
+      reason: approved
+        ? "izin_semester_tiga_disetujui"
+        : pending
+          ? "izin_semester_tiga_menunggu_persetujuan"
+          : extensionWindow.is_open ? "semester_dua_dapat_mengajukan_izin" : "jendela_izin_belum_dibuka",
+      message: approved
+        ? "Bimbingan semester kedua tetap aktif dan izin semester ketiga sudah disetujui."
+        : pending
+          ? "Bimbingan semester kedua tetap aktif selama izin semester ketiga menunggu keputusan."
+          : extensionWindow.is_open
+            ? "Bimbingan semester kedua tetap aktif. Jendela izin semester ketiga sudah dibuka."
+            : "Bimbingan semester kedua tetap aktif. Izin semester ketiga dibuka 30 hari sebelum periode berikutnya dimulai.",
+      extension_window: extensionWindow,
+      latest_izin: toIzinResponse(latestIzin),
+      reference_periode: semesterData.reference_periode,
+      first_periode: semesterData.first_periode,
+    };
+  }
 
   if (!isSemesterTigaPlus) {
     return {
@@ -209,12 +277,13 @@ async function buildSemesterLanjutanGate(mahasiswa, transaction = null) {
       is_semester_tiga_plus: true,
       is_locked: true,
       must_ulang_jalur: false,
-      can_submit_izin: true,
+      can_submit_izin: Boolean(dospemId) && extensionWindow.is_open,
       semester_penjaluran_aktif: semesterAktif,
       reason: "izin_belum_diajukan",
       message:
         "Anda sudah masuk semester penjaluran ke-3. Ajukan izin melanjutkan skripsi ke dosen pembimbing skripsi terlebih dahulu.",
       latest_izin: null,
+      extension_window: extensionWindow,
       reference_periode: semesterData.reference_periode,
       first_periode: semesterData.first_periode,
     };

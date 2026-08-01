@@ -3,6 +3,16 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
     const dialect = queryInterface.sequelize.getDialect();
+    const ignoreAlreadyExists = (error) => {
+      const code = error?.original?.code || error?.parent?.code;
+      if (["42710", "42P07"].includes(code)) return;
+      throw error;
+    };
+    const ignoreMissingObject = (error) => {
+      const code = error?.original?.code || error?.parent?.code;
+      if (["42704", "42P01"].includes(code)) return;
+      throw error;
+    };
 
     if (dialect === "postgres") {
       await queryInterface.sequelize.query(
@@ -41,8 +51,7 @@ module.exports = {
       await addAssignmentColumn("ended_by_actor_id", { type: Sequelize.INTEGER, allowNull: true });
       await queryInterface.sequelize.query(`
         UPDATE "PenetapanPembimbings"
-           SET semester_penjaluran_ke = COALESCE(semester_penjaluran_ke, 1),
-               decision_at = COALESCE(decision_at, "createdAt"),
+           SET decision_at = COALESCE(decision_at, "createdAt"),
                activated_at = CASE WHEN status = 'active' THEN COALESCE(activated_at, tanggal_mulai, "createdAt") ELSE activated_at END,
                semester_outcome_code = CASE WHEN status = 'active' THEN COALESCE(semester_outcome_code, 'in_progress') ELSE semester_outcome_code END,
                end_reason_code = CASE
@@ -62,7 +71,7 @@ module.exports = {
         name: "ck_assignment_semester_range",
         where: { semester_penjaluran_ke: { [Sequelize.Op.between]: [1, 3] } },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addConstraint("PenetapanPembimbings", {
         fields: ["status", "end_reason_code"],
         type: "check",
@@ -74,7 +83,7 @@ module.exports = {
           ],
         },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.sequelize.query(`
         WITH ordered AS (
           SELECT id,
@@ -94,7 +103,7 @@ module.exports = {
       `, { transaction });
 
       const extension = await queryInterface.describeTable("IzinLanjutSkripsis");
-      await queryInterface.removeIndex("IzinLanjutSkripsis", "uq_izin_lanjut_mahasiswa_semester", { transaction }).catch(() => {});
+      await queryInterface.removeIndex("IzinLanjutSkripsis", "uq_izin_lanjut_mahasiswa_semester", { transaction }).catch(ignoreMissingObject);
       const addExtensionColumn = async (name, definition) => {
         if (!extension[name]) {
           await queryInterface.addColumn("IzinLanjutSkripsis", name, definition, { transaction });
@@ -140,7 +149,7 @@ module.exports = {
         onDelete: "RESTRICT",
         onUpdate: "CASCADE",
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
 
       const guidance = await queryInterface.describeTable("BimbinganSkripsis");
       if (!guidance.penetapan_pembimbing_id) {
@@ -156,43 +165,68 @@ module.exports = {
       await queryInterface.addIndex("PenetapanPembimbings", ["previous_assignment_id"], {
         name: "idx_assignment_previous",
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("PenetapanPembimbings", ["pendaftaran_penjaluran_id", "semester_penjaluran_ke"], {
         name: "idx_assignment_cycle_semester",
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("PenetapanPembimbings", ["effective_at", "status"], {
         name: "idx_assignment_scheduled_due",
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("PenetapanPembimbings", ["idempotency_key"], {
         name: "uq_assignment_idempotency_key",
         unique: true,
         where: { idempotency_key: { [Sequelize.Op.ne]: null } },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("PenetapanPembimbings", ["mahasiswa_id", "periode_mulai_id", "semester_penjaluran_ke"], {
         name: "uq_assignment_scheduled_transition",
         unique: true,
         where: { status: "scheduled" },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("IzinLanjutSkripsis", ["mahasiswa_id", "pendaftaran_penjaluran_id", "semester_penjaluran_ke"], {
         name: "uq_extension_cycle_target_semester",
         unique: true,
         where: { pendaftaran_penjaluran_id: { [Sequelize.Op.ne]: null } },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("IzinLanjutSkripsis", ["idempotency_key"], {
         name: "uq_extension_idempotency_key",
         unique: true,
         where: { idempotency_key: { [Sequelize.Op.ne]: null } },
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
       await queryInterface.addIndex("BimbinganSkripsis", ["penetapan_pembimbing_id"], {
         name: "idx_guidance_assignment",
         transaction,
-      }).catch(() => {});
+      }).catch(ignoreAlreadyExists);
+
+      if (dialect === "postgres") {
+        const [objects] = await queryInterface.sequelize.query(`
+          SELECT name FROM (
+            SELECT conname AS name FROM pg_constraint
+             WHERE conname IN ('ck_assignment_semester_range', 'ck_ended_assignment_has_reason', 'fk_assignment_extension')
+            UNION ALL
+            SELECT indexname AS name FROM pg_indexes
+             WHERE indexname IN (
+               'idx_assignment_previous', 'idx_assignment_cycle_semester', 'idx_assignment_scheduled_due',
+               'uq_assignment_idempotency_key', 'uq_assignment_scheduled_transition',
+               'uq_extension_cycle_target_semester', 'uq_extension_idempotency_key', 'idx_guidance_assignment'
+             )
+          ) required
+        `, { transaction });
+        const found = new Set(objects.map((item) => item.name));
+        const required = [
+          'ck_assignment_semester_range', 'ck_ended_assignment_has_reason', 'fk_assignment_extension',
+          'idx_assignment_previous', 'idx_assignment_cycle_semester', 'idx_assignment_scheduled_due',
+          'uq_assignment_idempotency_key', 'uq_assignment_scheduled_transition',
+          'uq_extension_cycle_target_semester', 'uq_extension_idempotency_key', 'idx_guidance_assignment',
+        ];
+        const missing = required.filter((name) => !found.has(name));
+        if (missing.length) throw new Error(`Migrasi Tahap 4 tidak membentuk object wajib: ${missing.join(', ')}`);
+      }
     });
   },
 

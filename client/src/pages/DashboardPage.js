@@ -31,6 +31,7 @@ import SupervisorAssignmentTimeline from "../components/SupervisorAssignmentTime
 import NotificationMenuBadge from "../components/NotificationMenuBadge";
 import NotificationPage from "./NotificationPage";
 import useNotifications from "../hooks/useNotifications";
+import AcademicDataPanel from "../components/AcademicDataPanel";
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
@@ -80,6 +81,11 @@ const TAB_HEADERS = {
     icon: FolderOpen,
     title: "Dokumen Skripsi",
     subtitle: "Akses arsip dokumen pendukung proses skripsi Anda.",
+  },
+  akademik: {
+    icon: GraduationCap,
+    title: "Data Akademik",
+    subtitle: "Lihat histori Metodologi, SKS, mata kuliah wajib, sumber, dan kualitas data.",
   },
 };
 
@@ -1662,6 +1668,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       { id: "status", label: "Status", icon: Activity },
       { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
       { id: "dokumen", label: "Dokumen", icon: FolderOpen },
+      { id: "akademik", label: "Data Akademik", icon: GraduationCap },
     ];
   }, []);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
@@ -2054,10 +2061,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 const isActive = activeTab === item.id;
                 const isUlangAlihItem = item.id === "ulang-alih";
                 const isLockedBySemester =
-                  isHardLockedBySemester && item.id !== "izin-lanjut" && item.id !== "notifications" && !isUlangAlihItem;
+                  isHardLockedBySemester && item.id !== "izin-lanjut" && item.id !== "notifications" && item.id !== "akademik" && !isUlangAlihItem;
                 const isLockedByOnboardingItem =
                   isLockedByOnboarding &&
                   item.id !== "notifications" &&
+                  item.id !== "akademik" &&
                   item.id !== "pengajuan" &&
                   !(item.id === "bimbingan" && !bimbinganLockInfo.isLocked);
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
@@ -2222,6 +2230,9 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
                 apiBaseUrl={apiBaseUrl}
                 onSessionExpired={onSessionExpired}
               />
+            ) : null}
+            {!loading && !mustChangePassword && activeTab === "akademik" ? (
+              <AcademicDataPanel mode="student" session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
             ) : null}
           </div>
         </div>

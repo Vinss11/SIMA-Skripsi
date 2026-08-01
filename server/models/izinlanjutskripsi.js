@@ -76,6 +76,8 @@ module.exports = (sequelize, DataTypes) => {
       penetapan_hasil_id: DataTypes.INTEGER,
       idempotency_key: DataTypes.STRING(160),
       request_fingerprint: DataTypes.STRING(64),
+      decision_idempotency_key: DataTypes.STRING(160),
+      decision_request_fingerprint: DataTypes.STRING(64),
       decided_by_actor_type: DataTypes.STRING(40),
       decided_by_actor_id: DataTypes.INTEGER,
     },

@@ -49,6 +49,7 @@ const { createSystemNotification } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { submitExtensionRequest } = require("../services/extensionTransitionService");
 const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
+const { evaluateEligibility: evaluateAcademicEligibility } = require("../services/academicDataService");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -1719,6 +1720,10 @@ exports.getJalurEligibility = async (req, res) => {
     const hasPenelitianSubmission = selectedJalur === "penelitian"
       ? await hasPenelitianSubmissionForPendaftaran(mahasiswa_id, pendaftaranAktif)
       : false;
+    const academicEligibility = await evaluateAcademicEligibility({
+      mahasiswaId: mahasiswa_id,
+      context: "research_registration",
+    });
 
     const jalurList = ["penelitian", "magang", "pengabdian", "perintisan_bisnis"];
     const jalurEligibility = {};
@@ -1841,6 +1846,7 @@ exports.getJalurEligibility = async (req, res) => {
           reason: onboardingReason,
         },
         jalur_eligibility: jalurEligibility,
+        academic_eligibility: academicEligibility,
         flags: {
           has_active_pengajuan: hasActivePengajuan,
           has_penelitian_submission: hasPenelitianSubmission,
@@ -1957,97 +1963,6 @@ exports.submitIzinLanjutSemester = async (req, res) => {
       replayed: transition.replayed,
     });
 
-    /* istanbul ignore next -- alur legacy dipertahankan sementara untuk referensi migrasi */
-    const mahasiswa_id = req.user.id;
-    const alasan_pengajuan = String(req.body?.alasan_pengajuan || "").trim();
-
-    if (!alasan_pengajuan || alasan_pengajuan.length < 10) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Alasan pengajuan wajib diisi minimal 10 karakter.",
-      });
-    }
-
-    const mahasiswa = await Mahasiswa.findByPk(mahasiswa_id, {
-      attributes: ["id", "nim", "nama", "status_jalur_saat_ini", "dosen_pembimbing_skripsi_id"],
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-
-    if (!mahasiswa) {
-      await t.rollback();
-      return res.status(404).json({
-        success: false,
-        message: "Data mahasiswa tidak ditemukan",
-      });
-    }
-
-    const gate = await buildSemesterLanjutanGate(mahasiswa, t);
-    const activeAssignment = await getActiveSupervisorAssignment(mahasiswa_id, t);
-    const primarySupervisorId = Number(
-      activeAssignment.pembimbing_1?.id || mahasiswa.dosen_pembimbing_skripsi_id || 0
-    ) || null;
-
-    if (!gate.is_semester_tiga_plus) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Belum memasuki semester penjaluran ke-3, permohonan extend belum diperlukan.",
-        detail: gate,
-      });
-    }
-
-    if (!gate.can_submit_izin) {
-      await t.rollback();
-      return res.status(409).json({
-        success: false,
-        message: gate.message,
-        detail: gate,
-      });
-    }
-
-    if (!primarySupervisorId) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Dosen pembimbing skripsi belum ditetapkan. Permohonan extend belum bisa diajukan.",
-      });
-    }
-
-    const periodeReferensi = gate.reference_periode || (await getReferencePeriode(t));
-
-    const izin = await IzinLanjutSkripsi.create(
-      {
-        mahasiswa_id,
-        dosen_pembimbing_skripsi_id: primarySupervisorId,
-        periode_penjaluran_id: periodeReferensi?.id || null,
-        semester_penjaluran_ke: gate.semester_penjaluran_aktif,
-        status: "pending",
-        alasan_pengajuan,
-        tanggal_pengajuan: new Date(),
-      },
-      { transaction: t }
-    );
-
-    await t.commit();
-
-    const withDetail = await IzinLanjutSkripsi.findByPk(izin.id, {
-      include: [
-        {
-          model: Dosen,
-          as: "dosenPembimbingSkripsi",
-          attributes: ["id", "nik", "nama", "email"],
-          required: false,
-        },
-      ],
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: "Permintaan izin melanjutkan skripsi berhasil dikirim. Menunggu keputusan dosen pembimbing skripsi.",
-      data: toIzinResponse(withDetail),
-    });
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di submitIzinLanjutSemester:", error);

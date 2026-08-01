@@ -4,6 +4,10 @@ const { Model } = require("sequelize");
 module.exports = (sequelize, DataTypes) => {
   class PeriodePenjaluran extends Model {
     static associate(models) {
+      PeriodePenjaluran.belongsTo(models.PeriodeAkademik, {
+        foreignKey: "periode_akademik_id",
+        as: "periodeAkademik",
+      });
       PeriodePenjaluran.hasMany(models.PendaftaranPenjaluran, {
         foreignKey: "periode_penjaluran_id",
         as: "pendaftarans",
@@ -112,6 +116,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
       },
       pengawas_perintisan_bisnis_dosen_id: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      periode_akademik_id: {
         type: DataTypes.INTEGER,
         allowNull: true,
       },

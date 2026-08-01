@@ -19,7 +19,11 @@
     "reconcile:stage3-change-cycles": "node scripts/reconcile-stage3-change-cycles.js --execute",
     "reconcile:stage4-semester-assignments:dry-run": "node scripts/reconcile-stage4-semester-assignments.js --dry-run",
     "reconcile:stage4-semester-assignments": "node scripts/reconcile-stage4-semester-assignments.js --execute",
-    "activate:scheduled-assignments": "node scripts/activate-scheduled-assignments.js"
+    "reconcile:stage5-academic-data:dry-run": "node scripts/reconcile-stage5-academic-data.js --dry-run",
+    "reconcile:stage5-academic-data": "node scripts/reconcile-stage5-academic-data.js --execute",
+    "activate:scheduled-assignments": "node scripts/activate-scheduled-assignments.js",
+    "worker:academic-outbox": "node scripts/process-academic-outbox.js",
+    "worker:academic-outbox:once": "node scripts/process-academic-outbox.js --once"
   },
   "keywords": [],
   "author": "",

@@ -54,4 +54,9 @@ route.use("/api/pendaftaran", pendaftaranRoutes);
 const notificationRoutes = require("./notificationRoutes");
 route.use("/api/notifications", notificationRoutes);
 
+const academicRoutes = require("./academicRoutes");
+route.use("/api/admin/akademik", academicRoutes.admin);
+route.use("/api/sekretaris/akademik", academicRoutes.secretary);
+route.use("/api/mahasiswa/akademik", academicRoutes.student);
+
 module.exports = route;

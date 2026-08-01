@@ -226,6 +226,22 @@ exports.confirmSemesterTransition = async (req, res) => {
       actorType: "sekretaris_prodi",
       actorId: Number(req.user?.id) || null,
     });
+    if (result.group_needs_review === true) {
+      return res.status(409).json({
+        success: false,
+        message: result.message || "Kelompok Perintisan memerlukan tindak lanjut sebelum dapat diproses.",
+        code: "PERINTISAN_GROUP_REVIEW_REQUIRED",
+        data: result,
+      });
+    }
+    if (result.group_waiting_extensions === true) {
+      return res.status(409).json({
+        success: false,
+        message: result.message,
+        code: result.code || "PERINTISAN_GROUP_EXTENSIONS_PENDING",
+        data: result,
+      });
+    }
     return res.status(result.replayed ? 200 : 201).json({ success: true, data: result });
   } catch (error) {
     return transitionError(res, error);
@@ -248,7 +264,11 @@ exports.confirmSemesterTransitionsBulk = async (req, res) => {
         actorType: "sekretaris_prodi",
         actorId: Number(req.user?.id) || null,
       });
-      results.push({ expected_assignment_id: Number(item.expected_assignment_id), success: true, ...value });
+      results.push({
+        expected_assignment_id: Number(item.expected_assignment_id),
+        success: value.group_needs_review !== true && value.group_waiting_extensions !== true,
+        ...value,
+      });
     } catch (error) {
       results.push({ expected_assignment_id: Number(item.expected_assignment_id), success: false, code: error.code || "INTERNAL_ERROR", message: error.message });
     }

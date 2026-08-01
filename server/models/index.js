@@ -35,6 +35,11 @@ fs
     db[model.name] = model;
   });
 
+// Domain modules may register multiple tightly-coupled Sequelize models.
+Object.values(sequelize.models).forEach(model => {
+  db[model.name] = model;
+});
+
 Object.keys(db).forEach(modelName => {
   if (db[modelName].associate) {
     db[modelName].associate(db);

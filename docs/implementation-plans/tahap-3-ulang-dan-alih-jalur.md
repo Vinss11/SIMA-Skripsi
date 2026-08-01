@@ -913,7 +913,7 @@ Tahap dinyatakan selesai apabila:
 | Menyalin draft data Magang lama | Hanya sebagai aksi eksplisit; dokumen dan record aktif tetap baru |
 
 Keputusan baru wajib memperbarui `aturan-bisnis-simps.md`, BPMN, kontrak API, migrasi, implementasi, dan test dalam perubahan yang sama.
-# Status implementasi (30 Juli 2026)
+# Status implementasi (1 Agustus 2026 — blocker ditutup)
 
 Kontrak backend Tahap 3 telah diimplementasikan secara additive. Sumber jalur dibaca dari pendaftaran approved terakhir secara deterministik; pamit generik dikunci ke periode, pendaftaran lama, penetapan lama, dan Pembimbing 1; approval memutus assignment serta jadwal mendatang dalam satu transaksi; dan pamit baru dikonsumsi ketika pendaftaran ulang/alih berhasil dibuat. Pendaftaran baru menjadi root siklus melalui `pendaftaran_asal_id`, sedangkan bimbingan baru ditautkan melalui `pendaftaran_penjaluran_id`.
 
@@ -922,3 +922,5 @@ Endpoint utama tersedia pada `/api/jalur/change/*`, `/api/pendaftaran/change`, d
 Hardening 31 Juli 2026 menambahkan verifikasi snapshot assignment sebelum keputusan pamit, pembatalan bimbingan yang dibatasi ke permohonan `pending` pada siklus lama, fingerprint dan `Idempotency-Key` wajib untuk pamit serta pendaftaran, pemeriksaan workflow nonterminal dan gate semester, notifikasi view-only untuk Pembimbing 2, pembatalan pamit saat periode ditutup, dan adapter lifecycle untuk endpoint status/history lama. Migrasi tambahannya adalah `20260731100000-strengthen-stage3-idempotency.js`.
 
 Koreksi blocker 31 Juli 2026 memastikan keputusan terminal diperiksa sebelum snapshot assignment sehingga retry approval tetap `approved` dan ditandai replay, sedangkan keputusan terminal berbeda menghasilkan `409 PAMIT_DECISION_CONFLICT`. Pamit approved hanya mengecualikan `PAMIT_PENDING` dan gate semester akibat assignment yang sengaja diakhiri; workflow Penelitian, Magang/Perintisan, dan kelompok Perintisan aktif tetap memblokir. Replay pendaftaran merekonstruksi fingerprint dari pamit yang terhubung ke pendaftaran hasil, dan frontend mereset idempotency key hanya setelah hasil pasti sambil mempertahankannya pada kegagalan jaringan atau respons yang tidak dapat diverifikasi.
+
+Verifikasi 1 Agustus 2026 menyatakan seluruh blocker koreksi tersebut tertutup. Migrasi `20260731100000-strengthen-stage3-idempotency.js` sudah tracked dalam commit `6e7684d`, sehingga kolom dan unique index idempotensi dapat diterapkan pada database lain melalui alur migrasi normal.
