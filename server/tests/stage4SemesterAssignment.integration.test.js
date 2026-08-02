@@ -34,6 +34,7 @@ const { buildSemesterLanjutanGate } = require("../services/semesterLanjutanServi
 const assignmentController = require("../controllers/penetapanPembimbingController");
 const jalurController = require("../controllers/jalurController");
 const dosenController = require("../controllers/dosenController");
+const academicController = require("../controllers/academicController");
 
 async function invokeController(handler, req) {
   const response = { statusCode: 200, payload: null };
@@ -48,6 +49,7 @@ async function invokeController(handler, req) {
 test("Tahap 4: carry-forward dan izin semester 3 membentuk assignment per semester secara idempoten", async (t) => {
   const suffix = `${Date.now()}`.slice(-8);
   const ids = { students: [], dosens: [], periods: [], academicPeriods: [], registrations: [], groups: [] };
+  let previousActiveAcademicPeriodId = null;
 
   t.after(async () => {
     const assignments = await PenetapanPembimbing.findAll({ where: { mahasiswa_id: { [Op.in]: ids.students } }, attributes: ["id"] });
@@ -71,14 +73,29 @@ test("Tahap 4: carry-forward dan izin semester 3 membentuk assignment per semest
     await Dosen.destroy({ where: { id: { [Op.in]: ids.dosens } }, force: true });
     await PeriodePenjaluran.destroy({ where: { id: { [Op.in]: ids.periods } }, force: true });
     await PeriodeAkademik.destroy({ where: { id: { [Op.in]: ids.academicPeriods } }, force: true });
+    if (previousActiveAcademicPeriodId) {
+      const restored = await invokeController(academicController.updateMaster, {
+        params: { resource: "periode", id: previousActiveAcademicPeriodId }, body: { status: "active" },
+      });
+      assert.equal(restored.statusCode, 200, "periode akademik aktif sebelumnya harus dipulihkan");
+    }
     await SekretarisProdi.destroy({ where: { email: `stage4.${suffix}@test.local` }, force: true });
     await sequelize.close();
   });
 
+  previousActiveAcademicPeriodId = (await PeriodeAkademik.findOne({ where: { status: "active" }, attributes: ["id"] }))?.id || null;
   const sekretaris = await SekretarisProdi.create({
     nik: `S4${suffix}`.slice(0, 9), nama: "Sekretaris Stage 4", email: `stage4.${suffix}@test.local`, password: "test-password",
   }, { hooks: false });
-  const academicBaseYear = 3000 + Number(suffix.slice(-3));
+  const occupiedAcademicPeriods = new Set((await PeriodeAkademik.findAll({ attributes: ["tahun_akademik", "semester"] }))
+    .map((row) => `${row.tahun_akademik}:${row.semester}`));
+  let academicBaseYear = 2050;
+  while (academicBaseYear <= 2198 && [
+    `${academicBaseYear}/${academicBaseYear + 1}:genap`,
+    `${academicBaseYear + 1}/${academicBaseYear + 2}:ganjil`,
+    `${academicBaseYear + 1}/${academicBaseYear + 2}:genap`,
+  ].some((key) => occupiedAcademicPeriods.has(key))) academicBaseYear += 1;
+  assert.ok(academicBaseYear <= 2198, "rentang tahun akademik fixture Tahap 4 tersedia");
   const transitionStart = new Date(Date.now() + 2 * 86400000);
   transitionStart.setUTCHours(0, 0, 0, 0);
   const sourceAcademicStart = new Date(transitionStart.getTime() - 180 * 86400000);
@@ -92,14 +109,14 @@ test("Tahap 4: carry-forward dan izin semester 3 membentuk assignment per semest
   ];
   const periods = [];
   const academicPeriods = [];
-  for (const [periodIndex, [year, semester, start]] of periodDefinitions.entries()) {
+  for (const [year, semester, start] of periodDefinitions) {
     const academic = await PeriodeAkademik.create({
-      kode: `STAGE4-${suffix}-${semester}-${year.replace("/", "-")}`,
+      kode: `${year.replace("/", "-")}-${semester.toUpperCase()}`,
       tahun_akademik: year,
       semester,
       tanggal_mulai: new Date(start),
       tanggal_selesai: new Date(new Date(start).getTime() + 120 * 86400000),
-      status: periodIndex === 0 ? "active" : "draft",
+      status: "draft",
       sumber: "integration_test",
       metadata: {},
     });
@@ -111,6 +128,11 @@ test("Tahap 4: carry-forward dan izin semester 3 membentuk assignment per semest
     });
     periods.push(period); ids.periods.push(period.id);
   }
+  const activatedTestPeriod = await invokeController(academicController.updateMaster, {
+    params: { resource: "periode", id: academicPeriods[0].id }, body: { status: "active" },
+  });
+  assert.equal(activatedTestPeriod.statusCode, 200);
+  assert.equal(activatedTestPeriod.payload.data.status, "active");
   const dosens = [];
   for (let index = 1; index <= 2; index += 1) {
     const dosen = await Dosen.create({

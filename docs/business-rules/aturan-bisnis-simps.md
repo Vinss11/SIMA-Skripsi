@@ -658,6 +658,43 @@ Setiap bimbingan harus dapat ditelusuri ke:
 - jalur;
 - siklus baru/ulang/alih.
 
+### BR-BIMBINGAN-003 — Reviewer efektif dan pergantian
+
+**Status: Final**
+
+- Target P1/P2 saat permohonan dibuat bersifat historis dan tidak boleh ditimpa.
+- Hak mutasi berasal dari anggota penetapan yang menjadi reviewer efektif.
+- Pergantian pembimbing atau semester memindahkan resume yang belum selesai ke pengganti dengan urutan P1/P2 yang sama dan mencatat transfer append-only.
+- Jika pengganti dengan peran yang sama tidak tersedia, bimbingan masuk `needs_reviewer_resolution`; sistem tidak memindahkannya lintas peran secara otomatis.
+- Setelah transfer efektif, dosen lama hanya mempunyai akses histori sesuai kewenangan dan tidak dapat memproses permohonan atau resume.
+
+### BR-BIMBINGAN-004 — Validasi sesi dan versi resume
+
+**Status: Final**
+
+- Setiap submit atau revisi resume menghasilkan versi baru; versi dan keputusan lama tidak dihapus atau ditimpa.
+- Sesi dihitung hanya jika berada pada siklus yang dievaluasi, permohonan diterima, sesi terjadi, resume disetujui reviewer yang sah, dan data tidak diinvalidasi atau ambigu.
+- Untuk implementasi awal, persetujuan resume menjadi bukti sesi terjadi (`approved_resume`).
+- Setiap hasil dihitung/tidak dihitung menyimpan policy version, evaluator version, waktu evaluasi, dan reason code.
+
+### BR-BIMBINGAN-005 — Kebijakan minimum
+
+**Status: Final untuk konfigurasi; scope enforcement menunggu keputusan akademik**
+
+- Minimum bimbingan disimpan sebagai policy berversi dengan scope program studi, program kuliah, jalur, dan periode akademik.
+- Nilai delapan dimigrasikan sebagai policy legacy awal, bukan konstanta controller.
+- Sistem menampilkan progres per semester dan kumulatif per siklus.
+- Pilihan enforcement `cycle` atau `semester` dan approval readiness P1 atau seluruh pembimbing aktif harus disahkan sebelum diaktifkan pada production.
+
+### BR-BIMBINGAN-006 — Idempotensi, audit, dan readiness
+
+**Status: Final untuk mekanisme; readiness berjalan shadow sampai scope approval disahkan**
+
+- Seluruh mutasi bimbingan memakai `Idempotency-Key`, fingerprint payload, dan optimistic precondition version.
+- Retry identik mengembalikan hasil pertama; key sama dengan payload berbeda ditolak.
+- Mutation kritis menghasilkan event dan notifikasi atomik tanpa menyalin isi resume atau catatan sensitif ke notifikasi.
+- Tahap 7 hanya menerbitkan fakta kesiapan bimbingan berversi/checksum. Fakta tersebut tidak sama dengan verifikasi pendadaran dan tidak langsung menjadwalkan sidang.
+
 ## 18. Persyaratan pendadaran
 
 ### BR-SIDANG-001 — Persyaratan minimum

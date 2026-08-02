@@ -41,10 +41,15 @@ router.get("/dpa/current", authenticateToken, authorizeRole("mahasiswa"), mahasi
 router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("mahasiswa"), penetapanPembimbingController.getMySupervisorAssignmentHistory);
 
 // ========== BIMBINGAN SKRIPSI ==========
+router.get("/bimbingan/context", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceContext);
+router.get("/bimbingan/progress", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceProgress);
+router.post("/bimbingan/readiness", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.requestMahasiswaGuidanceReadiness);
+router.get("/bimbingan/readiness/current", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceReadiness);
 router.get("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaBimbingan);
 router.post("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.createMahasiswaBimbingan);
 router.post("/bimbingan/:id/expire", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.expireMahasiswaBimbingan);
 router.post("/bimbingan/:id/resume", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.submitResumeMahasiswaBimbingan);
+router.post("/bimbingan/:id/resume-versions", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.submitResumeMahasiswaBimbingan);
 
 // ========== DOKUMEN SIDANG ==========
 router.get(

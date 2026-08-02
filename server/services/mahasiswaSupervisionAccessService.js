@@ -59,10 +59,10 @@ async function getMahasiswaSupervisionAccess(mahasiswaId, transaction = null) {
   const currentSupervisor = activeAssignment.pembimbing_1 || mahasiswa.dosenPembimbingSkripsi || null;
   const currentSupervisors = [
     activeAssignment.pembimbing_1
-      ? { ...serializeSupervisor(activeAssignment.pembimbing_1), urutan: 1, peran: "utama" }
+      ? { ...serializeSupervisor(activeAssignment.pembimbing_1), assignment_member_id: activeAssignment.penetapan?.pembimbings?.find((item) => Number(item.urutan) === 1)?.id || null, assignment_id: activeAssignment.penetapan?.id || null, urutan: 1, peran: "utama" }
       : null,
     activeAssignment.pembimbing_2
-      ? { ...serializeSupervisor(activeAssignment.pembimbing_2), urutan: 2, peran: "pendamping" }
+      ? { ...serializeSupervisor(activeAssignment.pembimbing_2), assignment_member_id: activeAssignment.penetapan?.pembimbings?.find((item) => Number(item.urutan) === 2)?.id || null, assignment_id: activeAssignment.penetapan?.id || null, urutan: 2, peran: "pendamping" }
       : null,
   ].filter(Boolean);
   if (currentSupervisors.length === 0 && currentSupervisor) {

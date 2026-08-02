@@ -40,6 +40,7 @@ import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
 import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
 import SekretarisSidangManagementPage from "./SekretarisSidangManagementPage";
 import AcademicDataPanel from "../components/AcademicDataPanel";
+import GuidanceGovernancePanel from "../components/GuidanceGovernancePanel";
 
 const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
@@ -1820,6 +1821,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         { id: "mahasiswa-dpa", label: "Mahasiswa DPA", icon: UserCircle2 },
         { id: "mahasiswa-bimbingan", label: "Riwayat Bimbingan", icon: ListChecks },
         { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
+        { id: "bimbingan-governance", label: "Tata Kelola Bimbingan", icon: SlidersHorizontal },
         { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
         { id: "approval-penelitian", label: "Keputusan Final Sekprodi", icon: ListChecks },
         { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
@@ -1883,6 +1885,11 @@ function buildTabHeaders(isSekretaris) {
       icon: MessageSquareText,
       title: "Review Bimbingan",
       subtitle: "Terima, jadwalkan, dan review sesi bimbingan mahasiswa.",
+    },
+    "bimbingan-governance": {
+      icon: SlidersHorizontal,
+      title: "Tata Kelola Bimbingan",
+      subtitle: "Kelola policy, reviewer efektif, invalidasi approval, dan context bimbingan lintas siklus.",
     },
     "dokumen-sidang-review": {
       icon: FileSpreadsheet,
@@ -8068,6 +8075,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <p className="mt-1 text-sm text-[#5d6c91]">Sisa: {summary.kuotaSisa}</p>
                 </div>
               </section>
+            ) : null}
+
+            {!loading && isSekretaris && activeTab === "bimbingan-governance" ? (
+              <GuidanceGovernancePanel session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
             ) : null}
 
             {loading ? (

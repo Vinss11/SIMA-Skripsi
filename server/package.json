@@ -28,6 +28,9 @@
     "worker:auth-outbox:once": "node scripts/process-auth-outbox.js --once",
     "provision:stage6-activations": "node scripts/provision-stage6-activation-channels.js --execute",
     "reconcile:stage6-auth-security:dry-run": "node scripts/reconcile-stage6-auth-security.js --dry-run",
+    "backfill:stage7-guidance:dry-run": "node scripts/backfill-stage7-guidance.js --dry-run",
+    "backfill:stage7-guidance": "node scripts/backfill-stage7-guidance.js --execute",
+    "reconcile:stage7-guidance:dry-run": "node scripts/reconcile-stage7-guidance.js --dry-run",
     "recover:stage6-privileged": "node scripts/recover-stage6-privileged-account.js"
   },
   "keywords": [],

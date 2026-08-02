@@ -23,6 +23,14 @@ const NOTIFICATION_TYPES = Object.freeze({
   CHANGE_PAMIT_DECIDED_STUDENT: "change_pamit_decided_student",
   CHANGE_REGISTRATION_CREATED_STUDENT: "change_registration_created_student",
   CHANGE_PAMIT_INFO_LECTURER: "change_pamit_info_lecturer",
+  GUIDANCE_REQUESTED_LECTURER: "guidance_requested_lecturer",
+  GUIDANCE_REQUEST_DECIDED_STUDENT: "guidance_request_decided_student",
+  GUIDANCE_RESUME_SUBMITTED_LECTURER: "guidance_resume_submitted_lecturer",
+  GUIDANCE_RESUME_DECIDED_STUDENT: "guidance_resume_decided_student",
+  GUIDANCE_REVIEWER_TRANSFERRED: "guidance_reviewer_transferred",
+  GUIDANCE_REVIEWER_RESOLUTION_REQUIRED: "guidance_reviewer_resolution_required",
+  GUIDANCE_READINESS_REQUESTED: "guidance_readiness_requested",
+  GUIDANCE_READINESS_DECIDED: "guidance_readiness_decided",
 });
 
 const NOTIFICATION_TITLES = Object.freeze({
@@ -48,6 +56,14 @@ const NOTIFICATION_TITLES = Object.freeze({
   [NOTIFICATION_TYPES.CHANGE_PAMIT_DECIDED_STUDENT]: "Keputusan Pamit Ulang/Alih Jalur",
   [NOTIFICATION_TYPES.CHANGE_REGISTRATION_CREATED_STUDENT]: "Siklus Penjaluran Baru Dibuat",
   [NOTIFICATION_TYPES.CHANGE_PAMIT_INFO_LECTURER]: "Informasi Pamit Mahasiswa Bimbingan",
+  [NOTIFICATION_TYPES.GUIDANCE_REQUESTED_LECTURER]: "Permohonan Bimbingan Baru",
+  [NOTIFICATION_TYPES.GUIDANCE_REQUEST_DECIDED_STUDENT]: "Keputusan Permohonan Bimbingan",
+  [NOTIFICATION_TYPES.GUIDANCE_RESUME_SUBMITTED_LECTURER]: "Resume Bimbingan Perlu Direview",
+  [NOTIFICATION_TYPES.GUIDANCE_RESUME_DECIDED_STUDENT]: "Hasil Review Resume Bimbingan",
+  [NOTIFICATION_TYPES.GUIDANCE_REVIEWER_TRANSFERRED]: "Reviewer Bimbingan Diperbarui",
+  [NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED]: "Reviewer Bimbingan Perlu Ditetapkan",
+  [NOTIFICATION_TYPES.GUIDANCE_READINESS_REQUESTED]: "Persetujuan Kesiapan Bimbingan",
+  [NOTIFICATION_TYPES.GUIDANCE_READINESS_DECIDED]: "Status Kesiapan Bimbingan",
 });
 
 module.exports = { NOTIFICATION_TYPES, NOTIFICATION_TITLES };

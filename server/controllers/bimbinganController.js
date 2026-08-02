@@ -22,12 +22,15 @@ const {
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
 const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbingService");
+const guidanceWorkflow = require("../services/guidanceWorkflowService");
+const { resolveActiveGuidanceContext } = require("../services/guidanceContextService");
+const { getProgress, DEFAULT_MINIMUM } = require("../services/guidanceProgressService");
+const guidanceReadiness = require("../services/guidanceReadinessService");
 
 async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
   return getExistingSupervisionPermission(dosenId, transaction);
 }
 
-const TARGET_SESI_MINIMAL = 8;
 const NON_PENELITIAN_JALUR_SET = new Set(["magang", "pengabdian", "perintisan_bisnis"]);
 const JAKARTA_TIME_ZONE = "Asia/Jakarta";
 
@@ -116,6 +119,23 @@ function serializeRow(row) {
     reviewer_dosen_id: item.reviewer_dosen_id,
     pengajuan_id: item.pengajuan_id,
     pendaftaran_penjaluran_id: item.pendaftaran_penjaluran_id,
+    penetapan_pembimbing_id: item.penetapan_pembimbing_id,
+    target_assignment_id: item.target_assignment_id,
+    target_assignment_member_id: item.target_assignment_member_id,
+    target_urutan_snapshot: item.target_urutan_snapshot,
+    effective_reviewer_assignment_id: item.effective_reviewer_assignment_id,
+    effective_reviewer_assignment_member_id: item.effective_reviewer_assignment_member_id,
+    periode_akademik_id: item.periode_akademik_id,
+    semester_penjaluran_ke_snapshot: item.semester_penjaluran_ke_snapshot,
+    jalur_snapshot: item.jalur_snapshot,
+    cycle_type_snapshot: item.cycle_type_snapshot,
+    request_status: item.request_status || (item.status_permohonan === "approved" ? "accepted" : item.status_permohonan === "expired" ? "withdrawn" : item.status_permohonan),
+    scheduled_at: item.scheduled_at,
+    occurred_at: item.occurred_at,
+    occurrence_source: item.occurrence_source,
+    legacy_context_status: item.legacy_context_status,
+    reviewer_resolution_status: item.reviewer_resolution_status,
+    row_version: item.row_version,
     permintaan_pesan: item.permintaan_pesan,
     permintaan_tanggal: item.permintaan_tanggal,
     permintaan_jam: item.permintaan_jam,
@@ -132,6 +152,11 @@ function serializeRow(row) {
     reviewer_dosen_id: item.reviewer_dosen_id,
     reassigned_reviewer_at: item.reassigned_reviewer_at,
     is_counted: Boolean(item.is_counted),
+    resume_versions: (item.resumeVersions || []).slice().sort((a, b) => Number(b.version_number) - Number(a.version_number)).map((version) => ({
+      id: version.id, version_number: version.version_number, resume_text: version.resume_text, status: version.status,
+      submitted_at: version.submitted_at, reviewed_at: version.reviewed_at, review_note: version.review_note,
+      invalidated_at: version.invalidated_at, invalidation_reason: version.invalidation_reason,
+    })),
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     mahasiswa: item.mahasiswa
@@ -172,10 +197,10 @@ function buildStatFromRows(rows) {
   const submitted_resume = rows.filter((item) => item.status_resume === "submitted").length;
   const approved_resume = rows.filter((item) => item.status_resume === "approved").length;
   const counted_sessions = rows.filter((item) => item.status_resume === "approved" && item.is_counted).length;
-  const progress_percent = Math.min(100, Math.round((counted_sessions / TARGET_SESI_MINIMAL) * 100));
+  const progress_percent = Math.min(100, Math.round((counted_sessions / DEFAULT_MINIMUM) * 100));
 
   return {
-    target_minimum: TARGET_SESI_MINIMAL,
+    target_minimum: DEFAULT_MINIMUM,
     total_sesi: total,
     pending_permohonan,
     approved_permohonan,
@@ -195,44 +220,9 @@ async function resolveAuthenticatedDosenId(req, transaction = null) {
     return req.user.id;
   }
 
-  if (req.user?.role !== "sekretaris_prodi") {
-    return null;
-  }
-
-  const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
-    attributes: ["nik", "email", "jabatan"],
-    transaction: transaction || undefined,
-  });
-
-  if (!sekretaris) return null;
-
-  const orWhere = [];
-  if (sekretaris.nik) orWhere.push({ nik: String(sekretaris.nik).trim() });
-  if (sekretaris.email) orWhere.push({ email: String(sekretaris.email).trim().toLowerCase() });
-
-  const username = String(req.user?.username || "").trim();
-  if (username) {
-    orWhere.push({ nik: username });
-    orWhere.push({ email: username.toLowerCase() });
-  }
-
-  if (orWhere.length === 0) return null;
-
-  let dosen = await Dosen.findOne({
-    where: { [Op.or]: orWhere },
-    attributes: ["id"],
-    transaction: transaction || undefined,
-  });
-
-  if (!dosen && sekretaris.jabatan) {
-    dosen = await Dosen.findOne({
-      where: { jabatan_struktural: sekretaris.jabatan },
-      attributes: ["id"],
-      transaction: transaction || undefined,
-    });
-  }
-
-  return dosen?.id || null;
+  // Akun Sekretaris Prodi murni bersifat read-only. Ketika orang yang sama juga
+  // dosen, Stage 6 menjadikan akun Dosen identitas login utama.
+  return null;
 }
 
 function resolveSelectedJalurFromPendaftaran(pendaftaran) {
@@ -319,12 +309,22 @@ exports.getMahasiswaBimbingan = async (req, res) => {
           as: "pengajuan",
           attributes: ["id", "jenis_jalur", "tipe_pengajuan", "status"],
         },
+        { model: require("../models").GuidanceResumeVersion, as: "resumeVersions", required: false },
       ],
       order: [["createdAt", "DESC"]],
     });
 
     const serializedRows = rows.map(serializeRow).filter(Boolean);
-    const stats = buildStatFromRows(serializedRows);
+    let stats = buildStatFromRows(serializedRows);
+    let progress = null;
+    try {
+      const context = await resolveActiveGuidanceContext(mahasiswa_id);
+      progress = await getProgress({ mahasiswaId: mahasiswa_id, cycleRegistrationId: context.registration.id, assignmentId: context.assignment.id,
+        context: { kodeProgramStudi: context.program.kode_program_studi, programKuliah: context.program.program_kuliah,
+          jalur: context.snapshot.jalur_snapshot, periodeAkademikId: context.snapshot.periode_akademik_id } });
+      stats = { ...stats, target_minimum: progress.policy.minimum_validated_sessions, counted_sessions: progress.cycle.counted,
+        progress_percent: Math.min(100, Math.round((progress.cycle.counted / progress.policy.minimum_validated_sessions) * 100)) };
+    } catch (_) { /* Histori legacy tetap dapat dibaca walau context aktif belum lengkap. */ }
     const supervisionAccess = await getMahasiswaSupervisionAccess(mahasiswa_id);
 
     return res.json({
@@ -347,6 +347,7 @@ exports.getMahasiswaBimbingan = async (req, res) => {
           : null),
         supervision_access: supervisionAccess,
         stats,
+        progress,
         rows: summaryOnly ? [] : serializedRows,
       },
     });
@@ -667,15 +668,12 @@ exports.getDosenBimbingan = async (req, res) => {
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
     const view = String(req.query?.view || "").trim().toLowerCase();
-    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
-    const supervisedMahasiswaIdSet = new Set(supervisedMahasiswaIds.map(Number));
-    const where = {
-      [Op.or]: [
-        { dosen_id },
-        { reviewer_dosen_id: dosen_id },
-        { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
-      ],
-    };
+    const memberships = await PenetapanPembimbingDosen.findAll({ where: { dosen_id }, attributes: ["id"] });
+    const memberIds = memberships.map((item) => Number(item.id));
+    const historyView = view === "history";
+    const where = historyView
+      ? { [Op.or]: [{ target_assignment_member_id: { [Op.in]: memberIds } }, { effective_reviewer_assignment_member_id: { [Op.in]: memberIds } }] }
+      : { effective_reviewer_assignment_member_id: { [Op.in]: memberIds }, reviewer_resolution_status: "resolved" };
 
     if (view === "permohonan_sesi") {
       where.status_permohonan = { [Op.in]: ["pending", "expired"] };
@@ -710,16 +708,15 @@ exports.getDosenBimbingan = async (req, res) => {
         view: view || "all",
         stats,
         rows: serializedRows.map((item) => {
-          const directReviewer = Number(item.reviewer_dosen_id) === Number(dosen_id);
-          const originalReviewer = Number(item.dosen_id) === Number(dosen_id);
-          const activeSupervisor = supervisedMahasiswaIdSet.has(Number(item.mahasiswa_id));
+          const directReviewer = memberIds.includes(Number(item.effective_reviewer_assignment_member_id));
+          const originalReviewer = memberIds.includes(Number(item.target_assignment_member_id));
           return {
             ...item,
-            can_review: directReviewer || originalReviewer,
-            can_view: directReviewer || originalReviewer || activeSupervisor,
+            can_review: directReviewer,
+            can_view: directReviewer || originalReviewer,
             access_mode: directReviewer
-              ? "reassigned_reviewer"
-              : originalReviewer ? "target_supervisor" : "active_co_supervisor",
+              ? (originalReviewer ? "target_supervisor" : "reassigned_reviewer")
+              : "history_only",
           };
         }),
       },
@@ -746,14 +743,14 @@ exports.getDosenBimbinganDetail = async (req, res) => {
     const permission = await ensureExistingSupervisionAccess(dosen_id);
     if (!permission.allowed) return res.status(403).json({ success: false, message: permission.message });
 
-    const supervisedMahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
+    const memberships = await PenetapanPembimbingDosen.findAll({ where: { dosen_id }, attributes: ["id"] });
+    const memberIds = memberships.map((item) => Number(item.id));
     const row = await BimbinganSkripsi.findOne({
       where: {
         id: req.params.id,
         [Op.or]: [
-          { dosen_id },
-          { reviewer_dosen_id: dosen_id },
-          { mahasiswa_id: { [Op.in]: supervisedMahasiswaIds } },
+          { target_assignment_member_id: { [Op.in]: memberIds } },
+          { effective_reviewer_assignment_member_id: { [Op.in]: memberIds } },
         ],
       },
       include: [
@@ -781,12 +778,11 @@ exports.getDosenBimbinganDetail = async (req, res) => {
       success: true,
       data: {
         ...serializeRow(row),
-        can_review: Number(row.dosen_id) === Number(dosen_id)
-          || Number(row.reviewer_dosen_id) === Number(dosen_id),
+        can_review: memberIds.includes(Number(row.effective_reviewer_assignment_member_id)),
         can_view: true,
-        access_mode: Number(row.reviewer_dosen_id) === Number(dosen_id)
-          ? "reassigned_reviewer"
-          : Number(row.dosen_id) === Number(dosen_id) ? "target_supervisor" : "active_co_supervisor",
+        access_mode: memberIds.includes(Number(row.effective_reviewer_assignment_member_id))
+          ? (memberIds.includes(Number(row.target_assignment_member_id)) ? "target_supervisor" : "reassigned_reviewer")
+          : "history_only",
       },
     });
   } catch (error) {
@@ -1183,4 +1179,132 @@ exports.expireMahasiswaBimbingan = async (req, res) => {
       error: error.message,
     });
   }
+};
+
+// ===== Stage 7 canonical adapters =====
+function sendGuidanceError(res, error) {
+  const status = Number(error.status || error.statusCode || 500);
+  if (status >= 500) console.error("Guidance Stage 7 error:", error);
+  return res.status(status).json({ success: false, message: status >= 500 ? "Terjadi kesalahan pada server" : error.message,
+    code: error.code || "GUIDANCE_INTERNAL_ERROR", detail: error.detail || undefined });
+}
+
+function idempotencyKey(req) { return req.get("Idempotency-Key") || req.body?.idempotency_key; }
+function expectedVersion(req) {
+  const ifMatch = String(req.get("If-Match") || "").replace(/^W\//, "").replace(/"/g, "");
+  return req.body?.expected_version ?? (ifMatch ? Number(ifMatch) : null);
+}
+
+exports.getMahasiswaGuidanceContext = async (req, res) => {
+  try {
+    const context = await resolveActiveGuidanceContext(req.user.id);
+    return res.json({ success: true, data: { cycle: { id: context.registration.id, type: context.registration.jalur, jalur: context.snapshot.jalur_snapshot },
+      assignment: { id: context.assignment.id, semester_penjaluran_ke: context.assignment.semester_penjaluran_ke, periode_akademik_id: context.snapshot.periode_akademik_id },
+      supervisors: context.members.map((member) => ({ assignment_member_id: member.id, dosen_id: member.dosen_id, urutan: member.urutan,
+        peran: member.peran, nama: member.dosen?.nama, status: member.status, status_keaktifan: member.dosen?.status_keaktifan,
+        can_continue_existing_supervision: member.dosen?.continue_existing_supervision !== false })), program: context.program,
+      readiness: { mode: guidanceReadiness.mode(), enabled: guidanceReadiness.mode() === "enabled" } } });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.getMahasiswaGuidanceProgress = async (req, res) => {
+  try {
+    const context = await resolveActiveGuidanceContext(req.user.id);
+    const progress = await getProgress({ mahasiswaId: req.user.id, cycleRegistrationId: context.registration.id, assignmentId: context.assignment.id,
+      context: { kodeProgramStudi: context.program.kode_program_studi, programKuliah: context.program.program_kuliah,
+        jalur: context.snapshot.jalur_snapshot, periodeAkademikId: context.snapshot.periode_akademik_id } });
+    return res.json({ success: true, data: progress });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.requestMahasiswaGuidanceReadiness = async (req, res) => {
+  try {
+    const result = await guidanceReadiness.requestReadiness({ mahasiswaId: req.user.id, idempotencyKey: idempotencyKey(req) });
+    return res.status(result.replayed ? 200 : 201).json({ success: true, replayed: result.replayed, data: { request: result.request, mode: result.mode, progress: result.progress } });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.getMahasiswaGuidanceReadiness = async (req, res) => {
+  try {
+    const models = require("../models");
+    const row = await models.GuidanceReadinessRequest.findOne({ where: { mahasiswa_id: req.user.id }, order: [["createdAt", "DESC"]],
+      include: [{ model: models.GuidanceReadinessApproval, as: "approvals", required: false }, { model: models.GuidanceReadinessFact, as: "facts", required: false }] });
+    return res.json({ success: true, data: { request: row, mode: guidanceReadiness.mode(), enabled: guidanceReadiness.mode() === "enabled", downstream_gate_enabled: false } });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.getDosenGuidanceReadinessTasks = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Identitas dosen tidak tersedia." });
+    const members = await PenetapanPembimbingDosen.findAll({ where: { dosen_id: dosenId }, attributes: ["id"] });
+    const approvals = await require("../models").GuidanceReadinessApproval.findAll({ where: { assignment_member_id: { [Op.in]: members.map((m) => m.id) }, decision: "pending" }, order: [["createdAt", "ASC"]] });
+    return res.json({ success: true, data: { mode: guidanceReadiness.mode(), rows: approvals } });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.decideDosenGuidanceReadiness = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Identitas dosen tidak tersedia." });
+    const result = await guidanceReadiness.decideReadiness({ readinessId: req.params.id, dosenId, decision: req.body?.decision,
+      note: req.body?.note, expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.json({ success: true, replayed: result.replayed, data: result.request });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.createMahasiswaBimbingan = async (req, res) => {
+  try {
+    const pesan = String(req.body?.pesan || "").trim(); const tanggal = normalizeDateOnly(req.body?.tanggal); const jam = String(req.body?.jam || "").trim();
+    if (pesan.length < 10) return res.status(400).json({ success: false, code: "GUIDANCE_MESSAGE_INVALID", message: "Pesan bimbingan minimal 10 karakter." });
+    if (!tanggal || !isValidJam(jam)) return res.status(400).json({ success: false, code: "GUIDANCE_SCHEDULE_INVALID", message: "Tanggal dan jam bimbingan tidak valid." });
+    const result = await guidanceWorkflow.createRequest({ mahasiswaId: req.user.id, targetMemberId: req.body?.target_assignment_member_id,
+      targetDosenId: req.body?.dosen_pembimbing_id, pesan, tanggal, jam, idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Permohonan bimbingan berhasil disimpan.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.approveDosenBimbingan = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Akun ini tidak mempunyai identitas dosen untuk melakukan review." });
+    const row = await BimbinganSkripsi.findByPk(req.params.id); if (!row) return res.status(404).json({ success: false, code: "GUIDANCE_NOT_FOUND", message: "Data bimbingan tidak ditemukan." });
+    const tanggal = normalizeDateOnly(req.body?.tanggal_bimbingan || req.body?.permintaan_tanggal || row.permintaan_tanggal);
+    const jam = String(req.body?.jam_bimbingan || req.body?.permintaan_jam || row.permintaan_jam || "").trim();
+    const result = await guidanceWorkflow.decideRequest({ guidanceId: req.params.id, dosenId, action: "approve", catatan: req.body?.catatan_dosen,
+      tanggal, jam, lokasi: req.body?.lokasi_bimbingan, expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Keputusan permohonan berhasil disimpan.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.rejectDosenBimbingan = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Akun ini tidak mempunyai identitas dosen untuk melakukan review." });
+    const result = await guidanceWorkflow.decideRequest({ guidanceId: req.params.id, dosenId, action: "reject", catatan: req.body?.catatan_dosen,
+      expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Penolakan permohonan berhasil disimpan.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.submitResumeMahasiswaBimbingan = async (req, res) => {
+  try {
+    const resume = String(req.body?.resume || "").trim(); if (resume.length < 20) return res.status(400).json({ success: false, code: "GUIDANCE_RESUME_INVALID", message: "Resume minimal 20 karakter." });
+    const result = await guidanceWorkflow.submitResumeVersion({ guidanceId: req.params.id, mahasiswaId: req.user.id, resume,
+      expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Versi resume berhasil dikirim.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.reviewResumeDosenBimbingan = async (req, res) => {
+  try {
+    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Akun ini tidak mempunyai identitas dosen untuk melakukan review." });
+    const result = await guidanceWorkflow.reviewResumeVersion({ guidanceId: req.params.id, dosenId, action: req.body?.action,
+      catatan: req.body?.catatan_review, expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Review resume berhasil disimpan.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
+};
+
+exports.expireMahasiswaBimbingan = async (req, res) => {
+  try {
+    const result = await guidanceWorkflow.withdrawRequest({ guidanceId: req.params.id, mahasiswaId: req.user.id,
+      reason: req.body?.catatan_mahasiswa, expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
+    return res.status(result.status).json({ success: true, replayed: result.replayed, message: "Permohonan berhasil ditarik.", data: result.data });
+  } catch (error) { return sendGuidanceError(res, error); }
 };

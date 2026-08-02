@@ -11,10 +11,13 @@ const {
   PenetapanPembimbingDosen,
   SekretarisProdi,
   BimbinganSkripsi,
+  GuidanceReviewerTransfer,
+  GuidanceEvent,
   AssignmentActivationAttempt,
 } = require("../models");
 const { validateDosenForNewAssignment } = require("./dosenStatusService");
-const { createSupervisorAssignmentNotifications } = require("./notificationService");
+const { createSupervisorAssignmentNotifications, createSystemNotification } = require("./notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 
 const VALID_SOURCES = new Set(["penjaluran", "perpanjangan", "pergantian", "legacy_backfill"]);
 
@@ -47,61 +50,81 @@ async function withTransaction(transaction, callback) {
   return sequelize.transaction(callback);
 }
 
-function jakartaDateOnly() {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Jakarta",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date()).reduce((result, part) => {
-    if (part.type !== "literal") result[part.type] = part.value;
-    return result;
-  }, {});
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
-
 async function handleGuidanceAfterSupervisorReplacement({
   mahasiswaId,
-  oldSupervisorIds,
-  newReviewerDosenId,
+  oldAssignmentId,
+  newAssignmentId,
+  oldMembers,
+  newMembers,
+  transitionType = "supervisor_replacement",
+  effectiveTransitionAt = new Date(),
   reassignedBySekretarisId,
   transaction,
 }) {
-  const normalizedOldIds = [...new Set((oldSupervisorIds || []).map(Number).filter(Boolean))];
-  if (normalizedOldIds.length === 0) return { cancelled: 0, reassigned_reviews: 0 };
-  const [cancelled] = await BimbinganSkripsi.update({
-    status_permohonan: "cancelled_supervisor_change",
-    catatan_dosen: "Dibatalkan otomatis karena pergantian pembimbing. Silakan ajukan jadwal baru kepada pembimbing pengganti.",
-    tanggal_keputusan: new Date(),
-  }, {
-    where: {
-      mahasiswa_id: mahasiswaId,
-      dosen_id: { [Op.in]: normalizedOldIds },
-      [Op.or]: [
-        { status_permohonan: "pending" },
-        {
-          status_permohonan: { [Op.in]: ["approved", "rescheduled"] },
-          permintaan_tanggal: { [Op.gte]: jakartaDateOnly() },
-          status_resume: { [Op.notIn]: ["submitted", "revisi", "approved"] },
-        },
-      ],
-    },
-    transaction,
-  });
-  const [reassignedReviews] = await BimbinganSkripsi.update({
-    reviewer_dosen_id: newReviewerDosenId,
-    reassigned_reviewer_at: new Date(),
-    reassigned_by_sekretaris_id: reassignedBySekretarisId || null,
-  }, {
-    where: {
-      mahasiswa_id: mahasiswaId,
-      dosen_id: { [Op.in]: normalizedOldIds },
-      status_permohonan: { [Op.in]: ["approved", "rescheduled"] },
-      status_resume: { [Op.in]: ["submitted", "revisi"] },
-    },
-    transaction,
-  });
-  return { cancelled, reassigned_reviews: reassignedReviews };
+  const oldById = new Map((oldMembers || []).map((member) => [Number(member.id), member]));
+  const oldByDosen = new Map((oldMembers || []).map((member) => [Number(member.dosen_id), member]));
+  const newByOrder = new Map((newMembers || []).map((member) => [Number(member.urutan), member]));
+  const rows = await BimbinganSkripsi.findAll({ where: { mahasiswa_id: mahasiswaId,
+    [Op.or]: [{ effective_reviewer_assignment_id: oldAssignmentId }, { penetapan_pembimbing_id: oldAssignmentId }] }, transaction, lock: transaction.LOCK.UPDATE });
+  let cancelled = 0; let reassignedReviews = 0; let unresolved = 0;
+  for (const row of rows) {
+    const effectiveAt = new Date(effectiveTransitionAt);
+    const scheduled = row.scheduled_at ? new Date(row.scheduled_at) : new Date(`${row.permintaan_tanggal}T${row.permintaan_jam}:00+07:00`);
+    const futureWithoutResume = Number.isFinite(scheduled.getTime()) && scheduled.getTime() >= effectiveAt.getTime()
+      && ["pending", "accepted", "approved", "rescheduled"].includes(row.request_status || row.status_permohonan)
+      && !["submitted", "revisi", "approved"].includes(row.status_resume);
+    if (futureWithoutResume) {
+      row.status_permohonan = "cancelled_supervisor_change"; row.request_status = "cancelled_supervisor_change";
+      row.cancelled_at = new Date(); row.cancellation_reason_code = transitionType; row.tanggal_keputusan = row.cancelled_at;
+      row.catatan_dosen = "Dibatalkan otomatis karena pergantian assignment. Silakan ajukan jadwal baru."; row.row_version = Number(row.row_version || 1) + 1;
+      await row.save({ transaction });
+      await GuidanceEvent.create({ guidance_id: row.id, event_type: "request_cancelled_supervisor_change", actor_type: "system", actor_role: "system",
+        from_state: "pending", to_state: "cancelled_supervisor_change", assignment_id: newAssignmentId, occurred_at: new Date(),
+        reason_code: transitionType, metadata: { old_assignment_id: oldAssignmentId, new_assignment_id: newAssignmentId } }, { transaction });
+      await createSystemNotification({ recipientType: "mahasiswa", recipientId: mahasiswaId, type: NOTIFICATION_TYPES.GUIDANCE_REQUEST_DECIDED_STUDENT,
+        message: "Permohonan bimbingan dibatalkan karena pergantian assignment. Silakan ajukan jadwal baru.", referenceType: "bimbingan", referenceId: row.id,
+        actionKey: "guidance_detail", metadata: { decision: "cancelled_supervisor_change" },
+        deduplicationKey: `guidance:${row.id}:cancelled:${transitionType}:mahasiswa:${mahasiswaId}`, transaction });
+      cancelled += 1; continue;
+    }
+    if (!["submitted", "revisi"].includes(row.status_resume)) continue;
+    const oldMember = oldById.get(Number(row.effective_reviewer_assignment_member_id)) || oldByDosen.get(Number(row.reviewer_dosen_id || row.dosen_id));
+    const replacement = oldMember ? newByOrder.get(Number(oldMember.urutan)) : null;
+    if (!replacement) {
+      const reasonCode = "SAME_ROLE_REPLACEMENT_NOT_AVAILABLE";
+      const candidateMetadata = { required_urutan: oldMember?.urutan || row.target_urutan_snapshot || null,
+        available_candidates: [...newByOrder.values()].map((candidate) => ({ assignment_member_id: candidate.id, dosen_id: candidate.dosen_id, urutan: candidate.urutan })) };
+      row.reviewer_resolution_status = "needs_reviewer_resolution"; row.reviewer_resolution_reason_code = reasonCode;
+      row.row_version = Number(row.row_version || 1) + 1; await row.save({ transaction });
+      await GuidanceEvent.create({ guidance_id: row.id, event_type: "reviewer_resolution_required", actor_type: "system", actor_role: "system",
+        from_state: "resolved", to_state: "needs_reviewer_resolution", assignment_id: newAssignmentId, occurred_at: new Date(),
+        reason_code: reasonCode, metadata: { old_assignment_id: oldAssignmentId, new_assignment_id: newAssignmentId,
+          effective_transition_at: effectiveAt.toISOString(), ...candidateMetadata } }, { transaction });
+      await createSystemNotification({ recipientType: "mahasiswa", recipientId: mahasiswaId, type: NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED,
+        message: "Reviewer resume Anda perlu ditetapkan ulang oleh Sekretaris Prodi setelah pergantian pembimbing.", referenceType: "bimbingan", referenceId: row.id,
+        actionKey: "guidance_detail", metadata: { reason_code: reasonCode },
+        deduplicationKey: `guidance:${row.id}:reviewer-resolution:mahasiswa:${mahasiswaId}:${newAssignmentId}`, transaction });
+      if (reassignedBySekretarisId) await createSystemNotification({ recipientType: "sekretaris_prodi", recipientId: reassignedBySekretarisId,
+        type: NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED,
+        message: "Ada resume bimbingan yang memerlukan resolusi reviewer setelah pergantian assignment.", referenceType: "bimbingan", referenceId: row.id,
+        actionKey: "guidance_governance", metadata: { reason_code: reasonCode, ...candidateMetadata },
+        deduplicationKey: `guidance:${row.id}:reviewer-resolution:sekretaris:${reassignedBySekretarisId}:${newAssignmentId}`, transaction });
+      unresolved += 1; continue;
+    }
+    const before = Number(row.row_version || 1); const after = before + 1;
+    const guidanceEvent = await GuidanceEvent.create({ guidance_id: row.id, event_type: "reviewer_transferred", actor_type: "sekretaris_prodi",
+      actor_id: reassignedBySekretarisId || null, actor_role: "sekretaris_prodi", from_state: String(oldMember?.id || ""), to_state: String(replacement.id),
+      assignment_id: newAssignmentId, assignment_member_id: replacement.id, occurred_at: new Date(), reason_code: transitionType,
+      metadata: { from_assignment_id: oldAssignmentId, to_assignment_id: newAssignmentId, preserved_urutan: replacement.urutan } }, { transaction });
+    await GuidanceReviewerTransfer.create({ guidance_id: row.id, from_assignment_id: oldAssignmentId, from_assignment_member_id: oldMember?.id || null,
+      to_assignment_id: newAssignmentId, to_assignment_member_id: replacement.id, transition_type: transitionType, reason_code: "SAME_ROLE_REVIEWER_TRANSFER",
+      effective_at: effectiveAt, transferred_by_actor_type: "sekretaris_prodi", transferred_by_actor_id: reassignedBySekretarisId || null,
+      event_id: guidanceEvent.id, row_version_before: before, row_version_after: after }, { transaction });
+    row.effective_reviewer_assignment_id = newAssignmentId; row.effective_reviewer_assignment_member_id = replacement.id;
+    row.reviewer_dosen_id = replacement.dosen_id; row.reassigned_reviewer_at = new Date(); row.reassigned_by_sekretaris_id = reassignedBySekretarisId || null;
+    row.reviewer_resolution_status = "resolved"; row.reviewer_resolution_reason_code = null; row.row_version = after; await row.save({ transaction }); reassignedReviews += 1;
+  }
+  return { cancelled, reassigned_reviews: reassignedReviews, unresolved };
 }
 
 const assignmentInclude = [
@@ -303,7 +326,7 @@ async function activateSupervisorAssignment({
     const oldMembers = oldActive
       ? await PenetapanPembimbingDosen.findAll({
           where: { penetapan_pembimbing_id: oldActive.id },
-          attributes: ["dosen_id", "urutan"],
+          attributes: ["id", "dosen_id", "urutan"],
           order: [["urutan", "ASC"]],
           transaction: t,
         })
@@ -313,8 +336,8 @@ async function activateSupervisorAssignment({
     const removedSupervisorIds = oldMemberIds.filter((id) => !newMemberIds.includes(id));
     const sameComposition = oldMemberIds.length === newMemberIds.length
       && oldMemberIds.every((id, index) => id === newMemberIds[index]);
+    const replacementDate = startedAt || new Date();
     if (oldActive) {
-      const replacementDate = startedAt || new Date();
       await oldActive.update({
         status: "ended",
         tanggal_selesai: replacementDate,
@@ -350,11 +373,15 @@ async function activateSupervisorAssignment({
       transaction: t,
     });
     await mahasiswa.update({ dosen_pembimbing_skripsi_id: primary.dosen_id }, { transaction: t });
-    if (oldActive && removedSupervisorIds.length > 0) {
+    if (oldActive) {
       await handleGuidanceAfterSupervisorReplacement({
         mahasiswaId: mahasiswa.id,
-        oldSupervisorIds: removedSupervisorIds,
-        newReviewerDosenId: primary.dosen_id,
+        oldAssignmentId: oldActive.id,
+        newAssignmentId: penetapan.id,
+        oldMembers,
+        newMembers: members,
+        transitionType: sameComposition ? "semester_transition" : "supervisor_replacement",
+        effectiveTransitionAt: replacementDate,
         reassignedBySekretarisId: penetapan.created_by_sekretaris_id,
         transaction: t,
       });

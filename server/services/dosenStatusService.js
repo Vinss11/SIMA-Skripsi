@@ -189,6 +189,7 @@ async function getExistingSupervisionPermission(dosenId, transaction = null) {
   const dosen = await Dosen.findByPk(dosenId, {
     attributes: ["id", "nama", "status_keaktifan", "continue_existing_supervision"],
     transaction,
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
   });
   return { dosen, ...assertDosenCanContinueExistingSupervision(dosen) };
 }

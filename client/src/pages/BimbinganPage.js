@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -21,6 +21,7 @@ const BIMBINGAN_VIEW_TABS = [
   { key: "resume", label: "Resume Bimbingan" },
 ];
 const MAHASISWA_BIMBINGAN_TAB_STORAGE_KEY = "sima_mahasiswa_bimbingan_active_tab";
+const newCommandKey = () => window.crypto?.randomUUID?.() || `guidance-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function getInitialBimbinganViewTab() {
   if (typeof window === "undefined") return BIMBINGAN_VIEW_TABS[0].key;
@@ -213,6 +214,13 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [stats, setStats] = useState(null);
   const [dosenPembimbing, setDosenPembimbing] = useState(null);
   const [supervisionAccess, setSupervisionAccess] = useState(null);
+  const [guidanceContext, setGuidanceContext] = useState(null);
+  const [guidanceProgress, setGuidanceProgress] = useState(null);
+  const [guidanceReadiness, setGuidanceReadiness] = useState(null);
+  const [requestingReadiness, setRequestingReadiness] = useState(false);
+  const createRequestKeyRef = useRef(null);
+  const resumeCommandKeysRef = useRef({});
+  const withdrawCommandKeysRef = useRef({});
 
   const [mode, setMode] = useState("list");
   const [selectedRowId, setSelectedRowId] = useState(null);
@@ -259,7 +267,10 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       }
 
       if (!response.ok || !payload?.success) {
-        throw new Error(payload?.message || "Terjadi kesalahan pada server");
+        const requestError = new Error(payload?.message || "Terjadi kesalahan pada server");
+        requestError.receivedResponse = true;
+        requestError.code = payload?.code;
+        throw requestError;
       }
 
       return payload;
@@ -271,13 +282,20 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     try {
       setLoading(true);
       setError("");
-      const payload = await fetchWithAuth("/api/mahasiswa/bimbingan");
+      const [payload, contextPayload, readinessPayload] = await Promise.all([
+        fetchWithAuth("/api/mahasiswa/bimbingan"),
+        fetchWithAuth("/api/mahasiswa/bimbingan/context").catch(() => null),
+        fetchWithAuth("/api/mahasiswa/bimbingan/readiness/current").catch(() => null),
+      ]);
       const data = payload?.data || {};
       const fetchedRows = Array.isArray(data.rows) ? data.rows : [];
       setRows(fetchedRows);
       setStats(data.stats || null);
       setDosenPembimbing(data.dosen_pembimbing || null);
       setSupervisionAccess(data.supervision_access || null);
+      setGuidanceProgress(data.progress || null);
+      setGuidanceContext(contextPayload?.data || null);
+      setGuidanceReadiness(readinessPayload?.data || null);
       return fetchedRows;
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
@@ -288,6 +306,17 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setLoading(false);
     }
   }, [fetchWithAuth]);
+
+  const handleRequestReadiness = useCallback(async () => {
+    try {
+      setRequestingReadiness(true); setError("");
+      const payload = await fetchWithAuth("/api/mahasiswa/bimbingan/readiness", { method: "POST",
+        headers: { "Idempotency-Key": `readiness-${session.user?.id}-${Date.now()}` }, body: JSON.stringify({}) });
+      setGuidanceReadiness({ mode: payload?.data?.mode, enabled: payload?.data?.mode === "enabled", request: payload?.data?.request });
+      showSuccessToast(payload?.data?.mode === "shadow" ? "Snapshot readiness shadow berhasil dibuat." : "Permintaan readiness berhasil dikirim.");
+    } catch (requestError) { if (requestError.message !== "__SESSION_EXPIRED__") setError(requestError.message); }
+    finally { setRequestingReadiness(false); }
+  }, [fetchWithAuth, session.user?.id]);
 
   useEffect(() => {
     loadData();
@@ -463,15 +492,20 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
     try {
       setSubmittingRequest(true);
+      createRequestKeyRef.current ||= newCommandKey();
+      const selectedSupervisor = activeSupervisors.find((item) => Number(item.id) === Number(form.dosen_pembimbing_id));
       await fetchWithAuth("/api/mahasiswa/bimbingan", {
         method: "POST",
+        headers: { "Idempotency-Key": createRequestKeyRef.current },
         body: JSON.stringify({
           pesan: String(form.pesan || "").trim(),
           tanggal: form.tanggal,
           jam: form.jam,
           dosen_pembimbing_id: Number(form.dosen_pembimbing_id),
+          target_assignment_member_id: selectedSupervisor?.assignment_member_id || undefined,
         }),
       });
+      createRequestKeyRef.current = null;
       showSuccessToast("Pengajuan sesi bimbingan berhasil dibuat.");
       setForm({ dosen_pembimbing_id: "", pesan: "", tanggal: "", jam: "" });
       resetFormErrors();
@@ -479,6 +513,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       await loadData();
       onUpdated?.();
     } catch (submitError) {
+      if (submitError.receivedResponse) createRequestKeyRef.current = null;
       if (submitError.message !== "__SESSION_EXPIRED__") {
         setError(submitError.message || "Gagal mengirim permohonan bimbingan.");
       }
@@ -518,10 +553,13 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     setError("");
     try {
       setSubmittingResumeId(rowId);
+      resumeCommandKeysRef.current[rowId] ||= newCommandKey();
       const payload = await fetchWithAuth(`/api/mahasiswa/bimbingan/${rowId}/resume`, {
         method: "POST",
-        body: JSON.stringify({ resume }),
+        headers: { "Idempotency-Key": resumeCommandKeysRef.current[rowId] },
+        body: JSON.stringify({ resume, expected_version: currentRow.row_version }),
       });
+      delete resumeCommandKeysRef.current[rowId];
       const fallbackUpdatedRow = {
         id: rowId,
         resume_mahasiswa: resume,
@@ -558,6 +596,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setResumeDraft((prev) => ({ ...prev, [rowId]: "" }));
       onUpdated?.();
     } catch (resumeError) {
+      if (resumeError.receivedResponse) delete resumeCommandKeysRef.current[rowId];
       if (resumeError.message !== "__SESSION_EXPIRED__") {
         setError(resumeError.message || "Gagal mengirim resume.");
       }
@@ -584,12 +623,17 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     setError("");
     try {
       setExpiringRequestId(row.id);
+      withdrawCommandKeysRef.current[row.id] ||= newCommandKey();
       await fetchWithAuth(`/api/mahasiswa/bimbingan/${row.id}/expire`, {
         method: "POST",
+        headers: { "Idempotency-Key": withdrawCommandKeysRef.current[row.id] },
+        body: JSON.stringify({ expected_version: row.row_version }),
       });
+      delete withdrawCommandKeysRef.current[row.id];
       showSuccessToast("Permohonan berhasil ditarik dan diubah menjadi expired.");
       await handleRefresh();
     } catch (expireError) {
+      if (expireError.receivedResponse) delete withdrawCommandKeysRef.current[row.id];
       if (expireError.message !== "__SESSION_EXPIRED__") {
         setError(expireError.message || "Gagal menarik permohonan bimbingan.");
       }
@@ -629,6 +673,26 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
         </div>
       </section>
 
+      <section className="rounded-xl border border-[#dce6ff] bg-[#f7faff] p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-black text-[#1b274b]">Status Kesiapan Tahap Berikutnya</h3>
+            <p className="mt-1 text-sm text-[#51648f]">
+              Mode: <span className="font-bold uppercase">{guidanceReadiness?.mode || guidanceContext?.readiness?.mode || "shadow"}</span>
+              {guidanceReadiness?.request ? ` • Status: ${String(guidanceReadiness.request.status || "-").replaceAll("_", " ")}` : " • Belum ada snapshot"}
+            </p>
+            {(guidanceReadiness?.mode || guidanceContext?.readiness?.mode) === "shadow" ? (
+              <p className="mt-1 text-xs font-semibold text-[#8a6512]">Shadow hanya merekam kesiapan; belum membuka atau memblokir proses berikutnya.</p>
+            ) : null}
+          </div>
+          <button type="button" onClick={() => handleRequestReadiness().catch(() => {})}
+            disabled={requestingReadiness || !guidanceProgress?.enforcement?.sufficient}
+            className="rounded-lg bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+            {requestingReadiness ? "Menyimpan..." : guidanceReadiness?.request ? "Perbarui Snapshot" : "Buat Snapshot Readiness"}
+          </button>
+        </div>
+      </section>
+
       {error ? (
         <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-4 py-3 text-sm font-semibold text-[#a03f3f]">{error}</div>
       ) : null}
@@ -646,8 +710,16 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
         <div className="rounded-xl border border-[#e8ecf6] bg-white p-4 shadow-sm xl:col-span-2">
           <h3 className="text-lg font-black text-[#1b274b]">Progress Bimbingan</h3>
           <p className="text-sm text-[#5d6c91]">
-            Sesi tervalidasi: {stats?.counted_sessions || 0} dari {stats?.target_minimum || 8}
+            Sesi tervalidasi: {stats?.counted_sessions || 0} dari {stats?.target_minimum || 0}
           </p>
+          {guidanceContext ? (
+            <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-[#40578c]">
+              <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Jalur: {String(guidanceContext.cycle?.jalur || "-").replaceAll("_", " ")}</span>
+              <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Siklus: {guidanceContext.cycle?.type || "-"}</span>
+              <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Semester penjaluran: {guidanceContext.assignment?.semester_penjaluran_ke || "-"}</span>
+              <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Policy v{guidanceProgress?.policy?.version || "-"} ({guidanceProgress?.policy?.count_scope || "-"})</span>
+            </div>
+          ) : null}
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#dfe6f7]">
             <div
               className="h-full rounded-full bg-gradient-to-r from-[#2f63e3] to-[#2740a3]"
@@ -1107,6 +1179,24 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                       <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
                     </div>
                   ) : null}
+                  {Array.isArray(selectedRow.resume_versions) && selectedRow.resume_versions.length > 0 ? (
+                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
+                      <h4 className="text-sm font-black text-[#1b274b]">Riwayat Versi Resume</h4>
+                      <div className="mt-3 space-y-3">
+                        {selectedRow.resume_versions.map((version) => (
+                          <div key={version.id} className="rounded-lg border border-[#e6ebf7] bg-[#f8faff] p-3">
+                            <div className="flex flex-wrap justify-between gap-2 text-xs font-bold text-[#51648f]">
+                              <span>Versi {version.version_number} • {String(version.status || "-").replaceAll("_", " ")}</span>
+                              <span>{formatDateTime(version.submitted_at)}</span>
+                            </div>
+                            <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{version.resume_text}</p>
+                            {version.review_note ? <p className="mt-2 text-xs text-[#68779b]">Catatan: {version.review_note}</p> : null}
+                            {version.invalidated_at ? <p className="mt-1 text-xs font-bold text-[#b43b3b]">Di-invalidasi: {version.invalidation_reason || "-"}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -1261,7 +1351,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {selectedRow.status_resume === "approved" && selectedRow.is_counted ? (
                 <div className="inline-flex items-center gap-2 rounded-md bg-[#e8f8ef] px-3 py-2 text-sm font-semibold text-[#1f8a58]">
                   <CheckCircle2 className="h-4 w-4" />
-                  Sesi ini sudah dihitung ke progres minimal 8 bimbingan.
+                  Sesi ini sudah dihitung ke progres minimum {stats?.target_minimum || 0} bimbingan sesuai policy aktif.
                 </div>
               ) : null}
 

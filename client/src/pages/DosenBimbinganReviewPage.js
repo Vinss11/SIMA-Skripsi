@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   RefreshCcw,
@@ -11,8 +11,10 @@ const PAGE_SIZE = 20;
 const DOSEN_REVIEW_TABS = [
   { key: "permohonan_sesi", label: "Permohonan Sesi" },
   { key: "resume_bimbingan", label: "Resume Bimbingan" },
+  { key: "history", label: "Histori Read-only" },
 ];
 const DOSEN_REVIEW_TAB_STORAGE_KEY = "sima_dosen_bimbingan_review_active_tab";
+const newCommandKey = () => window.crypto?.randomUUID?.() || `guidance-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function getInitialReviewTab() {
   if (typeof window === "undefined") return DOSEN_REVIEW_TABS[0].key;
@@ -129,6 +131,8 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
   const [savingDecision, setSavingDecision] = useState(false);
   const [savingResume, setSavingResume] = useState(false);
+  const decisionCommandKeyRef = useRef(null);
+  const resumeCommandKeyRef = useRef(null);
 
   const fetchWithAuth = useCallback(
     async (path, options = {}) => {
@@ -154,7 +158,10 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
       }
 
       if (!response.ok || !payload?.success) {
-        throw new Error(payload?.message || "Terjadi kesalahan pada server");
+        const requestError = new Error(payload?.message || "Terjadi kesalahan pada server");
+        requestError.receivedResponse = true;
+        requestError.code = payload?.code;
+        throw requestError;
       }
 
       return payload.data;
@@ -361,21 +368,25 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
             catatan_dosen: catatanTrimmed,
             tanggal_bimbingan: decisionTanggal,
             jam_bimbingan: decisionJam,
-            lokasi_bimbingan: decisionLokasi.trim(),
+            lokasi_bimbingan: decisionLokasi.trim(), expected_version: selectedRow.row_version,
           }
-        : { catatan_dosen: catatanTrimmed };
+        : { catatan_dosen: catatanTrimmed, expected_version: selectedRow.row_version };
 
     setSavingDecision(true);
     try {
+      decisionCommandKeyRef.current ||= newCommandKey();
       await fetchWithAuth(endpoint, {
         method: "POST",
+        headers: { "Idempotency-Key": decisionCommandKeyRef.current },
         body: JSON.stringify(body),
       });
+      decisionCommandKeyRef.current = null;
       showSuccessToast(decision === "approve" ? "Permohonan bimbingan disetujui." : "Permohonan bimbingan ditolak.");
       await loadData();
       await loadDetail(selectedRowId);
       onRefreshParent?.();
     } catch (saveError) {
+      if (saveError.receivedResponse) decisionCommandKeyRef.current = null;
       if (saveError.message !== "__SESSION_EXPIRED__") {
         showErrorToast(saveError.message || "Gagal menyimpan keputusan bimbingan.");
       }
@@ -413,19 +424,24 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
 
     setSavingResume(true);
     try {
+      resumeCommandKeyRef.current ||= newCommandKey();
       await fetchWithAuth(`/api/dosen/bimbingan/${selectedRowId}/review-resume`, {
         method: "POST",
+        headers: { "Idempotency-Key": resumeCommandKeyRef.current },
         body: JSON.stringify({
           action: actionPayload,
           catatan_review: catatanTrimmed,
+          expected_version: selectedRow.row_version,
         }),
       });
+      resumeCommandKeyRef.current = null;
       showSuccessToast(actionPayload === "approve" ? "Resume bimbingan disetujui." : "Resume dikembalikan untuk revisi.");
       setResumeCatatan("");
       await loadData();
       await loadDetail(selectedRowId);
       onRefreshParent?.();
     } catch (resumeError) {
+      if (resumeError.receivedResponse) resumeCommandKeyRef.current = null;
       if (resumeError.message !== "__SESSION_EXPIRED__") {
         showErrorToast(resumeError.message || "Gagal menyimpan review resume.");
       }

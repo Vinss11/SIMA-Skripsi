@@ -35,6 +35,7 @@ const {
 } = require("../services/dosenStatusService");
 const { decideExtensionAndTransitionSemester } = require("../services/extensionTransitionService");
 const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
+const { getCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -4111,6 +4112,11 @@ exports.getMonitoringMahasiswa = async (req, res) => {
       if (!current.updated_at) current.updated_at = row.updatedAt;
       bimbinganMap.set(mahasiswaId, current);
     }
+    const guidanceProgressMap = new Map();
+    await Promise.all(mahasiswaIds.map(async (mahasiswaId) => {
+      try { guidanceProgressMap.set(mahasiswaId, await getCurrentProgressForMahasiswa(mahasiswaId)); }
+      catch (_) { guidanceProgressMap.set(mahasiswaId, null); }
+    }));
 
     const dokumenMap = new Map(
       dokumenRows.map((row) => {
@@ -4156,6 +4162,9 @@ exports.getMonitoringMahasiswa = async (req, res) => {
         pending_resume: 0,
         updated_at: null,
       };
+      const guidanceProgress = guidanceProgressMap.get(mahasiswaId);
+      if (guidanceProgress) bimbingan.tervalidasi = Number(guidanceProgress.enforcement.counted || 0);
+      const guidanceTarget = Number(guidanceProgress?.policy?.minimum_validated_sessions || 0);
       const dokumen = dokumenMap.get(mahasiswaId) || {
         approved: 0,
         submitted: 0,
@@ -4181,7 +4190,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
       } else if (dokumen.approved === 3) {
         tahap = "Siap Mendaftar Sidang";
         nextAction = "dokumen-sidang-review";
-      } else if (bimbingan.tervalidasi >= 8) {
+      } else if (guidanceProgress?.enforcement?.sufficient) {
         tahap = "Kelengkapan Dokumen Sidang";
         nextAction = "dokumen-sidang-review";
       } else if (bimbingan.pending_permohonan > 0 || bimbingan.pending_resume > 0) {
@@ -4236,8 +4245,9 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           dokumen.submitted > 0,
         bimbingan: {
           ...bimbingan,
-          target: 8,
-          progress_percent: Math.min(100, Math.round((bimbingan.tervalidasi / 8) * 100)),
+          target: guidanceTarget,
+          policy_id: guidanceProgress?.policy?.id || null,
+          progress_percent: guidanceTarget > 0 ? Math.min(100, Math.round((bimbingan.tervalidasi / guidanceTarget) * 100)) : 0,
         },
         dokumen: { ...dokumen, target: 3 },
         sidang: sidang

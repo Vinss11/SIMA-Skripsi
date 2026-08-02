@@ -12,8 +12,8 @@ const {
   getMahasiswaSupervisionAccess,
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
+const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
 
-const TARGET_SESI_MINIMAL = 8;
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
 const SIDANG_UPLOAD_ROOT = process.env.VERCEL
   ? path.join("/tmp", "sima-uploads", "sidang-dokumen")
@@ -111,15 +111,10 @@ function cleanupUploadedFileFromRequest(req) {
 }
 
 async function countValidBimbinganSessions(mahasiswaId, transaction = null) {
-  const counted = await BimbinganSkripsi.count({
-    where: {
-      mahasiswa_id: mahasiswaId,
-      status_resume: "approved",
-      is_counted: true,
-    },
-    transaction: transaction || undefined,
-  });
-  return Number(counted || 0);
+  const progress = transaction
+    ? await recalculateCurrentProgressForMahasiswa(mahasiswaId, transaction)
+    : await getCurrentProgressForMahasiswa(mahasiswaId);
+  return progress;
 }
 
 async function countValidBimbinganSessionsMap(mahasiswaIds) {
@@ -127,26 +122,11 @@ async function countValidBimbinganSessionsMap(mahasiswaIds) {
     return new Map();
   }
 
-  const rows = await BimbinganSkripsi.findAll({
-    where: {
-      mahasiswa_id: { [Op.in]: mahasiswaIds },
-      status_resume: "approved",
-      is_counted: true,
-    },
-    attributes: [
-      "mahasiswa_id",
-      [sequelize.fn("COUNT", sequelize.col("id")), "counted_sessions"],
-    ],
-    group: ["mahasiswa_id"],
-    raw: true,
-  });
-
   const result = new Map();
-  rows.forEach((row) => {
-    const mahasiswaId = Number(row.mahasiswa_id);
-    const counted = Number(row.counted_sessions || 0);
-    result.set(mahasiswaId, counted);
-  });
+  await Promise.all(mahasiswaIds.map(async (mahasiswaId) => {
+    try { const progress = await getCurrentProgressForMahasiswa(mahasiswaId); result.set(Number(mahasiswaId), progress); }
+    catch (_) { result.set(Number(mahasiswaId), null); }
+  }));
 
   return result;
 }
@@ -210,13 +190,14 @@ function summarizeDokumenStatus(serializedDokumen) {
   };
 }
 
-function buildGate(countedSessions) {
-  const counted = Number(countedSessions || 0);
+function buildGate(progress) {
+  const counted = Number(progress?.enforcement?.counted || 0);
+  const required = Number(progress?.policy?.minimum_validated_sessions || 0);
   return {
-    target_minimum: TARGET_SESI_MINIMAL,
+    target_minimum: required,
     counted_sessions: counted,
-    unlocked: counted >= TARGET_SESI_MINIMAL,
-    remaining_sessions: Math.max(TARGET_SESI_MINIMAL - counted, 0),
+    unlocked: Boolean(progress) && progress.enforcement.sufficient,
+    remaining_sessions: Math.max(required - counted, 0),
   };
 }
 
@@ -335,7 +316,7 @@ exports.uploadMahasiswaDokumenSidang = async (req, res) => {
       await transaction.rollback();
       return res.status(403).json({
         success: false,
-        message: `Upload dokumen dibuka setelah minimal ${TARGET_SESI_MINIMAL} bimbingan tervalidasi.`,
+        message: `Upload dokumen dibuka setelah minimal ${gate.target_minimum} bimbingan tervalidasi.`,
         data: { gate },
       });
     }
@@ -635,7 +616,7 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: "Review dokumen dibuka setelah mahasiswa menyelesaikan minimal 8 bimbingan tervalidasi.",
+        message: `Review dokumen dibuka setelah mahasiswa menyelesaikan minimal ${gate.target_minimum} bimbingan tervalidasi.`,
         data: { gate },
       });
     }

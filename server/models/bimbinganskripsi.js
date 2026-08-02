@@ -31,6 +31,13 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "penetapan_pembimbing_id",
         as: "penetapanPembimbing",
       });
+      BimbinganSkripsi.belongsTo(models.PenetapanPembimbing, { foreignKey: "target_assignment_id", as: "targetAssignment" });
+      BimbinganSkripsi.belongsTo(models.PenetapanPembimbingDosen, { foreignKey: "target_assignment_member_id", as: "targetAssignmentMember" });
+      BimbinganSkripsi.belongsTo(models.PenetapanPembimbing, { foreignKey: "effective_reviewer_assignment_id", as: "effectiveReviewerAssignment" });
+      BimbinganSkripsi.belongsTo(models.PenetapanPembimbingDosen, { foreignKey: "effective_reviewer_assignment_member_id", as: "effectiveReviewerMember" });
+      BimbinganSkripsi.belongsTo(models.PeriodeAkademik, { foreignKey: "periode_akademik_id", as: "periodeAkademik" });
+      BimbinganSkripsi.hasMany(models.GuidanceResumeVersion, { foreignKey: "guidance_id", as: "resumeVersions" });
+      BimbinganSkripsi.hasMany(models.GuidanceEvent, { foreignKey: "guidance_id", as: "guidanceEvents" });
     }
   }
 
@@ -56,6 +63,29 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: true,
       },
+      target_assignment_id: DataTypes.INTEGER,
+      target_assignment_member_id: DataTypes.INTEGER,
+      target_urutan_snapshot: DataTypes.INTEGER,
+      effective_reviewer_assignment_id: DataTypes.INTEGER,
+      effective_reviewer_assignment_member_id: DataTypes.INTEGER,
+      periode_akademik_id: DataTypes.INTEGER,
+      semester_penjaluran_ke_snapshot: DataTypes.INTEGER,
+      jalur_snapshot: DataTypes.STRING(40),
+      cycle_type_snapshot: DataTypes.STRING(20),
+      request_status: DataTypes.STRING(40),
+      request_decided_at: DataTypes.DATE,
+      scheduled_at: DataTypes.DATE,
+      occurred_at: DataTypes.DATE,
+      occurrence_source: DataTypes.STRING(40),
+      cancelled_at: DataTypes.DATE,
+      cancellation_reason_code: DataTypes.STRING(100),
+      current_resume_version_id: DataTypes.BIGINT,
+      progress_policy_id: DataTypes.INTEGER,
+      legacy_context_status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: "ambiguous" },
+      reviewer_resolution_status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: "resolved" },
+      reviewer_resolution_reason_code: DataTypes.STRING(100),
+      row_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
+      correlation_id: DataTypes.UUID,
       permintaan_pesan: {
         type: DataTypes.TEXT,
         allowNull: false,
