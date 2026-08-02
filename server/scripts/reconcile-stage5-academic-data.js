@@ -10,6 +10,7 @@ const checks = {
   duplicate_academic_period: `SELECT tahun_mulai, tahun_selesai, semester, COUNT(*)::int AS count FROM "PeriodeAkademiks" WHERE tahun_mulai IS NOT NULL GROUP BY 1,2,3 HAVING COUNT(*) > 1`,
   unmapped_registration_window: `SELECT id, tahun_akademik, semester FROM "PeriodePenjalurans" WHERE periode_akademik_id IS NULL`,
   academic_period_without_official_dates: `SELECT id, kode FROM "PeriodeAkademiks" WHERE tanggal_mulai IS NULL OR tanggal_selesai IS NULL`,
+  multiple_active_academic_period: `SELECT status, COUNT(*)::int AS count, ARRAY_AGG(kode ORDER BY id) AS periods FROM "PeriodeAkademiks" WHERE status = 'active' GROUP BY status HAVING COUNT(*) > 1`,
   multiple_active_curriculum: `SELECT mahasiswa_id, COUNT(*)::int AS count FROM "MahasiswaKurikulums" WHERE is_active = true GROUP BY mahasiswa_id HAVING COUNT(*) > 1`,
   multiple_active_external_attempt: `SELECT source_id, external_record_id, COUNT(*)::int AS count FROM "PercobaanMataKuliahMahasiswas" WHERE is_active = true AND external_record_id IS NOT NULL GROUP BY 1,2 HAVING COUNT(*) > 1`,
   multiple_active_fallback_attempt: `SELECT source_id, mahasiswa_id, mata_kuliah_id, periode_akademik_id, kelas_normalized, attempt_ke, COUNT(*)::int AS count FROM "PercobaanMataKuliahMahasiswas" WHERE is_active = true AND external_record_id IS NULL GROUP BY 1,2,3,4,5,6 HAVING COUNT(*) > 1`,
@@ -17,13 +18,32 @@ const checks = {
   methodology_without_evidence: `SELECT id, mahasiswa_id FROM "RiwayatMetodologiPenelitians" WHERE status = 'lulus' AND attempt_id IS NULL AND evidence_type NOT IN ('source_status','admin_correction')`,
   multiple_active_methodology_history: `SELECT mahasiswa_id, COUNT(*)::int AS count FROM "RiwayatMetodologiPenelitians" WHERE is_active = true GROUP BY mahasiswa_id HAVING COUNT(*) > 1`,
   absent_methodology_without_complete_scope: `SELECT r.id, r.mahasiswa_id FROM "RiwayatMetodologiPenelitians" r WHERE r.status = 'belum_mengambil' AND r.evidence_type = 'dataset_absence' AND NOT EXISTS (SELECT 1 FROM "CakupanDatasetAkademiks" c WHERE c.is_active = true AND c.is_complete = true AND c.periode_akademik_id = r.periode_akademik_id AND (c.mahasiswa_id = r.mahasiswa_id OR c.mahasiswa_id IS NULL))`,
-  overlapping_completeness_scope: `SELECT dataset_type, periode_akademik_id, scope_type, COALESCE(mahasiswa_id,0) mahasiswa_id, COUNT(*)::int AS count FROM "CakupanDatasetAkademiks" WHERE is_active = true GROUP BY 1,2,3,4 HAVING COUNT(*) > 1`,
+  invalid_completeness_scope: `SELECT id, scope_type FROM "CakupanDatasetAkademiks" WHERE scope_type NOT IN ('student','program','cohort') OR (scope_type = 'student' AND mahasiswa_id IS NULL)`,
+  cohort_scope_without_cohort_attribute: `SELECT id, scope_type FROM "CakupanDatasetAkademiks" WHERE scope_type = 'cohort' AND COALESCE(NULLIF(metadata->>'cohort',''), NULLIF(metadata->>'angkatan','')) IS NULL`,
+  overlapping_completeness_scope: `SELECT source_id, dataset_type, periode_akademik_id, scope_type,
+    COALESCE(mahasiswa_id, 0) AS mahasiswa_id,
+    COALESCE(kode_program_studi, '') AS kode_program_studi,
+    COALESCE(program_kuliah, '') AS program_kuliah,
+    CASE WHEN scope_type = 'cohort'
+      THEN COALESCE(NULLIF(metadata->>'cohort', ''), NULLIF(metadata->>'angkatan', ''), '')
+      ELSE ''
+    END AS angkatan,
+    COUNT(*)::int AS count
+    FROM "CakupanDatasetAkademiks"
+    WHERE is_active = true
+    GROUP BY 1,2,3,4,5,6,7,8
+    HAVING COUNT(*) > 1`,
   multiple_active_rule_context: `SELECT context, COUNT(*)::int AS count FROM "RuleSetAkademiks" WHERE status = 'active' GROUP BY context HAVING COUNT(*) > 1`,
   duplicate_import_idempotency: `SELECT idempotency_key, COUNT(*)::int AS count FROM "ImportAkademikBatches" WHERE idempotency_key IS NOT NULL GROUP BY idempotency_key HAVING COUNT(*) > 1`,
   duplicate_equivalence_membership: `SELECT kelompok_id, mata_kuliah_id, COALESCE(kurikulum_id,0) kurikulum_id, COUNT(*)::int AS count FROM "EkuivalensiMataKuliahs" GROUP BY 1,2,3 HAVING COUNT(*) > 1`,
-  multiple_current_snapshot: `SELECT mahasiswa_id, COUNT(*)::int AS count FROM "SnapshotAkademikMahasiswas" WHERE is_current = true GROUP BY mahasiswa_id HAVING COUNT(*) > 1`,
-  stale_snapshot_without_job: `SELECT s.id, s.mahasiswa_id FROM "SnapshotAkademikMahasiswas" s WHERE s.is_current = true AND s.calculation_status IN ('stale','failed') AND NOT EXISTS (SELECT 1 FROM "PekerjaanSnapshotAkademiks" j WHERE j.mahasiswa_id = s.mahasiswa_id AND j.status IN ('queued','processing'))`,
-  open_conflict_not_reflected: `SELECT c.id FROM "KonflikDataAkademiks" c LEFT JOIN "PercobaanMataKuliahMahasiswas" a ON c.entity_type = 'course_attempt' AND a.id = c.left_record_id WHERE c.status = 'open' AND c.entity_type IN ('student','course_attempt') AND NOT EXISTS (SELECT 1 FROM "SnapshotAkademikMahasiswas" s WHERE s.mahasiswa_id = CASE WHEN c.entity_type = 'student' THEN c.left_record_id ELSE a.mahasiswa_id END AND s.is_current = true AND s.data_state = 'conflicted')`,
+  directional_equivalence_without_pair: `SELECT id, kelompok_id FROM "EkuivalensiMataKuliahs" WHERE arah = 'source_to_target' AND (mata_kuliah_sumber_id IS NULL OR mata_kuliah_tujuan_id IS NULL)`,
+  attempt_without_academic_timestamps: `SELECT id, mahasiswa_id FROM "PercobaanMataKuliahMahasiswas" WHERE academic_effective_at IS NULL OR recorded_at IS NULL`,
+  methodology_without_academic_timestamps: `SELECT id, mahasiswa_id FROM "RiwayatMetodologiPenelitians" WHERE academic_effective_at IS NULL OR recorded_at IS NULL`,
+  historical_snapshot_marked_current: `SELECT id, mahasiswa_id, periode_akademik_id FROM "SnapshotAkademikMahasiswas" WHERE snapshot_scope = 'period_end' AND is_current = true`,
+  duplicate_period_end_snapshot: `SELECT mahasiswa_id, periode_akademik_id, calculation_version, COUNT(*)::int AS count FROM "SnapshotAkademikMahasiswas" WHERE snapshot_scope = 'period_end' GROUP BY 1,2,3 HAVING COUNT(*) > 1`,
+  multiple_current_snapshot: `SELECT mahasiswa_id, COUNT(*)::int AS count FROM "SnapshotAkademikMahasiswas" WHERE snapshot_scope = 'current' AND is_current = true GROUP BY mahasiswa_id HAVING COUNT(*) > 1`,
+  stale_snapshot_without_job: `SELECT s.id, s.mahasiswa_id FROM "SnapshotAkademikMahasiswas" s WHERE s.snapshot_scope = 'current' AND s.is_current = true AND s.calculation_status IN ('stale','failed') AND NOT EXISTS (SELECT 1 FROM "PekerjaanSnapshotAkademiks" j WHERE j.mahasiswa_id = s.mahasiswa_id AND j.status IN ('queued','processing'))`,
+  open_conflict_not_reflected: `SELECT c.id FROM "KonflikDataAkademiks" c LEFT JOIN "PercobaanMataKuliahMahasiswas" a ON c.entity_type = 'course_attempt' AND a.id = c.left_record_id WHERE c.status = 'open' AND c.entity_type IN ('student','course_attempt') AND NOT EXISTS (SELECT 1 FROM "SnapshotAkademikMahasiswas" s WHERE s.mahasiswa_id = CASE WHEN c.entity_type = 'student' THEN c.left_record_id ELSE a.mahasiswa_id END AND s.snapshot_scope = 'current' AND s.is_current = true AND s.data_state = 'conflicted')`,
   committed_batch_without_results: `SELECT b.id FROM "ImportAkademikBatches" b WHERE b.status = 'committed' AND NOT EXISTS (SELECT 1 FROM "ImportAkademikRows" r WHERE r.batch_id = b.id AND r.result_entity_id IS NOT NULL)`,
   orphan_evaluation: `SELECT e.id FROM "EvaluasiEligibilityAkademiks" e LEFT JOIN "SnapshotAkademikMahasiswas" s ON s.id = e.snapshot_id LEFT JOIN "RuleSetAkademiks" r ON r.id = e.rule_set_id WHERE (e.snapshot_id IS NOT NULL AND s.id IS NULL) OR (e.rule_set_id IS NOT NULL AND r.id IS NULL)`,
   failed_snapshot_job: `SELECT id, mahasiswa_id, attempt_count, last_error_code FROM "PekerjaanSnapshotAkademiks" WHERE status = 'failed'`,

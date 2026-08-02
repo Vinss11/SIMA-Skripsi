@@ -1,11 +1,12 @@
 "use strict";
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
-    // Hash password default untuk semua dosen
-    const defaultPassword = "12345678";
+    // Demo accounts still require activation; no shared credential is emitted.
+    const defaultPassword = crypto.randomBytes(48).toString("base64url");
     const hashedPassword1 = await bcrypt.hash(defaultPassword, 10);
     const hashedPassword2 = await bcrypt.hash(defaultPassword, 10);
     const hashedPassword3 = await bcrypt.hash(defaultPassword, 10);

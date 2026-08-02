@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const { Op } = require("sequelize");
+const { Op, where: sqlWhere, json } = require("sequelize");
 const db = require("../models");
 const policy = require("./academicPolicy");
 
@@ -22,18 +22,58 @@ function stable(value) {
 function checksum(value) { return crypto.createHash("sha256").update(JSON.stringify(stable(value))).digest("hex"); }
 function plain(value) { return value?.toJSON ? value.toJSON() : value; }
 
-async function resolveCourse(code, sourceId, programCode, transaction) {
+function normalizeProgramKuliah(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!["reguler", "internasional"].includes(normalized)) {
+    throw new AcademicDataError("Program kuliah import tidak dikenal.", 400, "ACADEMIC_PROGRAM_TYPE_INVALID");
+  }
+  return normalized;
+}
+
+const COMPLETENESS_SCOPE_TYPES = new Set(["student", "program", "cohort"]);
+
+function normalizeCompletenessScope(scope = {}, { defaultPeriodId = null, programCode = "INFORMATIKA", programKuliah = "reguler" } = {}) {
+  const scopeType = String(scope.scope_type || "program").trim().toLowerCase();
+  if (!COMPLETENESS_SCOPE_TYPES.has(scopeType)) {
+    throw new AcademicDataError("Scope kelengkapan dataset tidak dikenal.", 400, "ACADEMIC_COMPLETENESS_SCOPE_INVALID");
+  }
+  const isComplete = scope.is_complete === true;
+  if (isComplete && !Number(defaultPeriodId)) {
+    throw new AcademicDataError("Periode akademik wajib dipilih ketika dataset dinyatakan lengkap.", 400, "ACADEMIC_COMPLETENESS_PERIOD_REQUIRED");
+  }
+  const mahasiswaId = Number(scope.mahasiswa_id || 0) || null;
+  if (scopeType === "student" && !mahasiswaId) {
+    throw new AcademicDataError("Mahasiswa wajib ditentukan untuk completeness scope student.", 400, "ACADEMIC_COMPLETENESS_STUDENT_REQUIRED");
+  }
+  const cohort = String(scope.cohort || scope.angkatan || "").trim() || null;
+  if (scopeType === "cohort" && !cohort) {
+    throw new AcademicDataError("Angkatan wajib ditentukan untuk completeness scope cohort.", 400, "ACADEMIC_COMPLETENESS_COHORT_REQUIRED");
+  }
+  return {
+    ...scope,
+    scope_type: scopeType,
+    mahasiswa_id: scopeType === "student" ? mahasiswaId : null,
+    cohort: scopeType === "cohort" ? cohort : null,
+    is_complete: isComplete,
+    kode_program_studi: scope.kode_program_studi || programCode,
+    program_kuliah: normalizeProgramKuliah(scope.program_kuliah || programKuliah),
+  };
+}
+
+async function resolveCourse(code, sourceId, programCode, programKuliah, transaction) {
   const normalized = policy.normalizeCode(code);
-  const courses = await db.MataKuliah.findAll({ where: { kode: normalized, kode_program_studi: programCode, status: "active" }, transaction });
+  const courses = await db.MataKuliah.findAll({ where: { kode: normalized, kode_program_studi: programCode, program_kuliah: programKuliah, status: "active" }, transaction });
   const aliases = await db.MataKuliahAlias.findAll({
-    where: { kode_alias: normalized, kode_program_studi: programCode, is_active: true, [Op.or]: [{ source_id: sourceId }, { source_id: null }] }, transaction,
+    where: { kode_alias: normalized, kode_program_studi: programCode, program_kuliah: programKuliah,
+      is_active: true, [Op.or]: [{ source_id: sourceId }, { source_id: null }] }, transaction,
   });
   const ids = new Set([...courses.map((v) => v.id), ...aliases.map((v) => v.mata_kuliah_id)]);
   if (ids.size !== 1) return { course: null, error: ids.size === 0 ? "ACADEMIC_COURSE_NOT_FOUND" : "ACADEMIC_COURSE_AMBIGUOUS" };
   return { course: await db.MataKuliah.findByPk([...ids][0], { transaction }), error: null };
 }
 
-async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, programCode = "INFORMATIKA", transaction }) {
+async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, programCode = "INFORMATIKA", programKuliah = "reguler", transaction }) {
+  const normalizedProgramKuliah = normalizeProgramKuliah(programKuliah);
   const output = [];
   const seen = new Set();
   const normalizedNims = [...new Set(rows.map((row) => policy.normalizeNim(row?.nim)).filter(Boolean))];
@@ -43,9 +83,10 @@ async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, prog
     normalizedNims.length ? db.Mahasiswa.findAll({ where: { nim: { [Op.in]: normalizedNims } }, attributes: ["id", "nim"], transaction }) : [],
     normalizedPeriodCodes.length ? db.PeriodeAkademik.findAll({ where: { kode: { [Op.in]: normalizedPeriodCodes } }, transaction }) : [],
     defaultPeriodId ? db.PeriodeAkademik.findByPk(defaultPeriodId, { transaction }) : null,
-    normalizedCourseCodes.length ? db.MataKuliah.findAll({ where: { kode: { [Op.in]: normalizedCourseCodes }, kode_program_studi: programCode, status: "active" }, transaction }) : [],
+    normalizedCourseCodes.length ? db.MataKuliah.findAll({ where: { kode: { [Op.in]: normalizedCourseCodes }, kode_program_studi: programCode,
+      program_kuliah: normalizedProgramKuliah, status: "active" }, transaction }) : [],
     normalizedCourseCodes.length ? db.MataKuliahAlias.findAll({ where: { kode_alias: { [Op.in]: normalizedCourseCodes }, kode_program_studi: programCode,
-      is_active: true, [Op.or]: [{ source_id: sourceId }, { source_id: null }] }, transaction }) : [],
+      program_kuliah: normalizedProgramKuliah, is_active: true, [Op.or]: [{ source_id: sourceId }, { source_id: null }] }, transaction }) : [],
   ]);
   const aliasCourseIds = [...new Set(aliases.map((row) => row.mata_kuliah_id))];
   const aliasCourses = aliasCourseIds.length ? await db.MataKuliah.findAll({ where: { id: { [Op.in]: aliasCourseIds }, status: "active" }, transaction }) : [];
@@ -77,7 +118,8 @@ async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, prog
     if (!period) errors.push("ACADEMIC_PERIOD_NOT_FOUND");
 
     let course = null;
-    let normalized = { nim, kode_periode: periodCode || period?.kode || null };
+    let normalized = { nim, kode_periode: periodCode || period?.kode || null, kode_program_studi: programCode,
+      program_kuliah: normalizedProgramKuliah };
     if (datasetType === "course_attempts") {
       const courseCode = policy.normalizeCode(input.kode_mata_kuliah);
       const candidateIds = courseCandidates.get(courseCode) || new Set();
@@ -92,8 +134,10 @@ async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, prog
         nilai_huruf: String(input.nilai_huruf ?? "").trim().toUpperCase() || null,
         external_record_id: String(input.external_record_id ?? "").trim() || null,
         external_revision: String(input.external_revision ?? "").trim() || null,
+        academic_effective_at: input.academic_effective_at || input.tanggal_hasil_resmi || null,
         ...validation.normalized,
       };
+      if (normalized.academic_effective_at && Number.isNaN(new Date(normalized.academic_effective_at).getTime())) errors.push("ACADEMIC_EFFECTIVE_DATE_INVALID");
       const duplicateKey = `${nim}|${period?.id || periodCode}|${course?.id || normalized.kode_mata_kuliah}|${normalized.kelas_normalized}|${normalized.attempt_ke ?? "auto"}|${normalized.external_record_id || "fallback"}`;
       if (seen.has(duplicateKey)) errors.push("ACADEMIC_DUPLICATE_IN_FILE");
       seen.add(duplicateKey);
@@ -102,8 +146,10 @@ async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, prog
       if (!result.valid) errors.push("ACADEMIC_METHODOLOGY_STATUS_INVALID");
       normalized = { ...normalized, status_metodologi: result.normalized,
         nilai_huruf: String(input.nilai_huruf ?? "").trim().toUpperCase() || null,
-        nilai_angka: policy.parseNullableNumber(input.nilai_angka) };
+        nilai_angka: policy.parseNullableNumber(input.nilai_angka),
+        academic_effective_at: input.academic_effective_at || input.tanggal_hasil_resmi || null };
       if (Number.isNaN(normalized.nilai_angka)) errors.push("ACADEMIC_NUMERIC_GRADE_INVALID");
+      if (normalized.academic_effective_at && Number.isNaN(new Date(normalized.academic_effective_at).getTime())) errors.push("ACADEMIC_EFFECTIVE_DATE_INVALID");
     } else {
       errors.push("ACADEMIC_IMPORT_SCHEMA_INVALID");
     }
@@ -140,8 +186,13 @@ async function validateRows({ datasetType, sourceId, rows, defaultPeriodId, prog
 
 async function createImportPreview(input) {
   const t = input.transaction;
+  const programKuliah = normalizeProgramKuliah(input.programKuliah || input.completenessScope?.program_kuliah || "reguler");
+  const completenessScope = normalizeCompletenessScope(input.completenessScope, {
+    defaultPeriodId: input.defaultPeriodId, programCode: input.programCode, programKuliah,
+  });
   const businessFingerprint = checksum({ dataset_type: input.datasetType, schema_version: input.schemaVersion,
-    source_id: input.sourceId, period_id: input.defaultPeriodId || null, completeness_scope: input.completenessScope || {}, file_sha256: input.fileSha256 });
+    source_id: input.sourceId, period_id: input.defaultPeriodId || null, program_code: input.programCode || "INFORMATIKA",
+    program_kuliah: programKuliah, completeness_scope: completenessScope, file_sha256: input.fileSha256 });
   if (input.idempotencyKey) {
     const byKey = await db.ImportAkademikBatch.findOne({ where: { idempotency_key: input.idempotencyKey }, include: [{ model: db.ImportAkademikRow, as: "rows" }], transaction: t });
     if (byKey) {
@@ -151,14 +202,14 @@ async function createImportPreview(input) {
   }
   const replay = await db.ImportAkademikBatch.findOne({ where: { business_fingerprint: businessFingerprint }, include: [{ model: db.ImportAkademikRow, as: "rows" }], transaction: t });
   if (replay) return { batch: replay, replayed: true };
-  const validated = await validateRows({ ...input, transaction: t });
+  const validated = await validateRows({ ...input, completenessScope, programKuliah, transaction: t });
   const counts = validated.reduce((acc, row) => { acc.total += 1; acc[row.action] = (acc[row.action] || 0) + 1; return acc; }, { total: 0, create: 0, invalid: 0, conflict: 0, noop: 0, supersede: 0 });
   const validationChecksum = checksum(validated.map((row) => ({ fingerprint: row.row_fingerprint, action: row.action, errors: row.errors })));
   const batch = await db.ImportAkademikBatch.create({ dataset_type: input.datasetType, schema_version: input.schemaVersion,
     source_id: input.sourceId, external_revision: input.externalRevision || null, periode_akademik_id: input.defaultPeriodId || null,
     original_filename: input.filename, detected_mime: input.mime, file_size: input.fileSize, file_sha256: input.fileSha256,
     business_fingerprint: businessFingerprint, validation_checksum: validationChecksum,
-    status: counts.invalid || counts.conflict ? "invalid" : "validated", counts, completeness_scope: input.completenessScope || {},
+    status: counts.invalid || counts.conflict ? "invalid" : "validated", counts, completeness_scope: completenessScope,
     preview_expires_at: new Date(Date.now() + PREVIEW_TTL_MS), uploaded_by: input.actorId, idempotency_key: input.idempotencyKey || null,
   }, { transaction: t });
   await db.ImportAkademikRow.bulkCreate(validated.map((row) => ({ ...row, batch_id: batch.id })), { transaction: t });
@@ -180,10 +231,15 @@ async function createImportPreview(input) {
 }
 
 async function createImportPreviewTransactional(input) {
+  const programKuliah = normalizeProgramKuliah(input.programKuliah || input.completenessScope?.program_kuliah || "reguler");
+  const completenessScope = normalizeCompletenessScope(input.completenessScope, {
+    defaultPeriodId: input.defaultPeriodId, programCode: input.programCode, programKuliah,
+  });
   const businessFingerprint = checksum({ dataset_type: input.datasetType, schema_version: input.schemaVersion,
-    source_id: input.sourceId, period_id: input.defaultPeriodId || null, completeness_scope: input.completenessScope || {}, file_sha256: input.fileSha256 });
+    source_id: input.sourceId, period_id: input.defaultPeriodId || null, program_code: input.programCode || "INFORMATIKA",
+    program_kuliah: programKuliah, completeness_scope: completenessScope, file_sha256: input.fileSha256 });
   try {
-    return await db.sequelize.transaction((transaction) => createImportPreview({ ...input, transaction }));
+    return await db.sequelize.transaction((transaction) => createImportPreview({ ...input, completenessScope, programKuliah, transaction }));
   } catch (error) {
     if (!(error instanceof db.Sequelize.UniqueConstraintError)) throw error;
     const replay = await db.ImportAkademikBatch.findOne({ where: input.idempotencyKey
@@ -221,7 +277,9 @@ async function revalidateImportBatch(batchId) {
     const batch = await db.ImportAkademikBatch.findByPk(batchId, { include: [{ model: db.ImportAkademikRow, as: "rows" }], transaction, lock: transaction.LOCK.UPDATE });
     if (!batch || !["invalid", "validated", "expired"].includes(batch.status)) throw new AcademicDataError("Batch tidak dapat direvalidasi.", 409, "ACADEMIC_IMPORT_STATE_INVALID");
     const rows = batch.rows.map((row) => ({ ...row.raw_payload, __sheet_name: row.sheet_name, __row_number: row.row_number }));
-    const validated = await validateRows({ datasetType: batch.dataset_type, sourceId: batch.source_id, rows, defaultPeriodId: batch.periode_akademik_id, transaction });
+    const validated = await validateRows({ datasetType: batch.dataset_type, sourceId: batch.source_id, rows,
+      defaultPeriodId: batch.periode_akademik_id, programCode: batch.completeness_scope?.kode_program_studi || "INFORMATIKA",
+      programKuliah: batch.completeness_scope?.program_kuliah || "reguler", transaction });
     return replaceBatchValidation(batch, validated, transaction);
   });
 }
@@ -268,7 +326,7 @@ async function resolveAcademicConflict(conflictId, { decision, actorId, changes 
 }
 
 async function ingestAcademicDataset({ source, schemaVersion, externalRevision, completenessScope, rows, idempotencyKey,
-  datasetType = "course_attempts", defaultPeriodId = null, programCode = "INFORMATIKA", actorId = null,
+  datasetType = "course_attempts", defaultPeriodId = null, programCode = "INFORMATIKA", programKuliah = null, actorId = null,
   filename = "external-academic-dataset.json", mime = "application/json" }) {
   const sourceRecord = Number.isInteger(source)
     ? await db.SumberDataAkademik.findByPk(source)
@@ -278,8 +336,11 @@ async function ingestAcademicDataset({ source, schemaVersion, externalRevision, 
   if (!sourceRecord?.is_active) throw new AcademicDataError("Sumber data akademik tidak ditemukan atau tidak aktif.", 404, "ACADEMIC_SOURCE_NOT_FOUND");
   const payload = rows || [];
   const fileSha256 = checksum({ source: sourceRecord.id, schemaVersion, externalRevision, completenessScope, rows: payload });
+  const resolvedProgramKuliah = normalizeProgramKuliah(programKuliah || completenessScope?.program_kuliah || "reguler");
   return createImportPreviewTransactional({ datasetType, schemaVersion, sourceId: sourceRecord.id, externalRevision,
-    completenessScope, rows: payload, idempotencyKey, defaultPeriodId, programCode, actorId, filename, mime,
+    completenessScope: { ...(completenessScope || {}), kode_program_studi: completenessScope?.kode_program_studi || programCode,
+      program_kuliah: resolvedProgramKuliah }, rows: payload, idempotencyKey, defaultPeriodId, programCode,
+    programKuliah: resolvedProgramKuliah, actorId, filename, mime,
     fileSize: Buffer.byteLength(JSON.stringify(payload)), fileSha256 });
 }
 
@@ -310,19 +371,21 @@ function attemptPayloadUnchanged(existing, normalized) {
 
 async function academicFactsRevisionChecksum(mahasiswaId, transaction) {
   const attributes = ["id", "updatedAt"];
-  const [attempts, methodology, coverage, curriculum, corrections, conflicts] = await Promise.all([
+  const [attempts, methodology, coverage, curriculum, corrections, conflicts, academicPeriods] = await Promise.all([
     db.PercobaanMataKuliahMahasiswa.findAll({ where: { mahasiswa_id: mahasiswaId, is_active: true }, attributes: [...attributes, "version"], transaction }),
     db.RiwayatMetodologiPenelitian.findAll({ where: { mahasiswa_id: mahasiswaId, is_active: true }, attributes: [...attributes, "version"], transaction }),
     db.CakupanDatasetAkademik.findAll({ where: { is_active: true, [Op.or]: [{ mahasiswa_id: mahasiswaId }, { mahasiswa_id: null }] }, attributes: [...attributes, "version", "checksum"], transaction }),
     db.MahasiswaKurikulum.findAll({ where: { mahasiswa_id: mahasiswaId, is_active: true }, attributes, transaction }),
     db.KoreksiDataAkademik.findAll({ where: { status: "active", [Op.or]: [{ target_record_id: { [Op.in]: db.sequelize.literal(`(SELECT id FROM "PercobaanMataKuliahMahasiswas" WHERE mahasiswa_id = ${Number(mahasiswaId)})`) } }] }, attributes, transaction }),
     db.KonflikDataAkademik.findAll({ where: { status: "open", [Op.or]: [{ entity_type: "student", left_record_id: mahasiswaId }, { entity_type: "course_attempt", left_record_id: { [Op.in]: db.sequelize.literal(`(SELECT id FROM "PercobaanMataKuliahMahasiswas" WHERE mahasiswa_id = ${Number(mahasiswaId)})`) } }] }, attributes, transaction }),
+    db.PeriodeAkademik.findAll({ attributes: ["id", "status", "tanggal_mulai", "tanggal_selesai", "updatedAt"], transaction }),
   ]);
-  return checksum({ mahasiswaId, attempts, methodology, coverage, curriculum, corrections, conflicts });
+  return checksum({ mahasiswaId, attempts, methodology, coverage, curriculum, corrections, conflicts, academicPeriods });
 }
 
 async function queueSnapshot(mahasiswaId, reason, transaction, periodId = null) {
-  const target = await academicFactsRevisionChecksum(mahasiswaId, transaction);
+  const factsRevision = await academicFactsRevisionChecksum(mahasiswaId, transaction);
+  const target = checksum({ facts_revision: factsRevision, snapshot_scope: periodId ? "period_end" : "current", period_id: periodId || null });
   const [job] = await db.PekerjaanSnapshotAkademik.findOrCreate({ where: { mahasiswa_id: mahasiswaId, target_checksum: target, calculation_version: CALCULATION_VERSION }, defaults: { status: "queued" }, transaction });
   if (job.status === "failed") await job.update({ status: "queued", next_retry_at: null, last_error_code: null, last_error_message: null }, { transaction });
   const [outbox] = await db.OutboxAkademik.findOrCreate({ where: { deduplication_key: `snapshot:${mahasiswaId}:${target}` }, defaults: { event_type: "academic.snapshot.requested", aggregate_type: "mahasiswa", aggregate_id: mahasiswaId, payload: { job_id: job.id, reason, period_id: periodId }, status: "pending", available_at: new Date() }, transaction });
@@ -350,6 +413,9 @@ async function commitImport(batchId, { actorId, checksum: requestedChecksum, ide
     if (batch.commit_idempotency_key && (batch.commit_idempotency_key !== idempotencyKey || batch.commit_request_fingerprint !== commitFingerprint)) throw new AcademicDataError("Idempotency key commit digunakan untuk payload berbeda.", 409, "ACADEMIC_IMPORT_IDEMPOTENCY_CONFLICT");
     await batch.update({ status: "committing", commit_idempotency_key: idempotencyKey, commit_request_fingerprint: commitFingerprint }, { transaction });
     const batchRows = await db.ImportAkademikRow.findAll({ where: { batch_id: batch.id }, order: [["row_number", "ASC"]], transaction, lock: transaction.LOCK.UPDATE });
+    const periodIds = [...new Set(batchRows.map((row) => Number(row.periode_akademik_id)).filter(Boolean))];
+    const periods = periodIds.length ? await db.PeriodeAkademik.findAll({ where: { id: { [Op.in]: periodIds } }, transaction }) : [];
+    const periodsById = new Map(periods.map((item) => [Number(item.id), item]));
     const lockedStudentIds = [...new Set(batchRows.map((row) => row.mahasiswa_id).filter(Boolean))].sort((a, b) => a - b);
     if (lockedStudentIds.length) await db.Mahasiswa.findAll({ where: { id: { [Op.in]: lockedStudentIds } }, attributes: ["id"], order: [["id", "ASC"]], transaction, lock: transaction.LOCK.UPDATE });
     const affected = new Set();
@@ -371,7 +437,9 @@ async function commitImport(batchId, { actorId, checksum: requestedChecksum, ide
         }
         const attempt = await nextAttemptNumber(row, transaction);
         const previousAttempt = authoritativeAttempt || (p._existing_id ? await db.PercobaanMataKuliahMahasiswa.findByPk(p._existing_id, { transaction, lock: transaction.LOCK.UPDATE }) : null);
-        if (previousAttempt) await previousAttempt.update({ is_active: false, superseded_at: new Date() }, { transaction });
+        const recordedAt = new Date();
+        const academicEffectiveAt = new Date(p.academic_effective_at || periodsById.get(Number(row.periode_akademik_id))?.tanggal_selesai || recordedAt);
+        if (previousAttempt) await previousAttempt.update({ is_active: false, superseded_at: recordedAt }, { transaction });
         const created = await db.PercobaanMataKuliahMahasiswa.create({ mahasiswa_id: row.mahasiswa_id, mata_kuliah_id: row.mata_kuliah_id,
           periode_akademik_id: row.periode_akademik_id, source_id: batch.source_id, import_row_id: row.id,
           external_record_id: p.external_record_id, external_revision: p.external_revision || batch.external_revision,
@@ -379,7 +447,8 @@ async function commitImport(batchId, { actorId, checksum: requestedChecksum, ide
           sks_diambil: p.sks, sks_lulus: p.status_kelulusan === "passed" && policy.isCreditRecognized(p.credit_origin, p.recognition_status) ? p.sks : 0,
           nilai_huruf: p.nilai_huruf, nilai_angka: p.nilai_angka, status_registrasi: p.status_registrasi,
           status_kelulusan: p.status_kelulusan, credit_origin: p.credit_origin, recognition_status: p.recognition_status,
-          effective_at: new Date(), version: Number(previousAttempt?.version || 0) + 1, previous_version_id: previousAttempt?.id || null,
+          effective_at: recordedAt, academic_effective_at: academicEffectiveAt, recorded_at: recordedAt,
+          version: Number(previousAttempt?.version || 0) + 1, previous_version_id: previousAttempt?.id || null,
           metadata: { batch_id: batch.id } }, { transaction });
         await row.update({ result_entity_type: "course_attempt", result_entity_id: created.id }, { transaction });
         const course = await db.MataKuliah.findByPk(row.mata_kuliah_id, { transaction });
@@ -387,23 +456,39 @@ async function commitImport(batchId, { actorId, checksum: requestedChecksum, ide
       } else {
         const p = row.normalized_payload;
         const previous = await db.RiwayatMetodologiPenelitian.findOne({ where: { mahasiswa_id: row.mahasiswa_id, is_active: true }, order: [["effective_at", "DESC"]], transaction, lock: transaction.LOCK.UPDATE });
-        const effectiveAt = new Date();
-        if (previous) await previous.update({ is_active: false, superseded_at: effectiveAt }, { transaction });
+        const recordedAt = new Date();
+        const academicEffectiveAt = new Date(p.academic_effective_at || periodsById.get(Number(row.periode_akademik_id))?.tanggal_selesai || recordedAt);
+        if (previous) await previous.update({ is_active: false, superseded_at: recordedAt }, { transaction });
         const created = await db.RiwayatMetodologiPenelitian.create({ mahasiswa_id: row.mahasiswa_id, periode_akademik_id: row.periode_akademik_id,
           source_id: batch.source_id, import_row_id: row.id, status: p.status_metodologi, nilai_huruf: p.nilai_huruf,
-          nilai_angka: p.nilai_angka, effective_at: effectiveAt, version: Number(previous?.version || 0) + 1,
+          nilai_angka: p.nilai_angka, effective_at: recordedAt, academic_effective_at: academicEffectiveAt, recorded_at: recordedAt,
+          version: Number(previous?.version || 0) + 1,
           previous_version_id: previous?.id || null, evidence_type: "source_status", metadata: { batch_id: batch.id } }, { transaction });
         await row.update({ result_entity_type: "methodology_history", result_entity_id: created.id }, { transaction });
       }
       affected.add(row.mahasiswa_id);
     }
-    const scope = batch.completeness_scope || {};
-    if (scope.is_complete === true && batch.periode_akademik_id) {
+    const scope = normalizeCompletenessScope(batch.completeness_scope, {
+      defaultPeriodId: batch.periode_akademik_id,
+      programCode: batch.completeness_scope?.kode_program_studi || "INFORMATIKA",
+      programKuliah: batch.completeness_scope?.program_kuliah || "reguler",
+    });
+    if (scope.is_complete === true) {
       const coverageKey = { source_id: batch.source_id, dataset_type: batch.dataset_type,
         mahasiswa_id: scope.scope_type === "student" ? Number(scope.mahasiswa_id || 0) || null : null,
-        periode_akademik_id: batch.periode_akademik_id, scope_type: scope.scope_type || "global",
+        periode_akademik_id: batch.periode_akademik_id, scope_type: scope.scope_type || "program",
         kode_program_studi: scope.kode_program_studi || null, program_kuliah: scope.program_kuliah || null, is_active: true };
-      const previousCoverage = await db.CakupanDatasetAkademik.findOne({ where: coverageKey, transaction, lock: transaction.LOCK.UPDATE });
+      const cohortIdentity = scope.scope_type === "cohort" ? {
+        [Op.or]: [
+          sqlWhere(json("metadata.cohort"), scope.cohort),
+          sqlWhere(json("metadata.angkatan"), scope.cohort),
+        ],
+      } : null;
+      const previousCoverage = await db.CakupanDatasetAkademik.findOne({
+        where: { ...coverageKey, ...(cohortIdentity ? { [Op.and]: [cohortIdentity] } : {}) },
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
       const declaredAt = new Date();
       if (previousCoverage) await previousCoverage.update({ is_active: false, superseded_at: declaredAt }, { transaction });
       await db.CakupanDatasetAkademik.create({ ...coverageKey, batch_id: batch.id,
@@ -433,21 +518,40 @@ async function createMethodologyFromAttempt(attempt, course, batch, row, transac
   await db.RiwayatMetodologiPenelitian.create({ mahasiswa_id: attempt.mahasiswa_id, periode_akademik_id: attempt.periode_akademik_id,
     attempt_id: attempt.id, source_id: batch.source_id, import_row_id: row.id, status: methodologyStatus,
     nilai_huruf: attempt.nilai_huruf, nilai_angka: attempt.nilai_angka, effective_at: attempt.effective_at,
+    academic_effective_at: attempt.academic_effective_at, recorded_at: attempt.recorded_at,
     version: Number(previous?.version || 0) + 1, previous_version_id: previous?.id || null, evidence_type: "course_attempt",
     metadata: { course_id: course.id, batch_id: batch.id } }, { transaction });
 }
 
-function versionAtCutoffWhere(cutoff) {
-  return { effective_at: { [Op.lte]: cutoff }, [Op.or]: [{ superseded_at: null }, { superseded_at: { [Op.gt]: cutoff } }] };
+function latestAttemptVersions(rows) {
+  const selected = new Map();
+  rows.forEach((row) => {
+    const key = row.external_record_id
+      ? `external:${row.source_id}:${row.external_record_id}`
+      : `natural:${row.source_id}:${row.mahasiswa_id}:${row.mata_kuliah_id}:${row.periode_akademik_id}:${row.kelas_normalized}:${row.attempt_ke}`;
+    const current = selected.get(key);
+    if (!current || Number(row.version) > Number(current.version)) selected.set(key, row);
+  });
+  return [...selected.values()];
 }
 
 async function calculateSnapshotInTransaction(mahasiswaId, { transaction, periodId = null }) {
-  await db.Mahasiswa.findByPk(mahasiswaId, { attributes: ["id"], transaction, lock: transaction.LOCK.UPDATE });
+  const mahasiswa = await db.Mahasiswa.findByPk(mahasiswaId, { attributes: ["id", "angkatan"], transaction, lock: transaction.LOCK.UPDATE });
+  if (!mahasiswa) throw new AcademicDataError("Mahasiswa tidak ditemukan.", 404, "ACADEMIC_STUDENT_NOT_FOUND");
   const period = periodId ? await db.PeriodeAkademik.findByPk(periodId, { transaction }) : null;
   if (periodId && !period) throw new AcademicDataError("Periode akademik snapshot tidak ditemukan.", 404, "ACADEMIC_PERIOD_NOT_FOUND");
   if (periodId && !period.tanggal_selesai) throw new AcademicDataError("Tanggal selesai periode akademik wajib tersedia untuk snapshot historis.", 409, "ACADEMIC_PERIOD_END_DATE_REQUIRED");
   const cutoff = periodId ? new Date(period.tanggal_selesai) : new Date();
-  const attempts = await db.PercobaanMataKuliahMahasiswa.findAll({ where: { mahasiswa_id: mahasiswaId, ...versionAtCutoffWhere(cutoff) }, order: [["periode_akademik_id", "ASC"], ["attempt_ke", "ASC"]], transaction });
+  const activePeriods = periodId ? [] : await db.PeriodeAkademik.findAll({ where: { status: "active" },
+    order: [["tanggal_mulai", "DESC"], ["createdAt", "DESC"]], transaction });
+  const periodsCoveringCutoff = activePeriods.filter((item) => item.tanggal_mulai && item.tanggal_selesai
+    && new Date(item.tanggal_mulai) <= cutoff && new Date(item.tanggal_selesai) >= cutoff);
+  const currentTargetPeriod = periodId ? null
+    : periodsCoveringCutoff.length === 1 ? periodsCoveringCutoff[0]
+      : activePeriods.length === 1 ? activePeriods[0] : null;
+  const attemptVersions = await db.PercobaanMataKuliahMahasiswa.findAll({ where: { mahasiswa_id: mahasiswaId,
+    academic_effective_at: { [Op.lte]: cutoff } }, order: [["periode_akademik_id", "ASC"], ["attempt_ke", "ASC"], ["version", "DESC"]], transaction });
+  const attempts = latestAttemptVersions(attemptVersions);
   const curriculumAssignments = await db.MahasiswaKurikulum.findAll({ where: { mahasiswa_id: mahasiswaId }, transaction });
   const curriculumPeriodIds = curriculumAssignments.map((item) => item.periode_mulai_id).filter(Boolean);
   const curriculumPeriods = curriculumPeriodIds.length ? await db.PeriodeAkademik.findAll({ where: { id: { [Op.in]: curriculumPeriodIds } }, transaction }) : [];
@@ -457,14 +561,36 @@ async function calculateSnapshotInTransaction(mahasiswaId, { transaction, period
     return starts ? new Date(starts) <= cutoff : item.is_active;
   }) : curriculumAssignments.filter((item) => item.is_active))
     .sort((a, b) => new Date(curriculumPeriodMap.get(Number(b.periode_mulai_id))?.tanggal_mulai || 0) - new Date(curriculumPeriodMap.get(Number(a.periode_mulai_id))?.tanggal_mulai || 0))[0] || null;
+  const curriculum = assignment ? await db.Kurikulum.findByPk(assignment.kurikulum_id, { transaction }) : null;
   const requirements = assignment ? await db.KurikulumMataKuliah.findAll({ where: { kurikulum_id: assignment.kurikulum_id, is_active: true }, transaction }) : [];
-  const methodology = await db.RiwayatMetodologiPenelitian.findOne({ where: { mahasiswa_id: mahasiswaId, ...versionAtCutoffWhere(cutoff) }, order: [["effective_at", "DESC"]], transaction });
+  const methodology = await db.RiwayatMetodologiPenelitian.findOne({ where: { mahasiswa_id: mahasiswaId,
+    academic_effective_at: { [Op.lte]: cutoff } }, order: [["academic_effective_at", "DESC"], ["version", "DESC"]], transaction });
   const attemptIds = attempts.map((v) => v.id);
-  const conflicts = await db.KonflikDataAkademik.count({ where: { status: "open", createdAt: { [Op.lte]: cutoff }, [Op.or]: [{ entity_type: "student", left_record_id: mahasiswaId }, { entity_type: "course_attempt", left_record_id: { [Op.in]: attemptIds.length ? attemptIds : [0] } }] }, transaction });
-  const completeness = await db.CakupanDatasetAkademik.findAll({ where: { declared_at: { [Op.lte]: cutoff }, [Op.or]: [{ superseded_at: null }, { superseded_at: { [Op.gt]: cutoff } }], [Op.and]: [{ [Op.or]: [{ mahasiswa_id: mahasiswaId }, { mahasiswa_id: null }] }] }, transaction });
+  const conflicts = await db.KonflikDataAkademik.count({ where: { status: "open",
+    [Op.or]: [{ entity_type: "student", left_record_id: mahasiswaId },
+      { entity_type: "course_attempt", left_record_id: { [Op.in]: attemptIds.length ? attemptIds : [0] } }] }, transaction });
+  const completenessCandidates = await db.CakupanDatasetAkademik.findAll({ where: { is_active: true,
+    [Op.or]: [{ mahasiswa_id: mahasiswaId }, { mahasiswa_id: null }] }, transaction });
+  const coveragePeriodIds = [...new Set(completenessCandidates.map((item) => item.periode_akademik_id).filter(Boolean))];
+  const coveragePeriods = coveragePeriodIds.length ? await db.PeriodeAkademik.findAll({ where: { id: { [Op.in]: coveragePeriodIds } }, transaction }) : [];
+  const coveragePeriodMap = new Map(coveragePeriods.map((item) => [Number(item.id), item]));
+  const completeness = completenessCandidates.filter((item) => {
+    const coveragePeriod = coveragePeriodMap.get(Number(item.periode_akademik_id));
+    const coverageEnd = coveragePeriod?.tanggal_selesai;
+    const programMatches = (!item.kode_program_studi || item.kode_program_studi === curriculum?.kode_program_studi)
+      && (!item.program_kuliah || item.program_kuliah === curriculum?.program_kuliah);
+    const scopeType = String(item.scope_type || "").toLowerCase();
+    const declaredCohort = String(item.metadata?.cohort || item.metadata?.angkatan || "").trim();
+    const scopeMatches = scopeType === "student" ? Number(item.mahasiswa_id) === Number(mahasiswaId)
+        : scopeType === "program" ? programMatches
+          : scopeType === "cohort" ? Boolean(mahasiswa.angkatan && declaredCohort
+            && String(mahasiswa.angkatan) === declaredCohort && programMatches) : false;
+    return scopeMatches && programMatches && (!coverageEnd || new Date(coverageEnd) <= cutoff);
+  });
   const passed = attempts.filter((v) => v.status_kelulusan === "passed" && policy.isCreditRecognized(v.credit_origin, v.recognition_status));
   const passedCourseIds = new Set(passed.map((v) => Number(v.mata_kuliah_id)));
-  const equivalenceCandidates = await db.EkuivalensiMataKuliah.findAll({ where: { [Op.or]: [{ kurikulum_id: assignment?.kurikulum_id || null }, { kurikulum_id: null }] }, transaction });
+  const equivalenceCandidates = await db.EkuivalensiMataKuliah.findAll({ where: { is_active: true,
+    [Op.or]: [{ kurikulum_id: assignment?.kurikulum_id || null }, { kurikulum_id: null }] }, transaction });
   const boundaryIds = [...new Set(equivalenceCandidates.flatMap((item) => [item.berlaku_mulai_id, item.berlaku_selesai_id]).filter(Boolean))];
   const boundaries = boundaryIds.length ? await db.PeriodeAkademik.findAll({ where: { id: { [Op.in]: boundaryIds } }, transaction }) : [];
   const boundaryMap = new Map(boundaries.map((item) => [Number(item.id), item]));
@@ -474,13 +600,25 @@ async function calculateSnapshotInTransaction(mahasiswaId, { transaction, period
     return (!start || new Date(start) <= cutoff) && (!end || new Date(end) >= cutoff);
   });
   const groupsByCourse = new Map();
+  const substitutionTargets = new Map();
+  const addGroup = (courseId, groupId) => { if (!courseId) return; if (!groupsByCourse.has(courseId)) groupsByCourse.set(courseId, new Set()); groupsByCourse.get(courseId).add(groupId); };
+  const addSubstitution = (sourceId, targetId) => { if (!sourceId || !targetId) return; if (!substitutionTargets.has(sourceId)) substitutionTargets.set(sourceId, new Set()); substitutionTargets.get(sourceId).add(targetId); };
+  const legacyGroups = new Map();
   equivalences.forEach((item) => {
-    const courseId = Number(item.mata_kuliah_id);
-    if (!groupsByCourse.has(courseId)) groupsByCourse.set(courseId, new Set());
-    groupsByCourse.get(courseId).add(Number(item.kelompok_id));
+    const groupId = Number(item.kelompok_id);
+    const sourceId = Number(item.mata_kuliah_sumber_id || 0);
+    const targetId = Number(item.mata_kuliah_tujuan_id || 0);
+    if (sourceId && targetId) {
+      addGroup(sourceId, groupId); addGroup(targetId, groupId); addSubstitution(sourceId, targetId);
+      if (item.arah === "bidirectional") addSubstitution(targetId, sourceId);
+    } else if (item.arah === "bidirectional" && item.mata_kuliah_id) {
+      if (!legacyGroups.has(groupId)) legacyGroups.set(groupId, []); legacyGroups.get(groupId).push(Number(item.mata_kuliah_id));
+      addGroup(Number(item.mata_kuliah_id), groupId);
+    }
   });
-  const passedGroups = new Set(); passedCourseIds.forEach((courseId) => (groupsByCourse.get(courseId) || []).forEach((groupId) => passedGroups.add(groupId)));
-  const requirementMet = (courseId) => passedCourseIds.has(Number(courseId)) || [...(groupsByCourse.get(Number(courseId)) || [])].some((groupId) => passedGroups.has(groupId));
+  legacyGroups.forEach((courseIds) => courseIds.forEach((sourceId) => courseIds.forEach((targetId) => { if (sourceId !== targetId) addSubstitution(sourceId, targetId); })));
+  const requirementMet = (courseId) => passedCourseIds.has(Number(courseId))
+    || [...passedCourseIds].some((sourceId) => substitutionTargets.get(sourceId)?.has(Number(courseId)));
   const missing = requirements.filter((v) => v.sifat === "wajib" && !requirementMet(v.mata_kuliah_id)).map((v) => v.mata_kuliah_id);
   const creditedUnits = new Map();
   passed.forEach((attempt) => {
@@ -492,29 +630,47 @@ async function calculateSnapshotInTransaction(mahasiswaId, { transaction, period
   let dataState = "available";
   const completenessGroups = new Map();
   completeness.forEach((item) => {
-    const key = [item.dataset_type, item.periode_akademik_id, item.scope_type, item.mahasiswa_id || 0, item.kode_program_studi || "", item.program_kuliah || ""].join("|");
+    const declaredCohort = item.scope_type === "cohort" ? String(item.metadata?.cohort || item.metadata?.angkatan || "") : "";
+    const key = [item.source_id, item.dataset_type, item.periode_akademik_id, item.scope_type, item.mahasiswa_id || 0,
+      item.kode_program_studi || "", item.program_kuliah || "", declaredCohort].join("|");
     if (!completenessGroups.has(key)) completenessGroups.set(key, []); completenessGroups.get(key).push(item);
   });
   const completenessConflict = [...completenessGroups.values()].some((items) => items.length > 1 && new Set(items.map((v) => `${v.is_complete}:${v.checksum}`)).size > 1);
+  const requiredCoveragePeriodIds = periodId ? [Number(periodId)]
+    : currentTargetPeriod ? [Number(currentTargetPeriod.id)] : [];
+  const completeCourseCoverage = completeness.filter((item) => item.dataset_type === "course_attempts" && item.is_complete === true);
+  const coveredPeriodIds = new Set(completeCourseCoverage.map((item) => Number(item.periode_akademik_id)));
+  const hasCompleteCoverage = requiredCoveragePeriodIds.length > 0 && completeCourseCoverage.length > 0
+    && requiredCoveragePeriodIds.every((requiredPeriodId) => coveredPeriodIds.has(requiredPeriodId));
   if (conflicts > 0 || completenessConflict) { dataState = "conflicted"; quality.push("ACADEMIC_DATA_CONFLICTED"); }
+  else if (!periodId && !currentTargetPeriod) { dataState = "incomplete"; quality.push("ACADEMIC_ACTIVE_PERIOD_UNDETERMINED"); }
   else if (!attempts.length && !methodology && !completeness.length) { dataState = "unavailable"; quality.push("ACADEMIC_DATA_UNAVAILABLE"); }
   else if (!assignment) { dataState = "incomplete"; quality.push("ACADEMIC_CURRICULUM_UNASSIGNED"); }
+  else if (!hasCompleteCoverage) { dataState = "incomplete"; quality.push("ACADEMIC_COVERAGE_INCOMPLETE"); }
   const facts = { cutoff: periodId ? cutoff.toISOString() : "current", period_id: periodId || null,
+    target_period_id: periodId || currentTargetPeriod?.id || null,
     attempts: attempts.map((v) => plain(v)), curriculum_id: assignment?.kurikulum_id || null,
     requirements: requirements.map(plain), equivalences: equivalences.map(plain), methodology: plain(methodology), completeness: completeness.map(plain) };
   const inputChecksum = checksum(facts);
-  const existing = await db.SnapshotAkademikMahasiswa.findOne({ where: { mahasiswa_id: mahasiswaId, is_current: true }, transaction, lock: transaction.LOCK.UPDATE });
+  const snapshotScope = periodId ? "period_end" : "current";
+  const existingWhere = periodId
+    ? { mahasiswa_id: mahasiswaId, periode_akademik_id: periodId, calculation_version: CALCULATION_VERSION, snapshot_scope: "period_end" }
+    : { mahasiswa_id: mahasiswaId, snapshot_scope: "current", is_current: true };
+  const existing = await db.SnapshotAkademikMahasiswa.findOne({ where: existingWhere, transaction, lock: transaction.LOCK.UPDATE });
   if (existing?.input_checksum === inputChecksum && existing.calculation_status === "ready") return { snapshot: existing, noop: true };
-  if (existing) await existing.update({ is_current: false, calculation_status: "stale" }, { transaction });
-  const snapshot = await db.SnapshotAkademikMahasiswa.create({ mahasiswa_id: mahasiswaId, kurikulum_id: assignment?.kurikulum_id || null,
-    periode_akademik_id: periodId || methodology?.periode_akademik_id || null, cutoff_at: cutoff,
+  if (existing && snapshotScope === "current") await existing.update({ is_current: false, calculation_status: "stale" }, { transaction });
+  const snapshotValues = { mahasiswa_id: mahasiswaId, kurikulum_id: assignment?.kurikulum_id || null,
+    periode_akademik_id: periodId || null, cutoff_at: cutoff, snapshot_scope: snapshotScope,
     total_sks_diambil: attempts.filter((v) => !["withdrawn", "cancelled"].includes(v.status_registrasi)).reduce((sum, v) => sum + Number(v.sks_diambil || 0), 0),
     total_sks_lulus: [...creditedUnits.values()].reduce((sum, value) => sum + value, 0), wajib_total: requirements.filter((v) => v.sifat === "wajib").length,
     wajib_lulus: requirements.filter((v) => v.sifat === "wajib").length - missing.length, wajib_belum_lulus: missing,
     metodologi_status: methodology?.status || null, data_state: dataState, quality_issues: quality,
     source_revisions: [...new Set(attempts.map((v) => v.external_revision).filter(Boolean))], calculation_version: CALCULATION_VERSION,
-    calculation_status: "ready", input_checksum: inputChecksum, calculated_at: new Date(), is_current: true,
-  }, { transaction });
+    calculation_status: "ready", input_checksum: inputChecksum, calculated_at: new Date(), is_current: snapshotScope === "current",
+  };
+  const snapshot = existing && snapshotScope === "period_end"
+    ? await existing.update(snapshotValues, { transaction })
+    : await db.SnapshotAkademikMahasiswa.create(snapshotValues, { transaction });
   return { snapshot, noop: false };
 }
 
@@ -524,7 +680,9 @@ async function calculateSnapshot(mahasiswaId, { transaction = null, periodId = n
     return await db.sequelize.transaction((ownedTransaction) => calculateSnapshotInTransaction(mahasiswaId, { transaction: ownedTransaction, periodId }));
   } catch (error) {
     if (error instanceof db.Sequelize.UniqueConstraintError) {
-      const snapshot = await db.SnapshotAkademikMahasiswa.findOne({ where: { mahasiswa_id: mahasiswaId, is_current: true } });
+      const snapshot = await db.SnapshotAkademikMahasiswa.findOne({ where: periodId
+        ? { mahasiswa_id: mahasiswaId, periode_akademik_id: periodId, calculation_version: CALCULATION_VERSION, snapshot_scope: "period_end" }
+        : { mahasiswa_id: mahasiswaId, snapshot_scope: "current", is_current: true } });
       if (snapshot) return { snapshot, noop: true, replayed: true };
     }
     throw error;
@@ -532,7 +690,7 @@ async function calculateSnapshot(mahasiswaId, { transaction = null, periodId = n
 }
 
 async function evaluateEligibility({ mahasiswaId, context, referenceType = null, referenceId = null, persist = false, transaction = null, correlationId = null }) {
-  let snapshot = await db.SnapshotAkademikMahasiswa.findOne({ where: { mahasiswa_id: mahasiswaId, is_current: true }, transaction });
+  let snapshot = await db.SnapshotAkademikMahasiswa.findOne({ where: { mahasiswa_id: mahasiswaId, snapshot_scope: "current", is_current: true }, transaction });
   const rule = await db.RuleSetAkademik.findOne({ where: { context, status: "active" }, order: [["version", "DESC"]], transaction });
   if (!snapshot || snapshot.calculation_status !== "ready") {
     const [attemptCount, methodologyCount, curriculumCount, coverageCount] = await Promise.all([
@@ -572,13 +730,23 @@ async function evaluateEligibility({ mahasiswaId, context, referenceType = null,
 async function getStudentAcademicDetail(mahasiswaId) {
   const mahasiswa = await db.Mahasiswa.findByPk(mahasiswaId, { attributes: ["id", "nim", "nama", "angkatan"] });
   if (!mahasiswa) throw new AcademicDataError("Mahasiswa tidak ditemukan.", 404, "ACADEMIC_STUDENT_NOT_FOUND");
-  const [snapshotResult, attempts, methodology, curriculum, evaluations] = await Promise.all([
-    calculateSnapshot(mahasiswaId), db.PercobaanMataKuliahMahasiswa.findAll({ where: { mahasiswa_id: mahasiswaId, is_active: true }, order: [["periode_akademik_id", "DESC"]] }),
+  const [storedSnapshot, attempts, methodology, curriculum, evaluations] = await Promise.all([
+    db.SnapshotAkademikMahasiswa.findOne({ where: { mahasiswa_id: mahasiswaId, snapshot_scope: "current", is_current: true } }),
+    db.PercobaanMataKuliahMahasiswa.findAll({ where: { mahasiswa_id: mahasiswaId, is_active: true }, order: [["periode_akademik_id", "DESC"]] }),
     db.RiwayatMetodologiPenelitian.findAll({ where: { mahasiswa_id: mahasiswaId }, order: [["effective_at", "DESC"]] }),
     db.MahasiswaKurikulum.findOne({ where: { mahasiswa_id: mahasiswaId, is_active: true } }),
     db.EvaluasiEligibilityAkademik.findAll({ where: { mahasiswa_id: mahasiswaId }, order: [["evaluated_at", "DESC"]], limit: 20 }),
   ]);
-  return { mahasiswa: plain(mahasiswa), snapshot: plain(snapshotResult.snapshot), attempts: attempts.map(plain), methodology_history: methodology.map(plain), curriculum_assignment: plain(curriculum), evaluations: evaluations.map(plain) };
+  let snapshot = storedSnapshot;
+  const needsRefresh = !snapshot || snapshot.calculation_status !== "ready";
+  if (needsRefresh) {
+    await db.sequelize.transaction((transaction) => queueSnapshot(mahasiswaId, "academic-detail-read", transaction));
+    snapshot = snapshot ? { ...plain(snapshot), calculation_status: "refreshing" }
+      : { id: null, mahasiswa_id: mahasiswaId, snapshot_scope: "current", calculation_status: "refreshing", data_state: "unavailable",
+        quality_issues: ["ACADEMIC_SNAPSHOT_REFRESH_QUEUED"] };
+  }
+  return { mahasiswa: plain(mahasiswa), snapshot: plain(snapshot), refreshing: needsRefresh, attempts: attempts.map(plain),
+    methodology_history: methodology.map(plain), curriculum_assignment: plain(curriculum), evaluations: evaluations.map(plain) };
 }
 
 const CORRECTABLE = {
@@ -633,7 +801,8 @@ async function correctAcademicRecord(type, recordId, { actorId, reason, expected
     const correctionEffectiveAt = new Date();
     const clone = { ...before, ...sanitized, id: undefined, createdAt: undefined, updatedAt: undefined,
       version: Number(current.version) + 1, previous_version_id: current.id, is_active: true, superseded_at: null,
-      effective_at: correctionEffectiveAt,
+      effective_at: correctionEffectiveAt, academic_effective_at: current.academic_effective_at || current.effective_at,
+      recorded_at: correctionEffectiveAt,
       metadata: { ...(before.metadata || {}), correction: true } };
     delete clone.id; delete clone.createdAt; delete clone.updatedAt;
     await current.update({ is_active: false, superseded_at: correctionEffectiveAt }, { transaction });
@@ -649,6 +818,7 @@ async function correctAcademicRecord(type, recordId, { actorId, reason, expected
         const generatedHistory = await db.RiwayatMetodologiPenelitian.create({ mahasiswa_id: current.mahasiswa_id, periode_akademik_id: current.periode_akademik_id,
           attempt_id: replacement.id, source_id: current.source_id, import_row_id: current.import_row_id, status: nextStatus,
           nilai_huruf: replacement.nilai_huruf, nilai_angka: replacement.nilai_angka, effective_at: historyEffectiveAt,
+          academic_effective_at: replacement.academic_effective_at, recorded_at: historyEffectiveAt,
           version: Number(currentHistory?.version || 0) + 1, previous_version_id: currentHistory?.id || null,
           evidence_type: "admin_correction", metadata: { corrected_attempt_id: replacement.id } }, { transaction });
         methodologyLineage = { methodology_history_id: generatedHistory.id, previous_methodology_history_id: currentHistory?.id || null };
@@ -684,6 +854,7 @@ async function revokeAcademicCorrection(correctionId, { actorId, reason }) {
     const originalPlain = plain(original);
     const restoredPayload = { ...originalPlain, id: undefined, createdAt: undefined, updatedAt: undefined,
       effective_at: revokedAt, version: Number(replacement.version || 0) + 1, previous_version_id: replacement.id,
+      academic_effective_at: original.academic_effective_at || original.effective_at, recorded_at: revokedAt,
       is_active: true, superseded_at: null, metadata: { ...(originalPlain.metadata || {}), correction_revoke: correction.id } };
     delete restoredPayload.id; delete restoredPayload.createdAt; delete restoredPayload.updatedAt;
     const restoredRecord = await model.create(restoredPayload, { transaction });
@@ -696,6 +867,7 @@ async function revokeAcademicCorrection(correctionId, { actorId, reason }) {
         mahasiswa_id: original.mahasiswa_id, periode_akademik_id: original.periode_akademik_id, attempt_id: restoredRecord.id,
         source_id: original.source_id, import_row_id: original.import_row_id, status: methodologyStatusFromAttempt(restoredRecord),
         nilai_huruf: restoredRecord.nilai_huruf, nilai_angka: restoredRecord.nilai_angka, effective_at: revokedAt,
+        academic_effective_at: restoredRecord.academic_effective_at, recorded_at: revokedAt,
         version: Number(generatedHistory?.version || 0) + 1, previous_version_id: generatedHistory?.id || null,
         evidence_type: "correction_revoke", metadata: { revoked_correction_id: correction.id },
       }, { transaction });

@@ -1,10 +1,9 @@
 import React, { useState } from "react";
 import { ArrowRight, CircleHelp, Eye, EyeOff, Lock, User } from "lucide-react";
 
-function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
+function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPassword }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -13,7 +12,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
     event.preventDefault();
     setErrorMessage("");
 
-    if (!username.trim() || !password.trim()) {
+    if (!username.trim() || password.length === 0) {
       setErrorMessage("Username dan password wajib diisi.");
       return;
     }
@@ -27,7 +26,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
         },
         body: JSON.stringify({
           username: username.trim(),
-          password: password.trim(),
+          password,
         }),
       });
 
@@ -49,8 +48,12 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
           token: data.data.token,
           user: data.data.user,
           prompt_change_password: data.data.prompt_change_password,
+          credential_state: data.data.credential_state,
+          credential_version: data.data.credential_version,
+          next_action: data.data.next_action,
+          session: data.data.session,
         },
-        rememberMe
+        false
       );
     } catch (error) {
       setErrorMessage(`Tidak bisa terhubung ke server. Backend yang dipakai: ${apiBaseUrl || "same-origin"}.`);
@@ -118,15 +121,8 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration }) {
                 </button>
               </label>
 
-              <div className="flex items-center gap-3 pt-1 text-sm font-semibold text-[#32405f]">
-                <input
-                  id="rememberMe"
-                  type="checkbox"
-                  checked={rememberMe}
-                  onChange={(event) => setRememberMe(event.target.checked)}
-                  className="h-4 w-4 rounded border-[#9fb2de] text-[#1f4dbd] focus:ring-[#1f4dbd]"
-                />
-                <label htmlFor="rememberMe">Ingat saya di perangkat ini</label>
+              <div className="flex items-center justify-end pt-1 text-sm font-semibold text-[#32405f]">
+                <button type="button" onClick={onForgotPassword} className="ml-auto text-[#1f4dbd] hover:underline">Lupa password?</button>
               </div>
 
               {errorMessage ? (

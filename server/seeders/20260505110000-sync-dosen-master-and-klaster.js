@@ -1,5 +1,6 @@
 "use strict";
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
 const KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -103,7 +104,7 @@ module.exports = {
     const transaction = await queryInterface.sequelize.transaction();
     try {
       const now = new Date();
-      const defaultPasswordHash = await bcrypt.hash("12345678", 10);
+      const defaultPasswordHash = await bcrypt.hash(crypto.randomBytes(48).toString("base64url"), 10);
 
       const [existingDosenRows] = await queryInterface.sequelize.query(
         `SELECT "id", "nama", "kode_dosen" FROM "Dosens"`,

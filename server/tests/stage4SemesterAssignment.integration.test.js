@@ -92,14 +92,14 @@ test("Tahap 4: carry-forward dan izin semester 3 membentuk assignment per semest
   ];
   const periods = [];
   const academicPeriods = [];
-  for (const [year, semester, start] of periodDefinitions) {
+  for (const [periodIndex, [year, semester, start]] of periodDefinitions.entries()) {
     const academic = await PeriodeAkademik.create({
       kode: `STAGE4-${suffix}-${semester}-${year.replace("/", "-")}`,
       tahun_akademik: year,
       semester,
       tanggal_mulai: new Date(start),
       tanggal_selesai: new Date(new Date(start).getTime() + 120 * 86400000),
-      status: "active",
+      status: periodIndex === 0 ? "active" : "draft",
       sumber: "integration_test",
       metadata: {},
     });

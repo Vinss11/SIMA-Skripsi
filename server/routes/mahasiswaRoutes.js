@@ -40,9 +40,6 @@ router.put("/update-profile", authenticateToken, authorizeRole("mahasiswa"), mah
 router.get("/dpa/current", authenticateToken, authorizeRole("mahasiswa"), mahasiswaController.getCurrentDPA);
 router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("mahasiswa"), penetapanPembimbingController.getMySupervisorAssignmentHistory);
 
-// Change password mahasiswa
-router.put("/change-password", authenticateToken, authorizeRole("mahasiswa"), mahasiswaController.changePassword);
-
 // ========== BIMBINGAN SKRIPSI ==========
 router.get("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaBimbingan);
 router.post("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.createMahasiswaBimbingan);

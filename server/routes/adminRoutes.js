@@ -3,6 +3,7 @@ const router = express.Router();
 const adminController = require("../controllers/adminController");
 const mitraMagangController = require("../controllers/mitraMagangController");
 const uploadController = require("../controllers/uploadController");
+const authController = require("../controllers/authController");
 const upload = require("../middlewares/uploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
 
@@ -31,6 +32,10 @@ function handleUploadMulterError(err, res) {
 }
 
 // ========== MAHASISWA MANAGEMENT ==========
+
+router.post("/accounts/:accountType/:accountId/reset-link", authenticateToken, authorizeRole("admin"), authController.issueAdminReset);
+router.post("/accounts/:accountType/:accountId/activation-link", authenticateToken, authorizeRole("admin"), authController.issueAdminActivation);
+router.post("/accounts/:accountType/:accountId/recovery-channel/verify", authenticateToken, authorizeRole("admin"), authController.verifyRecoveryChannel);
 
 router.get("/mahasiswa", authenticateToken, authorizeRole("admin"), adminController.getAllMahasiswa);
 router.put("/mahasiswa/:id/assign-dospem-akademik", authenticateToken, authorizeRole("admin"), adminController.assignDosenPembimbingAkademik);

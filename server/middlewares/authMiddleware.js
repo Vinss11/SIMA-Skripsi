@@ -1,166 +1,92 @@
+"use strict";
+
 const jwt = require("jsonwebtoken");
 const { Op } = require("sequelize");
-const { Dosen, SekretarisProdi } = require("../models");
-const {
-  isAllowedSekretarisJabatan,
-  resolveProgramKuliahFromJabatan,
-} = require("../constants/sekretarisAkses");
+const db = require("../models");
+const { getJwtConfig } = require("../config/authSecurity");
+const repository = require("../services/accountSecurityRepository");
+const { isAllowedSekretarisJabatan, resolveProgramKuliahFromJabatan } = require("../constants/sekretarisAkses");
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
+function deny(res, status, message, code) { return res.status(status).json({ success: false, message, code }); }
 
-exports.authenticateToken = (req, res, next) => {
-  try {
-    // Ambil token dari header Authorization
-    const authHeader = req.headers["authorization"];
-    const token = authHeader && authHeader.split(" ")[1]; // Format: Bearer TOKEN
-
-    if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: "Token tidak ditemukan, silakan login terlebih dahulu",
-      });
-    }
-
-    // Verifikasi token
-    jwt.verify(token, JWT_SECRET, async (err, user) => {
-      if (err) {
-        return res.status(403).json({
-          success: false,
-          message: "Token tidak valid atau sudah kadaluarsa",
-        });
-      }
-
+function middleware({ allowDuringRestriction = false } = {}) {
+  return async (req, res, next) => {
+    try {
+      const header = req.headers.authorization;
+      const match = typeof header === "string" && header.match(/^Bearer\s+([^\s]+)$/i);
+      if (!match) return deny(res, 401, "Token tidak ditemukan, silakan login terlebih dahulu", "AUTH_TOKEN_REQUIRED");
+      const config = getJwtConfig();
+      let claims;
       try {
-        if (user.role === "dosen") {
-          const dosen = await Dosen.findByPk(user.id, { attributes: ["id", "account_is_active"] });
-          if (!dosen || dosen.account_is_active === false) {
-            return res.status(403).json({
-              success: false,
-              message: "Token tidak valid karena akun dosen dinonaktifkan. Silakan hubungi Admin Prodi.",
-            });
-          }
-        }
-      } catch (lookupError) {
-        console.error("Error saat memvalidasi status akun dosen:", lookupError);
-        return res.status(500).json({ success: false, message: "Terjadi kesalahan saat memvalidasi akun." });
+        claims = jwt.verify(match[1], config.secret, { algorithms: [config.algorithm], issuer: config.issuer, audience: config.audience });
+      } catch (_) { return deny(res, 401, "Token tidak valid atau sudah kedaluwarsa", "AUTH_TOKEN_INVALID"); }
+      const subject = String(claims.sub || "").match(/^(mahasiswa|dosen|admin|sekretaris_prodi):(\d+)$/);
+      if (!subject || !claims.sid || !Number.isInteger(claims.cv) || !claims.jti || !claims.role) {
+        return deny(res, 401, "Token tidak memiliki konteks sesi yang valid", "AUTH_TOKEN_INVALID");
       }
-
-      // Simpan data user ke request
-      req.user = user;
+      const accountType = subject[1]; const accountId = Number(subject[2]); const now = new Date();
+      const [account, session] = await Promise.all([
+        repository.resolveAccount({ accountType, accountId }),
+        db.AuthSession.findOne({ where: { id: claims.sid, account_type: accountType, account_id: accountId } }),
+      ]);
+      if (!account || !repository.isAccountLoginAllowed(accountType, account)) return deny(res, 401, "Akun tidak tersedia atau dinonaktifkan", "ACCOUNT_DISABLED");
+      if (!session || session.revoked_at || new Date(session.absolute_expires_at) <= now || new Date(session.idle_expires_at) <= now) {
+        return deny(res, 401, "Sesi telah berakhir atau dicabut", "SESSION_REVOKED");
+      }
+      const version = Number(account.credential_version || 1);
+      if (version !== Number(claims.cv) || version !== Number(session.credential_version) || session.role_snapshot?.role !== claims.role) {
+        return deny(res, 401, "Sesi telah berakhir atau dicabut", "SESSION_REVOKED");
+      }
+      const capabilities = Array.isArray(session.role_snapshot?.capabilities) ? session.role_snapshot.capabilities : [];
+      req.user = { id: accountId, role: claims.role, account_type: accountType, username: claims.username,
+        capabilities, session_id: session.id, credential_version: version, credential_state: repository.credentialState(account),
+        sekretaris_prodi_id: session.role_snapshot?.sekretaris_prodi_id || null };
+      if (!allowDuringRestriction && ["default", "temporary"].includes(req.user.credential_state)) {
+        return deny(res, 403, "Password wajib diubah sebelum mengakses fitur lain", "PASSWORD_CHANGE_REQUIRED");
+      }
+      // Avoid a write for every API call while retaining a reliable idle window.
+      if (!session.last_used_at || now - new Date(session.last_used_at) >= 60 * 1000) {
+        await session.update({ last_used_at: now, idle_expires_at: new Date(now.getTime() + Math.max(15, Number(process.env.AUTH_SESSION_IDLE_MINUTES || 60)) * 60000) });
+      }
       next();
-    });
-  } catch (error) {
-    console.error("Error di authenticateToken:", error);
-    res.status(500).json({
-      success: false,
-      message: "Terjadi kesalahan pada server",
-    });
-  }
-};
-
-// Middleware untuk memeriksa role tertentu
-// Mendukung: 'mahasiswa', 'dosen', 'admin', 'sekretaris_prodi'
-exports.authorizeRole = (...roles) => {
-  return (req, res, next) => {
-    if (!req.user || !req.user.role) {
-      return res.status(403).json({
-        success: false,
-        message: "Role tidak ditemukan dalam token",
-      });
+    } catch (error) {
+      console.error("Error di authenticateToken:", error);
+      return deny(res, 500, "Terjadi kesalahan saat memvalidasi sesi", "AUTH_VALIDATION_ERROR");
     }
-
-    const capabilities = Array.isArray(req.user.capabilities) ? req.user.capabilities : [];
-    const effectiveRoles = new Set([req.user.role, ...capabilities]);
-    if (req.user.role === "dosen" && roles.includes("sekretaris_prodi")) {
-      effectiveRoles.add("sekretaris_prodi");
-    }
-
-    const hasAllowedRole = roles.some((role) => effectiveRoles.has(role));
-    if (!hasAllowedRole) {
-      return res.status(403).json({
-        success: false,
-        message: `Akses ditolak. Hanya ${roles.join(", ")} yang diizinkan`,
-      });
-    }
-
-    next();
   };
+}
+
+exports.authenticateToken = middleware();
+exports.authenticateRestrictedAllowed = middleware({ allowDuringRestriction: true });
+
+exports.authorizeRole = (...roles) => (req, res, next) => {
+  if (!req.user?.role) return deny(res, 403, "Role tidak ditemukan dalam sesi", "ROLE_REQUIRED");
+  const effective = new Set([req.user.role, ...(req.user.capabilities || [])]);
+  if (!roles.some((role) => effective.has(role))) return deny(res, 403, `Akses ditolak. Hanya ${roles.join(", ")} yang diizinkan`, "ROLE_FORBIDDEN");
+  next();
 };
 
-// Middleware khusus untuk membatasi akses sekretaris prodi ke 2 akun resmi saja
 exports.authorizeSekretarisAccess = async (req, res, next) => {
   try {
-    if (!req.user || !["sekretaris_prodi", "dosen"].includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Akses ditolak. Hanya sekretaris prodi yang diizinkan.",
-      });
-    }
-
+    if (!req.user || !["sekretaris_prodi", "dosen"].includes(req.user.role)) return deny(res, 403, "Akses ditolak. Hanya sekretaris prodi yang diizinkan.", "ROLE_FORBIDDEN");
     if (req.user.role === "dosen") {
-      const dosen = await Dosen.findByPk(req.user.id, {
-        attributes: ["id", "nik", "email", "jabatan_struktural"],
-      });
-
-      if (!dosen || !isAllowedSekretarisJabatan(dosen.jabatan_struktural)) {
-        return res.status(403).json({
-          success: false,
-          message: "Akses sekretaris prodi ditolak. Dosen ini tidak sedang menjabat sebagai sekretaris prodi.",
-        });
-      }
-
-      const sekretarisWhere = [];
-      if (dosen.nik) sekretarisWhere.push({ nik: dosen.nik });
-      if (dosen.email) sekretarisWhere.push({ email: String(dosen.email).toLowerCase() });
-      const linkedSekretaris = sekretarisWhere.length > 0
-        ? await SekretarisProdi.findOne({
-            where: { [Op.or]: sekretarisWhere },
-            attributes: ["id"],
-          })
-        : null;
-
-      const programKuliah = resolveProgramKuliahFromJabatan(dosen.jabatan_struktural);
-      if (!programKuliah) {
-        return res.status(403).json({
-          success: false,
-          message: "Program Sekretaris Prodi tidak dapat ditentukan dari jabatan struktural.",
-        });
-      }
-
-      req.user.sekretaris_prodi_id = linkedSekretaris?.id || null;
+      const dosen = await db.Dosen.findByPk(req.user.id, { attributes: ["id", "nik", "email", "jabatan_struktural"] });
+      if (!dosen || !isAllowedSekretarisJabatan(dosen.jabatan_struktural)) return deny(res, 403, "Dosen tidak sedang menjabat sebagai sekretaris prodi.", "SEKRETARIS_ACCESS_DENIED");
+      const linked = await db.SekretarisProdi.findOne({ where: { [Op.or]: [{ nik: dosen.nik || "__none__" }, { email: String(dosen.email || "").toLowerCase() }] }, attributes: ["id"] });
+      req.user.sekretaris_prodi_id = linked?.id || null;
       req.user.sekretaris_jabatan = dosen.jabatan_struktural;
-      req.user.program_kuliah = programKuliah;
-      return next();
+      req.user.program_kuliah = resolveProgramKuliahFromJabatan(dosen.jabatan_struktural);
+    } else {
+      const sekretaris = await db.SekretarisProdi.findByPk(req.user.id, { attributes: ["id", "jabatan"] });
+      if (!sekretaris || !isAllowedSekretarisJabatan(sekretaris.jabatan)) return deny(res, 403, "Akun bukan sekretaris prodi resmi.", "SEKRETARIS_ACCESS_DENIED");
+      req.user.sekretaris_prodi_id = sekretaris.id;
+      req.user.sekretaris_jabatan = sekretaris.jabatan;
+      req.user.program_kuliah = resolveProgramKuliahFromJabatan(sekretaris.jabatan);
     }
-
-    const sekretaris = await SekretarisProdi.findByPk(req.user.id, {
-      attributes: ["id", "jabatan"],
-    });
-
-    if (!sekretaris || !isAllowedSekretarisJabatan(sekretaris.jabatan)) {
-      return res.status(403).json({
-        success: false,
-        message: "Akses sekretaris prodi ditolak. Akun ini tidak termasuk 2 akun resmi.",
-      });
-    }
-
-    const programKuliah = resolveProgramKuliahFromJabatan(sekretaris.jabatan);
-    if (!programKuliah) {
-      return res.status(403).json({
-        success: false,
-        message: "Program Sekretaris Prodi tidak dapat ditentukan dari jabatan.",
-      });
-    }
-
-    req.user.sekretaris_prodi_id = sekretaris.id;
-    req.user.sekretaris_jabatan = sekretaris.jabatan;
-    req.user.program_kuliah = programKuliah;
+    if (!req.user.program_kuliah) return deny(res, 403, "Program Sekretaris Prodi tidak dapat ditentukan.", "SEKRETARIS_PROGRAM_UNRESOLVED");
     next();
   } catch (error) {
     console.error("Error di authorizeSekretarisAccess:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Terjadi kesalahan pada server",
-    });
+    return deny(res, 500, "Terjadi kesalahan pada server", "INTERNAL_ERROR");
   }
 };

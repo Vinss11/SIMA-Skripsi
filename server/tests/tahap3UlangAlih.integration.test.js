@@ -59,7 +59,7 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
     await sequelize.close();
   });
 
-  for (const period of previousActivePeriods) await period.update({ is_active: false });
+  for (const period of previousActivePeriods) await period.update({ is_active: false, status: "closed" });
   const oldPeriod = await PeriodePenjaluran.create({
     tahun_akademik: "2025/2026", semester: "genap", label_periode: `T3 lama ${suffix}`,
     tanggal_mulai: new Date("2026-01-01T00:00:00Z"), tanggal_selesai: new Date("2026-02-01T00:00:00Z"),

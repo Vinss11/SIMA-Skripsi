@@ -1,14 +1,20 @@
 const express = require("express");
 const router = express.Router();
 const authController = require("../controllers/authController");
-const { authenticateToken } = require("../middlewares/authMiddleware");
+const { authenticateToken, authenticateRestrictedAllowed } = require("../middlewares/authMiddleware");
 
 // Public routes
 router.post("/login", authController.login);
-router.post("/login-mahasiswa-email", authController.loginMahasiswaByEmail);
+router.post("/forgot-password", authController.forgotPassword);
+router.post("/reset-password/validate", authController.validateResetToken);
+router.post("/reset-password/confirm", authController.confirmResetPassword);
 
-// Protected routes (memerlukan authentication)
-router.post("/change-password", authenticateToken, authController.changePassword);
+// A restricted account may only change its password or end its session.
+router.post("/change-password", authenticateRestrictedAllowed, authController.changePassword);
+router.post("/logout", authenticateRestrictedAllowed, authController.logout);
+router.post("/logout-all", authenticateRestrictedAllowed, authController.logoutAll);
+router.get("/sessions", authenticateToken, authController.listSessions);
+router.delete("/sessions/:sessionId", authenticateToken, authController.revokeSession);
 router.get("/profile", authenticateToken, authController.getProfile);
 
 module.exports = router;

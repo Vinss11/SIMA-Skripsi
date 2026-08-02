@@ -105,7 +105,7 @@ function ProfilePage({ session, apiBaseUrl, onBack, onLogout, onSessionExpired, 
     const nextErrors = {};
     if (!form.oldPassword) nextErrors.oldPassword = "Password lama wajib diisi.";
     if (!form.newPassword) nextErrors.newPassword = "Password baru wajib diisi.";
-    else if (form.newPassword.length < 6) nextErrors.newPassword = "Password baru minimal 6 karakter.";
+    else if (form.newPassword.length < 10) nextErrors.newPassword = "Password baru minimal 10 karakter.";
     if (!form.confirmPassword) nextErrors.confirmPassword = "Konfirmasi password wajib diisi.";
     else if (form.newPassword !== form.confirmPassword) {
       nextErrors.confirmPassword = "Konfirmasi password tidak sama.";
@@ -140,7 +140,7 @@ function ProfilePage({ session, apiBaseUrl, onBack, onLogout, onSessionExpired, 
       setForm({ oldPassword: "", newPassword: "", confirmPassword: "" });
       setVisible({ oldPassword: false, newPassword: false, confirmPassword: false });
       setSuccessMessage(payload.message || "Password berhasil diubah.");
-      onPasswordChanged?.();
+      onPasswordChanged?.(payload.data);
     } catch (error) {
       setErrors({ form: "Tidak dapat terhubung ke server." });
     } finally {

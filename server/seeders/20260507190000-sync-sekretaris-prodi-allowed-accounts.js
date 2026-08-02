@@ -1,5 +1,6 @@
 "use strict";
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 const { ALLOWED_SEKRETARIS_JABATAN } = require("../constants/sekretarisAkses");
 
 /** @type {import('sequelize-cli').Migration} */
@@ -32,7 +33,7 @@ module.exports = {
         );
       }
 
-      const hashedPassword = await bcrypt.hash("12345678", 10);
+      const hashedPassword = await bcrypt.hash(crypto.randomBytes(48).toString("base64url"), 10);
       const now = new Date();
 
       const records = ALLOWED_SEKRETARIS_JABATAN.map((jabatan) => {

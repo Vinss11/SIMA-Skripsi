@@ -216,6 +216,13 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.BOOLEAN,
         defaultValue: true,
       },
+      credential_state: { type: DataTypes.STRING(20), allowNull: false, defaultValue: "default" },
+      credential_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
+      password_changed_at: { type: DataTypes.DATE, allowNull: true }, password_origin: { type: DataTypes.STRING(30), allowNull: true },
+      force_change_reason: { type: DataTypes.STRING(120), allowNull: true }, security_updated_at: { type: DataTypes.DATE, allowNull: true },
+      security_updated_by_type: { type: DataTypes.STRING(30), allowNull: true }, security_updated_by_id: { type: DataTypes.INTEGER, allowNull: true },
+      recovery_email_verified_at: { type: DataTypes.DATE, allowNull: true },
+      recovery_email_verification_source: { type: DataTypes.STRING(80), allowNull: true },
       jabatan_struktural: {
         type: DataTypes.STRING,
         allowNull: true,

@@ -43,6 +43,7 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       { unique: true, fields: ["tahun_akademik", "semester"], name: "uq_periode_akademik_tahun_semester" },
       { unique: true, fields: ["tahun_mulai", "tahun_selesai", "semester"], name: "uq_periode_akademik_year_range" },
+      { unique: true, fields: ["status"], where: { status: "active" }, name: "uq_academic_period_single_active" },
     ],
   });
 

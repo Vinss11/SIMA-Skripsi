@@ -24,6 +24,8 @@ const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
   getActiveSupervisionLoad,
 } = require("../services/supervisorAccessService");
+const { unusableInitialPassword } = require("../services/credentialService");
+const { issueInitialActivation } = require("../services/passwordRecoveryService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -211,6 +213,9 @@ async function getMappedDosens(keyword = "") {
       "status_effective_at",
       "status_reason",
       "status_updated_at",
+      "credential_state",
+      "recovery_email_verified_at",
+      "recovery_email_verification_source",
       "createdAt",
       "updatedAt",
     ],
@@ -247,6 +252,9 @@ async function getMappedDosens(keyword = "") {
       status_effective_at: dosen.status_effective_at,
       status_reason: dosen.status_reason,
       status_updated_at: dosen.status_updated_at,
+      credential_state: dosen.credential_state,
+      recovery_email_verified_at: dosen.recovery_email_verified_at,
+      recovery_email_verification_source: dosen.recovery_email_verification_source,
       jumlah_bimbingan: jumlahBimbingan,
       sisa_kuota: sisaKuota,
       rincian_jalur: supervisionLoad.rincian_jalur,
@@ -1107,8 +1115,6 @@ exports.createDosen = async (req, res) => {
 
     const nextSeq = await getNextDosenSequence(t);
     const generatedKodeDosen = `DSN${String(nextSeq).padStart(4, "0")}`;
-    const defaultPassword = process.env.DEFAULT_PASSWORD_DOSEN || "12345678";
-
     const newDosen = await Dosen.create(
       {
         kode_dosen: generatedKodeDosen,
@@ -1116,8 +1122,15 @@ exports.createDosen = async (req, res) => {
         nama: nameValidation.normalized,
         gelar: normalizedGelar || null,
         email: normalizedEmail,
-        password: defaultPassword,
+        password: unusableInitialPassword(),
         is_default_password: true,
+        credential_state: "default",
+        credential_version: 1,
+        password_origin: "initial",
+        force_change_reason: "activation_required",
+        security_updated_at: new Date(),
+        security_updated_by_type: req.user.role,
+        security_updated_by_id: req.user.id,
         jabatan_struktural: normalizedJabatanStruktural || null,
         kuota_bimbingan: parsedKuota,
         status_keaktifan: normalizedStatus,
@@ -1136,6 +1149,7 @@ exports.createDosen = async (req, res) => {
     }
 
     await initializeAvailabilityForDosen(newDosen, t);
+    await issueInitialActivation({ accountType: "dosen", account: newDosen, actor: req.user, transaction: t });
 
     await t.commit();
 
@@ -1154,6 +1168,9 @@ exports.createDosen = async (req, res) => {
         "continue_existing_supervision",
         "status_effective_at",
         "status_reason",
+        "credential_state",
+        "recovery_email_verified_at",
+        "recovery_email_verification_source",
         "createdAt",
         "updatedAt",
       ],
@@ -1170,7 +1187,7 @@ exports.createDosen = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Dosen berhasil ditambahkan ke grid.",
+      message: "Dosen berhasil ditambahkan dan tautan aktivasi dijadwalkan untuk dikirim.",
       data: created,
     });
   } catch (error) {

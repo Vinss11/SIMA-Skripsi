@@ -18,6 +18,7 @@ function StudentSummary({ data }) {
   const stateTone = snapshot.data_state === "available" ? "green" : snapshot.data_state === "conflicted" ? "red" : "amber";
   return (
     <div className="space-y-4">
+      {data?.refreshing ? <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-800">Snapshot sedang diperbarui di latar belakang. Data terbaru akan tampil setelah proses selesai.</div> : null}
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={stateTone}>{STATE_LABELS[snapshot.data_state] || snapshot.data_state}</Badge>
         <Badge>{snapshot.calculation_status}</Badge>
@@ -49,6 +50,8 @@ function AdminImport({ api, token, onChanged }) {
   const [dataset, setDataset] = useState("course_attempts");
   const [sourceId, setSourceId] = useState("");
   const [periodId, setPeriodId] = useState("");
+  const [programKuliah, setProgramKuliah] = useState("reguler");
+  const [completeCoverage, setCompleteCoverage] = useState(false);
   const [batch, setBatch] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -63,15 +66,21 @@ function AdminImport({ api, token, onChanged }) {
     setPeriodDrafts(Object.fromEntries(loadedPeriods.map((period) => [period.id, {
       tanggal_mulai: period.tanggal_mulai ? String(period.tanggal_mulai).slice(0, 10) : "",
       tanggal_selesai: period.tanggal_selesai ? String(period.tanggal_selesai).slice(0, 10) : "",
+      status: period.status || "draft",
     }])));
   }, [api, token]);
   useEffect(() => { loadMaster().catch((error) => setMessage(error.message)); }, [loadMaster]);
 
   const preview = async (event) => {
     event.preventDefault(); if (!file || !sourceId) return;
+    if (completeCoverage && !periodId) { setMessage("Pilih periode akademik sebelum menyatakan dataset lengkap."); return; }
     setBusy(true); setMessage(""); setBatch(null);
     try {
-      const form = new FormData(); form.append("file", file); form.append("dataset_type", dataset); form.append("schema_version", "v1"); form.append("source_id", sourceId); if (periodId) form.append("periode_akademik_id", periodId);
+      const form = new FormData(); form.append("file", file); form.append("dataset_type", dataset); form.append("schema_version", "v1");
+      form.append("source_id", sourceId); form.append("program_kuliah", programKuliah); form.append("kode_program_studi", "INFORMATIKA");
+      form.append("completeness_scope", JSON.stringify({ scope_type: "program", is_complete: completeCoverage,
+        declared_by_source: completeCoverage, kode_program_studi: "INFORMATIKA", program_kuliah: programKuliah }));
+      if (periodId) form.append("periode_akademik_id", periodId);
       const response = await fetch(`${api}/api/admin/akademik/imports`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": window.crypto?.randomUUID?.() || String(Date.now()) }, body: form });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.message || "Preview gagal."); setBatch(payload.data); setMessage(payload.replayed ? "Preview replay ditemukan." : "Preview berhasil dibuat.");
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
@@ -91,7 +100,7 @@ function AdminImport({ api, token, onChanged }) {
     try {
       const response = await fetch(`${api}/api/admin/akademik/periode/${period.id}`, { method: "PUT",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ tanggal_mulai: draft.tanggal_mulai, tanggal_selesai: draft.tanggal_selesai }) });
+        body: JSON.stringify({ tanggal_mulai: draft.tanggal_mulai, tanggal_selesai: draft.tanggal_selesai, status: draft.status }) });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.message || "Tanggal periode gagal disimpan.");
       setMessage(`Tanggal resmi ${period.kode} berhasil disimpan.`); await loadMaster(); onChanged?.();
     } catch (error) { setMessage(error.message); } finally { setBusy(false); }
@@ -99,11 +108,11 @@ function AdminImport({ api, token, onChanged }) {
   return <div className="space-y-4">
     <div className="rounded-lg border border-[#dce4f4] p-4">
       <div className="mb-3"><h3 className="font-bold text-[#29385f]">Tanggal Resmi Periode Akademik</h3><p className="text-xs text-[#68769a]">Digunakan sebagai acuan transisi semester dan jendela izin lanjut. Isi berdasarkan kalender akademik resmi.</p></div>
-      <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-[#f4f7fc]"><tr><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Mulai</th><th className="px-3 py-2">Selesai</th><th className="px-3 py-2">Aksi</th></tr></thead><tbody>{periods.map((period) => <tr key={period.id} className="border-t"><td className="px-3 py-2 font-semibold">{period.kode}</td><td className="px-3 py-2"><input aria-label={`Tanggal mulai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_mulai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_mulai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><input aria-label={`Tanggal selesai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_selesai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_selesai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><button type="button" disabled={busy} onClick={() => savePeriod(period)} className="rounded bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Simpan</button></td></tr>)}</tbody></table></div>
+      <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-[#f4f7fc]"><tr><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Mulai</th><th className="px-3 py-2">Selesai</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Aksi</th></tr></thead><tbody>{periods.map((period) => { const missingDates = !period.tanggal_mulai || !period.tanggal_selesai; return <tr key={period.id} className={`border-t ${missingDates ? "bg-amber-50" : ""}`}><td className="px-3 py-2 font-semibold">{period.kode}{missingDates ? <span className="ml-2 text-xs text-amber-700">Tanggal wajib dilengkapi</span> : null}</td><td className="px-3 py-2"><input aria-label={`Tanggal mulai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_mulai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_mulai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><input aria-label={`Tanggal selesai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_selesai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_selesai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><select aria-label={`Status ${period.kode}`} value={periodDrafts[period.id]?.status || "draft"} onChange={(event) => updatePeriodDraft(period.id, "status", event.target.value)} className="rounded border p-2"><option value="draft">Draft</option><option value="active">Aktif</option><option value="closed">Ditutup</option></select></td><td className="px-3 py-2"><button type="button" disabled={busy} onClick={() => savePeriod(period)} className="rounded bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Simpan</button></td></tr>; })}</tbody></table></div>
     </div>
-    <form onSubmit={preview} className="grid gap-3 rounded-lg border border-[#dce4f4] p-4 md:grid-cols-2"><select value={dataset} onChange={(e) => setDataset(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="course_attempts">Attempt mata kuliah</option><option value="methodology_status">Status Metodologi</option></select><select required value={sourceId} onChange={(e) => setSourceId(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="">Pilih sumber</option>{sources.map((v) => <option key={v.id} value={v.id}>{v.kode} — {v.nama}</option>)}</select><select value={periodId} onChange={(e) => setPeriodId(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="">Periode dari setiap baris</option>{periods.map((v) => <option key={v.id} value={v.id}>{v.kode}</option>)}</select><input required type="file" accept=".xlsx,.xls,.ods" onChange={(e) => setFile(e.target.files?.[0] || null)} className="rounded-lg border p-2 text-sm"/><button disabled={busy} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? "Memproses…" : "Validasi & preview"}</button></form>
+    <form onSubmit={preview} className="grid gap-3 rounded-lg border border-[#dce4f4] p-4 md:grid-cols-2"><select value={dataset} onChange={(e) => setDataset(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="course_attempts">Attempt mata kuliah</option><option value="methodology_status">Status Metodologi</option></select><select required value={sourceId} onChange={(e) => setSourceId(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="">Pilih sumber</option>{sources.map((v) => <option key={v.id} value={v.id}>{v.kode} — {v.nama}</option>)}</select><select value={periodId} onChange={(e) => { setPeriodId(e.target.value); if (!e.target.value) setCompleteCoverage(false); }} className="rounded-lg border p-2 text-sm"><option value="">Periode dari setiap baris</option>{periods.map((v) => <option key={v.id} value={v.id}>{v.kode}</option>)}</select><select value={programKuliah} onChange={(e) => setProgramKuliah(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="reguler">Reguler</option><option value="internasional">Internasional</option></select><label className={`flex items-center gap-2 rounded-lg border p-2 text-sm ${!periodId ? "cursor-not-allowed bg-slate-50 text-slate-400" : ""}`}><input type="checkbox" disabled={!periodId} checked={completeCoverage} onChange={(e) => setCompleteCoverage(e.target.checked)}/>Sumber menyatakan dataset periode ini lengkap</label><input required type="file" accept=".xlsx,.xls,.ods" onChange={(e) => setFile(e.target.files?.[0] || null)} className="rounded-lg border p-2 text-sm"/><button disabled={busy} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? "Memproses…" : "Validasi & preview"}</button></form>
     {message ? <div className="rounded-lg bg-[#f4f7ff] p-3 text-sm font-semibold text-[#334b7e]">{message}</div> : null}
-    {batch ? <div className="rounded-lg border border-[#dce4f4] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold text-[#29385f]">Batch #{batch.id}</p><p className="text-sm text-[#68769a]">Status {batch.status} · total {batch.counts?.total || 0} · invalid {batch.counts?.invalid || 0}</p></div><button type="button" disabled={busy || batch.status !== "validated"} onClick={commit} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Commit atomik</button></div></div> : null}
+    {batch ? <div className="rounded-lg border border-[#dce4f4] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold text-[#29385f]">Batch #{batch.id}</p><p className="text-sm text-[#68769a]">Status {batch.status} · total {batch.counts?.total || 0} · invalid {batch.counts?.invalid || 0}</p>{batch.completeness_scope?.is_complete ? <p className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">Scope yang akan direkam saat commit: program {batch.completeness_scope.kode_program_studi}/{batch.completeness_scope.program_kuliah}, periode {periods.find((item) => Number(item.id) === Number(batch.periode_akademik_id))?.kode || `#${batch.periode_akademik_id}`}, tipe {batch.completeness_scope.scope_type}.</p> : <p className="mt-2 text-xs text-slate-500">Batch ini tidak mendeklarasikan dataset lengkap.</p>}</div><button type="button" disabled={busy || batch.status !== "validated"} onClick={commit} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Commit atomik</button></div></div> : null}
     <AdminOperations api={api} token={token} onMessage={setMessage}/>
   </div>;
 }

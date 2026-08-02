@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import LoginPage from "./pages/LoginPage";
 import PendaftaranJalurPage from "./pages/PendaftaranJalurPage";
 import PendaftaranSuccessPage from "./pages/PendaftaranSuccessPage";
@@ -8,411 +8,92 @@ import AdminDashboardPage from "./pages/AdminDashboardPage";
 import SekretarisDashboardPage from "./pages/SekretarisDashboardPage";
 import DosenDashboardPage from "./pages/DosenDashboardPage";
 import ProfilePage from "./pages/ProfilePage";
-import Swal from "sweetalert2";
-import "sweetalert2/dist/sweetalert2.min.css";
+import ForcedPasswordChangePage from "./pages/ForcedPasswordChangePage";
+import PasswordRecoveryPage from "./pages/PasswordRecoveryPage";
 
-const AUTH_STORAGE_KEY = "sima_auth_v1";
 const PRODUCTION_API_BASE_URL = "https://sima-skripsi-rz1j.vercel.app";
 const IS_LOCAL_FRONTEND = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
-const API_BASE_URL =
-  process.env.REACT_APP_API_BASE_URL ||
-  (IS_LOCAL_FRONTEND ? "http://localhost:3000" : PRODUCTION_API_BASE_URL);
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || (IS_LOCAL_FRONTEND ? "http://localhost:3000" : PRODUCTION_API_BASE_URL);
 
-function decodeJwtPayload(token) {
-  if (!token || typeof token !== "string") return null;
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
-
-  try {
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-    return JSON.parse(window.atob(padded));
-  } catch (error) {
-    return null;
-  }
-}
-
-function isTokenExpired(token) {
-  const payload = decodeJwtPayload(token);
-  if (!payload?.exp) return false;
-  const nowInSeconds = Math.floor(Date.now() / 1000);
-  return payload.exp <= nowInSeconds;
-}
-
-function parseAuth(raw) {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed?.token || !parsed?.user?.role) return null;
-    if (isTokenExpired(parsed.token)) return null;
-    return parsed;
-  } catch (error) {
-    return null;
-  }
-}
-
-function loadAuth() {
-  return parseAuth(sessionStorage.getItem(AUTH_STORAGE_KEY)) || parseAuth(localStorage.getItem(AUTH_STORAGE_KEY));
-}
-
-function clearAuthStorage() {
-  localStorage.removeItem(AUTH_STORAGE_KEY);
-  sessionStorage.removeItem(AUTH_STORAGE_KEY);
-}
-
-function updateStoredAuthPromptFlag(token, promptFlag) {
-  const updateStorage = (storage) => {
-    const raw = storage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return false;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed?.token || parsed.token !== token) return false;
-      const next = { ...parsed, prompt_change_password: promptFlag };
-      storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
-      return true;
-    } catch (error) {
-      return false;
-    }
-  };
-
-  const localUpdated = updateStorage(localStorage);
-  const sessionUpdated = updateStorage(sessionStorage);
-  return localUpdated || sessionUpdated;
-}
-
-function updateStoredAuthUser(token, user) {
-  const updateStorage = (storage) => {
-    const raw = storage.getItem(AUTH_STORAGE_KEY);
-    if (!raw) return false;
-
-    try {
-      const parsed = JSON.parse(raw);
-      if (!parsed?.token || parsed.token !== token) return false;
-      const next = { ...parsed, user };
-      storage.setItem(AUTH_STORAGE_KEY, JSON.stringify(next));
-      return true;
-    } catch (error) {
-      return false;
-    }
-  };
-
-  const localUpdated = updateStorage(localStorage);
-  const sessionUpdated = updateStorage(sessionStorage);
-  return localUpdated || sessionUpdated;
-}
-
-function shallowEqualObjects(a, b) {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) return false;
-  return aKeys.every((key) => {
-    if (Object.is(a[key], b[key])) return true;
-    if (Array.isArray(a[key]) && Array.isArray(b[key])) {
-      return a[key].length === b[key].length && a[key].every((item, index) => Object.is(item, b[key][index]));
-    }
-    return false;
-  });
-}
-
-function saveAuth(authPayload, rememberMe) {
-  const value = JSON.stringify(authPayload);
-  sessionStorage.setItem(AUTH_STORAGE_KEY, value);
-  if (rememberMe) {
-    localStorage.setItem(AUTH_STORAGE_KEY, value);
-    return;
-  }
-  localStorage.removeItem(AUTH_STORAGE_KEY);
+function initialResetToken() {
+  if (!window.location.hash.startsWith("#reset-password")) return "";
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const token = params.get("token") || "";
+  // Remove the secret before any other component, telemetry, or navigation can observe it.
+  window.history.replaceState({}, document.title, "/");
+  return token;
 }
 
 function App() {
-  const [auth, setAuth] = useState(() => loadAuth());
-  const [showDefaultPasswordToast, setShowDefaultPasswordToast] = useState(false);
+  // Access tokens intentionally live only in memory. Reloading the tab requires
+  // login again until the HttpOnly refresh-cookie phase is introduced.
+  const [auth, setAuth] = useState(null);
   const [authScreen, setAuthScreen] = useState("login");
   const [registrationData, setRegistrationData] = useState(null);
-  const [registrationLoginLoading, setRegistrationLoginLoading] = useState(false);
-  const [registrationLoginError, setRegistrationLoginError] = useState("");
   const [showProfile, setShowProfile] = useState(false);
-  const defaultPasswordToastTokenRef = useRef("");
+  const [resetToken, setResetToken] = useState(initialResetToken);
 
-  const session = useMemo(
-    () => ({
-      token: auth?.token || "",
-      user: auth?.user || null,
-      prompt_change_password: auth?.prompt_change_password || false,
-    }),
-    [auth]
-  );
+  const session = useMemo(() => ({ token: auth?.token || "", user: auth?.user || null,
+    credential_state: auth?.credential_state || null, next_action: auth?.next_action || null,
+    prompt_change_password: Boolean(auth?.prompt_change_password) }), [auth]);
+  const restricted = Boolean(session.user) && (session.prompt_change_password || session.next_action === "change_password" || ["default", "temporary"].includes(session.credential_state));
 
-  const handleLoginSuccess = useCallback(({ token, user, prompt_change_password }, rememberMe) => {
-    const payload = { token, user, prompt_change_password };
-    saveAuth(payload, rememberMe);
-    setAuth(payload);
-    setAuthScreen("login");
-    setShowProfile(false);
-  }, []);
-
-  const handleLogout = useCallback(() => {
-    clearAuthStorage();
-    defaultPasswordToastTokenRef.current = "";
-    setShowDefaultPasswordToast(false);
-    setShowProfile(false);
-    setAuth(null);
-  }, []);
-
-  const handleSessionExpired = useCallback(() => {
-    clearAuthStorage();
-    defaultPasswordToastTokenRef.current = "";
-    setShowDefaultPasswordToast(false);
-    setShowProfile(false);
-    setAuth(null);
-    setAuthScreen("login");
-  }, []);
-
-  const handlePasswordChanged = useCallback(() => {
-    setAuth((prev) => {
-      if (!prev?.token) return prev;
-      const next = { ...prev, prompt_change_password: false };
-      defaultPasswordToastTokenRef.current = prev.token;
-      updateStoredAuthPromptFlag(prev.token, false);
-      return next;
-    });
-  }, []);
-
-  const handleOpenRegisteredMahasiswa = useCallback(async () => {
-    const username = String(registrationData?.akun_login?.username || registrationData?.registered_nim || "").trim();
-    const defaultPassword = String(registrationData?.akun_login?.default_password || "").trim();
-
-    if (!username || !defaultPassword) {
-      setAuthScreen("login");
-      return;
-    }
-
-    try {
-      setRegistrationLoginLoading(true);
-      setRegistrationLoginError("");
-      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          username,
-          password: defaultPassword,
-        }),
-      });
-
-      const data = await response.json().catch(() => null);
-      if (!response.ok || !data?.success || !data?.data?.token || !data?.data?.user) {
-        setRegistrationLoginError(data?.message || "Gagal masuk otomatis. Silakan coba login dari halaman utama.");
-        return;
-      }
-
-      if (data.data.user.role !== "mahasiswa") {
-        setRegistrationLoginError("Akun ini bukan akun mahasiswa.");
-        return;
-      }
-
-      handleLoginSuccess(
-        {
-          token: data.data.token,
-          user: data.data.user,
-          prompt_change_password: data.data.prompt_change_password,
-        },
-        true
-      );
-    } catch (error) {
-      setRegistrationLoginError("Tidak bisa terhubung ke server.");
-    } finally {
-      setRegistrationLoginLoading(false);
-    }
-  }, [registrationData, handleLoginSuccess]);
+  const clearSession = useCallback(() => { setShowProfile(false); setAuth(null); setAuthScreen("login"); }, []);
+  const handleLoginSuccess = useCallback((payload) => { setAuth(payload); setAuthScreen("login"); setShowProfile(false); }, []);
+  const handleLogout = useCallback(async () => {
+    const token = auth?.token;
+    clearSession();
+    try { if (token) await fetch(`${API_BASE_URL}/api/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }); } catch (_) { /* local logout remains safe */ }
+    try { new BroadcastChannel("sima-auth").postMessage({ type: "logout" }); } catch (_) { /* unsupported browser */ }
+  }, [auth?.token, clearSession]);
+  const handleSessionExpired = useCallback(() => clearSession(), [clearSession]);
+  const handlePasswordChanged = useCallback((nextAuth) => { if (nextAuth?.token && nextAuth?.user) setAuth(nextAuth); }, []);
 
   useEffect(() => {
-    if (session.user && session.prompt_change_password && defaultPasswordToastTokenRef.current !== session.token) {
-      defaultPasswordToastTokenRef.current = session.token;
-      setShowDefaultPasswordToast(true);
-      return;
-    }
-
-    if (!session.user) {
-      defaultPasswordToastTokenRef.current = "";
-      setShowDefaultPasswordToast(false);
-    }
-  }, [session.user, session.prompt_change_password, session.token]);
+    let channel;
+    try { channel = new BroadcastChannel("sima-auth"); channel.onmessage = (event) => { if (event.data?.type === "logout") clearSession(); }; } catch (_) { return undefined; }
+    return () => channel?.close();
+  }, [clearSession]);
 
   useEffect(() => {
-    if (!showDefaultPasswordToast) return;
-
-    Swal.fire({
-      toast: true,
-      position: "top-end",
-      icon: "warning",
-      title: "Password Masih Default",
-      text: "Demi keamanan akun, segera ganti password default Anda di menu ubah password.",
-      showConfirmButton: false,
-      showCloseButton: true,
-      timer: 7000,
-      timerProgressBar: true,
-      didOpen: (toast) => {
-        toast.addEventListener("mouseenter", Swal.stopTimer);
-        toast.addEventListener("mouseleave", Swal.resumeTimer);
-      },
-    }).finally(() => {
-      setShowDefaultPasswordToast(false);
-    });
-  }, [showDefaultPasswordToast]);
-
-  useEffect(() => {
-    if (!auth?.token) return undefined;
-
+    if (!auth?.token || restricted) return undefined;
     let cancelled = false;
     const refreshProfile = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/auth/profile`, {
-          headers: {
-            Authorization: `Bearer ${auth.token}`,
-            "Content-Type": "application/json",
-          },
-        });
+        const response = await fetch(`${API_BASE_URL}/api/auth/profile`, { headers: { Authorization: `Bearer ${auth.token}` } });
         const payload = await response.json().catch(() => null);
-        if (!response.ok || !payload?.success || !payload?.data?.user) {
-          if (response.status === 401 || response.status === 403) {
-            handleSessionExpired();
-          }
-          return;
-        }
-
-        if (cancelled) return;
-        setAuth((prev) => {
-          if (!prev?.token || prev.token !== auth.token) return prev;
-          const nextUser = {
-            ...prev.user,
-            ...payload.data.user,
-          };
-          if (shallowEqualObjects(prev.user, nextUser)) return prev;
-          const next = { ...prev, user: nextUser };
-          updateStoredAuthUser(prev.token, nextUser);
-          return next;
-        });
-      } catch (profileError) {
-        // Profile refresh is a sync helper; keep the current session if the network hiccups.
-      }
+        if ([401, 403].includes(response.status)) { if (payload?.code === "PASSWORD_CHANGE_REQUIRED") return; handleSessionExpired(); return; }
+        if (!response.ok || !payload?.data?.user || cancelled) return;
+        setAuth((previous) => previous?.token === auth.token ? { ...previous, user: { ...previous.user, ...payload.data.user } } : previous);
+      } catch (_) { /* keep memory session during transient network errors */ }
     };
+    refreshProfile(); window.addEventListener("focus", refreshProfile);
+    return () => { cancelled = true; window.removeEventListener("focus", refreshProfile); };
+  }, [auth?.token, restricted, handleSessionExpired]);
 
-    refreshProfile();
-    window.addEventListener("focus", refreshProfile);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", refreshProfile);
-    };
-  }, [auth?.token, handleSessionExpired]);
+  if (resetToken) {
+    return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="reset" resetToken={resetToken} onComplete={() => { setResetToken(""); window.history.replaceState({}, document.title, "/"); setAuthScreen("login"); }} />;
+  }
 
   if (!session.user) {
-    if (authScreen === "register") {
-      return (
-        <PendaftaranJalurPage
-          apiBaseUrl={API_BASE_URL}
-          onBack={() => setAuthScreen("login")}
-          onRegisterSuccess={(result) => {
-            setRegistrationData(result || null);
-            setRegistrationLoginError("");
-            setAuthScreen("register-success");
-          }}
-        />
-      );
-    }
-
-    if (authScreen === "register-success") {
-      return (
-        <PendaftaranSuccessPage
-          registrationData={registrationData}
-          isOpeningLogin={registrationLoginLoading}
-          loginError={registrationLoginError}
-          onOpenMahasiswaBaruLogin={handleOpenRegisteredMahasiswa}
-        />
-      );
-    }
-
-    return (
-      <LoginPage
-        apiBaseUrl={API_BASE_URL}
-        onLoginSuccess={handleLoginSuccess}
-        onOpenRegistration={() => setAuthScreen("register")}
-      />
-    );
+    if (authScreen === "forgot") return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="forgot" onBack={() => setAuthScreen("login")} />;
+    if (authScreen === "register") return <PendaftaranJalurPage apiBaseUrl={API_BASE_URL} onBack={() => setAuthScreen("login")}
+      onRegisterSuccess={(result) => { setRegistrationData(result || null); setAuthScreen("register-success"); }} />;
+    if (authScreen === "register-success") return <PendaftaranSuccessPage registrationData={registrationData} onOpenMahasiswaBaruLogin={() => setAuthScreen("login")} />;
+    return <LoginPage apiBaseUrl={API_BASE_URL} onLoginSuccess={handleLoginSuccess} onOpenRegistration={() => setAuthScreen("register")} onForgotPassword={() => setAuthScreen("forgot")} />;
   }
+
+  if (restricted) return <ForcedPasswordChangePage session={session} apiBaseUrl={API_BASE_URL} onPasswordChanged={handlePasswordChanged} onLogout={handleLogout} />;
 
   let rolePage = <RoleDummyPage session={session} onLogout={handleLogout} />;
-
-  if (session.user.role === "mahasiswa") {
-    rolePage = (
-      <DashboardPage
-        session={session}
-        apiBaseUrl={API_BASE_URL}
-        onLogout={handleLogout}
-        onSessionExpired={handleSessionExpired}
-        onPasswordChanged={handlePasswordChanged}
-        onOpenProfile={() => setShowProfile(true)}
-      />
-    );
-  }
-  if (session.user.role === "admin") {
-    rolePage = (
-      <AdminDashboardPage
-        session={session}
-        apiBaseUrl={API_BASE_URL}
-        onLogout={handleLogout}
-        onSessionExpired={handleSessionExpired}
-        onOpenProfile={() => setShowProfile(true)}
-      />
-    );
-  }
-  if (session.user.role === "dosen") {
-    const capabilities = Array.isArray(session.user.capabilities) ? session.user.capabilities : [];
-    rolePage = (
-      <DosenDashboardPage
-        session={session}
-        apiBaseUrl={API_BASE_URL}
-        onLogout={handleLogout}
-        onSessionExpired={handleSessionExpired}
-        isSekretaris={capabilities.includes("sekretaris_prodi")}
-        onOpenProfile={() => setShowProfile(true)}
-      />
-    );
-  }
-  if (session.user.role === "sekretaris_prodi") {
-    rolePage = (
-      <SekretarisDashboardPage
-        session={session}
-        apiBaseUrl={API_BASE_URL}
-        onLogout={handleLogout}
-        onSessionExpired={handleSessionExpired}
-        onOpenProfile={() => setShowProfile(true)}
-      />
-    );
-  }
-
-  if (showProfile) {
-    return (
-      <ProfilePage
-        session={session}
-        apiBaseUrl={API_BASE_URL}
-        onBack={() => setShowProfile(false)}
-        onLogout={handleLogout}
-        onSessionExpired={handleSessionExpired}
-        onPasswordChanged={handlePasswordChanged}
-      />
-    );
-  }
-
-  return (
-    <>
-      {rolePage}
-    </>
-  );
+  const common = { session, apiBaseUrl: API_BASE_URL, onLogout: handleLogout, onSessionExpired: handleSessionExpired, onOpenProfile: () => setShowProfile(true) };
+  if (session.user.role === "mahasiswa") rolePage = <DashboardPage {...common} onPasswordChanged={handlePasswordChanged} />;
+  if (session.user.role === "admin") rolePage = <AdminDashboardPage {...common} />;
+  if (session.user.role === "dosen") rolePage = <DosenDashboardPage {...common} isSekretaris={(session.user.capabilities || []).includes("sekretaris_prodi")} />;
+  if (session.user.role === "sekretaris_prodi") rolePage = <SekretarisDashboardPage {...common} />;
+  if (showProfile) return <ProfilePage session={session} apiBaseUrl={API_BASE_URL} onBack={() => setShowProfile(false)} onLogout={handleLogout}
+    onSessionExpired={handleSessionExpired} onPasswordChanged={handlePasswordChanged} />;
+  return rolePage;
 }
 
 export default App;

@@ -600,13 +600,13 @@ Alias menunjuk satu mata kuliah kanonik yang sama, sedangkan ekuivalensi merupak
 
 **Status: Final**
 
-Akun mahasiswa tersedia setelah data mahasiswa di-import. Password awal ditandai sebagai password default. Nilai literal password awal tidak ditetapkan dalam dokumen ini dan harus berasal dari konfigurasi yang aman.
+Akun tersedia setelah data master di-import, tetapi tidak diberi shared default password. Password internal awal bersifat acak dan tidak dapat digunakan; aktivasi dilakukan melalui tautan sekali pakai yang dikirim hanya ke kanal terverifikasi.
 
 ### BR-AKUN-002 — Wajib ganti password
 
 **Status: Final**
 
-Pengguna dengan password default:
+Pengguna dengan `credential_state` `default` atau `temporary`:
 
 - dapat login;
 - hanya dapat mengakses ganti password dan logout;
@@ -618,7 +618,25 @@ Pembatasan harus diterapkan pada frontend dan middleware backend.
 
 **Status: Final**
 
-Sistem menyediakan lupa/reset password. Password sementara hasil reset kembali mewajibkan pengguna mengganti password sebelum menggunakan aplikasi.
+Sistem menyediakan lupa/reset password dengan response publik generik. Pengguna memilih password baru melalui token sekali pakai yang disimpan sebagai hash, mempunyai masa berlaku, dikonsumsi secara atomik, dan mencabut seluruh sesi lama. Sistem tidak mengirim atau menampilkan password sementara.
+
+### BR-AKUN-004 â€” Sesi dan pencabutan
+
+**Status: Final**
+
+Setiap access token wajib menunjuk sesi server-side dan versi kredensial akun. Akun, sesi, expiry, dan versi kredensial diperiksa pada setiap request. Logout mencabut sesi berjalan; logout-all, ganti password, reset password, dan reset oleh Admin mencabut sesi yang relevan.
+
+### BR-AKUN-005 â€” Kanal pemulihan dan kewenangan Admin
+
+**Status: Final**
+
+Tautan pemulihan hanya boleh dikirim ke email/kanal yang telah diverifikasi atau berasal dari trusted source yang keputusan serta waktu verifikasinya tercatat. Admin hanya dapat menerbitkan tautan reset untuk Mahasiswa dan Dosen, wajib memberi alasan, dan tidak pernah menerima password atau token. Reset Admin dan Sekretaris Prodi tidak tersedia melalui flow ini.
+
+### BR-AKUN-006 â€” Kebijakan password
+
+**Status: Final**
+
+Password baru minimal 10 karakter dan maksimal 72 byte UTF-8 sebelum bcrypt. Password tidak di-trim, dipotong, atau dinormalisasi diam-diam; password yang sama dengan password aktif, terlalu umum, atau memuat identifier akun ditolak.
 
 ## 17. Bimbingan
 

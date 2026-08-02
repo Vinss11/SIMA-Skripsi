@@ -8,7 +8,6 @@ function PendaftaranSuccessPage({
   onOpenMahasiswaBaruLogin,
 }) {
   const username = registrationData?.akun_login?.username || "-";
-  const defaultPassword = registrationData?.akun_login?.default_password || null;
   const isNewAccount = Boolean(registrationData?.akun_login?.prompt_change_password);
   const groupMembers = Array.isArray(registrationData?.anggota_kelompok)
     ? registrationData.anggota_kelompok
@@ -44,18 +43,12 @@ function PendaftaranSuccessPage({
               <p>
                 Username: <span className="font-semibold">{username}</span>
               </p>
-              {defaultPassword ? (
-                <p>
-                  Password default: <span className="font-semibold">{defaultPassword}</span>
-                </p>
-              ) : (
-                <p>Gunakan password akun mahasiswa yang sudah ada.</p>
-              )}
+              <p>Gunakan password akun mahasiswa yang sudah ada. Untuk akun baru, ikuti tautan aktivasi yang dikirim melalui kanal terverifikasi.</p>
             </div>
             {isNewAccount ? (
               <div className="mt-4 flex items-start gap-2 rounded-lg border border-[#bde0cb] bg-white/70 px-3 py-2 text-xs font-semibold text-[#2f6a4c] sm:text-sm">
                 <ShieldCheck className="mt-0.5 h-4 w-4 flex-none" />
-                <p>Setelah berhasil masuk, mahasiswa wajib mengganti password sebelum mengakses menu lain.</p>
+                <p>Password atau token aktivasi tidak pernah ditampilkan pada halaman ini.</p>
               </div>
             ) : null}
           </div>
@@ -88,7 +81,7 @@ function PendaftaranSuccessPage({
               className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <LogIn className="h-4 w-4" />
-              {isOpeningLogin ? "Memproses..." : isNewAccount ? "Lanjut Ganti Password" : "Login Mahasiswa"}
+              {isOpeningLogin ? "Memproses..." : "Kembali ke Login"}
             </button>
             {loginError ? (
               <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">

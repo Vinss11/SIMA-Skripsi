@@ -5,13 +5,10 @@ import {
   Bell,
   CalendarDays,
   CheckCircle2,
-  Eye,
-  EyeOff,
   Clock3,
   FileText,
   FolderOpen,
   GraduationCap,
-  KeyRound,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -1372,93 +1369,7 @@ function IzinLanjutSemesterPanel({
   );
 }
 
-function ForceChangePasswordCard({
-  session,
-  newPassword,
-  confirmPassword,
-  showNewPassword,
-  showConfirmPassword,
-  isSubmitting,
-  errorMessage,
-  onFieldChange,
-  onToggleNewPassword,
-  onToggleConfirmPassword,
-  onSubmit,
-}) {
-  return (
-    <section className="rounded-xl border border-[#f4d5a0] bg-[#fff7e9] p-6 shadow-sm">
-      <div className="flex items-start gap-3">
-        <ShieldAlert className="mt-0.5 h-6 w-6 text-[#c98300]" />
-        <div>
-          <h3 className="text-xl font-black text-[#6d4700]">Wajib Ganti Password</h3>
-          <p className="mt-1 text-sm text-[#7c5f1c]">
-            Untuk keamanan akun, Anda harus mengganti password default sebelum melanjutkan ke menu lain.
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-lg border border-[#ecd3a7] bg-white/70 px-4 py-3 text-sm text-[#684d1b]">
-        Username akun Anda adalah NIM: <span className="font-bold">{session?.user?.username || "-"}</span>
-      </div>
-
-      <form onSubmit={onSubmit} className="mt-4 space-y-4">
-        <label className="group relative block">
-          <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#7c6b42]" />
-          <input
-            type={showNewPassword ? "text" : "password"}
-            name="newPassword"
-            placeholder="Password baru (minimal 6 karakter)"
-            value={newPassword}
-            onChange={onFieldChange}
-            className="h-12 w-full rounded-xl border border-[#d4d9e9] bg-white pl-12 pr-12 text-[#1a2648] outline-none transition focus:border-[#2f63e3] focus:ring-4 focus:ring-[#2f63e3]/15"
-          />
-          <button
-            type="button"
-            onClick={onToggleNewPassword}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-[#5a688d] transition hover:text-[#2b3f74]"
-          >
-            {showNewPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
-        </label>
-
-        <label className="group relative block">
-          <KeyRound className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-[#7c6b42]" />
-          <input
-            type={showConfirmPassword ? "text" : "password"}
-            name="confirmPassword"
-            placeholder="Konfirmasi password baru"
-            value={confirmPassword}
-            onChange={onFieldChange}
-            className="h-12 w-full rounded-xl border border-[#d4d9e9] bg-white pl-12 pr-12 text-[#1a2648] outline-none transition focus:border-[#2f63e3] focus:ring-4 focus:ring-[#2f63e3]/15"
-          />
-          <button
-            type="button"
-            onClick={onToggleConfirmPassword}
-            className="absolute right-4 top-1/2 -translate-y-1/2 text-[#5a688d] transition hover:text-[#2b3f74]"
-          >
-            {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-          </button>
-        </label>
-
-        {errorMessage ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{errorMessage}</div>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="rounded-xl bg-[#2f63e3] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isSubmitting ? "Menyimpan..." : "Simpan Password Baru"}
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-}
-
-function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPasswordChanged, onOpenProfile }) {
+function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [refreshTick, setRefreshTick] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1478,14 +1389,6 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
   const [ulangAlihSubmitting, setUlangAlihSubmitting] = useState(false);
   const [ulangAlihError, setUlangAlihError] = useState("");
   const [ulangAlihSuccess, setUlangAlihSuccess] = useState("");
-  const [passwordForm, setPasswordForm] = useState({
-    newPassword: "",
-    confirmPassword: "",
-  });
-  const [passwordError, setPasswordError] = useState("");
-  const [savingPassword, setSavingPassword] = useState(false);
-  const [showNewPassword, setShowNewPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const sessionExpiredRef = useRef(false);
   const pamitIdempotencyRef = useRef(null);
   const changeRegistrationIdempotencyRef = useRef(null);
@@ -1766,75 +1669,6 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
       setIzinLanjutSuccess("");
     }
   }, [isHardLockedBySemester]);
-
-  const handlePasswordFieldChange = (event) => {
-    const { name, value } = event.target;
-    setPasswordForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleChangePassword = async (event) => {
-    event.preventDefault();
-    setPasswordError("");
-
-    if (!passwordForm.newPassword || !passwordForm.confirmPassword) {
-      setPasswordError("Semua field password wajib diisi.");
-      return;
-    }
-
-    if (passwordForm.newPassword.length < 6) {
-      setPasswordError("Password baru minimal 6 karakter.");
-      return;
-    }
-
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setPasswordError("Konfirmasi password baru tidak sama.");
-      return;
-    }
-
-    try {
-      setSavingPassword(true);
-      const response = await fetch(`${apiBaseUrl}/api/auth/change-password`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          oldPassword: session?.user?.username || "",
-          newPassword: passwordForm.newPassword,
-        }),
-      });
-
-      const data = await response.json().catch(() => null);
-
-      if (response.status === 401 || response.status === 403) {
-        const lowerMessage = String(data?.message || "").toLowerCase();
-        const isTokenError =
-          lowerMessage.includes("token tidak valid") ||
-          lowerMessage.includes("token tidak ditemukan") ||
-          lowerMessage.includes("kadaluarsa");
-        if (isTokenError) {
-          onSessionExpired?.();
-          return;
-        }
-      }
-
-      if (!response.ok || !data?.success) {
-        setPasswordError(data?.message || "Gagal mengganti password.");
-        return;
-      }
-
-      setPasswordForm({ newPassword: "", confirmPassword: "" });
-      setShowNewPassword(false);
-      setShowConfirmPassword(false);
-      onPasswordChanged?.();
-      setActiveTab("pengajuan");
-    } catch (requestError) {
-      setPasswordError("Tidak dapat terhubung ke server.");
-    } finally {
-      setSavingPassword(false);
-    }
-  };
 
   const handleSubmitIzinLanjut = async () => {
     setIzinLanjutError("");
@@ -2121,22 +1955,6 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onPass
             className="min-w-0 flex h-full min-h-0 flex-col gap-4 overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             style={{ msOverflowStyle: "none" }}
           >
-            {mustChangePassword ? (
-              <ForceChangePasswordCard
-                session={session}
-                newPassword={passwordForm.newPassword}
-                confirmPassword={passwordForm.confirmPassword}
-                showNewPassword={showNewPassword}
-                showConfirmPassword={showConfirmPassword}
-                isSubmitting={savingPassword}
-                errorMessage={passwordError}
-                onFieldChange={handlePasswordFieldChange}
-                onToggleNewPassword={() => setShowNewPassword((prev) => !prev)}
-                onToggleConfirmPassword={() => setShowConfirmPassword((prev) => !prev)}
-                onSubmit={handleChangePassword}
-              />
-            ) : null}
-
             {!mustChangePassword && activeTab !== "bimbingan" ? (
               <MenuSectionHeader
                 icon={activeTabHeader.icon}

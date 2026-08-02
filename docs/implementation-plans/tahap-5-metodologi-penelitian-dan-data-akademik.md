@@ -128,7 +128,7 @@ Bukti kelengkapan disimpan pada `CakupanDatasetAkademik`, bukan hanya metadata b
 - `dataset_type`;
 - mahasiswa nullable untuk cakupan cohort/global;
 - periode akademik;
-- `scope_type`: `student`, `cohort`, `program`, atau `global`;
+- `scope_type`: `student`, `cohort`, atau `program`. Scope `global` belum didukung agar deklarasi kelengkapan selalu memiliki batas program studi/program kuliah yang eksplisit;
 - scope program studi/program kuliah bila relevan;
 - `is_complete`;
 - `declared_by_source` dan `declared_at`;
@@ -1079,18 +1079,18 @@ Keputusan baru wajib memperbarui `aturan-bisnis-simps.md`, data dictionary, temp
 Mode `enforced` ditolak oleh API dan dievaluasi sebagai `shadow` bila terdapat data legacy. Aktivasi hanya boleh dibuka setelah keputusan bisnis final, seluruh consumer memakai `effective_decision` sebagai gate yang konsisten, pengujian endpoint lengkap lulus, dan UAT disetujui.
 
 - [ ] **Paket 0 — Parsial.** Baseline dan kontrak missing-data tersedia; threshold, precedence sumber, approval koreksi sensitif, serta kebijakan fail-open/fail-closed belum disahkan.
-- [ ] **Paket 1 — Parsial.** Model semester, kurikulum, mata kuliah, mapping, dan form tanggal tersedia; tiga periode legacy masih menunggu tanggal kalender akademik resmi.
-- [x] **Paket 2 — Selesai.** Attempt dan histori Metodologi mempunyai version lineage, cutoff, constraint active-version, koreksi, serta revoke yang konsisten.
-- [x] **Paket 3 — Selesai.** Upload, template, preview server-side, raw row, revalidation, conflict cleanup, commit atomik, exact replay, fallback key, dan report aman tersedia.
+- [ ] **Paket 1 — Parsial.** Model semester, kurikulum, mata kuliah, mapping, serta form Admin untuk tanggal resmi dan status periode tersedia; tiga periode legacy masih menunggu tanggal kalender akademik resmi yang tidak boleh diisi melalui asumsi sistem.
+- [x] **Paket 2 — Selesai.** Attempt dan histori Metodologi mempunyai version lineage, `academic_effective_at` yang terpisah dari `recorded_at`, constraint active-version, koreksi, serta revoke yang konsisten. Late import tetap masuk ke snapshot periode akademik yang benar.
+- [x] **Paket 3 — Selesai.** Upload, template, preview server-side, raw row, revalidation, conflict cleanup, commit atomik, exact replay, fallback key, scope program kuliah, dan report aman tersedia. Deklarasi dataset lengkap mewajibkan periode, membatasi tipe scope, serta menampilkan scope coverage sebelum commit.
 - [x] **Paket 4 — Selesai.** Koreksi tervalidasi dan keputusan konflik `keep_admin_correction`, `accept_source`, `create_manual_correction`, serta `dismiss_false_positive` mengubah fakta/raw row dan status batch secara konsisten.
-- [x] **Paket 5 — Selesai.** Snapshot memakai cutoff historis dan version-at-cutoff, pergantian current transaksional, job checksum berbasis revision fakta, serta worker outbox `SKIP LOCKED` dengan retry/backoff.
+- [x] **Paket 5 — Selesai.** Snapshot `current` dan `period_end` dipisahkan; snapshot historis tidak menggantikan current. Snapshot current mensyaratkan coverage periode akademik aktif, termasuk saat mahasiswa belum mempunyai attempt; periode aktif yang tidak dapat ditentukan menghasilkan `incomplete`. Scope cohort hanya berlaku bila atribut angkatan mahasiswa dan deklarasi coverage cocok. Ekuivalensi berarah, cutoff akademik, checksum revision fakta, serta worker seluruh event outbox dengan `SKIP LOCKED` dan retry/backoff tersedia. Endpoint GET hanya membaca snapshot dan mengantrekan refresh bila stale/belum tersedia.
 - [ ] **Paket 6 — Parsial.** Evaluated result, effective decision, reason code, dan persistence tersedia; enforcement sengaja dinonaktifkan.
 - [ ] **Paket 7 — Parsial.** Penelitian, ulang/alih, dan izin lanjut menerima evaluasi akademik advisory; gate enforced belum diaktifkan.
 - [ ] **Paket 8 — Parsial.** Checklist pendadaran membaca eligibility terpusat, tetapi threshold resmi dan UAT belum tersedia.
 - [x] **Paket 9 — Selesai.** API master, import, correction, conflict, snapshot/job/outbox, rule-set, mahasiswa, dan monitoring memiliki role authorization.
-- [ ] **Paket 10 — Parsial.** UI mahasiswa, monitoring Sekprodi, import, master, kurikulum, konflik, koreksi/revoke, rule, jobs/outbox, batch, dan report tersedia; automated frontend interaction test belum lengkap.
+- [ ] **Paket 10 — Parsial.** UI mahasiswa, monitoring Sekprodi, import, master, kurikulum, konflik, koreksi/revoke, rule, jobs/outbox, batch, dan report tersedia. Form Admin menyorot periode tanpa tanggal resmi, dapat menetapkan status periode, menonaktifkan deklarasi completeness sebelum periode dipilih, dan menampilkan preview scope; automated frontend interaction test belum lengkap.
 - [ ] **Paket 11 — Parsial.** Formula quarantine, sanitasi report, batas ukuran, authorization, rate limit, dan audit lineage tersedia; kebijakan retention/enkripsi institusi serta security UAT belum disahkan.
 - [x] **Paket 12 — Selesai.** `ingestAcademicDataset()` memakai transaksi dan pipeline preview/validation yang sama dengan import file.
-- [ ] **Paket 13 — Parsial.** Rekonsiliasi dry-run/execute tersedia; tiga tanggal periode akademik resmi masih menjadi finding operasional.
+- [ ] **Paket 13 — Parsial.** Rekonsiliasi dry-run/execute tersedia dan memeriksa scope completeness ilegal serta cohort tanpa atribut. Tiga tanggal periode akademik resmi masih menjadi satu-satunya kelompok finding operasional.
 
 Tahap 5 belum boleh dinyatakan siap produksi atau siap enforcement sampai seluruh item parsial yang menjadi gate operasional diselesaikan.

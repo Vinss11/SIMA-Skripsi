@@ -1,10 +1,11 @@
 "use strict";
 const bcrypt = require("bcrypt");
+const crypto = require("crypto");
 
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface) {
-    const hashed = await bcrypt.hash("12345678", 10);
+    const hashed = await bcrypt.hash(crypto.randomBytes(48).toString("base64url"), 10);
     await queryInterface.bulkUpdate(
       "Dosens",
       {

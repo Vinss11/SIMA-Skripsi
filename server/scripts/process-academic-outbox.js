@@ -14,12 +14,17 @@ async function processAcademicOutboxOnce({ now = new Date() } = {}) {
   try {
     return await db.sequelize.transaction(async (transaction) => {
       const outbox = await db.OutboxAkademik.findOne({
-        where: { event_type: "academic.snapshot.requested", status: "pending", available_at: { [Op.lte]: now } },
+        where: { event_type: { [Op.in]: ["academic.snapshot.requested", "academic.import.committed", "academic.correction.created"] },
+          status: "pending", available_at: { [Op.lte]: now } },
         order: [["available_at", "ASC"], ["id", "ASC"]], transaction, lock: transaction.LOCK.UPDATE, skipLocked: true,
       });
       if (!outbox) return null;
       selectedId = outbox.id;
       await outbox.update({ status: "processing", attempt_count: Number(outbox.attempt_count || 0) + 1 }, { transaction });
+      if (["academic.import.committed", "academic.correction.created"].includes(outbox.event_type)) {
+        await outbox.update({ status: "processed", processed_at: now, last_error: null }, { transaction });
+        return { outbox_id: outbox.id, event_type: outbox.event_type, audit_only: true };
+      }
       const job = await db.PekerjaanSnapshotAkademik.findByPk(outbox.payload?.job_id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!job) throw Object.assign(new Error("Snapshot job tidak ditemukan."), { code: "ACADEMIC_SNAPSHOT_JOB_NOT_FOUND" });
       if (job.status === "completed") {

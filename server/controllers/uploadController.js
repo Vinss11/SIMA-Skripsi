@@ -14,6 +14,8 @@ const {
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
+const { unusableInitialPassword } = require("../services/credentialService");
+const { issueInitialActivation } = require("../services/passwordRecoveryService");
 
 const TEMPLATE_HEADERS = {
   topik: [
@@ -563,7 +565,6 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
     failed: [],
     total: uploadRows.length,
   };
-  const DEFAULT_PASSWORD_DOSEN = process.env.DEFAULT_PASSWORD_DOSEN || "12345678";
   let nextKodeSequence = await getNextDosenSequence(transaction);
   const seenNikInFile = new Set();
   const seenNamaInFile = new Set();
@@ -787,8 +788,15 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
             nama: nameValidation.normalized,
             gelar: normalizedGelar,
             email: normalizedEmail,
-            password: DEFAULT_PASSWORD_DOSEN,
+            password: unusableInitialPassword(),
             is_default_password: true,
+            credential_state: "default",
+            credential_version: 1,
+            password_origin: "initial",
+            force_change_reason: "activation_required",
+            security_updated_at: new Date(),
+            security_updated_by_type: "admin",
+            security_updated_by_id: adminId,
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
             status_keaktifan: statusKeaktifan,
@@ -808,6 +816,8 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         }
 
         await initializeAvailabilityForDosen(savedDosen, transaction);
+        await issueInitialActivation({ accountType: "dosen", account: savedDosen,
+          actor: { id: adminId, role: "admin" }, transaction });
       }
 
       const klasterLabel = formatDosenKlasterCodes(allKlasters, parsedKlaster.klasterIds);
@@ -845,10 +855,7 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
     }
   }
 
-  return {
-    ...results,
-    passwordDefault: DEFAULT_PASSWORD_DOSEN,
-  };
+  return results;
 }
 
 // ========== TOPIK UPLOAD ==========
@@ -1696,7 +1703,6 @@ exports.uploadMahasiswa = async (req, res) => {
       total: data.length,
     };
 
-    const DEFAULT_PASSWORD = "12345678";
     const seenNimInFile = new Set();
     const seenNamaInFile = new Set();
     const seenEmailInFile = new Set();
@@ -1868,17 +1874,27 @@ exports.uploadMahasiswa = async (req, res) => {
             nama: nameValidation.normalized,
             email: normalizedEmail,
             // Password akan di-hash oleh hook model (beforeCreate)
-            password: DEFAULT_PASSWORD,
+            password: unusableInitialPassword(),
             is_default_password: true,
+            credential_state: "default",
+            credential_version: 1,
+            password_origin: "initial",
+            force_change_reason: "activation_required",
+            security_updated_at: new Date(),
+            security_updated_by_type: "admin",
+            security_updated_by_id: req.user?.id || null,
             angkatan: angkatan.toString().trim(),
             dosen_pembimbing_akademik_id: dpa.id,
             status_jalur_saat_ini: "belum_mengajukan",
           },
           { transaction: t }
         );
+        await issueInitialActivation({ accountType: "mahasiswa", account: newMahasiswa,
+          actor: { id: req.user?.id || null, role: "admin" }, transaction: t });
 
         results.success.push({
           row: rowNumber,
+          mahasiswa_id: newMahasiswa.id,
           nim: newMahasiswa.nim,
           nama: newMahasiswa.nama,
           email: newMahasiswa.email,
@@ -1922,7 +1938,6 @@ exports.uploadMahasiswa = async (req, res) => {
         total: results.total,
         berhasil: results.success.length,
         gagal: results.failed.length,
-        password_default: DEFAULT_PASSWORD,
         detail_berhasil: results.success,
         detail_gagal: results.failed,
       },
@@ -2055,7 +2070,6 @@ exports.uploadDosen = async (req, res) => {
       total: uploadRows.length,
     };
 
-    const DEFAULT_PASSWORD_DOSEN = process.env.DEFAULT_PASSWORD_DOSEN || "12345678"; // Password default untuk dosen
     let nextKodeSequence = await getNextDosenSequence(t);
     const seenNikInFile = new Set();
     const seenNamaInFile = new Set();
@@ -2280,8 +2294,15 @@ exports.uploadDosen = async (req, res) => {
             gelar: gelar ? String(gelar).trim() || null : null,
             email: normalizedEmail,
             // Password akan di-hash oleh hook model (beforeCreate)
-            password: DEFAULT_PASSWORD_DOSEN,
+            password: unusableInitialPassword(),
             is_default_password: true,
+            credential_state: "default",
+            credential_version: 1,
+            password_origin: "initial",
+            force_change_reason: "activation_required",
+            security_updated_at: new Date(),
+            security_updated_by_type: "admin",
+            security_updated_by_id: req.user?.id || null,
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
           },
@@ -2292,6 +2313,8 @@ exports.uploadDosen = async (req, res) => {
           const selectedKlasters = allKlasters.filter((item) => parsedKlaster.klasterIds.includes(item.id));
           await newDosen.setKlasters(selectedKlasters, { transaction: t });
         }
+        await issueInitialActivation({ accountType: "dosen", account: newDosen,
+          actor: { id: req.user?.id || null, role: "admin" }, transaction: t });
 
         results.success.push({
           row: rowNumber,
@@ -2344,7 +2367,6 @@ exports.uploadDosen = async (req, res) => {
         total: results.total,
         berhasil: results.success.length,
         gagal: results.failed.length,
-        password_default: DEFAULT_PASSWORD_DOSEN,
         detail_berhasil: results.success,
         detail_gagal: results.failed,
       },
@@ -2432,7 +2454,6 @@ async function previewUploadDosenHandler(req, res) {
         invalid: results.failed.length,
         berhasil: results.success.length,
         gagal: results.failed.length,
-        password_default: results.passwordDefault,
         detail_valid: results.success,
         detail_invalid: results.failed,
         detail_berhasil: results.success,
@@ -2500,7 +2521,6 @@ exports.commitUploadDosen = async (req, res) => {
         total: results.total,
         berhasil: results.success.length,
         gagal: results.failed.length,
-        password_default: results.passwordDefault,
         detail_berhasil: results.success,
         detail_gagal: results.failed,
       },

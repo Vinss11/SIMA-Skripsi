@@ -20,13 +20,20 @@ function normalizePeriodBody(body) {
   if (body.tahun_mulai != null && Number(body.tahun_mulai) !== parsed.tahun_mulai) throw new academic.AcademicDataError("Tahun mulai tidak cocok dengan kode.", 400, "ACADEMIC_PERIOD_YEAR_MISMATCH");
   const start = body.tanggal_mulai ? new Date(body.tanggal_mulai) : null;
   const end = body.tanggal_selesai ? new Date(body.tanggal_selesai) : null;
+  const status = String(body.status || "draft").trim().toLowerCase();
+  if (!["draft", "active", "closed"].includes(status)) {
+    throw new academic.AcademicDataError("Status periode akademik tidak valid.", 400, "ACADEMIC_PERIOD_STATUS_INVALID");
+  }
   if ((start && Number.isNaN(start.getTime())) || (end && Number.isNaN(end.getTime())) || (start && end && end < start)) {
     throw new academic.AcademicDataError("Rentang tanggal periode akademik tidak valid.", 400, "ACADEMIC_PERIOD_DATE_RANGE_INVALID");
+  }
+  if (status === "active" && (!start || !end)) {
+    throw new academic.AcademicDataError("Tanggal resmi wajib lengkap sebelum periode diaktifkan.", 400, "ACADEMIC_PERIOD_OFFICIAL_DATES_REQUIRED");
   }
   return { kode: parsed.kode, tahun_mulai: parsed.tahun_mulai, tahun_selesai: parsed.tahun_selesai,
     tahun_akademik: `${parsed.tahun_mulai}/${parsed.tahun_selesai}`, semester: parsed.semester,
     tanggal_mulai: start, tanggal_selesai: end,
-    status: body.status || "draft", sumber: body.sumber || "manual", metadata: body.metadata || {} };
+    status, sumber: body.sumber || "manual", metadata: body.metadata || {} };
 }
 
 const masterConfigs = {
@@ -36,6 +43,43 @@ const masterConfigs = {
 };
 
 function pick(body, fields) { return fields.reduce((acc, key) => { if (Object.prototype.hasOwnProperty.call(body, key)) acc[key] = body[key]; return acc; }, {}); }
+
+async function persistAcademicPeriod({ id = null, payload }) {
+  return db.sequelize.transaction(async (transaction) => {
+    // A transaction-scoped advisory lock also serializes the empty-table/create
+    // case, which row locks alone cannot protect.
+    await db.sequelize.query(
+      "SELECT pg_advisory_xact_lock(hashtext('stage5-single-active-academic-period'))",
+      { transaction },
+    );
+    await db.PeriodeAkademik.findAll({ attributes: ["id"], transaction, lock: transaction.LOCK.UPDATE });
+
+    let row = null;
+    if (id != null) {
+      row = await db.PeriodeAkademik.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+      if (!row) throw new academic.AcademicDataError("Data master tidak ditemukan.", 404, "ACADEMIC_MASTER_NOT_FOUND");
+    }
+    if (payload.status === "active") {
+      await db.PeriodeAkademik.update({ status: "closed" }, {
+        where: { status: "active", ...(row ? { id: { [Op.ne]: row.id } } : {}) },
+        transaction,
+      });
+    }
+    if (row) await row.update(payload, { transaction });
+    else row = await db.PeriodeAkademik.create(payload, { transaction });
+
+    if (id != null) {
+      await db.SnapshotAkademikMahasiswa.update({ calculation_status: "stale" }, { where: {
+        calculation_status: "ready",
+        [Op.or]: [
+          { snapshot_scope: "current", is_current: true },
+          { snapshot_scope: "period_end", periode_akademik_id: row.id },
+        ],
+      }, transaction });
+    }
+    return row;
+  });
+}
 
 exports.listMaster = async (req, res) => {
   try {
@@ -48,7 +92,8 @@ exports.listMaster = async (req, res) => {
 
 exports.createMaster = async (req, res) => {
   try {
-    if (req.params.resource === "periode") return res.status(201).json({ success: true, data: await db.PeriodeAkademik.create(normalizePeriodBody(req.body || {})) });
+    if (req.params.resource === "periode") return res.status(201).json({ success: true,
+      data: await persistAcademicPeriod({ payload: normalizePeriodBody(req.body || {}) }) });
     const config = masterConfigs[req.params.resource];
     if (!config) throw new academic.AcademicDataError("Master tidak dikenal.", 404, "ACADEMIC_MASTER_NOT_FOUND");
     const payload = pick(req.body || {}, config.create);
@@ -60,11 +105,18 @@ exports.createMaster = async (req, res) => {
 exports.updateMaster = async (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (req.params.resource === "periode") {
+      const existing = await db.PeriodeAkademik.findByPk(id);
+      if (!existing) throw new academic.AcademicDataError("Data master tidak ditemukan.", 404, "ACADEMIC_MASTER_NOT_FOUND");
+      const payload = normalizePeriodBody({ ...existing.toJSON(), ...req.body });
+      const row = await persistAcademicPeriod({ id, payload });
+      return res.json({ success: true, data: row });
+    }
     const model = req.params.resource === "periode" ? db.PeriodeAkademik : db[masterConfigs[req.params.resource]?.model];
     if (!model) throw new academic.AcademicDataError("Master tidak dikenal.", 404, "ACADEMIC_MASTER_NOT_FOUND");
     const row = await model.findByPk(id);
     if (!row) throw new academic.AcademicDataError("Data master tidak ditemukan.", 404, "ACADEMIC_MASTER_NOT_FOUND");
-    const payload = req.params.resource === "periode" ? normalizePeriodBody({ ...row.toJSON(), ...req.body }) : pick(req.body || {}, masterConfigs[req.params.resource].create);
+    const payload = pick(req.body || {}, masterConfigs[req.params.resource].create);
     await row.update(payload);
     return res.json({ success: true, data: row });
   } catch (error) { return sendError(res, error); }
@@ -73,7 +125,8 @@ exports.updateMaster = async (req, res) => {
 exports.createAlias = async (req, res) => {
   try {
     const row = await db.MataKuliahAlias.create({ mata_kuliah_id: Number(req.params.id), source_id: req.body.source_id || null,
-      kode_alias: policy.normalizeCode(req.body.kode_alias), kode_program_studi: req.body.kode_program_studi || "INFORMATIKA", is_active: true });
+      kode_alias: policy.normalizeCode(req.body.kode_alias), kode_program_studi: req.body.kode_program_studi || "INFORMATIKA",
+      program_kuliah: req.body.program_kuliah || "reguler", is_active: true });
     return res.status(201).json({ success: true, data: row });
   } catch (error) { return sendError(res, error); }
 };
@@ -84,7 +137,13 @@ exports.createEquivalenceGroup = async (req, res) => {
 };
 exports.upsertEquivalence = async (req, res) => {
   try {
-    const [row, created] = await db.EkuivalensiMataKuliah.upsert({ ...req.body, id: req.params.id ? Number(req.params.id) : undefined }, { returning: true });
+    const direction = req.body.arah || "bidirectional";
+    if (direction === "source_to_target" && (!req.body.mata_kuliah_sumber_id || !req.body.mata_kuliah_tujuan_id)) {
+      throw new academic.AcademicDataError("Ekuivalensi satu arah wajib memiliki mata kuliah sumber dan tujuan.", 400, "ACADEMIC_EQUIVALENCE_PAIR_REQUIRED");
+    }
+    const [row, created] = await db.EkuivalensiMataKuliah.upsert({ ...req.body, arah: direction,
+      mata_kuliah_id: req.body.mata_kuliah_id || req.body.mata_kuliah_sumber_id,
+      id: req.params.id ? Number(req.params.id) : undefined }, { returning: true });
     return res.status(created ? 201 : 200).json({ success: true, data: row });
   } catch (error) { return sendError(res, error); }
 };
@@ -104,8 +163,8 @@ exports.assignCurriculum = async (req, res) => {
 };
 
 const TEMPLATE_HEADERS = {
-  course_attempts: ["nim", "kode_periode", "kode_mata_kuliah", "attempt_ke", "kelas", "sks", "nilai_huruf", "nilai_angka", "status_registrasi", "status_kelulusan", "external_record_id", "external_revision", "credit_origin", "recognition_status"],
-  methodology_status: ["nim", "kode_periode", "status_metodologi", "nilai_huruf", "nilai_angka"],
+  course_attempts: ["nim", "kode_periode", "kode_mata_kuliah", "attempt_ke", "kelas", "sks", "nilai_huruf", "nilai_angka", "status_registrasi", "status_kelulusan", "external_record_id", "external_revision", "credit_origin", "recognition_status", "academic_effective_at"],
+  methodology_status: ["nim", "kode_periode", "status_metodologi", "nilai_huruf", "nilai_angka", "academic_effective_at"],
 };
 
 exports.downloadTemplate = async (req, res) => {
@@ -167,9 +226,13 @@ exports.createImport = async (req, res) => {
     const sourceId = Number(req.body.source_id);
     if (!await db.SumberDataAkademik.findByPk(sourceId)) throw new academic.AcademicDataError("Sumber data tidak ditemukan.", 400, "ACADEMIC_SOURCE_NOT_FOUND");
     const completenessScope = req.body.completeness_scope ? JSON.parse(req.body.completeness_scope) : {};
+    const programKuliah = String(req.body.program_kuliah || completenessScope.program_kuliah || "").trim().toLowerCase();
+    if (!["reguler", "internasional"].includes(programKuliah)) throw new academic.AcademicDataError("Program kuliah wajib dipilih.", 400, "ACADEMIC_PROGRAM_TYPE_INVALID");
     const result = await academic.createImportPreviewTransactional({ datasetType, schemaVersion: req.body.schema_version || "v1",
       sourceId, externalRevision: req.body.external_revision || null, defaultPeriodId: Number(req.body.periode_akademik_id) || null,
-      completenessScope, rows, filename: String(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_"), mime: req.file.mimetype,
+      programCode: req.body.kode_program_studi || "INFORMATIKA", programKuliah,
+      completenessScope: { ...completenessScope, kode_program_studi: completenessScope.kode_program_studi || req.body.kode_program_studi || "INFORMATIKA",
+        program_kuliah: programKuliah }, rows, filename: String(req.file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_"), mime: req.file.mimetype,
       fileSize: req.file.size, fileSha256: crypto.createHash("sha256").update(bytes).digest("hex"), actorId: req.user.id,
       idempotencyKey: req.headers["idempotency-key"] || null });
     return res.status(result.replayed ? 200 : 201).json({ success: true, data: result.batch, replayed: result.replayed });
@@ -308,7 +371,7 @@ exports.getMonitoring = async (req, res) => {
       const curricula = await db.Kurikulum.findAll({ where: { program_kuliah: req.user.program_kuliah }, attributes: ["id"] });
       where.kurikulum_id = { [Op.in]: curricula.map((item) => item.id) };
     }
-    const snapshots = await db.SnapshotAkademikMahasiswa.findAll({ where: { ...where, is_current: true }, order: [["updatedAt", "DESC"]], limit: Math.min(Number(req.query.limit) || 100, 500) });
+    const snapshots = await db.SnapshotAkademikMahasiswa.findAll({ where: { ...where, snapshot_scope: "current", is_current: true }, order: [["updatedAt", "DESC"]], limit: Math.min(Number(req.query.limit) || 100, 500) });
     const ids = snapshots.map((v) => v.mahasiswa_id); const students = await db.Mahasiswa.findAll({ where: { id: { [Op.in]: ids } }, attributes: ["id", "nim", "nama", "angkatan"] });
     const map = new Map(students.map((v) => [v.id, v])); return res.json({ success: true, data: snapshots.map((v) => ({ ...v.toJSON(), mahasiswa: map.get(v.mahasiswa_id) || null })) });
   } catch (e) { return sendError(res, e); }
