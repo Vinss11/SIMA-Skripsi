@@ -14,8 +14,7 @@ const {
   isValidJabatanStruktural,
 } = require("../constants/jabatanStruktural");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
-const { unusableInitialPassword } = require("../services/credentialService");
-const { issueInitialActivation } = require("../services/passwordRecoveryService");
+const { buildInitialCredentialAttributes } = require("../services/initialCredentialService");
 
 const TEMPLATE_HEADERS = {
   topik: [
@@ -617,6 +616,10 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
       const normalizedGelar = gelarValidation.normalized;
 
       const normalizedNik = nik ? nik.toString().trim() : null;
+      if (!normalizedNik) {
+        results.failed.push({ row: rowNumber, data: row, error: "NIK wajib diisi karena digunakan sebagai username dosen." });
+        continue;
+      }
       const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
       const normalizedEmail = email.toString().trim().toLowerCase();
 
@@ -788,15 +791,7 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
             nama: nameValidation.normalized,
             gelar: normalizedGelar,
             email: normalizedEmail,
-            password: unusableInitialPassword(),
-            is_default_password: true,
-            credential_state: "default",
-            credential_version: 1,
-            password_origin: "initial",
-            force_change_reason: "activation_required",
-            security_updated_at: new Date(),
-            security_updated_by_type: "admin",
-            security_updated_by_id: adminId,
+            ...buildInitialCredentialAttributes("dosen", { nik: normalizedNik }, { type: "admin", id: adminId }),
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
             status_keaktifan: statusKeaktifan,
@@ -816,8 +811,6 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         }
 
         await initializeAvailabilityForDosen(savedDosen, transaction);
-        await issueInitialActivation({ accountType: "dosen", account: savedDosen,
-          actor: { id: adminId, role: "admin" }, transaction });
       }
 
       const klasterLabel = formatDosenKlasterCodes(allKlasters, parsedKlaster.klasterIds);
@@ -1873,24 +1866,16 @@ exports.uploadMahasiswa = async (req, res) => {
             nim: normalizedNim,
             nama: nameValidation.normalized,
             email: normalizedEmail,
-            // Password akan di-hash oleh hook model (beforeCreate)
-            password: unusableInitialPassword(),
-            is_default_password: true,
-            credential_state: "default",
-            credential_version: 1,
-            password_origin: "initial",
-            force_change_reason: "activation_required",
-            security_updated_at: new Date(),
-            security_updated_by_type: "admin",
-            security_updated_by_id: req.user?.id || null,
+            ...buildInitialCredentialAttributes("mahasiswa", { nim: normalizedNim }, {
+              type: "admin",
+              id: req.user?.id || null,
+            }),
             angkatan: angkatan.toString().trim(),
             dosen_pembimbing_akademik_id: dpa.id,
             status_jalur_saat_ini: "belum_mengajukan",
           },
           { transaction: t }
         );
-        await issueInitialActivation({ accountType: "mahasiswa", account: newMahasiswa,
-          actor: { id: req.user?.id || null, role: "admin" }, transaction: t });
 
         results.success.push({
           row: rowNumber,
@@ -2124,6 +2109,10 @@ exports.uploadDosen = async (req, res) => {
         }
 
         const normalizedNik = nik ? nik.toString().trim() : null;
+        if (!normalizedNik) {
+          results.failed.push({ row: rowNumber, data: row, error: "NIK wajib diisi karena digunakan sebagai username dosen." });
+          continue;
+        }
         const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
         const normalizedEmail = email.toString().trim().toLowerCase();
 
@@ -2282,27 +2271,20 @@ exports.uploadDosen = async (req, res) => {
         }
 
         const generatedKodeDosen = `DSN${String(nextKodeSequence).padStart(4, "0")}`;
-        const generatedNik = String(nextKodeSequence).padStart(9, "0");
         nextKodeSequence += 1;
 
         // Insert dosen ke database
         const newDosen = await Dosen.create(
           {
             kode_dosen: generatedKodeDosen,
-            nik: normalizedNik || generatedNik,
+            nik: normalizedNik,
             nama: nameValidation.normalized,
             gelar: gelar ? String(gelar).trim() || null : null,
             email: normalizedEmail,
-            // Password akan di-hash oleh hook model (beforeCreate)
-            password: unusableInitialPassword(),
-            is_default_password: true,
-            credential_state: "default",
-            credential_version: 1,
-            password_origin: "initial",
-            force_change_reason: "activation_required",
-            security_updated_at: new Date(),
-            security_updated_by_type: "admin",
-            security_updated_by_id: req.user?.id || null,
+            ...buildInitialCredentialAttributes("dosen", { nik: normalizedNik }, {
+              type: "admin",
+              id: req.user?.id || null,
+            }),
             jabatan_struktural: jabatanStruktural,
             kuota_bimbingan: kuota,
           },
@@ -2313,8 +2295,6 @@ exports.uploadDosen = async (req, res) => {
           const selectedKlasters = allKlasters.filter((item) => parsedKlaster.klasterIds.includes(item.id));
           await newDosen.setKlasters(selectedKlasters, { transaction: t });
         }
-        await issueInitialActivation({ accountType: "dosen", account: newDosen,
-          actor: { id: req.user?.id || null, role: "admin" }, transaction: t });
 
         results.success.push({
           row: rowNumber,

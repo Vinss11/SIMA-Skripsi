@@ -600,7 +600,14 @@ Alias menunjuk satu mata kuliah kanonik yang sama, sedangkan ekuivalensi merupak
 
 **Status: Final**
 
-Akun tersedia setelah data master di-import, tetapi tidak diberi shared default password. Password internal awal bersifat acak dan tidak dapat digunakan; aktivasi dilakukan melalui tautan sekali pakai yang dikirim hanya ke kanal terverifikasi.
+Akun tersedia setelah dibuat atau di-import dengan password awal institusional berikut:
+
+- Dosen dan Admin menggunakan `12345678`;
+- Mahasiswa menggunakan NIM miliknya sendiri.
+
+Password awal wajib di-hash melalui credential service, tidak boleh disimpan sebagai plaintext, dan tidak boleh dikembalikan pada response, report, log, maupun browser storage. Akun dibuat dengan `credential_state = default` dan `is_default_password = true`. Ketentuan `12345678` untuk Admin berlaku pada provisioning akun Admin baru dan rekonsiliasi per akun Admin lama yang benar-benar masih berstatus `default`; akun Admin `active` tidak boleh diubah otomatis. Pemulihan Admin yang sudah aktif tetap mengikuti recovery offline privileged dan tidak tersedia melalui menu reset akun biasa. Sekretaris Prodi tidak menggunakan password awal bersama dan mengikuti provisioning/recovery khusus akun privileged.
+
+Nilai password awal hanya boleh didefinisikan pada konfigurasi/policy kredensial terpusat dan tidak boleh diduplikasi sebagai literal pada controller, model hook, seeder production, atau frontend.
 
 ### BR-AKUN-002 — Wajib ganti password
 
@@ -618,7 +625,12 @@ Pembatasan harus diterapkan pada frontend dan middleware backend.
 
 **Status: Final**
 
-Sistem menyediakan lupa/reset password dengan response publik generik. Pengguna memilih password baru melalui token sekali pakai yang disimpan sebagai hash, mempunyai masa berlaku, dikonsumsi secara atomik, dan mencabut seluruh sesi lama. Sistem tidak mengirim atau menampilkan password sementara.
+Sistem menyediakan dua jalur reset untuk akun non-privileged:
+
+1. self-service lupa password melalui tautan sekali pakai ke kanal terverifikasi; dan
+2. reset oleh Admin ke password awal institusional apabila email akun dummy/tidak dapat diakses.
+
+Response public forgot-password tetap generik. Token self-service disimpan sebagai hash, mempunyai masa berlaku, dikonsumsi secara atomik, dan mencabut seluruh sesi lama. Reset oleh Admin wajib meminta alasan, mencabut seluruh sesi dan token aktif, menaikkan `credential_version`, mengubah state menjadi `default`, mencatat audit, dan tidak menampilkan hash. Setelah reset, Dosen login menggunakan `12345678`, sedangkan Mahasiswa login menggunakan NIM, kemudian wajib mengganti password sebelum mengakses aktivitas bisnis.
 
 ### BR-AKUN-004 â€” Sesi dan pencabutan
 
@@ -630,13 +642,15 @@ Setiap access token wajib menunjuk sesi server-side dan versi kredensial akun. A
 
 **Status: Final**
 
-Tautan pemulihan hanya boleh dikirim ke email/kanal yang telah diverifikasi atau berasal dari trusted source yang keputusan serta waktu verifikasinya tercatat. Admin hanya dapat menerbitkan tautan reset untuk Mahasiswa dan Dosen, wajib memberi alasan, dan tidak pernah menerima password atau token. Reset Admin dan Sekretaris Prodi tidak tersedia melalui flow ini.
+Tautan pemulihan hanya boleh dikirim ke email/kanal yang telah diverifikasi atau berasal dari trusted source yang keputusan serta waktu verifikasinya tercatat. Admin dapat menerbitkan tautan reset atau melakukan reset ke password awal institusional hanya untuk Mahasiswa dan Dosen, wajib memberi alasan, dan tidak pernah menerima hash maupun token. Reset Admin dan Sekretaris Prodi tidak tersedia melalui flow ini.
 
 ### BR-AKUN-006 â€” Kebijakan password
 
 **Status: Final**
 
 Password baru minimal 10 karakter dan maksimal 72 byte UTF-8 sebelum bcrypt. Password tidak di-trim, dipotong, atau dinormalisasi diam-diam; password yang sama dengan password aktif, terlalu umum, atau memuat identifier akun ditolak.
+
+Ketentuan minimum 10 karakter berlaku untuk password baru yang dipilih pengguna, bukan untuk credential awal institusional. Saat forced change, password baru Dosen dan Admin tidak boleh sama dengan `12345678`; password baru Mahasiswa tidak boleh sama dengan NIM atau identifier akun lainnya.
 
 ## 17. Bimbingan
 
@@ -930,7 +944,7 @@ Sistem dianggap selesai sesuai scope apabila:
 - Pengabdian tetap aman dan data yang sudah ada tidak rusak, tetapi penyelesaian flow Pengabdian tidak menjadi syarat release selama berstatus hold;
 - histori mahasiswa dapat dibaca per periode dan semester;
 - tidak ada aktivasi pembimbing yang bergantung pada surat tugas;
-- password default tidak dapat dipakai untuk beraktivitas;
+- password awal hanya dapat dipakai untuk login restricted dan tidak dapat dipakai untuk aktivitas bisnis sebelum forced change selesai;
 - mahasiswa yang belum memenuhi syarat tidak dapat dijadwalkan;
 - setiap sidang memiliki tepat tiga dosen tanpa bentrok;
 - perubahan penguji dan reschedule mempunyai histori;

@@ -333,7 +333,7 @@ Daftar berikut adalah temuan sebelum implementasi koreksi dan tidak lagi menjadi
 
 1. Endpoint pendaftaran umum masih menerima `ulang`/`alih`; scope tersebut harus dipindahkan penuh ke flow authenticated Tahap 3.
 2. Pendaftaran baru masih menerima dan menyimpan pilihan dosen pembimbing TA dari mahasiswa, padahal P1/P2 diputuskan Sekprodi saat final.
-3. Endpoint pendaftaran publik masih dapat membuat akun mahasiswa, menggunakan NIM sebagai password, dan mengembalikan password awal. Ini tidak sesuai kontrak bahwa akun berasal dari master/import dan juga melampaui tanggung jawab penjaluran.
+3. Endpoint pendaftaran publik masih dapat membuat akun mahasiswa dan mengembalikan password awal. Penggunaan NIM sebagai credential awal kini sesuai BR-AKUN-001, tetapi pembuatan credential harus melalui account/credential service Tahap 6 dan password awal tidak boleh dikembalikan oleh endpoint penjaluran.
 4. Belum terlihat constraint database unik `(mahasiswa_id, periode_penjaluran_id)`, sehingga pengecekan aplikasi saja masih rentan race condition.
 5. Endpoint daftar dosen publik mencampur kebutuhan DPA dengan kandidat pembimbing final. Kandidat P1/P2 seharusnya hanya tersedia pada konteks keputusan Sekprodi.
 6. Data pembimbing legacy masih disimpan pada kolom pendaftaran sebelum keputusan final, sehingga sumber kebenaran berpotensi ganda.
@@ -361,7 +361,7 @@ Hasil: refactor mempunyai baseline dan tidak mengubah keputusan Penelitian yang 
 
 1. Pisahkan endpoint pendaftaran baru dari ulang/alih secara tegas.
 2. Wajibkan autentikasi mahasiswa yang sudah tersedia di master/import untuk pendaftaran baru.
-3. Hilangkan pembuatan akun, penyimpanan password literal NIM, dan pengembalian password dari response pendaftaran.
+3. Hilangkan pembuatan akun dari controller penjaluran, penyimpanan NIM sebagai password dalam bentuk plaintext, dan pengembalian password melalui response API. Jika akun mahasiswa dibuat oleh layanan akun Tahap 6, NIM hanya boleh diproses sebagai kredensial awal untuk kemudian di-hash.
 4. Jika self-registration tetap diinginkan, hentikan implementasi paket ini sampai aturan bisnis diperbarui dan desain keamanan disetujui.
 5. Server mengambil mahasiswa dari token dan master data; frontend tidak mengirim NIM/nama/email sebagai sumber identitas.
 6. Server menentukan periode aktif dan memeriksa window tanggal di dalam transaksi.

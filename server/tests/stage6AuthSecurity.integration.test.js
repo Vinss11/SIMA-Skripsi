@@ -13,6 +13,7 @@ const recovery = require("../services/passwordRecoveryService"); const passwordP
 const accountSecurityRepository = require("../services/accountSecurityRepository");
 const authOutboxWorker = require("../scripts/process-auth-outbox");
 const stage6Reconciliation = require("../scripts/reconcile-stage6-auth-security");
+const initialCredentials = require("../services/initialCredentialService");
 const { ALLOWED_SEKRETARIS_JABATAN } = require("../constants/sekretarisAkses");
 
 function request(body = {}, token = null) { return { body, params: {}, ip: "127.0.0.99", socket: {}, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "user-agent": "stage6-test" } }; }
@@ -28,8 +29,9 @@ test("Tahap 6: kebijakan password mempertahankan spasi dan batas bcrypt", () => 
   assert.equal(passwordPolicy.validateNewPassword("Mahasiswa123!", { identifiers: ["mahasiswa"] }).reasons.includes("PASSWORD_CONTAINS_IDENTIFIER"), true);
 });
 
-test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengonsumsinya", async (t) => {
+test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengganti password", async (t) => {
   const suffix = String(Date.now()).slice(-7);
+  const suffixName = [...suffix].map((digit) => "abcdefghij"[Number(digit)]).join("");
   const actor = await db.Admin.create({
     nip: `A${suffix}`,
     nama: "Admin Provisioning 6",
@@ -45,6 +47,7 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
   let dosenId = null;
   let mahasiswaId = null;
   let sekretarisAliasId = null;
+  let defaultAdminId = null;
   const uploadPath = path.join(os.tmpdir(), `stage6-mahasiswa-${suffix}.xlsx`);
 
   t.after(async () => {
@@ -59,6 +62,11 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
       await db.Mahasiswa.destroy({ where: { id: mahasiswaId }, force: true });
     }
     if (sekretarisAliasId) await db.SekretarisProdi.destroy({ where: { id: sekretarisAliasId }, force: true });
+    if (defaultAdminId) {
+      await db.AuthSession.destroy({ where: { account_type: "admin", account_id: defaultAdminId }, force: true });
+      await db.AuthSecurityEvent.destroy({ where: { [Op.or]: [{ target_type: "admin", target_id: defaultAdminId }, { actor_type: "admin", actor_id: defaultAdminId }] }, force: true });
+      await db.Admin.destroy({ where: { id: defaultAdminId }, force: true });
+    }
     if (dosenId) {
       const resetRecords = await db.PasswordResetToken.findAll({ where: { account_type: "dosen", account_id: dosenId }, attributes: ["id"] });
       const resetIds = resetRecords.map((item) => item.id);
@@ -78,7 +86,7 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
   const created = await invoke(adminController.createDosen, {
     ...request({
       nik: suffix.slice(0, 9),
-      nama: "Dosen Provisioning Tahap Enam",
+      nama: `Dosen Provisioning Tahap Enam ${suffixName}`,
       gelar: "M.Kom.",
       email: `dosen-provision-${suffix}@test.local`,
       jabatan_struktural: null,
@@ -93,26 +101,22 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
   assert.equal(created.payload.data.credential_state, "default");
   assert.equal(created.payload.data.recovery_email_verified_at, null);
 
-  const activation = await db.PasswordResetToken.findOne({ where: { account_type: "dosen", account_id: dosenId, purpose: "admin_activation" } });
-  assert.ok(activation);
-  const outbox = await db.AuthOutbox.findOne({ where: { reset_token_id: activation.id, status: "pending" } });
-  assert.ok(outbox);
-  assert.equal((await invoke(authController.login, request({ username: created.payload.data.kode_dosen, password: "password-tidak-dikenal" }))).statusCode, 401);
-
-  await outbox.update({ status: "processing", available_at: new Date("2000-01-01T00:00:00.000Z"),
-    claimed_at: new Date(Date.now() - 10 * 60 * 1000), attempt_count: 1 });
-  const reclaimed = await authOutboxWorker.claimOne();
-  assert.equal(reclaimed.id, outbox.id);
-  assert.equal(reclaimed.attempt_count, 2);
-
+  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "dosen", account_id: dosenId, purpose: "admin_activation" } }), 0);
+  assert.equal((await invoke(authController.login, request({ username: created.payload.data.nik, password: "password-tidak-dikenal" }))).statusCode, 401);
+  const initialDosenLogin = await invoke(authController.login, request({ username: created.payload.data.nik, password: "12345678" }));
+  assert.equal(initialDosenLogin.statusCode, 200);
+  assert.equal(initialDosenLogin.payload.data.next_action, "change_password");
+  assert.equal(initialDosenLogin.payload.data.user.username, created.payload.data.nik);
+  const restrictedDosen = await authenticate(middleware.authenticateRestrictedAllowed, initialDosenLogin.payload.data.token);
+  assert.equal(restrictedDosen.next, true);
   const activationPassword = "Activated account secure! 94";
-  await recovery.confirmReset(recovery.decrypt(outbox), activationPassword);
+  const changedDosen = await invoke(authController.changePassword, { ...restrictedDosen.req,
+    body: { current_password: "12345678", new_password: activationPassword } });
+  assert.equal(changedDosen.statusCode, 200);
   const activated = await db.Dosen.findByPk(dosenId);
   assert.equal(activated.credential_state, "active");
   assert.equal(activated.is_default_password, false);
-  assert.ok(activated.recovery_email_verified_at instanceof Date);
-  assert.equal(activated.recovery_email_verification_source, "activation_link_consumed");
-  const login = await invoke(authController.login, request({ username: activated.kode_dosen, password: activationPassword }));
+  const login = await invoke(authController.login, request({ username: activated.nik, password: activationPassword }));
   assert.equal(login.statusCode, 200);
   assert.equal(login.payload.data.next_action, null);
 
@@ -160,7 +164,7 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet([{
     NIM: `26${suffix.slice(-6)}`,
-    Nama: "Mahasiswa Provisioning Tahap Enam",
+    Nama: `Mahasiswa Provisioning Tahap Enam ${suffixName}`,
     Email: `mahasiswa-provision-${suffix}@test.local`,
     Angkatan: "2026",
     "NIK DPA": activated.nik,
@@ -173,12 +177,23 @@ test("Tahap 6: akun dosen baru memperoleh aktivasi dan dapat login setelah mengo
   });
   assert.equal(imported.statusCode, 201);
   mahasiswaId = imported.payload.data.detail_berhasil[0].mahasiswa_id;
-  const studentActivation = await db.PasswordResetToken.findOne({ where: { account_type: "mahasiswa", account_id: mahasiswaId, purpose: "admin_activation" } });
-  const studentOutbox = await db.AuthOutbox.findOne({ where: { reset_token_id: studentActivation.id, status: "pending" } });
-  assert.ok(studentOutbox);
-  await recovery.confirmReset(recovery.decrypt(studentOutbox), "Imported account secure! 95");
-  const importedLogin = await invoke(authController.login, request({ username: imported.payload.data.detail_berhasil[0].nim, password: "Imported account secure! 95" }));
+  const importedNim = imported.payload.data.detail_berhasil[0].nim;
+  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "mahasiswa", account_id: mahasiswaId, purpose: "admin_activation" } }), 0);
+  const importedLogin = await invoke(authController.login, request({ username: importedNim, password: importedNim }));
   assert.equal(importedLogin.statusCode, 200);
+  assert.equal(importedLogin.payload.data.next_action, "change_password");
+
+  const defaultAdmin = await db.Admin.create({
+    nip: `B${suffix}`,
+    nama: "Admin Default Tahap Enam",
+    email: `admin-default-${suffix}@test.local`,
+    role: "staff",
+    ...initialCredentials.buildInitialCredentialAttributes("admin"),
+  });
+  defaultAdminId = defaultAdmin.id;
+  const defaultAdminLogin = await invoke(authController.login, request({ username: defaultAdmin.nip, password: "12345678" }));
+  assert.equal(defaultAdminLogin.statusCode, 200);
+  assert.equal(defaultAdminLogin.payload.data.next_action, "change_password");
 
   const sourceFindings = stage6Reconciliation.scanRuntimeSources();
   assert.equal(sourceFindings.some((finding) => finding.type === "literal_known_default"), false);

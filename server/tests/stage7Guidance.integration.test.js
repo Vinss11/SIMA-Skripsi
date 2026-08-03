@@ -4,6 +4,7 @@ process.env.NODE_ENV = "test";
 require("dotenv").config();
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const { Op } = require("sequelize");
 const db = require("../models");
 const workflow = require("../services/guidanceWorkflowService");
@@ -11,6 +12,7 @@ const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa, 
 const { activateSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const readiness = require("../services/guidanceReadinessService");
 const governance = require("../controllers/guidanceGovernanceController");
+const { processProgressRecalculationJobOnce } = require("../services/guidanceProgressRecalculationService");
 
 db.sequelize.options.logging = false;
 
@@ -19,6 +21,7 @@ test("Tahap 7: workflow terikat siklus, idempoten, versioned, dan hanya reviewer
   const ids = { students: [], dosens: [], secretaries: [], periods: [], academic: [], registrations: [], assignments: [], guidance: [], policies: [] };
   t.after(async () => {
     const guidanceIds = ids.guidance;
+    await db.GuidanceProgressRecalculationJob.destroy({ where: { mahasiswa_id: ids.students }, force: true });
     await db.Notifikasi.destroy({ where: { [Op.or]: [{ recipient_type: "mahasiswa", recipient_id: ids.students }, { recipient_type: "dosen", recipient_id: ids.dosens },
       { recipient_type: "sekretaris_prodi", recipient_id: ids.secretaries }] }, force: true });
     await db.GuidanceProgressSnapshot.destroy({ where: { mahasiswa_id: ids.students }, force: true });
@@ -119,20 +122,26 @@ test("Tahap 7: workflow terikat siklus, idempoten, versioned, dan hanya reviewer
   assert.equal(await db.GuidanceResumeVersion.count({ where: { guidance_id: guidance.id } }), 1);
   assert.equal(await db.GuidanceProgressEvaluation.count({ where: { guidance_id: guidance.id, counted: true, superseded_at: null } }), 1);
   const progress = await getCurrentProgressForMahasiswa(student.id); assert.equal(progress.cycle.counted, 1); assert.equal(progress.policy.minimum_validated_sessions, 8);
-  const researchPolicy = await db.GuidanceRequirementPolicy.create({ kode_program_studi: "INFORMATIKA", program_kuliah: "reguler", jalur: "penelitian",
-    periode_akademik_id: academic.id, version: 1, status: "active", minimum_validated_sessions: 2, count_scope: "cycle",
-    occurrence_proof_mode: "approved_resume", supervisor_approval_scope: "p1", require_p2_if_available: false,
-    effective_at: new Date(), source: "stage7_test", row_version: 1 }); ids.policies.push(researchPolicy.id);
+  const researchDraft = await invoke(governance.createPolicy, { body: { kode_program_studi: "INFORMATIKA", program_kuliah: "reguler",
+    jalur: "penelitian", periode_akademik_id: academic.id, minimum_validated_sessions: 2, count_scope: "cycle",
+    occurrence_proof_mode: "approved_resume", supervisor_approval_scope: "p1" }, operationKey: `s7-policy-research-${suffix}` });
+  const researchPolicy = researchDraft.payload.data; ids.policies.push(researchPolicy.id);
+  const researchActivation = await invoke(governance.activatePolicy, { params: { id: researchPolicy.id },
+    body: { expected_version: researchPolicy.row_version }, operationKey: `s7-policy-research-activate-${suffix}` });
+  assert.equal(researchActivation.payload.recalculation_jobs_queued, 1);
   const evaluationsBeforeRead = await db.GuidanceProgressEvaluation.count({ where: { guidance_id: guidance.id } });
   const staleReads = await Promise.all([getCurrentProgressForMahasiswa(student.id), getCurrentProgressForMahasiswa(student.id)]);
   assert.equal(staleReads[0].evaluation_state.requires_recalculation, true);
-  assert.equal(staleReads[0].cycle.counted, 0, "GET tidak boleh menulis atau memakai evaluasi policy lama");
+  assert.equal(staleReads[0].cycle.counted, 1, "GET menampilkan evaluation terakhir selama rekalkulasi policy");
+  assert.equal(staleReads[0].cycle.is_stale, true);
   assert.equal(await db.GuidanceProgressEvaluation.count({ where: { guidance_id: guidance.id } }), evaluationsBeforeRead);
   const recalculated = await Promise.all([recalculateCurrentProgressForMahasiswa(student.id), recalculateCurrentProgressForMahasiswa(student.id)]);
   const reevaluatedForPolicy = recalculated[0];
   assert.equal(recalculated[1].cycle.counted, 1);
   assert.equal(reevaluatedForPolicy.policy.id, researchPolicy.id); assert.equal(reevaluatedForPolicy.cycle.counted, 1);
   assert.equal((await db.GuidanceProgressEvaluation.findOne({ where: { guidance_id: guidance.id, superseded_at: null } })).policy_id, researchPolicy.id);
+  const processedPolicyJob = await processProgressRecalculationJobOnce(); assert.ok(processedPolicyJob?.job_id);
+  assert.equal((await db.GuidanceProgressRecalculationJob.findByPk(processedPolicyJob.job_id)).status, "completed");
   const events = await db.GuidanceEvent.findAll({ where: { guidance_id: guidance.id } });
   assert.deepEqual(events.map((event) => event.event_type), ["request_created", "request_accepted", "resume_submitted", "resume_approved"]);
 
@@ -295,15 +304,12 @@ test("Tahap 7: workflow terikat siklus, idempoten, versioned, dan hanya reviewer
   assert.equal(filteredCandidates.statusCode, 200); assert.equal(filteredCandidates.payload.data.rows.length, 0);
   const ineligibleResolution = await invoke(governance.resolveReviewer, { params: { id: unresolvedRow.id }, user: secretaryUser,
     body: { target_assignment_member_id: (await db.PenetapanPembimbingDosen.findOne({ where: { penetapan_pembimbing_id: p1Only.id } })).id,
-      expected_version: unresolvedRow.row_version, reason_code: "PINDAH_PERAN_DARURAT" }, operationKey: `s7-resolution-ineligible-${suffix}` });
+      expected_version: unresolvedRow.row_version }, operationKey: `s7-resolution-ineligible-${suffix}` });
   assert.equal(ineligibleResolution.statusCode, 409); assert.equal(ineligibleResolution.payload.code, "GUIDANCE_REVIEWER_UNAVAILABLE");
   await dosens[0].update({ status_keaktifan: "active", continue_existing_supervision: true });
   const p1OnlyMember = await db.PenetapanPembimbingDosen.findOne({ where: { penetapan_pembimbing_id: p1Only.id } });
-  const missingRoleReason = await invoke(governance.resolveReviewer, { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version }, operationKey: `s7-resolution-no-reason-${suffix}` });
-  assert.equal(missingRoleReason.statusCode, 400); assert.equal(missingRoleReason.payload.code, "GUIDANCE_REVIEWER_ROLE_CHANGE_REASON_REQUIRED");
   const resolutionPayload = { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version, reason_code: "PINDAH_PERAN_DARURAT" },
+    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version },
     operationKey: `s7-resolution-parallel-${suffix}` };
   const resolvedParallel = await Promise.all([invoke(governance.resolveReviewer, resolutionPayload), invoke(governance.resolveReviewer, resolutionPayload)]);
   assert.equal(resolvedParallel[0].statusCode, 200); assert.equal(resolvedParallel[1].statusCode, 200);
@@ -312,10 +318,30 @@ test("Tahap 7: workflow terikat siklus, idempoten, versioned, dan hanya reviewer
   assert.equal(unresolvedRow.reviewer_resolution_reason_code, null);
   assert.equal(await db.Notifikasi.count({ where: { reference_type: "bimbingan", reference_id: unresolvedRow.id,
     type: "guidance_reviewer_transferred" } }), 2);
+  const manualTransfer = await db.GuidanceReviewerTransfer.findOne({ where: { guidance_id: unresolvedRow.id, transition_type: "manual_resolution" } });
+  assert.equal(manualTransfer.reason_code, "CROSS_ROLE_FALLBACK_APPROVED_BY_SEKPRODI");
+  const manualEvent = await db.GuidanceEvent.findByPk(manualTransfer.event_id);
+  assert.equal(manualEvent.metadata.from_urutan, 2); assert.equal(manualEvent.metadata.to_urutan, 1);
   const duplicateResolution = await invoke(governance.resolveReviewer, { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version, reason_code: "PINDAH_PERAN_DARURAT" },
+    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version },
     operationKey: `s7-resolution-after-terminal-${suffix}` });
   assert.equal(duplicateResolution.statusCode, 409); assert.equal(duplicateResolution.payload.code, "GUIDANCE_REVIEWER_RESOLUTION_NOT_REQUIRED");
+
+  // Backfill execute dapat diulang tanpa menggandakan resume, evaluation, atau event audit.
+  const backfillLegacy = await db.BimbinganSkripsi.create({ mahasiswa_id: student.id, dosen_id: dosens[0].id,
+    penetapan_pembimbing_id: p1Only.id, permintaan_pesan: "Legacy untuk uji rerun backfill", permintaan_tanggal: new Date(),
+    permintaan_jam: "07:00", status_permohonan: "approved", status_resume: "approved", resume_mahasiswa: "Resume legacy yang disetujui.",
+    tanggal_review_resume: new Date(), reviewer_dosen_id: dosens[0].id, is_counted: true, legacy_context_status: "ambiguous" });
+  ids.guidance.push(backfillLegacy.id);
+  const backfillArgs = ["scripts/backfill-stage7-guidance.js", "--execute", "--batch-size=1", `--after-id=${backfillLegacy.id - 1}`];
+  execFileSync(process.execPath, backfillArgs, { cwd: require("node:path").resolve(__dirname, ".."), env: { ...process.env, NODE_ENV: "test" } });
+  const backfillCounts = { versions: await db.GuidanceResumeVersion.count({ where: { guidance_id: backfillLegacy.id } }),
+    evaluations: await db.GuidanceProgressEvaluation.count({ where: { guidance_id: backfillLegacy.id } }),
+    events: await db.GuidanceEvent.count({ where: { guidance_id: backfillLegacy.id, event_type: "legacy_backfill_classified" } }) };
+  execFileSync(process.execPath, backfillArgs, { cwd: require("node:path").resolve(__dirname, ".."), env: { ...process.env, NODE_ENV: "test" } });
+  assert.deepEqual({ versions: await db.GuidanceResumeVersion.count({ where: { guidance_id: backfillLegacy.id } }),
+    evaluations: await db.GuidanceProgressEvaluation.count({ where: { guidance_id: backfillLegacy.id } }),
+    events: await db.GuidanceEvent.count({ where: { guidance_id: backfillLegacy.id, event_type: "legacy_backfill_classified" } }) }, backfillCounts);
 
   // Pengabdian tetap read-only: histori legacy terbaca, sedangkan create workflow baru ditolak.
   const holdStudent = await db.Mahasiswa.create({ nim: `H${suffix}`.slice(0, 10), nama: "Mahasiswa Pengabdian Hold",

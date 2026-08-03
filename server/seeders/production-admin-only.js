@@ -1,5 +1,8 @@
 "use strict";
 
+const bcrypt = require("bcrypt");
+const { resolveInitialPassword } = require("../services/initialCredentialService");
+
 const ADMIN_NIP = "199501012020121001";
 
 module.exports = {
@@ -16,10 +19,7 @@ module.exports = {
       return;
     }
 
-    const hashedPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD_HASH;
-    if (!/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/.test(String(hashedPassword || ""))) {
-      throw new Error("BOOTSTRAP_ADMIN_PASSWORD_HASH wajib berupa bcrypt hash yang valid untuk bootstrap Admin produksi.");
-    }
+    const hashedPassword = await bcrypt.hash(resolveInitialPassword("admin"), 10);
 
     await queryInterface.bulkInsert(
       "Admins",
@@ -29,12 +29,14 @@ module.exports = {
           nama: "Admin Utama",
           email: "admin@sima.local",
           password: hashedPassword,
-          is_default_password: false,
-          credential_state: "active",
+          is_default_password: true,
+          credential_state: "default",
           credential_version: 1,
-          password_origin: "initial",
-          password_changed_at: new Date(),
+          password_origin: "institutional_default",
+          password_changed_at: null,
+          force_change_reason: "initial_institutional_password",
           security_updated_at: new Date(),
+          security_updated_by_type: "system",
           role: "koordinator",
           createdAt: new Date(),
           updatedAt: new Date(),

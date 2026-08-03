@@ -2,7 +2,9 @@
 
 require("dotenv").config();
 const fs = require("fs"); const path = require("path"); const db = require("../models");
+const bcrypt = require("bcrypt");
 const repository = require("../services/accountSecurityRepository");
+const initialCredentials = require("../services/initialCredentialService");
 
 async function scalar(sql, replacements = {}) { const [rows] = await db.sequelize.query(sql, { replacements }); return Number(rows[0]?.count || 0); }
 async function findLoginIdentifierCollisions() {
@@ -53,7 +55,7 @@ function scanRuntimeSources() {
       const absolute = path.join(directory, entry.name);
       if (entry.isDirectory()) visit(absolute, relativeBase);
       else if (/\.(js|jsx|ts|tsx)$/.test(entry.name)) {
-        if (absolute === __filename) continue;
+        if (absolute === __filename || absolute.endsWith("initialCredentialService.js")) continue;
         const relative = path.relative(relativeBase, absolute).replaceAll("\\", "/");
         const text = fs.readFileSync(absolute, "utf8");
         for (const [type, pattern] of rules) if (pattern.test(text)) findings.push({ type, file: relative });
@@ -73,19 +75,35 @@ async function run() {
     const mismatch = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE (credential_state = 'active' AND is_default_password = true) OR (credential_state IN ('default','temporary') AND is_default_password = false)`);
     const invalidHash = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE password IS NULL OR password !~ '^\\$2[aby]\\$'`);
     const accountType = ["mahasiswa", "dosen", "admin", "sekretaris_prodi"][accountTables.indexOf(table)];
-    const unavailableActivation = await scalar(`SELECT COUNT(*) AS count FROM "${table}" a WHERE credential_state IN ('default','temporary')
+    const unavailableActivation = accountType === "sekretaris_prodi" ? await scalar(`SELECT COUNT(*) AS count FROM "${table}" a WHERE credential_state IN ('default','temporary')
       AND recovery_email_verified_at IS NULL
       AND NOT EXISTS (SELECT 1 FROM "PasswordResetTokens" t WHERE t.account_type=:accountType AND t.account_id=a.id
-        AND t.purpose='admin_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND t.expires_at>NOW())`, { accountType });
+        AND t.purpose='admin_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND t.expires_at>NOW())`, { accountType }) : 0;
     const invalidRecoveryProvenance = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE (recovery_email_verified_at IS NULL) <> (recovery_email_verification_source IS NULL)`);
     if (invalidState) findings.push({ type: "invalid_credential_state_or_version", table, count: invalidState });
     if (mismatch) findings.push({ type: "credential_legacy_flag_mismatch", table, count: mismatch });
     if (invalidHash) findings.push({ type: "invalid_password_hash", table, count: invalidHash });
     if (unavailableActivation) findings.push({ type: "activation_channel_unverified", table, count: unavailableActivation,
-      action: new Set(["Mahasiswas", "Dosens"]).has(table)
-        ? "Konfigurasikan provider delivery lalu jalankan provision:stage6-activations; email baru dianggap terverifikasi setelah tautan aktivasi dikonsumsi."
-        : "Akun privileged wajib dipulihkan satu per satu melalui runbook recovery offline dengan persetujuan tercatat." });
+      action: "Akun Sekretaris Prodi wajib dipulihkan satu per satu melalui runbook recovery offline dengan persetujuan tercatat." });
     if (invalidRecoveryProvenance) findings.push({ type: "invalid_recovery_verification_provenance", table, count: invalidRecoveryProvenance });
+  }
+  for (const accountType of initialCredentials.SUPPORTED_ACCOUNT_TYPES) {
+    const definition = repository.TYPES[accountType];
+    const attributes = accountType === "mahasiswa"
+      ? ["id", "nim", "password", "credential_state"]
+      : ["id", "password", "credential_state"];
+    const accounts = await definition.model().findAll({ where: { credential_state: "default" }, attributes });
+    let invalidCount = 0;
+    for (const account of accounts) {
+      const expected = initialCredentials.resolveInitialPassword(accountType, account);
+      if (!(await bcrypt.compare(expected, account.password))) invalidCount += 1;
+    }
+    if (invalidCount) findings.push({
+      type: "institutional_default_credential_mismatch",
+      account_type: accountType,
+      count: invalidCount,
+      action: "Jalankan reconcile:stage6-initial-credentials -- --execute; akun active tidak akan diubah.",
+    });
   }
   const sessionUnion = accountTables.map((table, index) => {
     const type = ["mahasiswa", "dosen", "admin", "sekretaris_prodi"][index];

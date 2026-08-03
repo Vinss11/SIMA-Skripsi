@@ -15,6 +15,8 @@ async function run() {
     ["transfer_without_event", `SELECT COUNT(*)::int AS count FROM "GuidanceReviewerTransfers" t LEFT JOIN "GuidanceEvents" e ON e.id=t.event_id WHERE e.id IS NULL`],
     ["reviewer_resolution_reason_inconsistent", `SELECT COUNT(*)::int AS count FROM "BimbinganSkripsis" WHERE (reviewer_resolution_status = 'needs_reviewer_resolution' AND reviewer_resolution_reason_code IS NULL) OR (reviewer_resolution_status = 'resolved' AND reviewer_resolution_reason_code IS NOT NULL)`],
     ["duplicate_backfill_event", `SELECT COUNT(*)::int AS count FROM (SELECT guidance_id, event_type, idempotency_key FROM "GuidanceEvents" WHERE event_type='legacy_backfill_classified' AND idempotency_key IS NOT NULL GROUP BY guidance_id, event_type, idempotency_key HAVING COUNT(*) > 1) duplicate`],
+    ["failed_progress_recalculation_job", `SELECT COUNT(*)::int AS count FROM "GuidanceProgressRecalculationJobs" WHERE status = 'failed'`],
+    ["stuck_progress_recalculation_job", `SELECT COUNT(*)::int AS count FROM "GuidanceProgressRecalculationJobs" WHERE status IN ('pending', 'processing') AND "updatedAt" < NOW() - INTERVAL '15 minutes'`],
     ["null_row_version", `SELECT COUNT(*)::int AS count FROM "BimbinganSkripsis" WHERE row_version IS NULL OR row_version < 1`],
     ["ambiguous_counted", `SELECT COUNT(*)::int AS count FROM "BimbinganSkripsis" WHERE legacy_context_status <> 'resolved' AND is_counted=true`],
   ];

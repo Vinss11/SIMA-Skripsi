@@ -4,6 +4,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const { claimReceipt, completeCommandReceipt } = require("../services/guidanceWorkflowService");
 const { getExistingSupervisionPermission } = require("../services/dosenStatusService");
+const { enqueueProgressRecalculationJobsForPolicy } = require("../services/guidanceProgressRecalculationService");
 const { createSystemNotification } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 
@@ -22,24 +23,26 @@ async function changePolicyStatus({ policyId, action, actorId, expectedVersion, 
     const payload = { policy_id: Number(policyId), action, expected_version: Number(expectedVersion) };
     const operation = `${action}_guidance_policy`;
     const command = await claimReceipt({ actorType: "sekretaris_prodi", actorId, operation, idempotencyKey: key, payload, transaction });
-    if (command.replay) return { row: await db.GuidanceRequirementPolicy.findByPk(command.receipt.aggregate_id, { transaction }), replayed: true };
+    if (command.replay) return { row: await db.GuidanceRequirementPolicy.findByPk(command.receipt.aggregate_id, { transaction }), replayed: true, jobsQueued: 0 };
     const row = await db.GuidanceRequirementPolicy.findByPk(policyId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!row) throw governanceError("Policy bimbingan tidak ditemukan.", 404, "GUIDANCE_POLICY_NOT_FOUND");
     if (!Number.isInteger(Number(expectedVersion))) throw governanceError("expected_version wajib dikirim.", 428, "GUIDANCE_PRECONDITION_REQUIRED");
     if (Number(row.row_version) !== Number(expectedVersion)) throw governanceError("Policy telah berubah. Muat ulang sebelum melanjutkan.", 409, "GUIDANCE_VERSION_CONFLICT");
+    let jobsQueued = 0;
     if (action === "activate") {
       if (row.status !== "draft") throw governanceError("Hanya policy draft yang dapat diaktifkan.", 409, "GUIDANCE_POLICY_STATE_CONFLICT");
       const sameScope = { kode_program_studi: row.kode_program_studi, program_kuliah: row.program_kuliah, jalur: row.jalur, periode_akademik_id: row.periode_akademik_id };
       const active = await db.GuidanceRequirementPolicy.findOne({ where: { ...sameScope, status: "active", id: { [Op.ne]: row.id } }, transaction, lock: transaction.LOCK.UPDATE });
       if (active) throw governanceError("Masih ada policy aktif pada scope yang sama. Retire policy tersebut terlebih dahulu.", 409, "GUIDANCE_POLICY_ACTIVE_SCOPE_CONFLICT");
       await row.update({ status: "active", effective_at: new Date(), retired_at: null, approved_by_type: "sekretaris_prodi", approved_by_id: actorId, row_version: row.row_version + 1 }, { transaction });
+      jobsQueued = await enqueueProgressRecalculationJobsForPolicy(row, transaction);
     } else {
       if (row.status !== "active") throw governanceError("Hanya policy aktif yang dapat di-retire.", 409, "GUIDANCE_POLICY_STATE_CONFLICT");
       await row.update({ status: "retired", retired_at: new Date(), row_version: row.row_version + 1 }, { transaction });
     }
     await completeCommandReceipt({ receipt: command.receipt, aggregateType: "GuidanceRequirementPolicy", aggregateId: row.id, responseStatus: 200,
       responsePayload: { id: row.id, status: row.status, row_version: row.row_version }, transaction });
-    return { row, replayed: false };
+    return { row, replayed: false, jobsQueued };
   });
 }
 
@@ -49,7 +52,7 @@ async function policyStatusHandler(req, res, action) {
     if (!key) throw governanceError("Idempotency-Key wajib dikirim.", 400, "IDEMPOTENCY_KEY_REQUIRED");
     const result = await changePolicyStatus({ policyId: req.params.id, action, actorId: req.user.sekretaris_prodi_id || req.user.id,
       expectedVersion: req.body?.expected_version, key });
-    return res.json({ success: true, replayed: result.replayed, data: result.row });
+    return res.json({ success: true, replayed: result.replayed, data: result.row, recalculation_jobs_queued: result.jobsQueued });
   } catch (error) {
     if (error.name === "SequelizeUniqueConstraintError") return fail(res, governanceError("Masih ada policy aktif pada scope yang sama.", 409, "GUIDANCE_POLICY_ACTIVE_SCOPE_CONFLICT"));
     return fail(res, error);
@@ -134,8 +137,7 @@ exports.resolveReviewer = async (req, res) => {
     if (!key) return res.status(400).json({ success: false, code: "IDEMPOTENCY_KEY_REQUIRED", message: "Idempotency-Key wajib dikirim." });
     const actorId = req.user.sekretaris_prodi_id || req.user.id; const targetMemberId = Number(req.body?.target_assignment_member_id);
     const result = await db.sequelize.transaction(async (transaction) => {
-      const reasonCode = String(req.body?.reason_code || "").trim();
-      const payload = { guidance_id: Number(req.params.id), target_member_id: targetMemberId, reason_code: reasonCode || null, expected_version: expectedVersion };
+      const payload = { guidance_id: Number(req.params.id), target_member_id: targetMemberId, expected_version: expectedVersion };
       const command = await claimReceipt({ actorType: "sekretaris_prodi", actorId, operation: "resolve_guidance_reviewer",
         idempotencyKey: key, payload, transaction });
       if (command.replay) return { guidance: await db.BimbinganSkripsi.findByPk(command.receipt.aggregate_id, { transaction }), replayed: true };
@@ -143,6 +145,8 @@ exports.resolveReviewer = async (req, res) => {
       if (!guidance) { const error = new Error("Bimbingan tidak ditemukan."); error.status = 404; error.code = "GUIDANCE_NOT_FOUND"; throw error; }
       if (guidance.reviewer_resolution_status !== "needs_reviewer_resolution") throw governanceError("Bimbingan tidak sedang menunggu resolusi reviewer.", 409, "GUIDANCE_REVIEWER_RESOLUTION_NOT_REQUIRED");
       if (!Number.isInteger(expectedVersion) || expectedVersion !== Number(guidance.row_version)) { const error = new Error("Versi bimbingan tidak sesuai."); error.status = 409; error.code = "GUIDANCE_VERSION_CONFLICT"; throw error; }
+      const previousMember = await db.PenetapanPembimbingDosen.findByPk(guidance.effective_reviewer_assignment_member_id, { transaction });
+      if (!previousMember) throw governanceError("Konteks reviewer efektif sebelumnya tidak ditemukan.", 409, "GUIDANCE_EFFECTIVE_REVIEWER_CONTEXT_MISSING");
       const member = await db.PenetapanPembimbingDosen.findByPk(targetMemberId, { include: [{ model: db.PenetapanPembimbing, as: "penetapan", required: true }], transaction });
       if (!member || member.status !== "active" || Number(member.penetapan.mahasiswa_id) !== Number(guidance.mahasiswa_id)
         || member.penetapan.status !== "active" || !isEffective(member) || !isEffective(member.penetapan)
@@ -151,17 +155,17 @@ exports.resolveReviewer = async (req, res) => {
       }
       const permission = await getExistingSupervisionPermission(member.dosen_id, transaction);
       if (!permission.allowed) throw governanceError(permission.message || "Status dosen tujuan tidak mengizinkan kelanjutan bimbingan.", 409, "GUIDANCE_REVIEWER_UNAVAILABLE");
-      if (Number(member.urutan) !== Number(guidance.target_urutan_snapshot) && reasonCode.length < 5) {
-        throw governanceError("Alasan perubahan peran P1/P2 minimal 5 karakter.", 400, "GUIDANCE_REVIEWER_ROLE_CHANGE_REASON_REQUIRED");
-      }
+      const reasonCode = Number(member.urutan) === Number(previousMember.urutan)
+        ? "SAME_ROLE_MANUAL_RESOLUTION"
+        : "CROSS_ROLE_FALLBACK_APPROVED_BY_SEKPRODI";
       const before = guidance.row_version; const event = await db.GuidanceEvent.create({ guidance_id: guidance.id, event_type: "reviewer_transferred",
         actor_type: "sekretaris_prodi", actor_id: actorId, actor_role: "sekretaris_prodi", from_state: String(guidance.effective_reviewer_assignment_member_id || ""),
         to_state: String(member.id), assignment_id: member.penetapan_pembimbing_id, assignment_member_id: member.id, occurred_at: new Date(),
-        idempotency_key: key, reason_code: reasonCode || "MANUAL_RESOLUTION", metadata: { manual_resolution: true,
-          from_urutan: guidance.target_urutan_snapshot, to_urutan: member.urutan } }, { transaction });
+        idempotency_key: key, reason_code: reasonCode, metadata: { manual_resolution: true,
+          from_urutan: previousMember.urutan, to_urutan: member.urutan } }, { transaction });
       await db.GuidanceReviewerTransfer.create({ guidance_id: guidance.id, from_assignment_id: guidance.effective_reviewer_assignment_id,
         from_assignment_member_id: guidance.effective_reviewer_assignment_member_id, to_assignment_id: member.penetapan_pembimbing_id,
-        to_assignment_member_id: member.id, transition_type: "manual_resolution", reason_code: reasonCode || "MANUAL_RESOLUTION",
+        to_assignment_member_id: member.id, transition_type: "manual_resolution", reason_code: reasonCode,
         effective_at: new Date(), transferred_by_actor_type: "sekretaris_prodi", transferred_by_actor_id: actorId, event_id: event.id,
         row_version_before: before, row_version_after: before + 1 }, { transaction });
       await guidance.update({ effective_reviewer_assignment_id: member.penetapan_pembimbing_id, effective_reviewer_assignment_member_id: member.id,

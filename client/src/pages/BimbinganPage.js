@@ -712,6 +712,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
           <p className="text-sm text-[#5d6c91]">
             Sesi tervalidasi: {stats?.counted_sessions || 0} dari {stats?.target_minimum || 0}
           </p>
+          {guidanceProgress?.evaluation_state?.requires_recalculation ? (
+            <p className="mt-1 text-xs font-bold text-[#9a6900]">Sedang dihitung ulang. Angka yang tampil adalah hasil evaluasi terakhir.</p>
+          ) : null}
           {guidanceContext ? (
             <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-[#40578c]">
               <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Jalur: {String(guidanceContext.cycle?.jalur || "-").replaceAll("_", " ")}</span>

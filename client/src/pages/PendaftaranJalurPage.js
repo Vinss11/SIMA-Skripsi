@@ -1299,7 +1299,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     />
                     {fieldErrors.account_password ? (
                       <p className="mt-1 text-xs font-semibold text-[#c43f3f]">{fieldErrors.account_password}</p>
-                    ) : null}
+                    ) : (
+                      <p className="mt-1 text-xs text-[#6477a8]">
+                        Jika password belum pernah diganti, gunakan NIM sebagai password awal.
+                      </p>
+                    )}
                   </div>
                   <div>
                     <RequiredLabel>Nama</RequiredLabel>

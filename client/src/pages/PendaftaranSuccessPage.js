@@ -43,12 +43,16 @@ function PendaftaranSuccessPage({
               <p>
                 Username: <span className="font-semibold">{username}</span>
               </p>
-              <p>Gunakan password akun mahasiswa yang sudah ada. Untuk akun baru, ikuti tautan aktivasi yang dikirim melalui kanal terverifikasi.</p>
+              <p>
+                {isNewAccount
+                  ? "Gunakan NIM sebagai password awal. Setelah login, Anda wajib membuat password baru sebelum membuka menu lain."
+                  : "Gunakan password akun mahasiswa yang sudah Anda buat."}
+              </p>
             </div>
             {isNewAccount ? (
               <div className="mt-4 flex items-start gap-2 rounded-lg border border-[#bde0cb] bg-white/70 px-3 py-2 text-xs font-semibold text-[#2f6a4c] sm:text-sm">
                 <ShieldCheck className="mt-0.5 h-4 w-4 flex-none" />
-                <p>Password atau token aktivasi tidak pernah ditampilkan pada halaman ini.</p>
+                <p>Password awal hanya membuka sesi terbatas untuk mengganti password.</p>
               </div>
             ) : null}
           </div>

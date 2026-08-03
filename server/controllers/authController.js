@@ -22,7 +22,7 @@ function publicUser(accountType, account) {
   const user = {
     id: account.id,
     username: accountType === "mahasiswa" ? account.nim
-      : accountType === "dosen" ? (account.kode_dosen || account.nik || account.email)
+      : accountType === "dosen" ? (account.nik || account.kode_dosen || account.email)
       : accountType === "sekretaris_prodi" ? (account.nik || account.email)
       : account.nip,
     nama: account.nama,

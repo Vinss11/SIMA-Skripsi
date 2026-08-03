@@ -8183,6 +8183,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <p className="mt-1 text-base font-black text-[#1f2d53]">
                           {selectedMonitoringMahasiswa?.bimbingan?.tervalidasi || 0}/{selectedMonitoringMahasiswa?.bimbingan?.target || 8} sesi
                         </p>
+                        {selectedMonitoringMahasiswa?.bimbingan?.is_stale ? <p className="mt-1 text-xs font-bold text-[#9a6900]">Sedang dihitung ulang</p> : null}
                       </div>
                       <div>
                         <p className="text-xs font-bold uppercase text-[#68779e]">Dokumen Sidang</p>
@@ -8393,6 +8394,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                     Ada review yang perlu ditindaklanjuti
                                   </p>
                                 ) : null}
+                                {row.bimbingan?.is_stale ? <p className="mt-1 text-xs font-bold text-[#9a6900]">Sedang dihitung ulang</p> : null}
                               </div>
                             </td>
                             <td className="px-3 py-3">

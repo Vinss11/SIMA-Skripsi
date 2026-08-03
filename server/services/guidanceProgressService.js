@@ -122,7 +122,7 @@ async function resolveProgress({ mahasiswaId, cycleRegistrationId, assignmentId 
       if (recalculate) {
         evaluation = await evaluateGuidance({ guidance: row, resumeVersion: versionById.get(currentResumeId) || null, policy, transaction });
         await row.save({ transaction, fields: ["is_counted", "progress_policy_id"] });
-      } else evaluation = null;
+      }
     }
     if (evaluation) activeByGuidance.set(Number(row.id), evaluation);
   }
@@ -135,10 +135,13 @@ async function resolveProgress({ mahasiswaId, cycleRegistrationId, assignmentId 
     policy: { id: policy.id, version: policy.version, minimum_validated_sessions: required, count_scope: policy.count_scope,
       occurrence_proof_mode: policy.occurrence_proof_mode, supervisor_approval_scope: policy.supervisor_approval_scope,
       require_p2_if_available: Boolean(policy.require_p2_if_available) },
-    cycle: { counted: cycleCount, required, remaining: Math.max(0, required - cycleCount), sufficient: cycleCount >= required },
-    semester: { assignment_id: assignmentId, counted: semesterCount, required, remaining: Math.max(0, required - semesterCount), sufficient: semesterCount >= required },
-    enforcement: { counted: selectedCount, sufficient: selectedCount >= required },
-    evaluation_state: { requires_recalculation: staleGuidanceIds.length > 0, stale_count: staleGuidanceIds.length },
+    cycle: { counted: cycleCount, required, remaining: Math.max(0, required - cycleCount), sufficient: cycleCount >= required,
+      is_stale: staleGuidanceIds.length > 0 },
+    semester: { assignment_id: assignmentId, counted: semesterCount, required, remaining: Math.max(0, required - semesterCount), sufficient: semesterCount >= required,
+      is_stale: staleGuidanceIds.length > 0 },
+    enforcement: { counted: selectedCount, sufficient: selectedCount >= required, is_stale: staleGuidanceIds.length > 0 },
+    evaluation_state: { status: staleGuidanceIds.length > 0 ? "recalculation_required" : "current",
+      requires_recalculation: staleGuidanceIds.length > 0, stale_count: staleGuidanceIds.length },
   };
   if (persistSnapshot) {
     const watermark = crypto.createHash("sha256").update(rows.map((row) => {

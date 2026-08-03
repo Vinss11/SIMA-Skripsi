@@ -24,8 +24,7 @@ const {
   getSupervisedMahasiswaIdsWithLegacyFallback,
   getActiveSupervisionLoad,
 } = require("../services/supervisorAccessService");
-const { unusableInitialPassword } = require("../services/credentialService");
-const { issueInitialActivation } = require("../services/passwordRecoveryService");
+const { buildInitialCredentialAttributes } = require("../services/initialCredentialService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -1122,15 +1121,7 @@ exports.createDosen = async (req, res) => {
         nama: nameValidation.normalized,
         gelar: normalizedGelar || null,
         email: normalizedEmail,
-        password: unusableInitialPassword(),
-        is_default_password: true,
-        credential_state: "default",
-        credential_version: 1,
-        password_origin: "initial",
-        force_change_reason: "activation_required",
-        security_updated_at: new Date(),
-        security_updated_by_type: req.user.role,
-        security_updated_by_id: req.user.id,
+        ...buildInitialCredentialAttributes("dosen", { nik: normalizedNik }, req.user),
         jabatan_struktural: normalizedJabatanStruktural || null,
         kuota_bimbingan: parsedKuota,
         status_keaktifan: normalizedStatus,
@@ -1149,8 +1140,6 @@ exports.createDosen = async (req, res) => {
     }
 
     await initializeAvailabilityForDosen(newDosen, t);
-    await issueInitialActivation({ accountType: "dosen", account: newDosen, actor: req.user, transaction: t });
-
     await t.commit();
 
     const created = await Dosen.findByPk(newDosen.id, {
@@ -1187,7 +1176,7 @@ exports.createDosen = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: "Dosen berhasil ditambahkan dan tautan aktivasi dijadwalkan untuk dikirim.",
+      message: "Dosen berhasil ditambahkan dan dapat login menggunakan NIK dengan password awal institusional.",
       data: created,
     });
   } catch (error) {

@@ -104,6 +104,15 @@ module.exports = (sequelize, DataTypes) => {
     response_payload_minimal: json(), completed_at: DataTypes.DATE, expires_at: DataTypes.DATE,
   }, { ...common, modelName: "GuidanceCommandReceipt", tableName: "GuidanceCommandReceipts" });
 
+  class GuidanceProgressRecalculationJob extends Model {}
+  GuidanceProgressRecalculationJob.init({
+    policy_id: { type: DataTypes.INTEGER, allowNull: false }, mahasiswa_id: { type: DataTypes.INTEGER, allowNull: false },
+    cycle_registration_id: { type: DataTypes.INTEGER, allowNull: false }, assignment_id: { type: DataTypes.INTEGER, allowNull: false },
+    status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: "pending" }, attempt_count: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    available_at: { type: DataTypes.DATE, allowNull: false }, started_at: DataTypes.DATE, completed_at: DataTypes.DATE,
+    last_error_code: DataTypes.STRING(80), last_error_message: DataTypes.TEXT, result: json(),
+  }, { ...common, modelName: "GuidanceProgressRecalculationJob", tableName: "GuidanceProgressRecalculationJobs" });
+
   GuidanceReviewerTransfer.associate = (models) => {
     models.GuidanceReadinessRequest.hasMany(models.GuidanceReadinessApproval, { foreignKey: "readiness_request_id", as: "approvals" });
     models.GuidanceReadinessApproval.belongsTo(models.GuidanceReadinessRequest, { foreignKey: "readiness_request_id", as: "request" });

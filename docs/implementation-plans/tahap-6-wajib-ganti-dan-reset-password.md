@@ -1,8 +1,20 @@
 # Rancangan Pengerjaan Tahap 6 — Wajib Ganti dan Reset Password
 
-## Status implementasi (1 Agustus 2026)
+## Status implementasi dan perubahan keputusan (3 Agustus 2026)
 
-Gate 6A dan minimum transisi Gate 6B telah diimplementasikan: bypass login email dan fallback JWT dihapus, empat role memakai credential state/version, root guard serta middleware memaksa perubahan password, access token menunjuk live server session, dan logout/revocation tersedia. Gate 6C tersedia di balik `AUTH_RECOVERY_ENABLED`: token reset hashed dan single-use, payload delivery dienkripsi AES-GCM, worker mendukung retry/dead-letter, serta Admin reset dibatasi untuk Mahasiswa/Dosen. Aktivasi recovery produksi tetap menunggu konfigurasi provider, delivery key, dan penetapan kanal email terverifikasi.
+Gate 6A dan minimum transisi Gate 6B telah diimplementasikan: bypass login email dan fallback JWT dihapus, empat role memakai credential state/version, root guard serta middleware memaksa perubahan password, access token menunjuk live server session, dan logout/revocation tersedia. Gate 6C tersedia di balik `AUTH_RECOVERY_ENABLED`: token reset hashed dan single-use, payload delivery dienkripsi AES-GCM, worker mendukung retry/dead-letter, serta Admin reset dibatasi untuk Mahasiswa/Dosen.
+
+Keputusan akun awal telah diperbarui berdasarkan arahan akademik:
+
+- Dosen serta Admin baru/default menggunakan password awal institusional `12345678`;
+- Mahasiswa baru menggunakan NIM masing-masing sebagai password awal;
+- ketiganya dibuat sebagai credential `default`, dapat login restricted, dan wajib mengganti password sebelum mengakses aktivitas bisnis;
+- penggunaan `12345678` pada Admin berlaku untuk provisioning akun baru dan rekonsiliasi per akun yang benar-benar masih `default`; akun Admin `active` tidak diubah dan reset-nya tetap memakai recovery offline privileged;
+- Sekretaris Prodi tetap memakai provisioning/recovery khusus akun privileged, bukan password awal bersama;
+- link aktivasi/reset email dipertahankan sebagai jalur pemulihan alternatif, bukan satu-satunya cara akun non-privileged memperoleh akses awal;
+- untuk email dummy/tidak dapat diakses, Admin dapat mereset Dosen/Mahasiswa ke password awal institusional dengan alasan, audit, version increment, dan session revocation.
+
+Implementasi yang masih membuat password awal acak/tidak dapat digunakan dan mewajibkan link aktivasi harus dimigrasikan mengikuti keputusan baru ini. Perubahan tersebut tidak mengurangi forced-change, password policy untuk password baru, limiter, audit, maupun pencabutan sesi.
 
 ## 1. Tujuan
 
@@ -28,7 +40,8 @@ Aturan final:
 
 - akun mahasiswa tersedia setelah import;
 - password awal ditandai sebagai password default;
-- nilai literal password awal tidak ditulis pada aturan bisnis atau source code;
+- password awal Dosen dan Admin adalah `12345678`, sedangkan password awal Mahasiswa adalah NIM miliknya;
+- derivasi password awal hanya berada pada konfigurasi/policy credential terpusat dan tidak diduplikasi pada controller/frontend;
 - pengguna dengan password default hanya dapat mengakses ganti password dan logout;
 - pembatasan wajib berlaku di frontend dan middleware backend;
 - lupa/reset password tersedia;
@@ -46,7 +59,7 @@ Frontend hanya lapisan pengalaman pengguna. Backend tetap menjadi enforcement so
 - versioning kredensial dan pencabutan sesi;
 - logout sesi saat ini dan seluruh sesi;
 - forgot/reset password mandiri;
-- reset/aktivasi berbasis link oleh Admin untuk target non-privileged, dengan audit dan object-level authorization;
+- reset berbasis link atau reset ke password awal institusional oleh Admin untuk target non-privileged, dengan audit dan object-level authorization;
 - session/access-token hardening yang diperlukan untuk revocation;
 - delivery reset melalui adapter/outbox;
 - password policy, rate limit, lock/backoff, audit, rekonsiliasi, dan monitoring;
@@ -58,7 +71,7 @@ Frontend hanya lapisan pengalaman pengguna. Backend tetap menjadi enforcement so
 - multi-factor authentication;
 - single sign-on/OAuth/SAML;
 - perubahan status akademik atau role pengguna;
-- pemulihan akun tanpa email/kanal terverifikasi sebelum prosedurnya disahkan;
+- pemulihan akun non-privileged tanpa email di luar reset ke password awal institusional oleh Admin yang terotorisasi;
 - pengelolaan credential sistem akademik eksternal;
 - penyimpanan jawaban pertanyaan keamanan;
 - pengiriman password atau token melalui kanal publik/tidak terotorisasi.
@@ -71,7 +84,7 @@ Tahap 6 dipecah menjadi tiga release gate yang harus dilewati berurutan:
 | --- | --- | --- |
 | **6A — Tutup bypass dan paksa ganti password** | hapus login email tanpa password dan paparan password awal; credential state/version; forced-change seluruh role; password policy; hardening JWT; frontend guard | seluruh bypass tertutup, secret fail-closed, direct API/deep link terblokir, dan characterization/integration test 6A lulus |
 | **6B — Session dan revocation** | session registry; live account/session lookup; logout; logout-all; revocation setelah change password; token/storage migration | sesi dapat dicabut server-side, token legacy ditolak saat cutover, dan test revocation/replay/concurrency 6B lulus |
-| **6C — Recovery berbasis link** | verified recovery channel; forgot/reset link; limiter; encrypted token outbox; delivery worker; reset/activation target non-privileged oleh Admin | 6A dan 6B sudah stabil; limiter, provider, outbox, retry/dead-letter, redaction, serta consume atomik sudah teruji |
+| **6C — Recovery dan reset akun non-privileged** | verified recovery channel; forgot/reset link; reset ke password awal oleh Admin; limiter; encrypted token outbox; delivery worker | 6A dan 6B sudah stabil; reset Admin terotorisasi dan ter-audit; limiter, provider, outbox, retry/dead-letter, redaction, serta consume atomik sudah teruji |
 
 Ketentuan gate:
 
@@ -107,9 +120,9 @@ Guard saat ini memeriksa role mahasiswa. Dosen, Admin, dan Sekprodi dengan passw
 
 Endpoint `/api/auth/login-mahasiswa-email` menerima email tanpa password, membandingkan hash dengan literal default, membocorkan apakah email terdaftar, lalu menerbitkan JWT. Endpoint ini harus dihentikan sebelum enforcement dianggap aman.
 
-#### 4.2.4 Secret dan password literal masih mempunyai fallback
+#### 4.2.4 Secret dan password awal belum dikelola terpusat
 
-JWT memakai fallback secret development dan beberapa controller/seeder memakai literal/fallback password awal. Produksi harus gagal start bila secret wajib tidak tersedia; shared default tidak boleh menjadi fallback source.
+JWT memakai fallback secret development dan beberapa controller/seeder memakai literal/fallback password awal. Produksi harus gagal start bila secret wajib tidak tersedia. Password awal institusional harus berasal dari credential policy/config terpusat, di-hash oleh service, dan tidak boleh tersebar sebagai fallback pada controller, model hook, atau frontend.
 
 #### 4.2.5 Password awal dapat tampil pada response/frontend
 
@@ -152,10 +165,10 @@ Gunakan state kredensial kanonik:
 | State | Makna | Akses |
 | --- | --- | --- |
 | `default` | Password awal akun belum diganti | Login, ganti password, logout |
-| `temporary` | State kompatibilitas untuk password sementara legacy; tidak diterbitkan flow versi awal | Login, ganti password, logout |
+| `temporary` | Password sementara untuk recovery offline akun privileged atau kompatibilitas legacy | Login, ganti password, logout |
 | `active` | Password permanen telah dibuat pengguna | Sesuai role/status akun |
 
-Permintaan forgot-password tidak mengubah state menjadi restricted dan tidak mengunci akun. Versi awal tidak membuat atau mengirim temporary password. Aktivasi/reset selalu memakai one-time link dan pengguna memilih password sendiri.
+Permintaan forgot-password tidak mengubah state menjadi restricted dan tidak mengunci akun. Self-service reset memakai one-time link dan pengguna memilih password sendiri. Reset oleh Admin untuk Dosen/Mahasiswa mengembalikan akun ke state `default` dengan password awal sesuai tipe akun; state `temporary` tidak digunakan untuk reset non-privileged.
 
 `is_default_password` dipertahankan selama kompatibilitas, tetapi source of truth target adalah `credential_state`. Mapping:
 
@@ -175,6 +188,7 @@ Versi dinaikkan ketika:
 - password berhasil diganti;
 - self-service reset berhasil;
 - Admin menerbitkan reset/activation link untuk target non-privileged;
+- Admin mereset target non-privileged ke password awal institusional;
 - akun ditandai compromised;
 - tindakan keamanan mencabut seluruh sesi.
 
@@ -187,10 +201,11 @@ Middleware membandingkan token/session version dengan database pada setiap reque
 | `default` | Ganti dengan password valid | `active` | Cabut seluruh sesi lama, buat sesi baru |
 | `temporary` | Ganti dengan password valid | `active` | Cabut seluruh sesi lama, buat sesi baru |
 | `active` | Ganti password biasa | `active` | Cabut seluruh sesi lama, buat sesi baru |
-| Apa pun | Admin reset non-privileged berbasis link | activation-required tanpa membuat password baru | Cabut seluruh sesi dan reset token lama saat kebijakan reset dijalankan |
+| Apa pun | Admin menerbitkan reset-link non-privileged | Menunggu consume link | Cabut seluruh sesi dan reset token lama saat kebijakan reset dijalankan |
+| Apa pun | Admin reset non-privileged ke password awal | `default` | Cabut seluruh sesi dan reset token lama; pengguna login restricted lalu forced change |
 | Apa pun | Self-service reset dengan password pilihan pengguna | `active` | Cabut seluruh sesi dan reset token lama |
 
-Self-service reset dan Admin activation/reset versi awal hanya menghasilkan one-time link. Sistem tidak membuat, menampilkan, melaporkan, atau mengirim temporary password. State `temporary` hanya dipertahankan untuk kompatibilitas akun legacy dan bukan write path baru.
+Self-service reset menghasilkan one-time link. Admin dapat memilih reset-link atau reset ke password awal institusional untuk Dosen/Mahasiswa. Sistem tidak menampilkan hash dan tidak mengembalikan password awal pada response bisnis. State `temporary` hanya digunakan untuk recovery offline akun privileged atau kompatibilitas legacy.
 
 ### 5.5 Invariant global
 
@@ -199,7 +214,7 @@ Self-service reset dan Admin activation/reset versi awal hanya menghasilkan one-
 3. Flag dari JWT/frontend tidak pernah menjadi satu-satunya sumber credential state.
 4. Password, hash, reset token, refresh token, dan secret tidak pernah dicatat pada log.
 5. Password awal/temporary tidak dikembalikan oleh endpoint bisnis umum.
-6. Tidak ada shared default literal/fallback pada production path.
+6. Password awal Dosen/Admin dan derivasi NIM Mahasiswa hanya dikelola credential policy terpusat; tidak ada literal/fallback yang tersebar pada production path.
 7. Reset request selalu memberi response generik, terlepas akun ditemukan atau tidak.
 8. Reset token random, hashed, single-use, purpose-bound, dan mempunyai expiry.
 9. Token reset baru mencabut token reset aktif lama untuk account/purpose yang sama.
@@ -212,7 +227,7 @@ Self-service reset dan Admin activation/reset versi awal hanya menghasilkan one-
 16. Account disabled tidak dapat login/reset menjadi aktif tanpa flow status akun.
 17. Exact retry tidak membuat reset token, sesi, delivery, atau audit ganda.
 18. Dua consume token paralel menghasilkan tepat satu keberhasilan.
-19. Reset akun Admin/Sekprodi ditolak dan endpoint/capability-nya tidak dirilis sampai model otorisasi khusus disahkan dan diimplementasikan.
+19. Reset akun Admin/Sekprodi melalui flow non-privileged ditolak; recovery offline privileged tetap digunakan sampai model otorisasi khusus disahkan dan diimplementasikan.
 20. Recovery tidak mengubah role/capability/identitas akun.
 
 ## 6. Kontrak data target
@@ -224,13 +239,13 @@ Tambahkan secara additive pada keempat tabel akun atau abstraksikan melalui repo
 - `credential_state`;
 - `credential_version`, default 1;
 - `password_changed_at`;
-- `password_origin`: `initial`, `self_change`, `self_reset`, `admin_reset`, atau `migration`;
+- `password_origin`: `institutional_default`, `self_change`, `self_reset`, `admin_reset_default`, `admin_reset_link`, `offline_privileged_recovery`, atau `migration`;
 - `force_change_reason`, nullable;
 - `security_updated_at`;
 - `security_updated_by_type/id`, bila audit bersama belum mencukupi.
 - `recovery_email_verified_at`, nullable, atau relasi kanal pemulihan terverifikasi yang ekuivalen.
 
-Email pemulihan hanya eligible bila telah diverifikasi. Jika institusi memutuskan bahwa email institusi dari sumber akademik resmi otomatis dipercaya, keputusan tersebut harus tertulis, sumber/provenance harus tersimpan, dan waktu verifikasi diisi saat import/sinkronisasi. Email import biasa tidak boleh otomatis dianggap sah tanpa keputusan ini.
+Email pemulihan hanya eligible untuk self-service reset-link bila telah diverifikasi. Jika institusi memutuskan bahwa email institusi dari sumber akademik resmi otomatis dipercaya, keputusan tersebut harus tertulis, sumber/provenance harus tersimpan, dan waktu verifikasi diisi saat import/sinkronisasi. Email import biasa tidak boleh otomatis dianggap sah tanpa keputusan ini. Email dummy tidak menghalangi login awal atau reset oleh Admin ke password awal institusional.
 
 `is_default_password` tetap dual-write selama satu release kompatibilitas. Model hooks tidak boleh menjadi satu-satunya lokasi hashing; seluruh mutasi password diarahkan ke `CredentialService` agar transaction, versioning, session revocation, token revocation, dan audit selalu dijalankan.
 
@@ -327,12 +342,15 @@ Policy disediakan oleh service/config berversi, bukan hard-code per controller:
 - opsional menolak N hash histori terakhir;
 - menolak password yang sangat umum/terkompromi bila dataset/service tersedia;
 - menolak password yang identik dengan username/email/NIM/NIK;
+- menolak password baru Dosen/Admin yang sama dengan `12345678` dan password baru Mahasiswa yang sama dengan NIM;
 - tidak mewajibkan pola komposisi rumit tanpa keputusan kebijakan;
 - mendukung password manager dan paste;
 - confirmation hanya validasi frontend; backend menerima satu password baru;
 - hashing cost berasal dari konfigurasi dan dapat direhash saat login bila cost berubah.
 
 Password dihitung menggunakan `Buffer.byteLength(password, 'utf8')` atau ekuivalennya sebelum bcrypt. Password tidak di-trim, dipotong, atau dinormalisasi Unicode secara diam-diam sehingga byte yang divalidasi sama dengan byte yang di-hash.
+
+Policy minimum panjang dan common-password berlaku saat pengguna memilih password baru. Credential awal institusional merupakan bootstrap credential yang hanya dapat menghasilkan restricted session dan tidak dinilai sebagai password permanen.
 
 Policy error mengembalikan reason code tanpa mengungkap hash/history:
 
@@ -360,6 +378,15 @@ Login dengan credential benar
 ```
 
 Login tidak perlu ditolak karena pengguna membutuhkan jalur untuk mengganti password. Restricted session tidak mempunyai akses profile, notification, upload, dashboard, atau endpoint bisnis lain.
+
+Credential awal yang sah:
+
+- Dosen: kode dosen/NIK/email + `12345678`;
+- Mahasiswa: NIM + password berupa NIM yang sama;
+- Admin baru/default: identifier Admin + `12345678`;
+- Sekretaris Prodi: tidak memakai credential awal bersama dan mengikuti provisioning/recovery privileged.
+
+Create/import Dosen dan Mahasiswa serta provisioning Admin baru wajib menyimpan bcrypt hash credential awal melalui service terpusat, `credential_state = default`, `is_default_password = true`, `password_origin = institutional_default`, dan `force_change_reason = initial_institutional_password`.
 
 ### 8.2 Ganti password terautentikasi
 
@@ -409,7 +436,12 @@ Validasi token menggunakan `POST` dengan token di request body, bukan query stri
 
 ### 8.5 Reset oleh Admin
 
-Versi awal hanya menyediakan penerbitan one-time activation/reset link untuk target non-privileged yang diizinkan aturan otorisasi. Admin tidak melihat password lama, password baru, hash, atau token. Tidak ada temporary password buatan Admin.
+Untuk target non-privileged yang diizinkan, Admin mempunyai dua pilihan:
+
+1. **Kirim reset-link**, hanya jika kanal recovery target memenuhi syarat; atau
+2. **Reset ke password awal**, untuk kebutuhan email dummy/tidak dapat diakses.
+
+Reset ke password awal menetapkan Dosen ke `12345678` dan Mahasiswa ke NIM, lalu mengubah credential menjadi `default`. Operasi wajib memakai row lock dan transaksi, menaikkan `credential_version`, mencabut seluruh session/reset token aktif, mencatat actor/target/alasan, serta bersifat idempotent. Response hanya menyatakan bahwa akun dikembalikan ke password awal sesuai tipe akun; response tidak memuat password atau hash.
 
 Reset akun Admin/Sekprodi ditunda. Route, tombol, dan capability untuk target privileged tidak boleh diaktifkan sebelum tersedia tabel/aturan capability yang eksplisit, object-level authorization, audit, dan keputusan step-up/four-eyes. Pemeriksaan role ad hoc di controller tidak dianggap memenuhi syarat ini.
 
@@ -457,8 +489,8 @@ Middleware diterapkan pada root API/router sehingga route baru otomatis dilindun
 1. Inventaris seluruh account creation, import, seeder, login, change password, token issuance, dan response yang memuat credential.
 2. Hapus/deprecate `/login-mahasiswa-email` sebelum feature enforcement aktif.
 3. Hapus login otomatis yang membaca `default_password` dari response pendaftaran.
-4. Hapus fallback JWT secret dan password literal dari production path.
-5. Pastikan seeder demo tidak dapat berjalan di production dan seluruh nilai berasal dari config development yang eksplisit.
+4. Hapus fallback JWT secret dan literal password awal yang tersebar; pertahankan nilai password awal institusional hanya pada credential policy/config terpusat.
+5. Pastikan seeder demo tidak dapat berjalan di production dan seluruh credential awal dibuat melalui service yang sama dengan create/import production.
 6. Tentukan delivery channel, token expiry, password policy, session TTL, remember-me, trusted recovery source, dan retention; catat reset privileged account sebagai fitur yang ditunda.
 7. Buat characterization test login/change-password keempat role.
 8. Catat baseline migration, test, build, dan security scan secret.
@@ -476,8 +508,10 @@ Gate 6A terdiri dari Paket 0–3, Paket 5–6 untuk enforcement/change password,
 3. Tambahkan unique/index sesuai gate ketika tabel terkait diperkenalkan.
 4. Backfill credential state dari `is_default_password`.
 5. Backfill version 1 dan password changed timestamp bila dapat ditentukan.
-6. Data ambigu ditandai manual review; jangan otomatis menganggap active.
-7. Pertahankan dual-read/write satu release.
+6. Reconcile akun `default`: hash ulang Dosen ke `12345678`, Mahasiswa ke NIM, dan Admin baru ke `12345678` hanya jika provenance initial provisioning dapat dibuktikan; jangan mengubah akun `active` dan jangan memproses Admin secara massal.
+7. Pada akun default yang diperbaiki, naikkan credential version, cabut session/reset token, simpan origin/reason, dan buat audit idempoten.
+8. Data ambigu ditandai manual review; jangan otomatis menganggap active.
+9. Pertahankan dual-read/write satu release.
 
 Hasil: semua role mempunyai state yang dapat diverifikasi dan dicabut.
 
@@ -512,11 +546,14 @@ Implementasikan:
 - `validateNewPassword()`;
 - `changePassword()`;
 - `setPasswordFromReset()`;
-- `issueActivationResetLink()` tanpa membuat password sementara;
+- `deriveInitialCredential(accountType, account, operationContext)` untuk Dosen/Mahasiswa serta Admin baru/default yang memenuhi context;
+- `initializeDefaultCredential()` untuk create/import;
+- `resetToInstitutionalDefault()` untuk Admin reset non-privileged;
+- `issueActivationResetLink()` sebagai recovery alternatif;
 - `revokeAllCredentials()`;
 - `rehashIfNeeded()`.
 
-Service memiliki transaksi, row lock, hashing, state/version update, session/reset revocation sesuai gate, dan audit. Endpoint mahasiswa lama menjadi adapter sementara lalu dihapus. Validator menolak password di atas 72 byte UTF-8 sebelum memanggil bcrypt.
+Service memiliki transaksi, row lock, hashing, state/version update, session/reset revocation sesuai gate, dan audit. Derivasi Mahasiswa wajib memakai NIM kanonik dari row target, bukan nilai bebas request. Endpoint mahasiswa lama menjadi adapter sementara lalu dihapus. Validator menolak password baru di atas 72 byte UTF-8 sebelum memanggil bcrypt.
 
 ### Paket 4 — Session service dan token hardening
 
@@ -568,7 +605,7 @@ Gate 6B menyelesaikan Paket 4 dan bagian session/revocation pada Paket 6, lalu m
 
 Gate 6B harus lulus sebelum endpoint forgot/reset, outbox recovery, atau Admin activation/reset dapat diaktifkan.
 
-### Gate 6C — Recovery, delivery, dan Admin activation/reset non-privileged
+### Gate 6C — Recovery, delivery, dan Admin reset non-privileged
 
 ### Paket 7 — Forgot/reset password
 
@@ -597,14 +634,76 @@ Gate 6B harus lulus sebelum endpoint forgot/reset, outbox recovery, atau Admin a
 
 ### Paket 9 — Admin activation/reset non-privileged dan lifecycle akun awal
 
-1. Ganti shared default hanya dengan one-time activation link; jangan membuat temporary password.
+1. Create/import Dosen serta provisioning/rekonsiliasi Admin default menetapkan hash `12345678`; create/import Mahasiswa menetapkan hash NIM target.
 2. Import/create account tidak mengembalikan password pada response umum.
-3. Admin memilih target melalui object-level authorization.
-4. Penerbitan reset link mencabut session/token sesuai kebijakan dan menandai activation-required tanpa membuat password.
-5. Tolak target Admin/Sekprodi secara default; jangan sediakan permission semu atau pemeriksaan controller ad hoc.
-6. Implementasi reset target privileged menjadi tahap lanjutan setelah capability khusus dan aturan approval tersedia.
-7. Bulk activation/reset ditunda dari versi awal kecuali kebutuhan dan kontrolnya disahkan terpisah; secret tidak boleh masuk report.
-8. Buat audit target, actor, reason, method, dan delivery status.
+3. Akun baru disimpan sebagai `default`, restricted, dan wajib forced change.
+4. Admin memilih target reset melalui object-level authorization dan wajib memberi alasan.
+5. Sediakan reset-link untuk kanal terverifikasi dan reset-to-default untuk email dummy/tidak dapat diakses.
+6. Reset-to-default mencabut session/token, menaikkan version, mengatur origin/reason, dan tidak mengubah role/status akun.
+7. Tolak target Admin/Sekprodi secara default; jangan sediakan permission semu atau pemeriksaan controller ad hoc.
+8. Implementasi reset target privileged menjadi tahap lanjutan setelah capability khusus dan aturan approval tersedia.
+9. Bulk reset default hanya tersedia melalui script operasional ter-audit dan idempoten; password/hash tidak boleh masuk report.
+10. Buat audit target, actor, reason, method, dan delivery status.
+
+#### 9.1 Pemetaan perubahan implementasi
+
+| Area | Perubahan wajib |
+| --- | --- |
+| Credential policy | Tambahkan resolver tunggal yang mengembalikan credential awal berdasarkan konteks dan `accountType`: Dosen → `12345678`, Mahasiswa → NIM kanonik, Admin → `12345678` hanya pada provisioning baru atau rekonsiliasi per akun yang masih `default`; Sekprodi dan reset biasa target privileged ditolak |
+| Create Dosen | `adminController` tidak lagi memakai unusable random password atau otomatis mewajibkan activation link; panggil credential service dan simpan state `default` |
+| Import Dosen | Seluruh cabang preview/commit import menggunakan credential service yang sama; update row existing tidak boleh mereset akun `active` |
+| Create/import Mahasiswa | Password awal diturunkan dari NIM string apa adanya agar leading zero tidak hilang; hashing tidak dilakukan di controller dan password tidak dikembalikan pada response |
+| Provisioning Admin | Flow pembuatan Admin baru memakai operation context `initial_provisioning`; rekonsiliasi Admin lama yang masih `default` memakai `approved_default_reconciliation`. Keduanya menyimpan hash `12345678` dan mewajibkan forced change; akun Admin `active` tidak boleh memakai jalur ini |
+| Model hooks | Pastikan hash hanya terjadi sekali; service menjadi pemilik hashing dan hook kompatibilitas harus dapat membedakan hash bcrypt yang sudah jadi |
+| Login | Pertahankan login credential default dan response `next_action=change_password`; tidak ada login otomatis setelah create/import |
+| Middleware/UI | Restricted session hanya dapat change-password/logout dan seluruh role diarahkan ke forced-change page |
+| Recovery service | Pertahankan forgot/reset-link; tambahkan command transaksional `resetToInstitutionalDefault` khusus Dosen/Mahasiswa |
+| Admin API/UI | Tambahkan tombol **Reset ke Password Awal**, dialog konfirmasi + alasan, object authorization, idempotency key, dan pesan hasil tanpa password/hash |
+| Notification | Opsional memberi notifikasi bahwa akun di-reset; jangan memasukkan password awal karena nilainya mengikuti aturan institusional yang sudah diketahui pengguna |
+| Rekonsiliasi | Tambahkan dry-run/execute resumable untuk memperbaiki akun `default` lama; akun `active` hanya dilaporkan bila masih cocok credential awal |
+| Email activation | Hentikan penerbitan otomatis saat create/import; link tetap dapat diterbitkan sebagai alternatif recovery bila kanal valid |
+
+#### 9.2 Kontrak reset-to-default
+
+Request minimum:
+
+```http
+POST /api/admin/accounts/:type/:id/reset-to-default
+Idempotency-Key: <uuid>
+Content-Type: application/json
+
+{
+  "reason": "Email dummy tidak dapat digunakan untuk menerima reset link"
+}
+```
+
+Service wajib menjalankan satu transaksi dengan urutan:
+
+1. validasi actor Admin dan target hanya `dosen`/`mahasiswa`;
+2. lock target account;
+3. derivasi credential awal dari data target di database, bukan request;
+4. hash dengan bcrypt cost terkonfigurasi;
+5. set `credential_state=default`, `is_default_password=true`, origin/reason, dan naikkan version;
+6. revoke seluruh session serta reset token aktif;
+7. simpan security event dan command receipt;
+8. commit dan kembalikan hanya state/version/next action.
+
+Exact retry dengan key dan fingerprint sama mengembalikan hasil pertama. Key sama dengan target/alasan berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
+
+#### 9.3 Rekonsiliasi akun default lama
+
+Gunakan script operasional terpisah dari schema migration karena bcrypt per-row mahal dan perlu dapat dilanjutkan. Script wajib mendukung `--dry-run`, `--execute`, `--batch-size`, `--after-id`, report/checksum, dan rerun idempoten.
+
+Klasifikasi:
+
+- `repair_dosen_default`: Dosen state `default` yang hash-nya belum cocok `12345678`;
+- `repair_mahasiswa_default`: Mahasiswa state `default` yang hash-nya belum cocok NIM;
+- `repair_admin_initial_default`: Admin yang terbukti belum pernah menyelesaikan forced change dan hash-nya belum cocok `12345678`; wajib diproses per target dengan approval, bukan bulk massal;
+- `active_with_initial_credential`: finding keamanan; jangan diubah otomatis;
+- `privileged_default_ambiguous`: Admin/Sekprodi default yang provenance provisioning-nya tidak dapat dibuktikan; tangani recovery offline, bukan bulk reset;
+- `invalid_identifier`: manual review.
+
+Setiap execute yang mengubah hash juga menaikkan version, mencabut session/token, serta membuat audit dedup. Report tidak boleh berisi password, NIM penuh bila tidak diperlukan, atau hash.
 
 ### Paket 10 — Rate limiting dan abuse protection
 
@@ -615,6 +714,7 @@ Limiter minimum:
 - reset validation/confirm per token selector dan IP;
 - change password per account/session/IP;
 - Admin reset per actor/target;
+- reset-to-default per actor/target;
 - refresh token per session/family.
 
 Gunakan store terdistribusi untuk multi-instance. Konfigurasi trusted proxy harus eksplisit agar IP tidak dapat dipalsukan. Gunakan backoff/temporary lock yang tidak membuat permanent account denial-of-service. Response login/reset tetap tidak mengungkap apakah limiter terkait account valid.
@@ -648,12 +748,13 @@ GET  /api/auth/sessions
 DELETE /api/auth/sessions/:id
 
 POST /api/admin/accounts/:type/:id/reset-link
+POST /api/admin/accounts/:type/:id/reset-to-default
 GET  /api/admin/security-events
 GET  /api/admin/auth-outbox/failed
 POST /api/admin/auth-outbox/:id/retry
 ```
 
-Endpoint refresh/sessions digunakan hanya setelah Gate 6B aktif. Endpoint forgot/reset dan Admin reset-link tetap feature-off sampai Gate 6C lulus. Endpoint target Admin/Sekprodi harus menolak secara eksplisit dan tidak dianggap tersedia sebelum capability khusus diimplementasikan. Jangan menyediakan endpoint tanpa implementasi revocation utuh.
+Endpoint refresh/sessions digunakan hanya setelah Gate 6B aktif. Endpoint forgot/reset-link tetap feature-off sampai dependency delivery Gate 6C lulus. Endpoint `reset-to-default` dapat diaktifkan setelah 6B stabil, limiter/audit/object authorization lulus, dan tidak bergantung pada provider email. Kedua endpoint Admin hanya menerima target `mahasiswa` atau `dosen`; target Admin/Sekprodi harus ditolak eksplisit. Jangan menyediakan endpoint tanpa implementasi revocation utuh.
 
 Error code minimum:
 
@@ -668,6 +769,7 @@ Error code minimum:
 - `RESET_REQUEST_ACCEPTED`;
 - `AUTH_RATE_LIMITED`;
 - `ACCOUNT_RECOVERY_UNAVAILABLE` hanya pada kanal Admin terotorisasi, bukan public response.
+- `DEFAULT_CREDENTIAL_RESET_NOT_ALLOWED` untuk target/state yang tidak boleh di-reset melalui flow ini.
 
 ### Paket 13 — Audit, monitoring, dan rekonsiliasi
 
@@ -676,18 +778,19 @@ Rekonsiliasi dry-run/execute mendeteksi:
 - `is_default_password` tidak konsisten dengan credential state;
 - credential version null/tidak valid;
 - account tanpa password hash valid;
-- account active yang hash-nya cocok dengan daftar legacy shared default yang disetujui untuk audit;
+- account active yang hash-nya masih cocok dengan password awal Dosen/Admin atau NIM Mahasiswa;
+- account default Dosen yang hash-nya bukan `12345678`, account default Mahasiswa yang hash-nya bukan NIM, serta Admin initial-default dengan provenance valid yang hash-nya bukan `12345678`;
 - session active dengan version lama/account disabled;
 - reset token aktif yang expired/used;
 - beberapa reset token aktif pada purpose sama;
 - outbox delivery tertinggal/gagal;
-- password literal/default pada source/config/seeder production;
+- password awal literal di luar credential policy/config terpusat atau pada frontend/controller/seeder ad hoc;
 - JWT secret fallback/default;
 - endpoint protected yang tidak memakai middleware;
 - response/schema yang masih memuat `default_password`;
 - security event yang kehilangan actor/target/correlation.
 
-Pemeriksaan hash legacy dilakukan di proses terkontrol tanpa mencetak candidate maupun hash. Account terdampak ditandai force-change/recovery sesuai runbook, bukan password-nya diubah diam-diam tanpa pemberitahuan.
+Pemeriksaan hash dilakukan di proses terkontrol tanpa mencetak candidate maupun hash. Rekonsiliasi hanya memperbaiki account `default` secara idempoten; account `active` yang masih cocok dengan credential awal menjadi finding keamanan dan tidak diubah diam-diam tanpa prosedur/audit.
 
 ## 11. Strategi pengujian
 
@@ -715,6 +818,11 @@ Untuk mahasiswa, dosen, Admin, dan Sekprodi:
 6. perubahan flag frontend/token claim tidak membuka akses;
 7. route baru tanpa metadata tetap protected;
 8. account disabled tetap ditolak walaupun restricted credential valid.
+9. Dosen `default` dapat login dengan `12345678`, tetapi tidak dapat membuka endpoint bisnis.
+10. Mahasiswa `default` dapat login dengan password NIM, tetapi tidak dapat membuka endpoint bisnis.
+11. Admin baru `default` dapat login dengan `12345678`, tetapi tidak dapat membuka endpoint bisnis.
+12. Dosen dan Admin tidak dapat memakai `12345678` lagi setelah forced change sukses.
+13. Mahasiswa tidak dapat memakai NIM sebagai password lagi setelah forced change sukses.
 
 ### 11.3 Integration test change password dan sesi
 
@@ -750,13 +858,22 @@ Untuk mahasiswa, dosen, Admin, dan Sekprodi:
 
 ### 11.5 Integration test Admin activation/reset dan akun awal
 
-1. Admin berizin dapat menerbitkan reset-link target non-privileged dengan alasan/audit.
-2. Target Admin/Sekprodi selalu ditolak selama capability khusus belum tersedia.
-3. Route/tombol privileged reset tidak tersedia dan role check ad hoc tidak dapat mengaktifkannya.
-4. Admin tidak melihat password lama/baru, hash, token, atau ciphertext.
-5. Activation/reset link unik dan one-time; tidak ada temporary password.
-6. Response create/import tidak memuat default password.
-7. Reset tidak mengubah role/status/capability target.
+1. Create/import Dosen menghasilkan hash `12345678`, state `default`, dan forced-change reason yang benar.
+2. Create/import Mahasiswa menghasilkan hash NIM target, state `default`, dan forced-change reason yang benar.
+3. Provisioning Admin baru dan rekonsiliasi Admin lama yang masih `default` menghasilkan hash `12345678`, state `default`, dan forced-change reason yang benar tanpa mengubah Admin `active`.
+4. Response create/import/provisioning tidak memuat password awal atau hash.
+5. Admin baru/default dapat login restricted dengan `12345678`, tetapi seluruh endpoint bisnis dan workspace tetap tertutup sampai forced change selesai.
+6. Hanya operation context `initial_provisioning` atau `approved_default_reconciliation` yang dapat memakai resolver Admin; context kedua wajib menolak Admin `active` dan membutuhkan approval/audit per target.
+7. Admin berizin dapat menerbitkan reset-link target non-privileged dengan alasan/audit.
+8. Admin berizin dapat melakukan reset-to-default target non-privileged dengan alasan/audit.
+9. Reset-to-default Dosen menghasilkan login restricted dengan `12345678`; reset-to-default Mahasiswa menghasilkan login restricted dengan NIM.
+10. Reset-to-default mencabut session/reset token lama, menaikkan version, dan retry tidak menggandakan audit/mutation.
+11. Target Admin/Sekprodi selalu ditolak oleh endpoint reset biasa selama capability khusus belum tersedia.
+12. Route/tombol privileged reset tidak tersedia dan role check ad hoc tidak dapat mengaktifkannya.
+13. Admin tidak melihat password lama/baru, hash, token, atau ciphertext.
+14. Activation/reset link unik dan one-time.
+15. Reset tidak mengubah role/status/capability target.
+16. Script rekonsiliasi memperbaiki akun default lama tanpa menimpa akun active.
 
 ### 11.6 Frontend test
 
@@ -768,6 +885,8 @@ Untuk mahasiswa, dosen, Admin, dan Sekprodi:
 - sukses memakai session baru, bukan flag lokal;
 - logout multi-tab konsisten;
 - forgot selalu menampilkan pesan generik;
+- Admin dapat memilih reset-link atau reset ke password awal untuk target non-privileged;
+- UI reset-to-default menampilkan konfirmasi dan meminta alasan tanpa menampilkan password/hash;
 - reset invalid/expired tidak membocorkan account;
 - reset token tidak tertinggal pada address bar/history/referrer/analytics;
 - password manager dan paste berfungsi.
@@ -783,24 +902,27 @@ Untuk mahasiswa, dosen, Admin, dan Sekprodi:
 - XSS impact/storage review;
 - log/telemetry redaction;
 - response account enumeration;
+- mass reset abuse, target substitution, dan reset-to-default tanpa alasan/otorisasi;
 - open redirect pada reset link;
 - timing comparison secara praktis;
 - dependency/security scanner sesuai pipeline proyek.
 
 ### 11.8 UAT minimum
 
-1. Mahasiswa import pertama kali mengganti password.
-2. Dosen baru mengganti password.
-3. Admin dan Sekprodi default tidak dapat membuka workspace.
-4. Forgot password account valid.
-5. Forgot password email tidak dikenal memberi response sama.
-6. Token reset expired dan reused.
-7. Admin menerbitkan reset-link mahasiswa/dosen tanpa melihat credential.
-8. Reset Admin/Sekprodi tetap tidak tersedia sebelum capability khusus.
-9. Logout satu perangkat dan seluruh perangkat.
-10. Account dinonaktifkan dengan session aktif.
-11. Migrasi account legacy shared default.
-12. Delivery email gagal lalu retry.
+1. Mahasiswa import login dengan NIM lalu dipaksa mengganti password.
+2. Dosen baru login dengan `12345678` lalu dipaksa mengganti password.
+3. Admin baru atau Admin lama yang telah direkonsiliasi dalam state `default` login dengan `12345678`, tidak dapat membuka workspace, lalu dipaksa mengganti password.
+4. Sekprodi default tidak dapat membuka workspace dan tidak diasumsikan memakai `12345678`.
+5. Forgot password account valid.
+6. Forgot password email tidak dikenal memberi response sama.
+7. Token reset expired dan reused.
+8. Admin menerbitkan reset-link mahasiswa/dosen tanpa melihat credential.
+9. Admin mereset akun email dummy ke password awal; pengguna login restricted lalu mengganti password.
+10. Reset biasa target Admin/Sekprodi tetap tidak tersedia sebelum capability khusus.
+11. Logout satu perangkat dan seluruh perangkat.
+12. Account dinonaktifkan dengan session aktif.
+13. Migrasi account default lama tanpa mengubah account active.
+14. Delivery email gagal lalu retry.
 
 ## 12. Urutan implementasi dan dependensi
 
@@ -810,7 +932,7 @@ Untuk mahasiswa, dosen, Admin, dan Sekprodi:
 | 2 | Stabilkan dan observasi 6A | build, migration, integration/security/UAT 6A | tidak ada route bypass atau token legacy yang tidak tertangani |
 | 3 | **6B** — session schema/service, `sid`/version lookup, logout/logout-all, server-side revocation, storage/token migration | 6A stabil | stale/revoked session selalu ditolak; logout/replay/concurrency/session failure test lulus |
 | 4 | Stabilkan dan observasi 6B | integration/security/UAT 6B | server-side revocation dan runbook session terbukti operasional |
-| 5 | **6C** — verified recovery channel, limiter, reset token, encrypted outbox, worker/provider, forgot/reset, Admin reset-link non-privileged | 6B stabil; provider, delivery key, limiter store, dan retention siap | token aman dan single-use; delivery/retry/dead-letter teruji; tidak ada enumeration; privileged reset tetap tertutup |
+| 5 | **6C** — verified recovery channel, limiter, reset token, encrypted outbox, worker/provider, forgot/reset-link, dan Admin reset-to-default non-privileged | 6B stabil; limiter/audit/object authorization siap; provider, delivery key, dan retention diperlukan untuk jalur link | default reset ter-audit dan forced; token link aman/single-use; delivery teruji; tidak ada enumeration; privileged reset tetap tertutup |
 | 6 | Rekonsiliasi dan finalisasi Tahap 6 | seluruh gate lulus | constraint final, build, seluruh test, observability, runbook, dan UAT lulus |
 
 Paket 10 (limiter) untuk login/change-password harus masuk 6A. Bagian limiter session masuk 6B. Limiter forgot/reset dan Admin reset-link wajib selesai sebelum 6C diaktifkan. Paket 11–13 dikerjakan per irisan gate, bukan menunggu seluruh backend selesai.
@@ -818,15 +940,15 @@ Paket 10 (limiter) untuk login/change-password harus masuk 6A. Bagian limiter se
 ## 13. Strategi deployment
 
 1. Backup database dan simpan baseline test/build sebelum setiap gate.
-2. **Rilis 6A:** rotasi/hapus secret/default credential yang diketahui; validasi production fail-closed; hapus email-login bypass dan paparan default password; deploy/backfill credential state/version; jalankan middleware report-only; perbaiki route; deploy root frontend guard; lalu aktifkan forced-change.
+2. **Rilis 6A:** rotasi secret dan hapus credential legacy yang tidak sesuai policy; validasi production fail-closed; hapus email-login bypass dan paparan password awal; deploy/backfill credential state/version serta password awal Dosen/Mahasiswa dan Admin baru yang provenance-nya valid; jalankan middleware report-only; perbaiki route; deploy root frontend guard; lalu aktifkan forced-change.
 3. Observasi 6A dan jangan melanjutkan jika terdapat route bypass, migration mismatch, atau login regression.
 4. **Rilis 6B:** deploy session registry dan claim baru; migrasikan storage/token client; paksa login ulang token legacy; lalu aktifkan logout, logout-all, dan revocation.
 5. Observasi 6B dan buktikan stale/revoked session, refresh replay, serta perubahan password tidak meninggalkan sesi aktif.
 6. **Persiapan 6C dalam feature-off:** deploy recovery verification data, reset token, encrypted outbox, delivery key, limiter, worker, template, dan endpoint tanpa membuka akses publik.
 7. Jalankan end-to-end delivery pada environment aman, termasuk decrypt, retry, dead-letter, ciphertext cleanup, redaction, dan consume concurrency.
-8. **Aktifkan 6C** hanya setelah 6B stabil dan seluruh dependency delivery/limiter lulus; aktifkan forgot/reset dan Admin reset-link hanya untuk target non-privileged.
+8. **Aktifkan 6C** hanya setelah 6B stabil. Reset-to-default memerlukan limiter/audit/object authorization; forgot/reset-link juga memerlukan seluruh dependency delivery. Kedua jalur hanya berlaku untuk target non-privileged.
 9. Jangan aktifkan reset Admin/Sekprodi. Fitur tersebut membutuhkan proyek/keputusan lanjutan untuk capability dan approval khusus.
-10. Paksa recovery pada account legacy yang menggunakan shared default melalui activation/reset link.
+10. Jalankan rekonsiliasi idempoten untuk mengubah account `default` lama ke password awal sesuai tipe; jangan mengubah account `active`.
 11. Hentikan dual-write legacy setelah sedikitnya satu release stabil dan rekonsiliasi bersih.
 
 Rollback enforcement dapat mengubah middleware dari enforce ke report-only dalam keadaan darurat, tetapi tidak boleh menghidupkan kembali bypass login, secret lama, session revoked, atau token reset yang sudah consumed.
@@ -843,6 +965,7 @@ Metric minimum:
 - reset token expired/replay;
 - delivery queued/sent/failed/dead-letter/age;
 - Admin reset dan privileged reset attempt;
+- reset-to-default success/failure per target type tanpa identifier mentah;
 - credential state distribution dan legacy mismatch;
 - token version mismatch/reuse detection.
 
@@ -861,7 +984,9 @@ Runbook minimum:
 - email reset tidak terkirim;
 - user kehilangan akses email;
 - account compromised;
-- shared default ditemukan;
+- credential awal ditemukan pada akun `active` atau digunakan di luar policy yang disahkan;
+- akun default gagal login dengan credential awal yang seharusnya;
+- reset-to-default disalahgunakan atau dilakukan terhadap akun privileged;
 - JWT signing key rotation;
 - session store unavailable;
 - limiter store unavailable;
@@ -874,6 +999,8 @@ Runbook minimum:
 ### 15.1 Gate 6A selesai apabila
 
 - login mahasiswa tanpa password, fallback JWT secret, dan paparan password awal sudah dihapus;
+- Dosen serta Admin baru/default yang provenance-nya valid dapat login restricted dengan `12345678`, sedangkan Mahasiswa baru/default dapat login restricted dengan NIM;
+- create/import serta rekonsiliasi credential awal berjalan melalui service terpusat dan tidak menimpa akun active;
 - credential state/version dan legacy mapping konsisten untuk empat role;
 - akun default/legacy temporary hanya dapat change-password dan logout melalui UI maupun direct API;
 - frontend root guard berlaku bagi mahasiswa, dosen, Admin, dan Sekprodi;
@@ -898,6 +1025,8 @@ Runbook minimum:
 - worker dapat mendekripsi saat kirim, melakukan retry/dead-letter, serta menghapus ciphertext setelah status terminal/retention;
 - limiter, generic response, single-use/race-safe consume, session revocation, delivery/redaction, integration/security test, UAT, observability, dan runbook 6C lulus;
 - Admin hanya dapat menerbitkan activation/reset link target non-privileged yang diizinkan dan tidak pernah menerima password/token;
+- Admin dapat melakukan reset-to-default target non-privileged secara transaksional, terotorisasi, ter-audit, dan tanpa mengubah role/status akun;
+- email dummy tidak menghalangi pemulihan Dosen/Mahasiswa karena tersedia reset-to-default dengan forced change;
 - reset Admin/Sekprodi tetap tidak tersedia sampai capability khusus benar-benar diimplementasikan.
 
 ### 15.4 Tahap 6 selesai apabila
@@ -908,7 +1037,7 @@ Seluruh gate 6A–6C telah lulus dan:
 - enforcement berlaku pada root backend dan frontend;
 - direct API/deep link tidak dapat melewati restriction;
 - login via email tanpa password sudah dihapus;
-- tidak ada fallback JWT secret/shared default pada production path;
+- tidak ada fallback JWT secret atau literal password awal yang tersebar; credential awal hanya berasal dari policy/service terpusat;
 - password awal/temporary tidak muncul pada response bisnis, log, report, atau browser storage;
 - credential state/version menjadi sumber kebenaran dan legacy flag konsisten;
 - change/reset password mencabut seluruh session/token lama secara atomik;
@@ -918,6 +1047,7 @@ Seluruh gate 6A–6C telah lulus dan:
 - reset token hashed, single-use, expiring, purpose-bound, dan race-safe;
 - delivery mempunyai encrypted outbox, retry, dead-letter, ciphertext cleanup, key rotation, dan redaction;
 - Admin reset-link target non-privileged terotorisasi, ter-audit, dan tidak mengungkap credential;
+- Admin reset-to-default target non-privileged mencabut session/token lama, menaikkan version, dan menghasilkan forced change;
 - reset tidak mengubah role atau status account;
 - limiter/backoff melindungi seluruh endpoint autentikasi;
 - token cryptography/claims/session/account live state diverifikasi;
@@ -930,18 +1060,18 @@ Seluruh gate 6A–6C telah lulus dan:
 
 | Keputusan | Sikap rancangan |
 | --- | --- |
-| Cara aktivasi akun awal | **Dikunci untuk versi awal:** one-time activation link; tidak ada shared default atau temporary password baru |
+| Cara aktivasi akun awal | **Dikunci:** Dosen serta Admin baru/default memakai `12345678`, Mahasiswa memakai NIM; ketiganya login restricted lalu forced change. Admin `active` tidak direkonsiliasi otomatis, Sekprodi tetap melalui provisioning privileged, dan link aktivasi menjadi jalur alternatif |
 | Self-service reset menghasilkan active atau temporary | **Dikunci untuk versi awal:** pengguna memilih password melalui link dan state menjadi `active`; `temporary` hanya kompatibilitas legacy |
 | Password policy | Minimum length, maksimum absolut 72 byte UTF-8 sebelum bcrypt, history, common-password check, dan hashing cost wajib dikonfigurasi/disahkan |
 | Reset token expiry | Harus dikonfigurasi; rekomendasi waktu singkat dan tidak dapat diperpanjang setelah dibuat |
-| Delivery channel | Hanya email/kanal terverifikasi; trusted email institusi harus mempunyai keputusan eksplisit, provenance, dan timestamp verifikasi |
+| Delivery channel | Reset-link hanya ke email/kanal terverifikasi; email dummy menggunakan Admin reset-to-default, bukan pengiriman link palsu |
 | Token pada outbox | **Dikunci:** hash/HMAC pada reset-token table; ciphertext authenticated-encryption pada outbox; delivery key terpisah/bersistem versi; ciphertext dihapus setelah terminal/retention |
 | Session architecture | Target HttpOnly refresh/session cookie + short-lived access token; minimum transisi tetap wajib server-side sid/version revocation |
 | Remember me | Menambah refresh absolute expiry, bukan access token panjang di localStorage |
 | Session setelah change/reset | Rekomendasi cabut semua dan terbitkan satu session baru atau minta login ulang |
-| Admin reset privileged account | **Ditunda:** route/capability reset Admin/Sekprodi tidak dirilis sampai capability khusus, object authorization, audit, dan keputusan step-up/four-eyes tersedia |
+| Admin reset privileged account | **Ditunda:** `12345678` pada Admin hanya untuk provisioning baru atau rekonsiliasi per akun yang masih `default`, bukan reset Admin `active`. Route/capability reset Admin/Sekprodi active tidak dirilis sampai capability khusus, object authorization, audit, dan keputusan step-up/four-eyes tersedia |
 | Password history | Opsional tetapi harus konsisten lintas role bila diaktifkan |
-| Account tanpa email valid | Tidak dipulihkan lewat public reset; gunakan SOP Admin terotorisasi |
+| Account tanpa email valid | Tidak dipulihkan lewat public reset; Admin dapat reset-to-default untuk Dosen/Mahasiswa dengan alasan dan audit |
 | Email sama pada beberapa account | Jangan pilih diam-diam atau bocorkan; tetapkan delivery per account atau manual recovery |
 | Rate-limit thresholds/store | Konfigurasi environment dan store terdistribusi untuk multi-instance |
 | Retention session/reset/audit | Mengikuti kebijakan keamanan dan privasi institusi |

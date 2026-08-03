@@ -4247,6 +4247,8 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           ...bimbingan,
           target: guidanceTarget,
           policy_id: guidanceProgress?.policy?.id || null,
+          is_stale: Boolean(guidanceProgress?.evaluation_state?.requires_recalculation),
+          evaluation_status: guidanceProgress?.evaluation_state?.status || "current",
           progress_percent: guidanceTarget > 0 ? Math.min(100, Math.round((bimbingan.tervalidasi / guidanceTarget) * 100)) : 0,
         },
         dokumen: { ...dokumen, target: 3 },
