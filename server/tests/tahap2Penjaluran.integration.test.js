@@ -22,6 +22,7 @@ const {
   PenetapanPembimbingDosen,
   Notifikasi,
   RiwayatWorkflowPenjaluran,
+  AuthSecurityEvent,
 } = require("../models");
 const pendaftaranController = require("../controllers/pendaftaranController");
 const jalurController = require("../controllers/jalurController");
@@ -79,6 +80,7 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     if (groupId) await AnggotaKelompokPerintisan.destroy({ where: { kelompok_id: groupId }, force: true });
     if (groupId) await KelompokPerintisanBisnis.destroy({ where: { id: groupId }, force: true });
     if (registrationIds.length) await PendaftaranPenjaluran.destroy({ where: { id: registrationIds }, force: true });
+    if (mahasiswaIds.length) await AuthSecurityEvent.destroy({ where: { target_type: "mahasiswa", target_id: mahasiswaIds }, force: true });
     if (dosenIds.length) await DosenKetersediaanPeriode.destroy({ where: { dosen_id: dosenIds }, force: true });
     if (additionalPeriodIds.length) await PeriodePenjaluran.destroy({ where: { id: additionalPeriodIds }, force: true });
     if (periodId) await PeriodePenjaluran.destroy({ where: { id: periodId }, force: true });
@@ -314,6 +316,51 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     }) >= 12, true);
     await group.reload();
     assert.equal(group.status, "approved");
+  });
+
+  await t.test("NIM bebas dapat bootstrap akun dan pendaftaran ketika periode dibuka", async () => {
+    const nim = `BEBAS-${suffix}`;
+    const dpa = await Dosen.findByPk(dosenIds[0]);
+    assert.ok(dpa);
+
+    const initialCheck = responseRecorder();
+    await pendaftaranController.checkNimAvailability({ query: { nim } }, initialCheck);
+    assert.equal(initialCheck.statusCode, 200);
+    assert.equal(initialCheck.payload?.data?.status, "new_account_allowed");
+    assert.equal(initialCheck.payload?.data?.master_found, false);
+
+    const submitted = responseRecorder();
+    await pendaftaranController.submitPendaftaranJalurBaru({
+      body: {
+        nim,
+        nama: "Mahasiswa NIM Bebas",
+        email: `${nim}@students.uii.ac.id`,
+        program_kuliah: "reguler",
+        pendaftaran: "baru",
+        jenis_jalur_diambil: "penelitian",
+        dosen_pembimbing_akademik_id: dpa.id,
+      },
+    }, submitted);
+    assert.equal(submitted.statusCode, 201);
+    assert.equal(submitted.payload?.data?.account_created, true);
+    assert.equal(submitted.payload?.data?.credential_state, "default");
+    assert.equal(Object.hasOwn(submitted.payload?.data || {}, "password"), false);
+    assert.equal(Object.hasOwn(submitted.payload?.data || {}, "default_password"), false);
+
+    const student = await Mahasiswa.findOne({ where: { nim } });
+    assert.ok(student);
+    mahasiswaIds.push(student.id);
+    assert.equal(await student.comparePassword(nim), true);
+    assert.equal(student.credential_state, "default");
+    const registration = await PendaftaranPenjaluran.findOne({
+      where: { mahasiswa_id: student.id, periode_penjaluran_id: periodId },
+    });
+    assert.ok(registration);
+    registrationIds.push(registration.id);
+
+    const duplicateCheck = responseRecorder();
+    await pendaftaranController.checkNimAvailability({ query: { nim } }, duplicateCheck);
+    assert.equal(duplicateCheck.payload?.data?.status, "already_registered");
   });
 
   await t.test("finalizer menolak jalur pendaftaran dan status approval yang tidak sesuai", async () => {

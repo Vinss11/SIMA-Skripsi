@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { ArrowRight, CircleHelp, Eye, EyeOff, Lock, User } from "lucide-react";
+import { withAuthTabHeader } from "../utils/authTab";
 
 function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPassword }) {
   const [username, setUsername] = useState("");
@@ -21,9 +22,10 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPas
       setIsLoading(true);
       const response = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: "POST",
-        headers: {
+        credentials: "include",
+        headers: withAuthTabHeader({
           "Content-Type": "application/json",
-        },
+        }),
         body: JSON.stringify({
           username: username.trim(),
           password,

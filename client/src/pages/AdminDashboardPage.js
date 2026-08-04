@@ -1295,69 +1295,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
   };
 
-  const handleIssueDosenResetLink = async () => {
-    if (!selectedDosen?.id) return;
-    const prompt = await Swal.fire({ title: "Kirim tautan reset password", input: "textarea",
-      inputLabel: "Alasan administratif", inputPlaceholder: "Jelaskan alasan reset (wajib)", showCancelButton: true,
-      confirmButtonText: "Kirim tautan", preConfirm: (value) => String(value || "").trim() || Swal.showValidationMessage("Alasan reset wajib diisi.") });
-    if (!prompt.isConfirmed) return;
-    setDosenActionError(""); setDosenActionMessage("");
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/accounts/dosen/${selectedDosen.id}/reset-link`, { method: "POST",
-        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ reason: String(prompt.value).trim() }) });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.message || "Tautan reset gagal dijadwalkan.");
-      setDosenActionMessage(payload?.message || "Tautan reset dijadwalkan untuk dikirim.");
-    } catch (error) { setDosenActionError(error.message || "Tautan reset gagal dijadwalkan."); }
-  };
-
-  const handleIssueDosenActivationLink = async () => {
-    if (!selectedDosen?.id) return;
-    const prompt = await Swal.fire({ title: "Kirim ulang tautan aktivasi", input: "textarea",
-      inputLabel: "Alasan administratif", inputPlaceholder: "Contoh: pengguna belum menerima email aktivasi", showCancelButton: true,
-      confirmButtonText: "Kirim tautan", preConfirm: (value) => String(value || "").trim() || Swal.showValidationMessage("Alasan aktivasi wajib diisi.") });
-    if (!prompt.isConfirmed) return;
-    setDosenActionError(""); setDosenActionMessage("");
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/accounts/dosen/${selectedDosen.id}/activation-link`, { method: "POST",
-        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ reason: String(prompt.value).trim() }) });
-      const payload = await response.json().catch(() => null); if (!response.ok) throw new Error(payload?.message || "Tautan aktivasi gagal dijadwalkan.");
-      setDosenActionMessage(payload?.message || "Tautan aktivasi dijadwalkan untuk dikirim.");
-    } catch (error) { setDosenActionError(error.message || "Tautan aktivasi gagal dijadwalkan."); }
-  };
-
-  const handleIssueMahasiswaActivationLink = async (row) => {
-    if (!row?.mahasiswa_id) return;
-    const prompt = await Swal.fire({ title: `Kirim ulang aktivasi ${row.nim || "mahasiswa"}`, input: "textarea",
-      inputLabel: "Alasan administratif", inputPlaceholder: "Contoh: mahasiswa belum menerima email aktivasi", showCancelButton: true,
-      confirmButtonText: "Kirim tautan", preConfirm: (value) => String(value || "").trim() || Swal.showValidationMessage("Alasan aktivasi wajib diisi.") });
-    if (!prompt.isConfirmed) return;
-    const response = await fetch(`${apiBaseUrl}/api/admin/accounts/mahasiswa/${row.mahasiswa_id}/activation-link`, { method: "POST",
-      headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ reason: String(prompt.value).trim() }) });
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) return Swal.fire({ icon: "error", title: "Aktivasi gagal", text: payload?.message || "Tautan aktivasi gagal dijadwalkan." });
-    return Swal.fire({ icon: "success", title: "Aktivasi dijadwalkan", text: payload?.message || "Tautan aktivasi akan dikirim." });
-  };
-
-  const handleVerifyDosenRecoveryChannel = async () => {
-    if (!selectedDosen?.id) return;
-    const prompt = await Swal.fire({ title: "Verifikasi email pemulihan", html: `<p style="text-align:left">Cocokkan email pada profil dengan sumber resmi sebelum melanjutkan.</p>
-      <select id="recovery-source" class="swal2-select"><option value="institutional_directory">Direktori institusi</option><option value="official_academic_system">Sistem akademik resmi</option><option value="manual_document_verification">Verifikasi dokumen manual</option></select>
-      <textarea id="recovery-reason" class="swal2-textarea" placeholder="Catatan bukti verifikasi (minimal 10 karakter)"></textarea>`,
-      showCancelButton: true, confirmButtonText: "Simpan verifikasi", preConfirm: () => { const source = document.getElementById("recovery-source")?.value;
-        const reason = String(document.getElementById("recovery-reason")?.value || "").trim(); if (reason.length < 10) return Swal.showValidationMessage("Catatan bukti minimal 10 karakter."); return { source, reason }; } });
-    if (!prompt.isConfirmed) return;
-    setDosenActionError(""); setDosenActionMessage("");
-    try {
-      const response = await fetch(`${apiBaseUrl}/api/admin/accounts/dosen/${selectedDosen.id}/recovery-channel/verify`, { method: "POST",
-        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" }, body: JSON.stringify(prompt.value) });
-      const payload = await response.json().catch(() => null); if (!response.ok) throw new Error(payload?.message || "Verifikasi kanal gagal.");
-      setSelectedDosen((current) => current ? { ...current, recovery_email_verified_at: payload?.data?.verified_at,
-        recovery_email_verification_source: payload?.data?.source } : current);
-      setDosenActionMessage(payload?.message || "Email pemulihan berhasil diverifikasi.");
-    } catch (error) { setDosenActionError(error.message || "Verifikasi kanal gagal."); }
-  };
-
   const handleBackToDosenGrid = () => {
     setSelectedDosen(null);
     setDosenActionError("");
@@ -2491,15 +2428,6 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <button type="button" onClick={handleSaveDosenStatus} disabled={savingDosenStatus} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#b8473f] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:opacity-60">
                           {savingDosenStatus ? "Menganalisis..." : "Analisis Dampak & Simpan Status"}
                         </button>
-                        <p className="mt-3 text-xs font-semibold text-[#52658f]">Credential: {selectedDosen.credential_state || "-"} · Email pemulihan: {selectedDosen.recovery_email_verified_at ? `terverifikasi (${selectedDosen.recovery_email_verification_source || "sumber tercatat"})` : "belum terverifikasi"}</p>
-                        {["default", "temporary"].includes(selectedDosen.credential_state) ? (
-                          <button type="button" onClick={handleIssueDosenActivationLink} className="ml-2 mt-3 inline-flex items-center gap-2 rounded-lg border border-[#2f63e3] px-4 py-2 text-sm font-bold text-[#2f63e3] hover:bg-[#eef3ff]">Kirim Ulang Tautan Aktivasi</button>
-                        ) : (
-                          <>
-                            {!selectedDosen.recovery_email_verified_at ? <button type="button" onClick={handleVerifyDosenRecoveryChannel} className="ml-2 mt-3 inline-flex items-center gap-2 rounded-lg border border-[#64748b] px-4 py-2 text-sm font-bold text-[#475569] hover:bg-[#f8fafc]">Verifikasi Email Pemulihan</button> : null}
-                            <button type="button" disabled={!selectedDosen.recovery_email_verified_at} title={!selectedDosen.recovery_email_verified_at ? "Verifikasi email pemulihan terlebih dahulu" : ""} onClick={handleIssueDosenResetLink} className="ml-2 mt-3 inline-flex items-center gap-2 rounded-lg border border-[#2f63e3] px-4 py-2 text-sm font-bold text-[#2f63e3] hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-50">Kirim Tautan Reset Password</button>
-                          </>
-                        )}
                       </div>
 
                       <div className="md:col-span-2 rounded-xl border border-[#e4e9f6] p-4">
@@ -3072,20 +3000,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               {uploadMahasiswaResult?.data?.detail_berhasil?.length ? (
                 <div className="mt-3 space-y-2">
                   {uploadMahasiswaResult.data.detail_berhasil.map((row) => (
-                    <div
-                      key={row.mahasiswa_id || row.nim}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded border bg-white p-2 text-xs"
-                    >
-                      <span>
-                        <b>{row.nim}</b> · {row.nama} · aktivasi otomatis dijadwalkan
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleIssueMahasiswaActivationLink(row)}
-                        className="rounded border border-[#2f63e3] px-2 py-1 font-bold text-[#2f63e3]"
-                      >
-                        Kirim ulang aktivasi
-                      </button>
+                    <div key={row.mahasiswa_id || row.nim} className="rounded border bg-white p-2 text-xs">
+                      <b>{row.nim}</b> · {row.nama} · dapat login menggunakan NIM dan wajib mengganti password
                     </div>
                   ))}
                 </div>

@@ -10,7 +10,7 @@ function validateNewPassword(password, { identifiers = [], currentMatches = fals
   if (currentMatches) reasons.push("PASSWORD_SAME_AS_CURRENT");
   const lower = typeof password === "string" ? password.toLowerCase() : "";
   if (COMMON.has(lower)) reasons.push("PASSWORD_TOO_COMMON");
-  if (identifiers.some((value) => { const normalized = String(value).toLowerCase(); return normalized && (lower === normalized || lower.includes(normalized)); })) reasons.push("PASSWORD_CONTAINS_IDENTIFIER");
+  if (identifiers.some((value) => { const normalized = String(value).toLowerCase(); return normalized && lower === normalized; })) reasons.push("PASSWORD_CONTAINS_IDENTIFIER");
   return { valid: reasons.length === 0, reasons: [...new Set(reasons)], minimumLength: MIN_LENGTH, maximumBytes: 72 };
 }
 

@@ -27,7 +27,7 @@ async function changePassword({ accountType, accountId, currentPassword, newPass
     await sessions.recordSecurityEvent({ event_type: "password.changed", actor_type: accountType, actor_id: account.id,
       target_type: accountType, target_id: account.id, outcome: "success", reason_code: "SELF_CHANGE" }, transaction);
     const issued = await sessions.issueSession({ accountType, account, role, capabilities, identityContext, request, transaction });
-    return { account, token: issued.token, session: issued.session };
+    return { account, token: issued.token, refreshToken: issued.refreshToken, session: issued.session };
   });
 }
 

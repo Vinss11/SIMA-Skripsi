@@ -8,7 +8,12 @@ function required(name) {
 
 function getJwtConfig() {
   return { secret: required("JWT_SECRET"), algorithm: "HS256", issuer: process.env.JWT_ISSUER || "sima",
-    audience: process.env.JWT_AUDIENCE || "sima-api", expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m" };
+    audience: process.env.JWT_AUDIENCE || "sima-api", expiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "12h" };
+}
+
+function getRefreshJwtConfig() {
+  const access = getJwtConfig();
+  return { ...access, audience: `${access.audience}:refresh`, expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "12h" };
 }
 
 function recoveryEnabled() { return String(process.env.AUTH_RECOVERY_ENABLED || "false").toLowerCase() === "true"; }
@@ -22,4 +27,4 @@ function getDeliveryConfig() {
   return { key, keyVersion: process.env.AUTH_DELIVERY_KEY_VERSION || "v1", frontendOrigin: origin.origin };
 }
 
-module.exports = { getJwtConfig, recoveryEnabled, getDeliveryConfig };
+module.exports = { getJwtConfig, getRefreshJwtConfig, recoveryEnabled, getDeliveryConfig };

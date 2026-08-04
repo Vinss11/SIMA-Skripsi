@@ -1,6 +1,6 @@
 # Rancangan Pengerjaan Tahap 2 — Finalisasi Penjaluran Tiga Jalur Aktif
 
-> **Status implementasi 1 Agustus 2026 — selesai:** koreksi kontrak workflow, invariant finalizer, siklus ulang/alih, invariant kelompok, notifikasi, histori otoritatif, migration/backfill, integration test controller, alur endpoint Perintisan lengkap, dan audit rekonsiliasi operasional telah diterapkan. Predicate rekonsiliasi memakai `Pengajuans` untuk Penelitian dan `form_lanjutan_status` untuk Magang/Perintisan. Temuan notifikasi sudah dipisahkan menjadi data legacy dan anomali alur saat ini tanpa membuat ulang notifikasi lama. Rincian dry-run ada pada bagian 7.2; catatan gap lama dipertahankan sebagai arsip baseline.
+> **Status implementasi dan revisi keputusan 4 Agustus 2026:** koreksi workflow/finalizer sebelumnya telah selesai. Namun kontrak pendaftaran pertama dibuka kembali untuk self-registration terkontrol: NIM yang belum tersedia pada Master Mahasiswa tidak lagi ditolak, melainkan dapat membuat akun dan pendaftaran pertama secara atomik. Bagian Paket 1, API/frontend, pengujian, dan Definition of Done pada dokumen ini menjadi pekerjaan perubahan baru. Ulang/alih tetap authenticated melalui Tahap 3.
 
 ## 1. Tujuan
 
@@ -13,7 +13,7 @@ Tahap ini bukan pembangunan ulang seluruh flow. Implementasi dasar ketiga jalur 
 Rancangan ini terutama mengacu pada:
 
 - BR-PERIODE-003;
-- BR-DAFTAR-001, BR-DAFTAR-005, dan BR-DAFTAR-006;
+- BR-DAFTAR-001 dan BR-DAFTAR-005 sampai BR-DAFTAR-007;
 - BR-PENELITIAN-001 sampai BR-PENELITIAN-004;
 - BR-MAGANG-001 sampai BR-MAGANG-003;
 - BR-PERINTISAN-001 sampai BR-PERINTISAN-003;
@@ -66,6 +66,8 @@ Baseline form saat ini adalah satu ketua dan dua anggota, dengan tepat satu Hust
 ### 4.1 Termasuk Tahap 2
 
 - pendaftaran jenis `baru` untuk tiga jalur aktif;
+- self-registration terkontrol bagi pemohon utama yang NIM-nya belum tersedia pada Master Mahasiswa;
+- provisioning akun, credential awal, master minimum, dan pendaftaran pertama secara atomik melalui service Tahap 6;
 - pengikatan form ke pendaftaran dan periode;
 - pengajuan Penelitian melalui topik dosen atau judul mandiri;
 - pengajuan Magang individual beserta mitra dan dokumen;
@@ -333,7 +335,7 @@ Daftar berikut adalah temuan sebelum implementasi koreksi dan tidak lagi menjadi
 
 1. Endpoint pendaftaran umum masih menerima `ulang`/`alih`; scope tersebut harus dipindahkan penuh ke flow authenticated Tahap 3.
 2. Pendaftaran baru masih menerima dan menyimpan pilihan dosen pembimbing TA dari mahasiswa, padahal P1/P2 diputuskan Sekprodi saat final.
-3. Endpoint pendaftaran publik masih dapat membuat akun mahasiswa dan mengembalikan password awal. Penggunaan NIM sebagai credential awal kini sesuai BR-AKUN-001, tetapi pembuatan credential harus melalui account/credential service Tahap 6 dan password awal tidak boleh dikembalikan oleh endpoint penjaluran.
+3. Endpoint pendaftaran publik dapat membuat akun mahasiswa. Kemampuan ini kembali menjadi kebutuhan resmi untuk pendaftaran pertama, tetapi implementasi legacy tetap harus dikoreksi karena credential wajib dibuat melalui account/credential service Tahap 6 dan password awal tidak boleh dikembalikan oleh endpoint penjaluran.
 4. Belum terlihat constraint database unik `(mahasiswa_id, periode_penjaluran_id)`, sehingga pengecekan aplikasi saja masih rentan race condition.
 5. Endpoint daftar dosen publik mencampur kebutuhan DPA dengan kandidat pembimbing final. Kandidat P1/P2 seharusnya hanya tersedia pada konteks keputusan Sekprodi.
 6. Data pembimbing legacy masih disimpan pada kolom pendaftaran sebelum keputusan final, sehingga sumber kebenaran berpotensi ganda.
@@ -360,18 +362,69 @@ Hasil: refactor mempunyai baseline dan tidak mengubah keputusan Penelitian yang 
 ### Paket 1 — Finalisasi kontrak pendaftaran baru
 
 1. Pisahkan endpoint pendaftaran baru dari ulang/alih secara tegas.
-2. Wajibkan autentikasi mahasiswa yang sudah tersedia di master/import untuk pendaftaran baru.
-3. Hilangkan pembuatan akun dari controller penjaluran, penyimpanan NIM sebagai password dalam bentuk plaintext, dan pengembalian password melalui response API. Jika akun mahasiswa dibuat oleh layanan akun Tahap 6, NIM hanya boleh diproses sebagai kredensial awal untuk kemudian di-hash.
-4. Jika self-registration tetap diinginkan, hentikan implementasi paket ini sampai aturan bisnis diperbarui dan desain keamanan disetujui.
-5. Server mengambil mahasiswa dari token dan master data; frontend tidak mengirim NIM/nama/email sebagai sumber identitas.
-6. Server menentukan periode aktif dan memeriksa window tanggal di dalam transaksi.
-7. Tolak target selain tiga jalur aktif.
-8. Abaikan/tolak field pembimbing TA pada request pendaftaran baru.
-9. Tambahkan unique constraint `(mahasiswa_id, periode_penjaluran_id)` dan tangani conflict sebagai response idempotent/409 yang jelas.
-10. Pastikan tidak ada pengajuan aktif lain dan target form tersedia.
-11. Bentuk response `next_action` dari jalur yang tersimpan di database.
+2. Ubah kontrak pengecekan NIM menjadi state eksplisit, bukan boolean `available/unavailable` yang ambigu:
+   - `new_account_allowed`: NIM terisi dan belum ada pada master;
+   - `existing_account_auth_required`: NIM ada tetapi belum mendaftar pada periode aktif;
+   - `already_registered`: NIM sudah mempunyai pendaftaran pada periode aktif;
+   - input kosong tetap ditolak sebagai field wajib; format NIM tidak lagi dibatasi pola tertentu.
+3. Frontend tidak menampilkan “NIM belum tersedia pada master” sebagai error untuk `new_account_allowed`. Tampilkan informasi bahwa akun baru akan dibuat ketika pendaftaran disimpan.
+4. Pada mode akun baru:
+   - sembunyikan field **Password Akun Master** karena akun belum ada;
+   - izinkan pengisian nama, program kuliah, DPA dari master dosen yang valid, dan data minimum lain;
+   - email mahasiswa dibentuk/divalidasi menurut aturan institusi;
+   - jangan membuat akun hanya karena NIM selesai diketik atau field kehilangan fokus.
+5. Pada mode akun existing, wajibkan login atau verifikasi password akun; identitas, email, dan DPA dibaca dari master serta tidak ditimpa dari input publik.
+6. Submit final akun baru memanggil orchestration service yang dalam satu transaksi:
+   - lock/check ulang NIM dan periode aktif;
+   - membuat row Mahasiswa/master minimum;
+   - membuat credential awal berupa hash NIM melalui CredentialService Tahap 6 dengan state `default`;
+   - membuat pendaftaran jenis `baru` dan data form awal/lanjutan yang telah divalidasi;
+   - menulis audit provisioning dan pendaftaran;
+   - rollback seluruhnya jika salah satu langkah gagal.
+7. Jangan mengembalikan password awal, hash, atau `default_password` pada response. UI cukup memberi instruksi bahwa login awal menggunakan NIM dan pengguna wajib mengganti password.
+8. Bootstrap hanya berlaku bagi pemohon utama pendaftaran `baru`; anggota Perintisan yang belum memiliki akun tidak dibuat diam-diam dari form ketua.
+9. Server menentukan periode aktif dan memeriksa window tanggal di dalam transaksi.
+10. Tolak target selain tiga jalur aktif.
+11. Abaikan/tolak field pembimbing TA pada request pendaftaran baru.
+12. Tambahkan unique constraint NIM pada Mahasiswa dan `(mahasiswa_id, periode_penjaluran_id)` pada pendaftaran; ubah konflik concurrent menjadi hasil idempoten atau `409` yang jelas.
+13. Pastikan tidak ada pengajuan aktif lain dan target form tersedia.
+14. Bentuk response `next_action` dari jalur yang tersimpan di database. Untuk akun baru, sertakan `account_created: true`, `credential_state: default`, dan `next_action: change_password` tanpa credential rahasia.
 
-Hasil: pendaftaran baru tidak dapat dipalsukan, tidak membuat akun, dan tidak menetapkan pembimbing.
+Hasil: mahasiswa baru dapat langsung menyelesaikan pendaftaran pertama tanpa harus di-import lebih dahulu, tetapi pembuatan akun tetap transaksional, tidak membocorkan password, dan tidak menetapkan pembimbing.
+
+#### 1.1 Kontrak minimum check-NIM dan bootstrap
+
+`GET /api/pendaftaran/check-nim?nim=...` mengembalikan reason code stabil:
+
+```json
+{
+  "success": true,
+  "data": {
+    "status": "new_account_allowed",
+    "master_found": false,
+    "already_registered": false,
+    "requires_authentication": false
+  }
+}
+```
+
+Nilai `status` hanya `new_account_allowed`, `existing_account_auth_required`, atau `already_registered`; hanya NIM kosong yang menggunakan response validasi `400`. Frontend tidak boleh menurunkan pesan bisnis hanya dari boolean `available`.
+
+Submit final akun baru menggunakan endpoint/command bootstrap khusus dengan `Idempotency-Key`. Response sukses minimum:
+
+```json
+{
+  "success": true,
+  "data": {
+    "account_created": true,
+    "credential_state": "default",
+    "registration_created": true,
+    "next_action": "change_password"
+  }
+}
+```
+
+Response tidak memuat `default_password`, password, hash, token active-session, atau data keamanan internal.
 
 ### Paket 2 — Kontrak pengajuan dan histori bersama
 
@@ -510,15 +563,17 @@ Hasil: tiga jalur mempunyai semantik final approval, error, audit, dan idempoten
 ### Paket 7 — API dan otorisasi
 
 1. Pisahkan endpoint berdasarkan aktor:
-   - mahasiswa: membuat/melihat pendaftaran dan form miliknya;
+   - bootstrap publik terbatas: mengecek mode NIM dan membuat akun + pendaftaran pertama jenis `baru`;
+   - mahasiswa authenticated: membuat/melihat pendaftaran dan form miliknya, termasuk akun existing;
    - penanggung jawab: melihat/memutus antrean periode tugasnya;
    - Sekprodi: melihat/memutus final sesuai program kuliah;
    - Admin: tidak membuat keputusan akademik final.
 2. Jangan menyediakan kandidat P1/P2 melalui endpoint publik.
 3. Endpoint kandidat Sekprodi melakukan query terbaru dan mengembalikan eligibility serta kapasitas.
 4. Semua detail dan download dokumen memverifikasi object-level authorization.
-5. Gunakan error code konsisten untuk periode tertutup, duplicate registration, stale state, quota conflict, unavailable lecturer, invalid transition, dan idempotency conflict.
+5. Gunakan error code konsisten untuk `NEW_ACCOUNT_ALLOWED`, `EXISTING_ACCOUNT_AUTH_REQUIRED`, periode tertutup, duplicate registration, stale state, quota conflict, unavailable lecturer, invalid transition, dan idempotency conflict.
 6. Re-fetch dan revalidate tetap dilakukan walaupun UI sudah menyaring opsi.
+7. Endpoint bootstrap wajib diberi rate limit, idempotency key, validasi payload eksplisit, dan transaksi; endpoint ini tidak boleh menerima `ulang`, `alih`, keputusan P1/P2, role, status akun, atau ID mahasiswa bebas dari client.
 
 Hasil: aktor hanya dapat melihat dan melakukan aksi sesuai perannya.
 
@@ -528,15 +583,21 @@ Hasil: aktor hanya dapat melihat dan melakukan aksi sesuai perannya.
 
 1. Tampilkan hanya tiga jalur aktif.
 2. Jangan tampilkan pemilihan P1/P2 pada pendaftaran baru.
-3. Setelah pendaftaran, kunci menu pengajuan jalur lain sampai proses aktif selesai.
-4. Gunakan stepper konsisten:
+3. Setelah NIM terisi, tampilkan salah satu mode secara stabil:
+   - akun baru: informasi “Akun mahasiswa akan dibuat saat pendaftaran disimpan”, field identitas minimum, tanpa field password akun master;
+   - akun existing: minta login/verifikasi password dan isi identitas readonly dari master;
+   - sudah mendaftar: tampilkan penolakan duplikat dan arahkan ke status pendaftaran.
+4. Jangan mengganti alasan hasil pengecekan NIM saat `blur`; simpan reason code API sebagai source of truth agar `new_account_allowed` tidak berubah menjadi pesan “NIM sudah terdaftar”.
+5. Setelah pendaftaran, kunci menu pengajuan jalur lain sampai proses aktif selesai.
+6. Gunakan stepper konsisten:
    - Pendaftaran;
    - Form terkirim;
    - Review penanggung jawab;
    - Keputusan final Sekprodi;
    - Pembimbing aktif.
-5. Tampilkan alasan penolakan dan next action dari API.
-6. Untuk Perintisan, anggota melihat status kelompok readonly dan ketua mempunyai aksi edit/submit.
+7. Tampilkan alasan penolakan dan next action dari API.
+8. Setelah bootstrap sukses, tampilkan instruksi login awal menggunakan NIM dan arahkan ke forced-change; jangan menyimpan password di browser storage.
+9. Untuk Perintisan, anggota melihat status kelompok readonly dan ketua mempunyai aksi edit/submit.
 
 #### Penanggung jawab jalur
 
@@ -613,21 +674,27 @@ Uji minimal:
 
 ### 9.2 Integration/API test bersama
 
-1. Mahasiswa hanya dapat mendaftar sekali pada periode yang sama, termasuk dua request paralel.
-2. Pendaftaran menolak jalur hold.
-3. Request pendaftaran yang membawa P1/P2 ditolak atau field diabaikan secara aman.
-4. Form dengan jalur berbeda dari pendaftaran ditolak.
-5. Approval penanggung jawab tidak membuat penetapan/cache P1.
-6. Final Sekprodi membuat satu penetapan aktif dan membuka akses bimbingan.
-7. Dosen nonaktif, tidak tersedia, salah cluster, atau kuota penuh ditolak pada finalisasi.
-8. Perubahan status/ketersediaan setelah modal dibuka menghasilkan stale conflict dan tidak membuat data parsial.
-9. P1 dan P2 yang sama ditolak sesuai BR-PENETAPAN-002.
-10. Notifikasi mahasiswa, P1, dan P2 dibuat dengan referensi keputusan/penetapan yang benar.
-11. Pemanggilan final approval kedua dengan payload identik berhasil dengan `replayed: true` tanpa menggandakan histori, pemakaian kuota, penetapan, cache, atau notifikasi.
-12. Pemanggilan kedua dengan keputusan atau P1/P2 berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
-13. Kegagalan notifikasi atau update terakhir menyebabkan rollback lengkap.
-14. Sekprodi program lain tidak dapat melihat atau memutus pengajuan.
-15. Response list, detail, dan aksi selalu mempunyai `workflow_stage` serta `raw_workflow_status` yang benar.
+1. NIM terisi yang belum ada pada master menghasilkan state `new_account_allowed`, bukan error.
+2. Submit bootstrap membuat Mahasiswa, hash credential NIM, pendaftaran, dan audit secara atomik tanpa mengembalikan password/hash.
+3. Kegagalan pembuatan pendaftaran me-rollback akun/master/credential baru; kegagalan pembuatan credential juga tidak meninggalkan mahasiswa yatim.
+4. Dua bootstrap paralel untuk NIM yang sama menghasilkan tepat satu akun dan satu pendaftaran; request lain menjadi replay atau conflict terkontrol.
+5. NIM existing tanpa pendaftaran menghasilkan `existing_account_auth_required` dan data master tidak dapat ditimpa oleh payload publik.
+6. NIM existing yang sudah mendaftar menghasilkan `already_registered`.
+7. Mahasiswa hanya dapat mendaftar sekali pada periode yang sama, termasuk dua request paralel.
+8. Pendaftaran menolak jalur hold.
+9. Request pendaftaran yang membawa P1/P2 ditolak atau field diabaikan secara aman.
+10. Form dengan jalur berbeda dari pendaftaran ditolak.
+11. Approval penanggung jawab tidak membuat penetapan/cache P1.
+12. Final Sekprodi membuat satu penetapan aktif dan membuka akses bimbingan.
+13. Dosen nonaktif, tidak tersedia, salah cluster, atau kuota penuh ditolak pada finalisasi.
+14. Perubahan status/ketersediaan setelah modal dibuka menghasilkan stale conflict dan tidak membuat data parsial.
+15. P1 dan P2 yang sama ditolak sesuai BR-PENETAPAN-002.
+16. Notifikasi mahasiswa, P1, dan P2 dibuat dengan referensi keputusan/penetapan yang benar.
+17. Pemanggilan final approval kedua dengan payload identik berhasil dengan `replayed: true` tanpa menggandakan histori, pemakaian kuota, penetapan, cache, atau notifikasi.
+18. Pemanggilan kedua dengan keputusan atau P1/P2 berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
+19. Kegagalan notifikasi atau update terakhir menyebabkan rollback lengkap.
+20. Sekprodi program lain tidak dapat melihat atau memutus pengajuan.
+21. Response list, detail, dan aksi selalu mempunyai `workflow_stage` serta `raw_workflow_status` yang benar.
 
 ### 9.3 Integration test Penelitian
 
@@ -675,12 +742,15 @@ Uji minimal:
 
 1. Hanya jalur aktif yang tampil.
 2. Form pendaftaran baru tidak menampilkan pilihan P1/P2.
-3. Stepper memetakan seluruh raw status dengan benar.
-4. Kandidat Sekprodi di-refresh ketika modal dibuka/fokus kembali.
-5. Tombol keputusan mencegah klik ganda.
-6. Error stale state, kuota, dan ketersediaan mempunyai pesan serta next action.
-7. Anggota Perintisan hanya mempunyai tampilan readonly.
-8. Timeline tiga jalur memakai format yang konsisten.
+3. NIM yang belum ada menampilkan mode akun baru dan tidak berubah menjadi “NIM sudah terdaftar” setelah blur.
+4. Field password akun master tersembunyi pada mode akun baru dan tersedia pada mode existing-account.
+5. Perubahan NIM membatalkan hasil request lama sehingga response async yang stale tidak menimpa state terbaru.
+6. Stepper memetakan seluruh raw status dengan benar.
+7. Kandidat Sekprodi di-refresh ketika modal dibuka/fokus kembali.
+8. Tombol keputusan mencegah klik ganda.
+9. Error stale state, kuota, dan ketersediaan mempunyai pesan serta next action.
+10. Anggota Perintisan hanya mempunyai tampilan readonly.
+11. Timeline tiga jalur memakai format yang konsisten.
 
 ### 9.7 UAT end-to-end
 
@@ -692,12 +762,14 @@ Lakukan minimal tiga sesi UAT terpisah:
 
 Pada setiap sesi, verifikasi status mahasiswa, histori aktor/waktu, cache P1, akses bimbingan, kapasitas dosen, notifikasi, dan tidak adanya dependensi surat tugas.
 
+Sedikitnya satu sesi wajib dimulai dari NIM yang belum ada pada Master Mahasiswa untuk membuktikan bootstrap akun, pendaftaran, login awal dengan NIM, forced change, serta tidak adanya akun/pendaftaran parsial. Sesi lain wajib memakai akun existing untuk membuktikan autentikasi dan penolakan duplikat.
+
 ## 10. Urutan implementasi dan dependensi
 
 | Urutan | Paket | Dependensi | Risiko |
 | --- | --- | --- | --- |
 | 1 | Baseline dan decision gate | Tahap 1 stabil | Tinggi |
-| 2 | Kontrak pendaftaran dan constraint | Paket 0 | Tinggi |
+| 2 | Kontrak pendaftaran/bootstrap dan constraint | Paket 0 + CredentialService Tahap 6 | Tinggi |
 | 3 | Kontrak pengajuan/histori bersama | Paket 1 | Tinggi |
 | 4 | Service finalisasi bersama | Paket 2 dan kontrak penetapan Tahap 1 | Tinggi |
 | 5 | Penelitian | Paket 2–4 | Tinggi karena decision gate dan reservasi |
@@ -715,11 +787,13 @@ Penelitian, Magang, dan Perintisan dapat dikerjakan paralel setelah kontrak pend
 2. Deploy schema/history yang bersifat additive.
 3. Jalankan rekonsiliasi dry-run dan selesaikan konflik manual.
 4. Pasang constraint unik setelah data bersih.
-5. Deploy service normalisasi dan finalisasi di belakang feature flag bila diperlukan.
-6. Migrasikan jalur satu per satu: Magang, Perintisan, lalu Penelitian, atau sesuai hasil risiko pengujian.
-7. Jalankan smoke test final approval pada data uji untuk setiap jalur.
-8. Pantau conflict, rollback, duplicate key, orphan reservation, dan final approved tanpa assignment.
-9. Hapus jalur kode legacy hanya setelah satu release stabil dan tidak ada pembaca lama.
+5. Deploy kontrak check-NIM baru dan orchestration bootstrap di belakang feature flag; verifikasi rate limit, idempotency, rollback, serta integrasi CredentialService sebelum membuka self-registration.
+6. Deploy frontend mode akun baru/existing bersamaan dengan kontrak API agar status `new_account_allowed` tidak dibaca sebagai error.
+7. Deploy service normalisasi dan finalisasi di belakang feature flag bila diperlukan.
+8. Migrasikan jalur satu per satu: Magang, Perintisan, lalu Penelitian, atau sesuai hasil risiko pengujian.
+9. Jalankan smoke test bootstrap dan final approval pada data uji untuk setiap jalur.
+10. Pantau conflict, rollback, duplicate key, akun yatim, orphan reservation, dan final approved tanpa assignment.
+11. Hapus jalur kode legacy hanya setelah satu release stabil dan tidak ada pembaca lama.
 
 Rollback aplikasi tidak boleh membatalkan atau menghapus penetapan sah yang sudah aktif. Migration down hanya digunakan jika aman terhadap data yang sudah dibuat.
 
@@ -727,9 +801,12 @@ Rollback aplikasi tidak boleh membatalkan atau menghapus penetapan sah yang suda
 
 Tahap dinyatakan selesai apabila:
 
-- mahasiswa dari master dapat membuat satu pendaftaran baru pada periode aktif untuk salah satu dari tiga jalur aktif;
+- mahasiswa yang belum ada pada master dapat membuat akun dan satu pendaftaran pertama secara atomik pada periode aktif; mahasiswa existing tetap dapat mendaftar setelah autentikasi;
 - Pengabdian tidak tersedia sebagai pilihan baru selama hold;
-- pendaftaran tidak membuat akun, tidak mengembalikan password, dan tidak menerima keputusan P1/P2 dari mahasiswa;
+- bootstrap pendaftaran baru boleh membuat akun melalui CredentialService Tahap 6, tetapi tidak mengembalikan password/hash dan tidak menerima keputusan P1/P2 dari mahasiswa;
+- NIM belum ditemukan diperlakukan sebagai `new_account_allowed`, sedangkan NIM existing dibedakan antara `existing_account_auth_required` dan `already_registered`;
+- akun, credential, master minimum, pendaftaran, form bootstrap, dan audit berhasil bersama atau rollback bersama;
+- akun hasil bootstrap berstatus `default` dan wajib forced change sebelum aktivitas bisnis berikutnya;
 - pendaftaran, pengajuan, dan penetapan mempunyai lifecycle terpisah serta status normalisasi konsisten;
 - Penelitian topik dosen dan judul mandiri mencapai antrean final tanpa mengubah decision gate yang belum disahkan;
 - Magang menyimpan referensi dan snapshot mitra serta memvalidasi dokumen di backend;
@@ -758,6 +835,6 @@ Tahap dinyatakan selesai apabila:
 | Detail urutan review judul mandiri | Sementara | Pertahankan, jangan perluas asumsi |
 | P2 wajib atau opsional | Belum final per jalur | Perlakukan opsional |
 | Jumlah anggota Perintisan jika berubah | Menunggu aturan akademik | Gunakan baseline form saat ini dari satu config |
-| Self-registration versus akun dari import | Aturan menyatakan akun tersedia setelah import | Gunakan akun master; ubah aturan dahulu jika self-registration dipertahankan |
+| Self-registration versus akun dari import | **Dikunci 4 Agustus 2026:** keduanya didukung | NIM belum ada memakai bootstrap account + registration; NIM existing wajib autentikasi; ulang/alih tetap authenticated |
 
 Setiap keputusan baru harus memperbarui `aturan-bisnis-simps.md`, BPMN, kontrak API, implementasi, dan test dalam perubahan yang sama.

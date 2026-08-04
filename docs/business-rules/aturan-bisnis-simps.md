@@ -255,6 +255,23 @@ Mahasiswa tidak dapat mendaftar jika:
 
 Mahasiswa tidak memilih pembimbing lama atau baru pada form pendaftaran ulang/alih. Pembimbing lama dibaca dari histori, sedangkan pembimbing baru dipilih Sekretaris Prodi pada keputusan final.
 
+### BR-DAFTAR-007 — Pendaftaran pertama dan provisioning akun mahasiswa
+
+**Status: Final**
+
+Pendaftaran jenis `baru` boleh dimulai oleh mahasiswa yang NIM-nya belum tersedia pada Master Mahasiswa. Kondisi “NIM belum ditemukan pada master” merupakan mode pembuatan akun baru, bukan error kelayakan pendaftaran.
+
+Aturan flow:
+
+- NIM tidak ditemukan pada master → izinkan mahasiswa mengisi identitas dan form penjaluran pertama; pada submit final, sistem membuat akun Mahasiswa, data master minimum, credential awal, dan pendaftaran dalam satu transaksi;
+- NIM ditemukan dan belum mempunyai pendaftaran pada periode aktif → mahasiswa wajib membuktikan kepemilikan akun melalui autentikasi sebelum melanjutkan;
+- NIM ditemukan dan sudah mempunyai pendaftaran pada periode aktif → pendaftaran ditolak sebagai duplikat;
+- NIM hanya wajib terisi dan tidak dibatasi pola fakultas/angkatan tertentu. Periode tertutup, target jalur tidak aktif, data minimum tidak lengkap, atau pendaftaran ganda tetap ditolak.
+
+Untuk akun yang dibuat melalui pendaftaran pertama, password awal menggunakan NIM sesuai BR-AKUN-001. Credential dibuat melalui credential service dengan state `default`; password maupun hash tidak boleh dikembalikan melalui response. Seluruh data form pendaftaran pertama boleh diselesaikan dalam request bootstrap yang sama, tetapi setelah akun terbentuk pengguna hanya memperoleh akses restricted dan wajib mengganti password sebelum memakai endpoint bisnis berikutnya.
+
+Pengecualian bootstrap ini hanya berlaku untuk pemohon utama pada pendaftaran jenis `baru`. Ulang/alih tetap wajib authenticated, dan anggota kelompok Perintisan yang belum mempunyai akun harus melakukan provisioning pendaftaran pertamanya sendiri atau melalui proses master/import yang sah.
+
 ## 8. Pamit dan pengakhiran siklus lama
 
 ### BR-PAMIT-001 — Kewajiban pamit
@@ -648,7 +665,7 @@ Tautan pemulihan hanya boleh dikirim ke email/kanal yang telah diverifikasi atau
 
 **Status: Final**
 
-Password baru minimal 10 karakter dan maksimal 72 byte UTF-8 sebelum bcrypt. Password tidak di-trim, dipotong, atau dinormalisasi diam-diam; password yang sama dengan password aktif, terlalu umum, atau memuat identifier akun ditolak.
+Password baru minimal 10 karakter dan maksimal 72 byte UTF-8 sebelum bcrypt. Password tidak di-trim, dipotong, atau dinormalisasi diam-diam; password yang sama dengan password aktif, terlalu umum, atau sama persis dengan identifier akun ditolak. Identifier akun boleh menjadi bagian dari password apabila terdapat pembeda tambahan, misalnya nama pengguna atau karakter lain.
 
 Ketentuan minimum 10 karakter berlaku untuk password baru yang dipilih pengguna, bukan untuk credential awal institusional. Saat forced change, password baru Dosen dan Admin tidak boleh sama dengan `12345678`; password baru Mahasiswa tidak boleh sama dengan NIM atau identifier akun lainnya.
 

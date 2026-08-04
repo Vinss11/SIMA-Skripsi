@@ -20,12 +20,13 @@ const {
   getPeriodeWindowErrorCode,
   getPeriodeWindowMessage,
 } = require("../services/periodePenjaluranService");
+const { buildInitialCredentialAttributes } = require("../services/initialCredentialService");
+const { recordSecurityEvent } = require("../services/authSessionService");
 
 const JENIS_JALUR_OPTIONS = ["penelitian", "perintisan_bisnis", "magang"];
 const PERAN_TIM_PERINTISAN = ["hustler", "hipster", "hacker"];
 const PROGRAM_KULIAH_OPTIONS = ["reguler", "internasional"];
 const EMAIL_DOMAIN_MAHASISWA = "students.uii.ac.id";
-const NIM_MAHASISWA_REGEX = /^\d{2}523\d{3}$/;
 
 function normalizeText(value) {
   if (typeof value !== "string") return "";
@@ -396,14 +397,14 @@ exports.getDosenDropdown = async (req, res) => {
   }
 };
 
-// GET /api/pendaftaran/check-nim?nim=22523001
+// GET /api/pendaftaran/check-nim?nim=...
 exports.checkNimAvailability = async (req, res) => {
   try {
     const nim = normalizeText(req.query.nim);
-    if (!NIM_MAHASISWA_REGEX.test(nim)) {
+    if (!nim) {
       return res.status(400).json({
         success: false,
-        message: "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.",
+        message: "NIM wajib diisi.",
         detail: { field: "nim" },
       });
     }
@@ -432,9 +433,15 @@ exports.checkNimAvailability = async (req, res) => {
       success: true,
       data: {
         nim,
-        available: Boolean(existingMahasiswa) && !existingRegistration,
+        status: existingRegistration
+          ? "already_registered"
+          : existingMahasiswa
+            ? "existing_account_auth_required"
+            : "new_account_allowed",
+        available: !existingRegistration,
         master_found: Boolean(existingMahasiswa),
         already_registered: Boolean(existingRegistration),
+        requires_authentication: Boolean(existingMahasiswa) && !existingRegistration,
         mahasiswa: existingMahasiswa ? {
           id: existingMahasiswa.id,
           nim: existingMahasiswa.nim,
@@ -788,35 +795,77 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       });
     }
 
-    if (!NIM_MAHASISWA_REGEX.test(nim)) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.",
-        detail: { field: "nim" },
-      });
-    }
-
-    const authenticatedMahasiswa = await Mahasiswa.findOne({
+    let authenticatedMahasiswa = await Mahasiswa.findOne({
       where: { nim },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
-    if (!authenticatedMahasiswa) {
-      await t.rollback();
-      return res.status(404).json({
-        success: false,
-        code: "MASTER_STUDENT_NOT_FOUND",
-        message: "Mahasiswa belum tersedia pada master data. Hubungi admin untuk impor akun terlebih dahulu.",
-      });
-    }
-    if (!accountPassword || !(await authenticatedMahasiswa.comparePassword(accountPassword))) {
+    const accountCreated = !authenticatedMahasiswa;
+    if (authenticatedMahasiswa && (!accountPassword || !(await authenticatedMahasiswa.comparePassword(accountPassword)))) {
       await t.rollback();
       return res.status(401).json({
         success: false,
         code: "MASTER_ACCOUNT_AUTH_FAILED",
         message: "Password akun master mahasiswa tidak valid.",
       });
+    }
+
+    if (!authenticatedMahasiswa) {
+      if (!nama) {
+        await t.rollback();
+        return res.status(400).json({ success: false, message: "Nama wajib diisi.", detail: { field: "nama" } });
+      }
+      if (!dosenPembimbingAkademikId) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Dosen Pembimbing Akademik wajib diisi.",
+          detail: { field: "dosen_pembimbing_akademik_id" },
+        });
+      }
+      const bootstrapPeriod = await getActivePeriode(t);
+      if (!bootstrapPeriod) {
+        await t.rollback();
+        return res.status(403).json({ success: false, message: "Periode pendaftaran masih belum dibuka oleh sekretaris prodi." });
+      }
+      const bootstrapWindow = evaluatePeriodeWindow(bootstrapPeriod);
+      if (!bootstrapWindow.is_open) {
+        await t.rollback();
+        return res.status(403).json(buildPeriodeWindowErrorPayload(bootstrapWindow));
+      }
+      const bootstrapDpa = await Dosen.findByPk(dosenPembimbingAkademikId, { transaction: t, lock: t.LOCK.UPDATE });
+      if (!bootstrapDpa) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Dosen Pembimbing Akademik tidak ditemukan.",
+          detail: { field: "dosen_pembimbing_akademik_id" },
+        });
+      }
+      const dpaEligibility = assertDosenCanReceiveNewAssignment(bootstrapDpa, "penugasan baru");
+      if (!dpaEligibility.allowed) {
+        await t.rollback();
+        return res.status(409).json({ success: false, message: `Dosen Pembimbing Akademik: ${dpaEligibility.message}` });
+      }
+      authenticatedMahasiswa = await Mahasiswa.create({
+        nim,
+        nama,
+        email: email || `${nim}@${EMAIL_DOMAIN_MAHASISWA}`.toLowerCase(),
+        ...buildInitialCredentialAttributes("mahasiswa", { nim }, { type: "self_registration" }),
+        angkatan: deriveAngkatanFromNim(nim),
+        dosen_pembimbing_akademik_id: bootstrapDpa.id,
+        status_jalur_saat_ini: "belum_mengajukan",
+      }, { transaction: t });
+      await recordSecurityEvent({
+        event_type: "account.bootstrap.created",
+        actor_type: "mahasiswa",
+        actor_id: authenticatedMahasiswa.id,
+        target_type: "mahasiswa",
+        target_id: authenticatedMahasiswa.id,
+        outcome: "success",
+        reason_code: "FIRST_TRACK_REGISTRATION",
+        metadata: { periode_penjaluran_id: bootstrapPeriod.id },
+      }, t);
     }
 
     if (pendaftaran === "baru" && !JENIS_JALUR_OPTIONS.includes(jenisJalurDiambil)) {
@@ -916,8 +965,12 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
             username: groupResult.ketua.mahasiswa.nim,
             prompt_change_password: Boolean(groupResult.ketua.mahasiswa.is_default_password),
             can_login: true,
-            keterangan: "Gunakan kredensial akun master mahasiswa yang sudah tersedia.",
+            keterangan: accountCreated
+              ? "Gunakan NIM sebagai username dan password awal, lalu ganti password setelah login."
+              : "Gunakan kredensial akun mahasiswa yang sudah tersedia.",
           },
+          account_created: accountCreated,
+          credential_state: groupResult.ketua.mahasiswa.credential_state,
           next_action: {
             selected_jalur: "perintisan_bisnis",
             target_form: "pengajuan_perintisan_bisnis",
@@ -929,15 +982,6 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
 
     const existingMahasiswa = authenticatedMahasiswa;
 
-    if (!existingMahasiswa || existingMahasiswa.nim !== nim) {
-      await t.rollback();
-      return res.status(404).json({
-        success: false,
-        code: "MASTER_STUDENT_NOT_FOUND",
-        message: "Mahasiswa belum tersedia pada master data. Hubungi admin untuk impor akun terlebih dahulu.",
-        detail: { field: "nim" },
-      });
-    }
     if (!existingMahasiswa.dosen_pembimbing_akademik_id) {
       await t.rollback();
       return res.status(409).json({
@@ -1119,8 +1163,12 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
           username: mahasiswa.nim,
           prompt_change_password: Boolean(mahasiswa.is_default_password),
           can_login: true,
-          keterangan: "Gunakan kredensial akun master mahasiswa yang sudah tersedia.",
+          keterangan: accountCreated
+            ? "Gunakan NIM sebagai username dan password awal, lalu ganti password setelah login."
+            : "Gunakan kredensial akun mahasiswa yang sudah tersedia.",
         },
+        account_created: accountCreated,
+        credential_state: mahasiswa.credential_state,
         next_action: {
           selected_jalur: selectedJalur,
           target_form: targetForm,
@@ -1131,6 +1179,13 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
   } catch (error) {
     if (!t.finished) await t.rollback();
     console.error("Error di submitPendaftaranJalurBaru:", error);
+    if (error?.name === "SequelizeUniqueConstraintError") {
+      return res.status(409).json({
+        success: false,
+        code: "REGISTRATION_IDENTITY_CONFLICT",
+        message: "NIM atau akun tersebut baru saja digunakan. Periksa status pendaftaran lalu coba kembali.",
+      });
+    }
     res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",

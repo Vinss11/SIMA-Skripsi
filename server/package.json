@@ -28,7 +28,6 @@
     "worker:auth-outbox:once": "node scripts/process-auth-outbox.js --once",
     "worker:guidance-recalculation": "node scripts/process-guidance-recalculation-jobs.js",
     "worker:guidance-recalculation:once": "node scripts/process-guidance-recalculation-jobs.js --once",
-    "provision:stage6-activations": "node scripts/provision-stage6-activation-channels.js --execute",
     "reconcile:stage6-initial-credentials:dry-run": "node scripts/reconcile-stage6-initial-credentials.js --dry-run",
     "reconcile:stage6-initial-credentials": "node scripts/reconcile-stage6-initial-credentials.js --execute",
     "reconcile:stage6-auth-security:dry-run": "node scripts/reconcile-stage6-auth-security.js --dry-run",

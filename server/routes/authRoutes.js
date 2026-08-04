@@ -5,6 +5,7 @@ const { authenticateToken, authenticateRestrictedAllowed } = require("../middlew
 
 // Public routes
 router.post("/login", authController.login);
+router.post("/refresh", authController.refreshSession);
 router.post("/forgot-password", authController.forgotPassword);
 router.post("/reset-password/validate", authController.validateResetToken);
 router.post("/reset-password/confirm", authController.confirmResetPassword);

@@ -46,7 +46,10 @@ function middleware({ allowDuringRestriction = false } = {}) {
       }
       // Avoid a write for every API call while retaining a reliable idle window.
       if (!session.last_used_at || now - new Date(session.last_used_at) >= 60 * 1000) {
-        await session.update({ last_used_at: now, idle_expires_at: new Date(now.getTime() + Math.max(15, Number(process.env.AUTH_SESSION_IDLE_MINUTES || 60)) * 60000) });
+        await session.update({ last_used_at: now, idle_expires_at: new Date(Math.min(
+          new Date(session.absolute_expires_at).getTime(),
+          now.getTime() + Math.max(15, Number(process.env.AUTH_SESSION_IDLE_MINUTES || 720)) * 60000
+        )) });
       }
       next();
     } catch (error) {

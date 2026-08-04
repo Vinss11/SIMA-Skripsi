@@ -1304,11 +1304,13 @@ function StatusPage({
     selectedHistory.find((item) => String(item?.tipe_approval || "").toLowerCase() === "koordinator") || null;
   const pembimbingDecisionChip = pembimbingDecision ? getStatusChip(pembimbingDecision.status) : null;
   const ketuaClusterDecisionChip = ketuaClusterDecision ? getStatusChip(ketuaClusterDecision.status) : null;
-  const pembimbingName =
-    formatDosenFullName(pembimbingDecision?.dosen?.nama, pembimbingDecision?.dosen?.gelar) ||
-    formatDosenFullName(selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama, selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.gelar) ||
-    formatDosenFullName(selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.nama, selectedDetail?.detail_pengajuan?.calon_dosen_pembimbing?.gelar) ||
-    "-";
+  const pembimbingDecisionStatus = String(pembimbingDecision?.status || "").toLowerCase();
+  const hasPembimbingDecision = ["approved", "rejected"].includes(pembimbingDecisionStatus);
+  const pembimbingName = hasPembimbingDecision
+    ? formatDosenFullName(pembimbingDecision?.dosen?.nama, pembimbingDecision?.dosen?.gelar) ||
+      formatDosenFullName(selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama, selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.gelar) ||
+      ""
+    : "";
   const sidangChip = getSidangStatusChip(sidangStatus);
   const sidangSchedule =
     sidangStatus?.pendaftaran_aktif?.jadwal_sidang ||
@@ -1764,7 +1766,7 @@ function StatusPage({
                   />
                   <ResearchReadonlyInput
                     label="Tanggal Keputusan"
-                    value={formatDateTime(pembimbingDecision?.tanggal_keputusan)}
+                    value={hasPembimbingDecision ? formatDateTime(pembimbingDecision?.tanggal_keputusan) : ""}
                   />
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1772,15 +1774,19 @@ function StatusPage({
                     label="Catatan Persetujuan"
                     rows={2}
                     value={
-                      pembimbingDecision?.status === "approved"
+                      pembimbingDecisionStatus === "approved"
                       ? pembimbingDecision?.keterangan || selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
-                      : selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
+                      : ""
                     }
                   />
                   <ResearchReadonlyTextarea
                     label="Catatan Penolakan"
                     rows={2}
-                    value={alasanPenolakanList.length > 0 ? alasanPenolakanList.join("; ") : "-"}
+                    value={
+                      pembimbingDecisionStatus === "rejected" && alasanPenolakanList.length > 0
+                        ? alasanPenolakanList.join("; ")
+                        : ""
+                    }
                   />
                 </div>
                 <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">

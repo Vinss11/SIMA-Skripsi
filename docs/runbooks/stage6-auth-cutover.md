@@ -13,6 +13,8 @@
 4. Setelah laporan disetujui, jalankan mode execute idempoten. Untuk setiap akun yang benar-benar berubah, service menaikkan `credential_version`, mencabut session/reset token, mengisi `password_origin=institutional_default`, mengisi forced-change reason, dan membuat audit. Password maupun hash tidak boleh masuk report/log.
 5. Smoke test minimum:
 
+   - setiap NIM yang terisi dan belum ada dapat menyelesaikan bootstrap pendaftaran pertama; akun, credential default, dan pendaftaran terbentuk tanpa password/hash pada response;
+   - kegagalan bootstrap tidak meninggalkan akun atau pendaftaran parsial, sedangkan NIM existing tidak dapat diambil alih melalui bootstrap;
    - Dosen default login dengan `12345678`, hanya memperoleh restricted session, lalu wajib mengganti password;
    - Mahasiswa default login menggunakan NIM sebagai username dan password, hanya memperoleh restricted session, lalu wajib mengganti password;
    - Admin baru/default dengan provenance valid login menggunakan `12345678`, hanya memperoleh restricted session, lalu wajib mengganti password;

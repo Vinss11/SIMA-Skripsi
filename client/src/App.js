@@ -10,6 +10,7 @@ import DosenDashboardPage from "./pages/DosenDashboardPage";
 import ProfilePage from "./pages/ProfilePage";
 import ForcedPasswordChangePage from "./pages/ForcedPasswordChangePage";
 import PasswordRecoveryPage from "./pages/PasswordRecoveryPage";
+import { withAuthTabHeader } from "./utils/authTab";
 
 const PRODUCTION_API_BASE_URL = "https://sima-skripsi-rz1j.vercel.app";
 const IS_LOCAL_FRONTEND = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
@@ -25,9 +26,10 @@ function initialResetToken() {
 }
 
 function App() {
-  // Access tokens intentionally live only in memory. Reloading the tab requires
-  // login again until the HttpOnly refresh-cookie phase is introduced.
+  // Access token tetap hanya berada di memori; refresh halaman memulihkan sesi
+  // melalui refresh cookie HttpOnly yang tidak dapat dibaca JavaScript.
   const [auth, setAuth] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authScreen, setAuthScreen] = useState("login");
   const [registrationData, setRegistrationData] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
@@ -38,22 +40,29 @@ function App() {
     prompt_change_password: Boolean(auth?.prompt_change_password) }), [auth]);
   const restricted = Boolean(session.user) && (session.prompt_change_password || session.next_action === "change_password" || ["default", "temporary"].includes(session.credential_state));
 
-  const clearSession = useCallback(() => { setShowProfile(false); setAuth(null); setAuthScreen("login"); }, []);
-  const handleLoginSuccess = useCallback((payload) => { setAuth(payload); setAuthScreen("login"); setShowProfile(false); }, []);
+  const clearSession = useCallback(() => { setShowProfile(false); setAuth(null); setAuthReady(true); setAuthScreen("login"); }, []);
+  const handleLoginSuccess = useCallback((payload) => { setAuth(payload); setAuthReady(true); setAuthScreen("login"); setShowProfile(false); }, []);
   const handleLogout = useCallback(async () => {
     const token = auth?.token;
     clearSession();
-    try { if (token) await fetch(`${API_BASE_URL}/api/auth/logout`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }); } catch (_) { /* local logout remains safe */ }
-    try { new BroadcastChannel("sima-auth").postMessage({ type: "logout" }); } catch (_) { /* unsupported browser */ }
+    try { if (token) await fetch(`${API_BASE_URL}/api/auth/logout`, { method: "POST", credentials: "include", headers: withAuthTabHeader({ Authorization: `Bearer ${token}` }) }); } catch (_) { /* local logout remains safe */ }
   }, [auth?.token, clearSession]);
   const handleSessionExpired = useCallback(() => clearSession(), [clearSession]);
   const handlePasswordChanged = useCallback((nextAuth) => { if (nextAuth?.token && nextAuth?.user) setAuth(nextAuth); }, []);
 
   useEffect(() => {
-    let channel;
-    try { channel = new BroadcastChannel("sima-auth"); channel.onmessage = (event) => { if (event.data?.type === "logout") clearSession(); }; } catch (_) { return undefined; }
-    return () => channel?.close();
-  }, [clearSession]);
+    let cancelled = false;
+    const restoreSession = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/auth/refresh`, { method: "POST", credentials: "include", headers: withAuthTabHeader() });
+        const payload = await response.json().catch(() => null);
+        if (!cancelled && response.ok && payload?.data?.token && payload?.data?.user) setAuth(payload.data);
+      } catch (_) { /* halaman login tetap tersedia ketika backend tidak dapat dijangkau */ }
+      finally { if (!cancelled) setAuthReady(true); }
+    };
+    restoreSession();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!auth?.token || restricted) return undefined;
@@ -73,6 +82,10 @@ function App() {
 
   if (resetToken) {
     return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="reset" resetToken={resetToken} onComplete={() => { setResetToken(""); window.history.replaceState({}, document.title, "/"); setAuthScreen("login"); }} />;
+  }
+
+  if (!authReady) {
+    return <main className="flex min-h-screen items-center justify-center bg-[#eaf1ff] text-sm font-bold text-[#284b9b]">Memulihkan sesi...</main>;
   }
 
   if (!session.user) {

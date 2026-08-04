@@ -12,6 +12,55 @@ const {
 } = require("../constants/sekretarisAkses");
 const { getDosenStatusDecision } = require("../services/dosenStatusPolicy");
 
+const REFRESH_COOKIE_NAME = "sima_refresh";
+
+function authTabId(req) {
+  const value = String(req.headers?.["x-sima-auth-tab"] || "").trim();
+  return /^[a-zA-Z0-9_-]{16,80}$/.test(value) ? value : "";
+}
+
+function refreshCookieName(req) {
+  const tabId = authTabId(req);
+  return tabId ? `${REFRESH_COOKIE_NAME}_${tabId}` : REFRESH_COOKIE_NAME;
+}
+
+function refreshCookieOptions(expiresAt = null) {
+  const configuredSameSite = String(process.env.AUTH_COOKIE_SAME_SITE || "lax").toLowerCase();
+  const sameSite = new Set(["lax", "strict", "none"]).has(configuredSameSite) ? configuredSameSite : "lax";
+  const secure = process.env.AUTH_COOKIE_SECURE === undefined
+    ? process.env.NODE_ENV === "production"
+    : String(process.env.AUTH_COOKIE_SECURE).toLowerCase() === "true";
+  return {
+    httpOnly: true,
+    secure,
+    sameSite,
+    path: "/api/auth",
+    ...(expiresAt ? { expires: new Date(expiresAt), maxAge: Math.max(0, new Date(expiresAt).getTime() - Date.now()) } : {}),
+  };
+}
+
+function readRefreshCookie(req) {
+  const cookieName = refreshCookieName(req);
+  const rawCookie = String(req.headers?.cookie || "");
+  const pair = rawCookie.split(";").map((item) => item.trim()).find((item) => item.startsWith(`${cookieName}=`));
+  if (!pair) return "";
+  try { return decodeURIComponent(pair.slice(cookieName.length + 1)); } catch (_) { return ""; }
+}
+
+function setRefreshCookie(req, res, issued) {
+  if (issued?.refreshToken && issued?.session?.absolute_expires_at && typeof res.cookie === "function") {
+    const cookieName = refreshCookieName(req);
+    res.cookie(cookieName, issued.refreshToken, refreshCookieOptions(issued.session.absolute_expires_at));
+    if (cookieName !== REFRESH_COOKIE_NAME && typeof res.clearCookie === "function") {
+      res.clearCookie(REFRESH_COOKIE_NAME, refreshCookieOptions());
+    }
+  }
+}
+
+function clearRefreshCookie(req, res) {
+  if (typeof res.clearCookie === "function") res.clearCookie(refreshCookieName(req), refreshCookieOptions());
+}
+
 function capabilitiesFor(accountType, account) {
   return accountType === "dosen" && isAllowedSekretarisJabatan(account?.jabatan_struktural)
     ? ["sekretaris_prodi"]
@@ -113,6 +162,7 @@ exports.login = async (req, res) => {
       : {};
     const issued = await sessions.issueSession({ accountType, account, role: accountType, capabilities, identityContext,
       rememberMe: Boolean(req.body?.remember_me), request: req });
+    setRefreshCookie(req, res, issued);
     if (resolved.identityAlias) {
       await sessions.recordSecurityEvent({ event_type: "auth.identity_resolution", actor_type: accountType, actor_id: account.id,
         target_type: accountType, target_id: account.id, session_id: issued.session.id, outcome: "success", reason_code: "IDENTITY_ALIAS_RESOLVED",
@@ -138,6 +188,7 @@ exports.changePassword = async (req, res) => {
       capabilities: req.user.capabilities, identityContext: req.user.sekretaris_prodi_id
         ? { sekretaris_prodi_id: req.user.sekretaris_prodi_id, identity_alias: "valid_identity_alias" }
         : {}, request: req });
+    setRefreshCookie(req, res, result);
     return res.json({ success: true, message: "Password berhasil diubah", data: loginData(req.user.account_type, result.account, { token: result.token, session: result.session }) });
   } catch (error) { return sendError(res, error, "changePassword"); }
 };
@@ -145,6 +196,7 @@ exports.changePassword = async (req, res) => {
 exports.logout = async (req, res) => {
   try {
     await sessions.revokeCurrent(req.user.session_id, req.user);
+    clearRefreshCookie(req, res);
     await sessions.recordSecurityEvent({ event_type: "auth.logout", actor_type: req.user.account_type, actor_id: req.user.id,
       target_type: req.user.account_type, target_id: req.user.id, session_id: req.user.session_id, outcome: "success" });
     return res.json({ success: true, message: "Logout berhasil" });
@@ -154,10 +206,29 @@ exports.logout = async (req, res) => {
 exports.logoutAll = async (req, res) => {
   try {
     await sessions.revokeSessions(req.user.account_type, req.user.id, { reason: "logout_all", actorType: req.user.account_type, actorId: req.user.id });
+    clearRefreshCookie(req, res);
     await sessions.recordSecurityEvent({ event_type: "auth.logout_all", actor_type: req.user.account_type, actor_id: req.user.id,
       target_type: req.user.account_type, target_id: req.user.id, session_id: req.user.session_id, outcome: "success" });
     return res.json({ success: true, message: "Semua sesi berhasil dikeluarkan" });
   } catch (error) { return sendError(res, error, "logoutAll"); }
+};
+
+exports.refreshSession = async (req, res) => {
+  try {
+    const restored = await sessions.resumeSession(readRefreshCookie(req), req);
+    if (!restored) {
+      clearRefreshCookie(req, res);
+      return res.status(401).json({ success: false, message: "Sesi tidak tersedia. Silakan login kembali.", code: "REFRESH_SESSION_INVALID" });
+    }
+    setRefreshCookie(req, res, restored);
+    const identityAlias = restored.session.role_snapshot?.sekretaris_prodi_id
+      ? { sekretarisProdiId: restored.session.role_snapshot.sekretaris_prodi_id }
+      : null;
+    return res.json({ success: true, message: "Sesi berhasil dipulihkan", data: loginData(restored.accountType, restored.account, restored, identityAlias) });
+  } catch (error) {
+    clearRefreshCookie(req, res);
+    return sendError(res, error, "refreshSession");
+  }
 };
 
 exports.listSessions = async (req, res) => {
@@ -207,16 +278,6 @@ exports.issueAdminReset = async (req, res) => {
   } catch (error) { return sendError(res, error, "issueAdminReset"); }
 };
 
-exports.issueAdminActivation = async (req, res) => {
-  try {
-    await rateLimit.consume("admin_reset_actor", `${req.user.account_type}:${req.user.id}`, { limit: 20, windowMs: 60 * 60 * 1000 });
-    const result = await recovery.issueAdminActivation({ targetType: req.params.accountType, targetId: Number(req.params.accountId),
-      actor: req.user, reason: req.body?.reason });
-    return res.status(result.replayed ? 200 : 202).json({ success: true,
-      message: "Tautan aktivasi dijadwalkan untuk dikirim.", data: { replayed: result.replayed } });
-  } catch (error) { return sendError(res, error, "issueAdminActivation"); }
-};
-
 exports.verifyRecoveryChannel = async (req, res) => {
   try {
     const data = await recovery.verifyRecoveryChannel({ targetType: req.params.accountType, targetId: Number(req.params.accountId), actor: req.user,
@@ -233,4 +294,4 @@ exports.getProfile = async (req, res) => {
   } catch (error) { return sendError(res, error, "getProfile"); }
 };
 
-exports._private = { publicUser, loginData, capabilitiesFor };
+exports._private = { publicUser, loginData, capabilitiesFor, authTabId, refreshCookieName, readRefreshCookie, refreshCookieOptions };

@@ -24,9 +24,9 @@ async function createResetForAccount({ accountType, account, purpose, actor = nu
     correlation_id: correlationId, metadata: { actor_type: actor?.role || null, reason: reason || null } }, { transaction });
   const encrypted = encrypt(raw);
   await db.AuthOutbox.create({ id: crypto.randomUUID(), reset_token_id: tokenRecord.id, event_type: "password.reset.delivery",
-    template_id: purpose === "admin_activation" ? "account-activation" : "password-reset", recipient_reference: String(account.email).toLowerCase(),
+    template_id: "password-reset", recipient_reference: String(account.email).toLowerCase(),
     correlation_id: correlationId, ...encrypted, status: "pending", available_at: now, metadata: { purpose } }, { transaction });
-  await sessions.recordSecurityEvent({ event_type: purpose === "admin_activation" ? "admin.reset_link.issued" : "password.reset.requested",
+  await sessions.recordSecurityEvent({ event_type: actor ? "admin.reset_link.issued" : "password.reset.requested",
     actor_type: actor?.role || accountType, actor_id: actor?.id || account.id, target_type: accountType, target_id: account.id,
     correlation_id: correlationId, outcome: "success", reason_code: purpose }, transaction);
   return { tokenRecord, replayed: false };
@@ -55,35 +55,7 @@ async function issueAdminReset({ targetType, targetId, actor, reason }) {
     const unusableHash = await bcrypt.hash(credentials.unusableInitialPassword(), Math.min(14, Math.max(10, Number(process.env.AUTH_BCRYPT_ROUNDS || 10))));
     await account.update({ password: unusableHash, credential_version: Number(account.credential_version || 1) + 1, credential_state: "default", is_default_password: true,
       password_origin: "admin_reset", force_change_reason: "admin_reset_link", security_updated_at: new Date(), security_updated_by_type: actor.role, security_updated_by_id: actor.id }, { transaction, hooks: false });
-    return createResetForAccount({ accountType: targetType, account, purpose: "admin_activation", actor, reason: String(reason).trim(), transaction });
-  });
-}
-
-async function issueInitialActivation({ accountType, account, actor = null, transaction }) {
-  assertEnabled();
-  if (!account?.id || !account?.email) throw new RecoveryError("Akun baru wajib memiliki email aktivasi.", 409, "ACCOUNT_ACTIVATION_CHANNEL_REQUIRED");
-  if (!new Set(["mahasiswa", "dosen"]).has(accountType)) {
-    throw new RecoveryError("Aktivasi awal akun privileged harus mengikuti recovery offline.", 403, "PRIVILEGED_ACCOUNT_ACTIVATION_UNAVAILABLE");
-  }
-  if (!transaction) {
-    return db.sequelize.transaction((nestedTransaction) => issueInitialActivation({ accountType, account, actor, transaction: nestedTransaction }));
-  }
-  return createResetForAccount({ accountType, account, purpose: "admin_activation", actor,
-    reason: "initial_account_activation", transaction });
-}
-
-async function issueAdminActivation({ targetType, targetId, actor, reason }) {
-  assertEnabled();
-  if (!new Set(["mahasiswa", "dosen"]).has(targetType)) throw new RecoveryError("Aktivasi akun privileged tidak tersedia.", 403, "PRIVILEGED_ACCOUNT_ACTIVATION_UNAVAILABLE");
-  if (!String(reason || "").trim()) throw new RecoveryError("Alasan aktivasi wajib diisi.", 400, "ADMIN_ACTIVATION_REASON_REQUIRED");
-  return db.sequelize.transaction(async (transaction) => {
-    const account = await repository.resolveAccount({ accountType: targetType, accountId: targetId, transaction, lock: transaction.LOCK.UPDATE });
-    if (!account) throw new RecoveryError("Target akun tidak ditemukan.", 404, "ACCOUNT_NOT_FOUND");
-    if (!new Set(["default", "temporary"]).has(repository.credentialState(account))) {
-      throw new RecoveryError("Akun sudah aktif; gunakan alur reset password.", 409, "ACCOUNT_ALREADY_ACTIVATED");
-    }
-    return createResetForAccount({ accountType: targetType, account, purpose: "admin_activation", actor,
-      reason: String(reason).trim(), transaction });
+    return createResetForAccount({ accountType: targetType, account, purpose: "self_reset", actor, reason: String(reason).trim(), transaction });
   });
 }
 
@@ -119,10 +91,6 @@ async function confirmReset(raw, newPassword) {
     const record = await inspectToken(raw, { transaction, lock: transaction.LOCK.UPDATE });
     await record.update({ attempt_count: Number(record.attempt_count || 0) + 1, last_attempted_at: new Date() }, { transaction });
     const account = await credentials.setPasswordFromReset({ resetRecord: record, newPassword, transaction }); const now = new Date();
-    if (record.purpose === "admin_activation" && !account.recovery_email_verified_at) {
-      await account.update({ recovery_email_verified_at: now, recovery_email_verification_source: "activation_link_consumed",
-        security_updated_at: now, security_updated_by_type: record.account_type, security_updated_by_id: account.id }, { transaction, hooks: false });
-    }
     await record.update({ used_at: now }, { transaction });
     await db.PasswordResetToken.update({ revoked_at: now, revoked_reason: "reset_completed" }, { where: { account_type: record.account_type, account_id: record.account_id, id: { [Op.ne]: record.id }, used_at: null, revoked_at: null }, transaction });
     await sessions.recordSecurityEvent({ event_type: "password.reset.consumed", actor_type: record.account_type, actor_id: account.id,
@@ -131,5 +99,5 @@ async function confirmReset(raw, newPassword) {
   });
 }
 
-module.exports = { RecoveryError, requestForgot, issueAdminReset, issueInitialActivation, issueAdminActivation,
+module.exports = { RecoveryError, requestForgot, issueAdminReset,
   verifyRecoveryChannel, inspectToken, confirmReset, encrypt, decrypt, tokenHash, assertEnabled };

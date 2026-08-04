@@ -16,8 +16,16 @@ const stage6Reconciliation = require("../scripts/reconcile-stage6-auth-security"
 const initialCredentials = require("../services/initialCredentialService");
 const { ALLOWED_SEKRETARIS_JABATAN } = require("../constants/sekretarisAkses");
 
-function request(body = {}, token = null) { return { body, params: {}, ip: "127.0.0.99", socket: {}, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "user-agent": "stage6-test" } }; }
-async function invoke(handler, req) { const result = { statusCode: 200, payload: null }; const res = { status(code) { result.statusCode = code; return this; }, json(payload) { result.payload = payload; return payload; } }; await handler(req, res); return result; }
+const PRIMARY_AUTH_TAB_ID = "stage6_primary_tab_0001";
+const SECONDARY_AUTH_TAB_ID = "stage6_secondary_tab_0002";
+const refreshCookieName = (tabId) => `sima_refresh_${tabId}`;
+function request(body = {}, token = null) { return { body, params: {}, ip: "127.0.0.99", socket: {}, headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "user-agent": "stage6-test", "x-sima-auth-tab": PRIMARY_AUTH_TAB_ID } }; }
+async function invoke(handler, req) { const result = { statusCode: 200, payload: null, cookies: {}, clearedCookies: {} }; const res = {
+  status(code) { result.statusCode = code; return this; },
+  json(payload) { result.payload = payload; return payload; },
+  cookie(name, value, options) { result.cookies[name] = { value, options }; return this; },
+  clearCookie(name, options) { result.clearedCookies[name] = { options }; return this; },
+}; await handler(req, res); return result; }
 async function authenticate(handler, token) { const req = request({}, token); const result = { statusCode: 200, payload: null, next: false };
   const res = { status(code) { result.statusCode = code; return this; }, json(payload) { result.payload = payload; return payload; } };
   await handler(req, res, () => { result.next = true; }); return { ...result, req }; }
@@ -26,7 +34,8 @@ test("Tahap 6: kebijakan password mempertahankan spasi dan batas bcrypt", () => 
   assert.equal(passwordPolicy.validateNewPassword(" panjang aman ").valid, true);
   assert.equal(passwordPolicy.validateNewPassword("short").reasons.includes("PASSWORD_TOO_SHORT"), true);
   assert.equal(passwordPolicy.validateNewPassword("x".repeat(73)).reasons.includes("PASSWORD_TOO_LONG"), true);
-  assert.equal(passwordPolicy.validateNewPassword("Mahasiswa123!", { identifiers: ["mahasiswa"] }).reasons.includes("PASSWORD_CONTAINS_IDENTIFIER"), true);
+  assert.equal(passwordPolicy.validateNewPassword("mahasiswa", { identifiers: ["mahasiswa"] }).reasons.includes("PASSWORD_CONTAINS_IDENTIFIER"), true);
+  assert.equal(passwordPolicy.validateNewPassword("Mahasiswa123!", { identifiers: ["mahasiswa"] }).reasons.includes("PASSWORD_CONTAINS_IDENTIFIER"), false);
 });
 
 test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengganti password", async (t) => {
@@ -78,7 +87,8 @@ test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengga
       await db.DosenKetersediaanPeriode.destroy({ where: { dosen_id: dosenId }, force: true });
       await db.Dosen.destroy({ where: { id: dosenId }, force: true });
     }
-    await db.AuthSecurityEvent.destroy({ where: { actor_id: actor.id, actor_type: "admin" }, force: true });
+    await db.AuthSession.destroy({ where: { account_type: "admin", account_id: actor.id }, force: true });
+    await db.AuthSecurityEvent.destroy({ where: { [Op.or]: [{ actor_id: actor.id, actor_type: "admin" }, { target_id: actor.id, target_type: "admin" }] }, force: true });
     await db.Admin.destroy({ where: { id: actor.id }, force: true });
     await db.Klaster.destroy({ where: { id: klaster.id }, force: true });
   });
@@ -101,24 +111,56 @@ test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengga
   assert.equal(created.payload.data.credential_state, "default");
   assert.equal(created.payload.data.recovery_email_verified_at, null);
 
-  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "dosen", account_id: dosenId, purpose: "admin_activation" } }), 0);
+  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "dosen", account_id: dosenId } }), 0);
   assert.equal((await invoke(authController.login, request({ username: created.payload.data.nik, password: "password-tidak-dikenal" }))).statusCode, 401);
   const initialDosenLogin = await invoke(authController.login, request({ username: created.payload.data.nik, password: "12345678" }));
   assert.equal(initialDosenLogin.statusCode, 200);
+  const primaryRefreshCookieName = refreshCookieName(PRIMARY_AUTH_TAB_ID);
+  assert.ok(initialDosenLogin.cookies[primaryRefreshCookieName]?.value);
+  assert.equal(initialDosenLogin.cookies[primaryRefreshCookieName].options.httpOnly, true);
+  assert.ok(initialDosenLogin.cookies[primaryRefreshCookieName].options.maxAge > 11 * 60 * 60 * 1000);
   assert.equal(initialDosenLogin.payload.data.next_action, "change_password");
   assert.equal(initialDosenLogin.payload.data.user.username, created.payload.data.nik);
+  const refreshRequest = request();
+  refreshRequest.headers.cookie = `${primaryRefreshCookieName}=${encodeURIComponent(initialDosenLogin.cookies[primaryRefreshCookieName].value)}`;
+  const restoredDosenSession = await invoke(authController.refreshSession, refreshRequest);
+  assert.equal(restoredDosenSession.statusCode, 200);
+  assert.equal(restoredDosenSession.payload.data.session.id, initialDosenLogin.payload.data.session.id);
+  assert.ok(restoredDosenSession.payload.data.token);
   const restrictedDosen = await authenticate(middleware.authenticateRestrictedAllowed, initialDosenLogin.payload.data.token);
   assert.equal(restrictedDosen.next, true);
-  const activationPassword = "Activated account secure! 94";
+  const changedPassword = "Changed account secure! 94";
   const changedDosen = await invoke(authController.changePassword, { ...restrictedDosen.req,
-    body: { current_password: "12345678", new_password: activationPassword } });
+    body: { current_password: "12345678", new_password: changedPassword } });
   assert.equal(changedDosen.statusCode, 200);
   const activated = await db.Dosen.findByPk(dosenId);
   assert.equal(activated.credential_state, "active");
   assert.equal(activated.is_default_password, false);
-  const login = await invoke(authController.login, request({ username: activated.nik, password: activationPassword }));
+  const login = await invoke(authController.login, request({ username: activated.nik, password: changedPassword }));
   assert.equal(login.statusCode, 200);
   assert.equal(login.payload.data.next_action, null);
+
+  const secondaryLoginRequest = request({ username: actor.nip, password: "Admin provision secure! 83" });
+  secondaryLoginRequest.headers["x-sima-auth-tab"] = SECONDARY_AUTH_TAB_ID;
+  const secondaryAdminLogin = await invoke(authController.login, secondaryLoginRequest);
+  const secondaryRefreshCookieName = refreshCookieName(SECONDARY_AUTH_TAB_ID);
+  assert.equal(secondaryAdminLogin.statusCode, 200);
+  assert.ok(secondaryAdminLogin.cookies[secondaryRefreshCookieName]?.value);
+  assert.notEqual(primaryRefreshCookieName, secondaryRefreshCookieName);
+
+  const browserCookieHeader = [
+    `${primaryRefreshCookieName}=${encodeURIComponent(login.cookies[primaryRefreshCookieName].value)}`,
+    `${secondaryRefreshCookieName}=${encodeURIComponent(secondaryAdminLogin.cookies[secondaryRefreshCookieName].value)}`,
+  ].join("; ");
+  const primaryTabRefresh = request();
+  primaryTabRefresh.headers.cookie = browserCookieHeader;
+  const restoredPrimaryTab = await invoke(authController.refreshSession, primaryTabRefresh);
+  assert.equal(restoredPrimaryTab.payload.data.user.role, "dosen");
+  const secondaryTabRefresh = request();
+  secondaryTabRefresh.headers["x-sima-auth-tab"] = SECONDARY_AUTH_TAB_ID;
+  secondaryTabRefresh.headers.cookie = browserCookieHeader;
+  const restoredSecondaryTab = await invoke(authController.refreshSession, secondaryTabRefresh);
+  assert.equal(restoredSecondaryTab.payload.data.user.role, "admin");
 
   const aliasJabatan = ALLOWED_SEKRETARIS_JABATAN[0].replace("International", "Internasional");
   await activated.update({ jabatan_struktural: aliasJabatan }, { hooks: false });
@@ -126,7 +168,7 @@ test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengga
     password: activated.password, is_default_password: false, credential_state: "active", credential_version: activated.credential_version,
     password_origin: "identity_alias_test", jabatan: aliasJabatan }, { hooks: false });
   sekretarisAliasId = sekretarisAlias.id;
-  const aliasLogin = await invoke(authController.login, request({ username: activated.email, password: activationPassword }));
+  const aliasLogin = await invoke(authController.login, request({ username: activated.email, password: changedPassword }));
   assert.equal(aliasLogin.statusCode, 200);
   assert.equal(aliasLogin.payload.data.user.role, "dosen");
   assert.deepEqual(aliasLogin.payload.data.user.capabilities, ["sekretaris_prodi"]);
@@ -178,7 +220,7 @@ test("Tahap 6: akun baru langsung login dengan kredensial awal lalu wajib mengga
   assert.equal(imported.statusCode, 201);
   mahasiswaId = imported.payload.data.detail_berhasil[0].mahasiswa_id;
   const importedNim = imported.payload.data.detail_berhasil[0].nim;
-  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "mahasiswa", account_id: mahasiswaId, purpose: "admin_activation" } }), 0);
+  assert.equal(await db.PasswordResetToken.count({ where: { account_type: "mahasiswa", account_id: mahasiswaId } }), 0);
   const importedLogin = await invoke(authController.login, request({ username: importedNim, password: importedNim }));
   assert.equal(importedLogin.statusCode, 200);
   assert.equal(importedLogin.payload.data.next_action, "change_password");
@@ -250,7 +292,11 @@ test("Tahap 6: forced gate, live session, revocation, dan reset link atomik", as
 
   const secondLogin = await invoke(authController.login, request({ username: student.nim, password: "A genuinely new secret! 67" }));
   const secondAuth = await authenticate(middleware.authenticateToken, secondLogin.payload.data.token);
-  assert.equal((await invoke(authController.logout, secondAuth.req)).statusCode, 200);
+  const loggedOut = await invoke(authController.logout, secondAuth.req);
+  assert.equal(loggedOut.statusCode, 200);
+  assert.ok(
+    loggedOut.clearedCookies[refreshCookieName(PRIMARY_AUTH_TAB_ID)]
+  );
   assert.equal((await authenticate(middleware.authenticateToken, secondLogin.payload.data.token)).statusCode, 401);
   assert.equal((await authenticate(middleware.authenticateToken, newToken)).next, true);
   const primaryAuth = await authenticate(middleware.authenticateToken, newToken);
@@ -283,5 +329,6 @@ test("Tahap 6: forced gate, live session, revocation, dan reset link atomik", as
   assert.equal(verification.source, "institutional_directory");
   const adminReset = await recovery.issueAdminReset({ targetType: "dosen", targetId: dosen.id, actor: { id: admin.id, role: "admin" }, reason: "Permintaan pemilik akun terverifikasi" });
   assert.equal(adminReset.replayed, false); await dosen.reload(); assert.equal(await dosen.comparePassword(password), false);
+  assert.equal(adminReset.tokenRecord.purpose, "self_reset");
   assert.ok(await db.AuthOutbox.findOne({ where: { reset_token_id: adminReset.tokenRecord.id, status: "pending" } }));
 });

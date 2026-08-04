@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Eye, EyeOff, KeyRound, LogOut, Save, UserCircle2 } from "lucide-react";
+import { withAuthTabHeader } from "../utils/authTab";
 
 function resolveIdentity(user) {
   const role = String(user?.role || "").toLowerCase();
@@ -121,7 +122,8 @@ function ProfilePage({ session, apiBaseUrl, onBack, onLogout, onSessionExpired, 
       setSuccessMessage("");
       const response = await fetch(`${apiBaseUrl}/api/auth/change-password`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" },
+        credentials: "include",
+        headers: withAuthTabHeader({ Authorization: `Bearer ${session.token}`, "Content-Type": "application/json" }),
         body: JSON.stringify({ oldPassword: form.oldPassword, newPassword: form.newPassword }),
       });
       const payload = await response.json().catch(() => null);

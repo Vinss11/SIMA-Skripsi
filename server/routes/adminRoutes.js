@@ -34,7 +34,6 @@ function handleUploadMulterError(err, res) {
 // ========== MAHASISWA MANAGEMENT ==========
 
 router.post("/accounts/:accountType/:accountId/reset-link", authenticateToken, authorizeRole("admin"), authController.issueAdminReset);
-router.post("/accounts/:accountType/:accountId/activation-link", authenticateToken, authorizeRole("admin"), authController.issueAdminActivation);
 router.post("/accounts/:accountType/:accountId/recovery-channel/verify", authenticateToken, authorizeRole("admin"), authController.verifyRecoveryChannel);
 
 router.get("/mahasiswa", authenticateToken, authorizeRole("admin"), adminController.getAllMahasiswa);

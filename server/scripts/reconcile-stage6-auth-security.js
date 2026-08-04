@@ -74,17 +74,10 @@ async function run() {
     const invalidState = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE credential_state NOT IN ('default','temporary','active') OR credential_version < 1`);
     const mismatch = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE (credential_state = 'active' AND is_default_password = true) OR (credential_state IN ('default','temporary') AND is_default_password = false)`);
     const invalidHash = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE password IS NULL OR password !~ '^\\$2[aby]\\$'`);
-    const accountType = ["mahasiswa", "dosen", "admin", "sekretaris_prodi"][accountTables.indexOf(table)];
-    const unavailableActivation = accountType === "sekretaris_prodi" ? await scalar(`SELECT COUNT(*) AS count FROM "${table}" a WHERE credential_state IN ('default','temporary')
-      AND recovery_email_verified_at IS NULL
-      AND NOT EXISTS (SELECT 1 FROM "PasswordResetTokens" t WHERE t.account_type=:accountType AND t.account_id=a.id
-        AND t.purpose='admin_activation' AND t.used_at IS NULL AND t.revoked_at IS NULL AND t.expires_at>NOW())`, { accountType }) : 0;
     const invalidRecoveryProvenance = await scalar(`SELECT COUNT(*) AS count FROM "${table}" WHERE (recovery_email_verified_at IS NULL) <> (recovery_email_verification_source IS NULL)`);
     if (invalidState) findings.push({ type: "invalid_credential_state_or_version", table, count: invalidState });
     if (mismatch) findings.push({ type: "credential_legacy_flag_mismatch", table, count: mismatch });
     if (invalidHash) findings.push({ type: "invalid_password_hash", table, count: invalidHash });
-    if (unavailableActivation) findings.push({ type: "activation_channel_unverified", table, count: unavailableActivation,
-      action: "Akun Sekretaris Prodi wajib dipulihkan satu per satu melalui runbook recovery offline dengan persetujuan tercatat." });
     if (invalidRecoveryProvenance) findings.push({ type: "invalid_recovery_verification_provenance", table, count: invalidRecoveryProvenance });
   }
   for (const accountType of initialCredentials.SUPPORTED_ACCOUNT_TYPES) {

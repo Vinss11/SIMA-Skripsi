@@ -31,15 +31,11 @@ const PERAN_TIM_OPTIONS = [
   { value: "hacker", label: "Hacker" },
 ];
 const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
-const NIM_REGEX = /^\d{2}523\d{3}$/;
 const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
 const ANGGOTA_NAMA_REGEX = /^[a-zA-Z\s]+$/;
 const getNimValidationError = (nim) => {
   const normalizedNim = String(nim || "").trim();
   if (!normalizedNim) return "NIM wajib diisi.";
-  if (!NIM_REGEX.test(normalizedNim)) {
-    return "NIM tidak valid. Gunakan format YY523NNN, contoh 22523001.";
-  }
   return "";
 };
 const getNamaValidationError = (nama) => {
@@ -112,6 +108,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [fieldErrors, setFieldErrors] = useState(INITIAL_FIELD_ERRORS);
   const [touchedFields, setTouchedFields] = useState(INITIAL_TOUCHED_FIELDS);
   const [nimAvailability, setNimAvailability] = useState("idle");
+  const [nimAccountMode, setNimAccountMode] = useState("unknown");
   const [dosenOptions, setDosenOptions] = useState([]);
   const [formData, setFormData] = useState({
     email: "",
@@ -173,6 +170,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const structuralError = getNimValidationError(nim);
     if (structuralError) {
       setNimAvailability("idle");
+      setNimAccountMode("unknown");
       return undefined;
     }
 
@@ -188,8 +186,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         if (!response.ok || !data?.success) {
           throw new Error(data?.message || "Gagal memeriksa NIM.");
         }
-        if (data.data?.available) {
+        const accountStatus = data.data?.status;
+        if (["new_account_allowed", "existing_account_auth_required"].includes(accountStatus)) {
           setNimAvailability("available");
+          setNimAccountMode(accountStatus === "new_account_allowed" ? "new" : "existing");
           const master = data.data?.mahasiswa;
           if (master) {
             setFormData((prev) => ({
@@ -208,16 +208,16 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           }));
         } else {
           setNimAvailability("unavailable");
+          setNimAccountMode("already_registered");
           setFieldErrors((prev) => ({
             ...prev,
-            nim: data.data?.already_registered
-              ? "NIM sudah terdaftar pada periode aktif."
-              : "NIM belum tersedia pada master mahasiswa.",
+            nim: "NIM sudah terdaftar pada periode aktif.",
           }));
         }
       } catch (checkError) {
         if (checkError.name !== "AbortError") {
           setNimAvailability("idle");
+          setNimAccountMode("unknown");
         }
       }
     }, 350);
@@ -263,7 +263,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           if (!response.ok || !data?.success) {
             throw new Error(data?.message || "Gagal memeriksa NIM.");
           }
-          const isAvailable = Boolean(data.data?.available);
+          const isAvailable = data.data?.status === "existing_account_auth_required";
           const master = data.data?.mahasiswa;
           if (isAvailable && master) {
             setFormData((prev) => ({
@@ -290,9 +290,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
               ...next[index],
               nim: isAvailable
                 ? ""
-                : data.data?.already_registered
+                : data.data?.status === "new_account_allowed"
+                  ? "Anggota belum memiliki akun dan harus melakukan pendaftaran pertamanya sendiri."
+                  : data.data?.already_registered
                   ? "NIM sudah terdaftar pada periode aktif."
-                  : "NIM belum tersedia pada master mahasiswa.",
+                  : "NIM belum dapat digunakan sebagai anggota.",
             };
             return next;
           });
@@ -504,12 +506,32 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     let { value } = event.target;
 
     if (name === "nim") {
-      value = value.replace(/\D/g, "").slice(0, 8);
       const generatedEmail = buildMahasiswaEmailFromNim(value);
-      setFormData((prev) => ({ ...prev, nim: value, email: generatedEmail }));
+      setNimAccountMode("unknown");
+      setDosenSearchQueryByField((prev) => ({
+        ...prev,
+        dosen_pembimbing_akademik_id: "",
+      }));
+      setDebouncedDosenSearchQueryByField((prev) => ({
+        ...prev,
+        dosen_pembimbing_akademik_id: "",
+      }));
+      setActiveDosenSearchField((prev) =>
+        prev === "dosen_pembimbing_akademik_id" ? "" : prev
+      );
+      setFormData((prev) => ({
+        ...prev,
+        nim: value,
+        email: generatedEmail,
+        account_password: "",
+        nama: "",
+        dosen_pembimbing_akademik_id: "",
+        dosen_pembimbing_akademik_nama: "",
+      }));
       setFieldErrors((prev) => ({
         ...prev,
-        nim: touchedFields.nim || value.length === 8 ? getNimValidationError(value) : "",
+        nim: touchedFields.nim ? getNimValidationError(value) : "",
+        account_password: "",
       }));
       return;
     }
@@ -940,6 +962,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setFieldErrors(INITIAL_FIELD_ERRORS);
     setTouchedFields(INITIAL_TOUCHED_FIELDS);
     setNimAvailability("idle");
+    setNimAccountMode("unknown");
     setStep(1);
   };
 
@@ -1005,7 +1028,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         ? fieldErrors.nim || "NIM belum memenuhi syarat pendaftaran."
         : getNimValidationError(nim);
     const namaError = getNamaValidationError(nama);
-    const passwordError = formData.account_password ? "" : "Password akun master wajib diisi.";
+    const passwordError = nimAccountMode === "existing" && !formData.account_password
+      ? "Password akun master wajib diisi."
+      : "";
     const dpaError = formData.dosen_pembimbing_akademik_id
       ? ""
       : "Dosen Pembimbing Akademik wajib diisi.";
@@ -1258,13 +1283,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     <input
                       name="nim"
                       type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]{2}523[0-9]{3}"
-                      maxLength={8}
                       value={formData.nim}
                       onChange={handleChange}
                       onBlur={() => handleFieldBlur("nim")}
-                      placeholder="Contoh: 22523001"
+                      placeholder="Masukkan NIM"
                       aria-invalid={Boolean(fieldErrors.nim)}
                       aria-describedby={fieldErrors.nim ? "nim-error" : undefined}
                       className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
@@ -1279,9 +1301,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       </p>
                     ) : nimAvailability === "checking" ? (
                       <p className="mt-1 text-xs text-[#6477a8]">Memeriksa ketersediaan NIM...</p>
+                    ) : nimAccountMode === "new" ? (
+                      <p className="mt-1 text-xs font-semibold text-[#2f6a4c]">
+                        NIM dapat mendaftar. Akun mahasiswa akan dibuat saat pendaftaran disimpan.
+                      </p>
                     ) : null}
                   </div>
-                  <div>
+                  {nimAccountMode === "existing" ? <div>
                     <RequiredLabel>Password Akun Master</RequiredLabel>
                     <input
                       name="account_password"
@@ -1304,7 +1330,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                         Jika password belum pernah diganti, gunakan NIM sebagai password awal.
                       </p>
                     )}
-                  </div>
+                  </div> : null}
                   <div>
                     <RequiredLabel>Nama</RequiredLabel>
                     <input
@@ -1329,19 +1355,35 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       </p>
                     ) : null}
                   </div>
-                  <div>
-                    <RequiredLabel>Dosen Pembimbing Akademik</RequiredLabel>
-                    <input
-                      type="text"
-                      readOnly
-                      value={formData.dosen_pembimbing_akademik_nama}
-                      placeholder="Mengikuti master mahasiswa"
-                      className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
-                    />
-                    {fieldErrors.dosen_pembimbing_akademik_id ? (
-                      <p className="mt-1 text-xs font-semibold text-[#c43f3f]">{fieldErrors.dosen_pembimbing_akademik_id}</p>
-                    ) : null}
-                  </div>
+                  {nimAccountMode === "new" ? (
+                    renderDosenSelect({
+                      name: "dosen_pembimbing_akademik_id",
+                      label: "Dosen Pembimbing Akademik",
+                      value: formData.dosen_pembimbing_akademik_id,
+                      error: fieldErrors.dosen_pembimbing_akademik_id,
+                      required: true,
+                    })
+                  ) : (
+                    <div>
+                      <RequiredLabel>Dosen Pembimbing Akademik</RequiredLabel>
+                      <input
+                        type="text"
+                        readOnly
+                        value={formData.dosen_pembimbing_akademik_nama}
+                        placeholder={
+                          nimAccountMode === "existing"
+                            ? "Mengikuti master mahasiswa"
+                            : "Isi NIM terlebih dahulu"
+                        }
+                        className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
+                      />
+                      {fieldErrors.dosen_pembimbing_akademik_id ? (
+                        <p className="mt-1 text-xs font-semibold text-[#c43f3f]">
+                          {fieldErrors.dosen_pembimbing_akademik_id}
+                        </p>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-4">
