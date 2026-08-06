@@ -27,6 +27,7 @@ const resetTables = [
   "AnggotaKelompokPerintisans",
   "KelompokPerintisanBisnis",
   "JadwalSidangPengujis",
+  "PreferensiPengujiSidangs",
   "KetersediaanPengujiSidangs",
   "PendaftaranSidangs",
   "PeriodeSidangHaris",

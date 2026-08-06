@@ -1897,7 +1897,7 @@ function buildTabHeaders(isSekretaris) {
     "ketersediaan-sidang": {
       icon: CalendarRange,
       title: "Ketersediaan Sidang",
-      subtitle: "Isi ketersediaan hari/sesi sebagai penguji, tipe penilaian, dan kondisi fisik.",
+      subtitle: "Kelola tanggal ketersediaan dan preferensi penjadwalan Anda sebagai penguji sidang.",
     },
     submissions: {
       icon: ClipboardList,

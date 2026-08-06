@@ -13,6 +13,7 @@ const {
   PeriodeSidangRuangan,
   PendaftaranSidang,
   KetersediaanPengujiSidang,
+  PreferensiPengujiSidang,
   JadwalSidangPenguji,
 } = require("../models");
 const { canContinueExistingSupervision } = require("../services/dosenStatusService");
@@ -44,6 +45,11 @@ function normalizeAcademicSemester(value) {
     .toLowerCase();
   if (raw === "ganjil" || raw === "genap") return raw;
   return null;
+}
+
+function isValidAcademicYearRange(value) {
+  const match = String(value || "").trim().match(/^(\d{4})\/(\d{4})$/);
+  return Boolean(match) && Number(match[2]) === Number(match[1]) + 1;
 }
 
 function formatPeriodeLabel(periodeType, semester, tahunAkademik) {
@@ -109,7 +115,6 @@ function getDayOfWeekFromDateOnly(dateOnly) {
 function getSessionTemplateByDate(dateOnly) {
   const day = getDayOfWeekFromDateOnly(dateOnly);
   if (day === null) return [];
-  if (day === 0 || day === 6) return [];
   if (day === 5) {
     return [
       { sesi_ke: 1, sesi_mulai: "08:00", sesi_selesai: "09:30" },
@@ -685,7 +690,6 @@ exports.getSekretarisSidangOverview = async (req, res) => {
 exports.createSekretarisPeriodeSidang = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const todayJakarta = nowJakartaDateTime().date;
     const periodeType = normalizePeriodeType(req.body?.periode || req.body?.tipe_periode);
     const tahunAkademik = String(req.body?.tahun_akademik || "").trim();
     const semesterAkademik = normalizeAcademicSemester(req.body?.semester);
@@ -711,6 +715,16 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
         message: "Field tahun akademik wajib diisi.",
       });
     }
+    if (!isValidAcademicYearRange(tahunAkademik)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Format tahun akademik tidak valid. Gunakan YYYY/YYYY dengan tahun berurutan, contoh 2025/2026.",
+        field_errors: {
+          tahun_akademik: "Gunakan format YYYY/YYYY dengan tahun berurutan, contoh 2025/2026.",
+        },
+      });
+    }
     if (!semesterAkademik) {
       await transaction.rollback();
       return res.status(400).json({
@@ -730,20 +744,6 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Tanggal pendaftaran sidang tidak valid.",
-      });
-    }
-    if (tanggalMulai < todayJakarta) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Tanggal mulai pendaftaran sidang tidak boleh sebelum hari ini.",
-      });
-    }
-    if (tanggalSelesai < todayJakarta) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Tanggal selesai pendaftaran sidang tidak boleh sebelum hari ini.",
       });
     }
     const already = await PeriodeSidang.findOne({
@@ -832,7 +832,6 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
 exports.updateSekretarisPeriodeSidang = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
-    const todayJakarta = nowJakartaDateTime().date;
     const periodeId = Number(req.params.id);
     if (!periodeId) {
       await transaction.rollback();
@@ -873,21 +872,6 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
         message: "Rentang tanggal pendaftaran tidak valid.",
       });
     }
-    if (tanggalMulai < todayJakarta) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Tanggal mulai pendaftaran sidang tidak boleh sebelum hari ini.",
-      });
-    }
-    if (tanggalSelesai < todayJakarta) {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Tanggal selesai pendaftaran sidang tidak boleh sebelum hari ini.",
-      });
-    }
-
     if (!periodeType) {
       await transaction.rollback();
       return res.status(400).json({
@@ -900,6 +884,16 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Field tahun akademik wajib diisi.",
+      });
+    }
+    if (!isValidAcademicYearRange(tahunAkademik)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Format tahun akademik tidak valid. Gunakan YYYY/YYYY dengan tahun berurutan, contoh 2025/2026.",
+        field_errors: {
+          tahun_akademik: "Gunakan format YYYY/YYYY dengan tahun berurutan, contoh 2025/2026.",
+        },
       });
     }
     if (!semesterAkademik) {
@@ -952,7 +946,7 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
         await transaction.rollback();
         return res.status(400).json({
           success: false,
-          message: "Pilih minimal 1 hari sidang (Senin-Jumat).",
+          message: "Pilih minimal 1 tanggal sidang.",
         });
       }
       await PeriodeSidangHari.destroy({
@@ -1542,7 +1536,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: "Tidak ada slot sidang valid. Pilih hari Senin-Jumat.",
+        message: "Tidak ada slot sidang valid pada tanggal yang dipilih.",
       });
     }
 
@@ -1824,82 +1818,134 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
       });
     }
 
-    const periode =
-      (await getOpenPeriodeSidang()) ||
-      (await PeriodeSidang.findOne({
-        where: { status: { [Op.in]: ["open", "draft"] } },
-        order: [["updatedAt", "DESC"]],
-      }));
+    const requestedPeriodeId = Number(req.query?.periode_sidang_id || 0);
+    const periodes = await PeriodeSidang.findAll({
+      where: { status: { [Op.in]: ["open", "closed"] } },
+      order: [["activated_at", "DESC"], ["updatedAt", "DESC"]],
+    });
+    const periodeIds = periodes.map((item) => Number(item.id));
 
-    if (!periode) {
+    if (periodeIds.length === 0) {
       return res.json({
         success: true,
         data: {
+          periodes: [],
           periode_sidang: null,
-          slots: [],
+          tanggal_sidang: [],
           ketersediaan: [],
+          preferensi: null,
           jadwal_anda: [],
         },
       });
     }
 
-    const [hariRows, roomRows, availabilityRows, jadwalRows] = await Promise.all([
+    const [allHariRows, allRoomRows, allAvailabilityRows, preferenceRows] = await Promise.all([
       PeriodeSidangHari.findAll({
-        where: { periode_sidang_id: periode.id },
-        order: [["tanggal_sidang", "ASC"]],
+        where: { periode_sidang_id: { [Op.in]: periodeIds } },
+        order: [["periode_sidang_id", "ASC"], ["tanggal_sidang", "ASC"]],
       }),
       PeriodeSidangRuangan.findAll({
-        where: { periode_sidang_id: periode.id },
-        order: [["nama_ruangan", "ASC"]],
+        where: { periode_sidang_id: { [Op.in]: periodeIds } },
+        order: [["periode_sidang_id", "ASC"], ["nama_ruangan", "ASC"]],
       }),
       KetersediaanPengujiSidang.findAll({
         where: {
-          periode_sidang_id: periode.id,
+          periode_sidang_id: { [Op.in]: periodeIds },
           dosen_id: dosenId,
         },
-        order: [["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
+        order: [["periode_sidang_id", "ASC"], ["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
       }),
-      JadwalSidangPenguji.findAll({
+      PreferensiPengujiSidang.findAll({
         where: {
-          periode_sidang_id: periode.id,
-          [Op.or]: [{ penguji1_dosen_id: dosenId }, { penguji2_dosen_id: dosenId }],
-          assignment_status: { [Op.in]: ["assigned", "finalized"] },
+          periode_sidang_id: { [Op.in]: periodeIds },
+          dosen_id: dosenId,
         },
-        include: [
-          {
-            model: Mahasiswa,
-            as: "mahasiswa",
-            attributes: ["id", "nim", "nama"],
-          },
-        ],
-        order: [["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
+        order: [["updatedAt", "DESC"]],
       }),
     ]);
 
-    const slots = [];
-    hariRows.forEach((hari) => {
-      getSessionTemplateByDate(hari.tanggal_sidang).forEach((session) => {
-        slots.push({
-          tanggal_sidang: hari.tanggal_sidang,
-          sesi_ke: session.sesi_ke,
-          sesi_mulai: session.sesi_mulai,
-          sesi_selesai: session.sesi_selesai,
-        });
-      });
+    const groupByPeriode = (rows) => rows.reduce((result, row) => {
+      const key = Number(row.periode_sidang_id);
+      if (!result.has(key)) result.set(key, []);
+      result.get(key).push(row);
+      return result;
+    }, new Map());
+    const hariByPeriode = groupByPeriode(allHariRows);
+    const roomByPeriode = groupByPeriode(allRoomRows);
+    const availabilityByPeriode = groupByPeriode(allAvailabilityRows);
+    const preferenceByPeriode = new Map(preferenceRows.map((item) => [Number(item.periode_sidang_id), item]));
+
+    const serializedPeriodes = periodes.map((item) => {
+      const id = Number(item.id);
+      const availability = availabilityByPeriode.get(id) || [];
+      const selectedDates = new Set(availability.map((row) => String(row.tanggal_sidang)));
+      const preference = preferenceByPeriode.get(id) || null;
+      return {
+        ...serializePeriode(item, hariByPeriode.get(id) || [], roomByPeriode.get(id) || []),
+        jumlah_hari_sidang: (hariByPeriode.get(id) || []).length,
+        ketersediaan_diisi: Boolean(preference),
+        jumlah_tanggal_tersedia: selectedDates.size,
+        ketersediaan_diperbarui_at: preference?.updatedAt || null,
+      };
     });
+
+    const selectedPeriode = requestedPeriodeId
+      ? periodes.find((item) => Number(item.id) === requestedPeriodeId)
+      : null;
+    if (requestedPeriodeId && !selectedPeriode) {
+      return res.status(404).json({ success: false, message: "Periode sidang tidak ditemukan." });
+    }
+
+    let tanggalSidang = [];
+    let selectedAvailability = [];
+    let selectedPreference = null;
+    let jadwalRows = [];
+    if (selectedPeriode) {
+      const selectedId = Number(selectedPeriode.id);
+      tanggalSidang = (hariByPeriode.get(selectedId) || []).map((hari) => ({
+        tanggal_sidang: hari.tanggal_sidang,
+        jumlah_sesi: getSessionTemplateByDate(hari.tanggal_sidang).length,
+        sesi: getSessionTemplateByDate(hari.tanggal_sidang),
+      }));
+      selectedAvailability = availabilityByPeriode.get(selectedId) || [];
+      selectedPreference = preferenceByPeriode.get(selectedId) || null;
+      jadwalRows = await JadwalSidangPenguji.findAll({
+        where: {
+          periode_sidang_id: selectedId,
+          [Op.or]: [{ penguji1_dosen_id: dosenId }, { penguji2_dosen_id: dosenId }],
+          assignment_status: { [Op.in]: ["assigned", "finalized"] },
+        },
+        include: [{ model: Mahasiswa, as: "mahasiswa", attributes: ["id", "nim", "nama"] }],
+        order: [["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
+      });
+    }
 
     return res.json({
       success: true,
       data: {
-        periode_sidang: serializePeriode(periode, hariRows, roomRows),
-        slots,
-        ketersediaan: availabilityRows.map((row) => ({
+        periodes: serializedPeriodes,
+        periode_sidang: selectedPeriode
+          ? serializePeriode(
+              selectedPeriode,
+              hariByPeriode.get(Number(selectedPeriode.id)) || [],
+              roomByPeriode.get(Number(selectedPeriode.id)) || []
+            )
+          : null,
+        tanggal_sidang: tanggalSidang,
+        ketersediaan: selectedAvailability.map((row) => ({
           id: row.id,
           tanggal_sidang: row.tanggal_sidang,
           sesi_ke: row.sesi_ke,
-          tipe_penilaian: row.tipe_penilaian,
-          kondisi_fisik: row.kondisi_fisik,
         })),
+        preferensi: selectedPreference
+          ? {
+              mobilitas_ruangan: selectedPreference.mobilitas_ruangan,
+              maksimal_sesi_per_hari: selectedPreference.maksimal_sesi_per_hari,
+              membutuhkan_jeda: selectedPreference.membutuhkan_jeda,
+              submitted_at: selectedPreference.submitted_at,
+              updated_at: selectedPreference.updatedAt,
+            }
+          : null,
         jadwal_anda: jadwalRows.map((row) => ({
           id: row.id,
           tanggal_sidang: row.tanggal_sidang,
@@ -1959,39 +2005,47 @@ exports.saveDosenKetersediaanSidang = async (req, res) => {
       });
     }
 
-    const availabilityInput = Array.isArray(req.body?.ketersediaan) ? req.body.ketersediaan : [];
+    const tanggalInput = Array.isArray(req.body?.tanggal_sidang_list) ? req.body.tanggal_sidang_list : [];
+    const mobilitasRuangan = String(req.body?.mobilitas_ruangan || "").trim().toLowerCase();
+    const maksimalSesiPerHari = Number(req.body?.maksimal_sesi_per_hari);
+    const membutuhkanJeda = req.body?.membutuhkan_jeda;
+    if (!["dapat_berpindah", "satu_ruangan"].includes(mobilitasRuangan)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Konfirmasi mobilitas ruangan wajib dipilih." });
+    }
+    if (!Number.isInteger(maksimalSesiPerHari) || maksimalSesiPerHari < 1 || maksimalSesiPerHari > 5) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Maksimal sesi per hari harus bernilai 1 sampai 5." });
+    }
+    if (typeof membutuhkanJeda !== "boolean") {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Kebutuhan jeda wajib dipilih." });
+    }
     const hariRows = await PeriodeSidangHari.findAll({
       where: { periode_sidang_id: periode.id },
       transaction,
     });
     const allowedDates = new Set(hariRows.map((item) => item.tanggal_sidang));
+    const selectedDates = [...new Set(tanggalInput.map(normalizeDateOnly).filter(Boolean))];
+    if (selectedDates.length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Pilih minimal satu tanggal ketersediaan." });
+    }
+    if (selectedDates.some((tanggal) => !allowedDates.has(tanggal))) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Terdapat tanggal yang tidak termasuk konfigurasi Sekretaris Prodi." });
+    }
 
-    const normalizedRows = [];
-    const uniqueKey = new Set();
-    availabilityInput.forEach((item) => {
-      const tanggal = normalizeDateOnly(item?.tanggal_sidang);
-      const sesiKe = Number(item?.sesi_ke || 0);
-      const tipe = String(item?.tipe_penilaian || "santai").toLowerCase();
-      const kondisi = String(item?.kondisi_fisik || "fit").toLowerCase();
-      const isAvailable = item?.is_available !== false;
-      if (!isAvailable) return;
-      if (!tanggal || !allowedDates.has(tanggal)) return;
-      const sessions = getSessionTemplateByDate(tanggal);
-      if (!sessions.some((session) => session.sesi_ke === sesiKe)) return;
-      if (!["ketat", "santai"].includes(tipe)) return;
-      if (!["fit", "tidak_fit"].includes(kondisi)) return;
-      const dedupe = `${tanggal}#${sesiKe}`;
-      if (uniqueKey.has(dedupe)) return;
-      uniqueKey.add(dedupe);
-      normalizedRows.push({
+    const normalizedRows = selectedDates.flatMap((tanggal) =>
+      getSessionTemplateByDate(tanggal).map((session) => ({
         periode_sidang_id: periode.id,
         dosen_id: dosenId,
         tanggal_sidang: tanggal,
-        sesi_ke: sesiKe,
-        tipe_penilaian: tipe,
-        kondisi_fisik: kondisi,
-      });
-    });
+        sesi_ke: session.sesi_ke,
+        tipe_penilaian: "santai",
+        kondisi_fisik: "fit",
+      }))
+    );
 
     await KetersediaanPengujiSidang.destroy({
       where: {
@@ -2004,12 +2058,32 @@ exports.saveDosenKetersediaanSidang = async (req, res) => {
     if (normalizedRows.length > 0) {
       await KetersediaanPengujiSidang.bulkCreate(normalizedRows, { transaction });
     }
+    const preferencePayload = {
+      mobilitas_ruangan: mobilitasRuangan,
+      maksimal_sesi_per_hari: maksimalSesiPerHari,
+      membutuhkan_jeda: membutuhkanJeda,
+      submitted_at: new Date(),
+    };
+    const existingPreference = await PreferensiPengujiSidang.findOne({
+      where: { periode_sidang_id: periode.id, dosen_id: dosenId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (existingPreference) {
+      await existingPreference.update(preferencePayload, { transaction });
+    } else {
+      await PreferensiPengujiSidang.create(
+        { periode_sidang_id: periode.id, dosen_id: dosenId, ...preferencePayload },
+        { transaction }
+      );
+    }
 
     await transaction.commit();
     return res.json({
       success: true,
       message: "Ketersediaan penguji sidang berhasil disimpan.",
       data: {
+        total_tanggal_tersimpan: selectedDates.length,
         total_slot_tersimpan: normalizedRows.length,
       },
     });

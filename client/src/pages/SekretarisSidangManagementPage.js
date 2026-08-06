@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { CalendarCheck2, Eye, Plus, RefreshCcw, Save } from "lucide-react";
+import { ArrowLeft, CalendarCheck2, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, Plus, RefreshCcw, Save, X } from "lucide-react";
 import { formatDosenFullName } from "../utils/dosen";
 
 const GRID_PAGE_SIZE = 20;
@@ -66,9 +66,143 @@ function uniqueSorted(values) {
   );
 }
 
+function isValidAcademicYear(value) {
+  const match = String(value || "").trim().match(/^(\d{4})\/(\d{4})$/);
+  return Boolean(match) && Number(match[2]) === Number(match[1]) + 1;
+}
+
+function fieldClass(hasError) {
+  return `mt-1 block w-full rounded-lg border px-3 py-2 text-sm font-normal outline-none ${
+    hasError
+      ? "border-[#dc4c4c] bg-[#fffafa] focus:border-[#c73737] focus:ring-1 focus:ring-[#f1b6b6]"
+      : "border-[#d1daf0] focus:border-[#2f63e3]"
+  }`;
+}
+
+function FieldError({ message }) {
+  return message ? <p className="mt-1 text-xs font-semibold text-[#b73a3a]">{message}</p> : null;
+}
+
+function toLocalDateOnly(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseLocalDate(value) {
+  const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onClose, onApply }) {
+  const [visibleMonth, setVisibleMonth] = useState(() => new Date());
+  const [draftDates, setDraftDates] = useState([]);
+
+  useEffect(() => {
+    if (!open) return;
+    const initial = parseLocalDate(selectedDates?.[0] || initialDate || minDate) || new Date();
+    setVisibleMonth(new Date(initial.getFullYear(), initial.getMonth(), 1));
+    setDraftDates(uniqueSorted(selectedDates || []));
+  }, [initialDate, minDate, open, selectedDates]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, open]);
+
+  if (!open) return null;
+
+  const year = visibleMonth.getFullYear();
+  const month = visibleMonth.getMonth();
+  const firstDayOffset = (new Date(year, month, 1).getDay() + 6) % 7;
+  const cells = Array.from({ length: 42 }, (_, index) => new Date(year, month, index - firstDayOffset + 1));
+  const selectedSet = new Set(draftDates);
+  const monthLabel = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(visibleMonth);
+  const today = toLocalDateOnly(new Date());
+
+  const toggleDate = (dateOnly) => {
+    setDraftDates((current) => current.includes(dateOnly)
+      ? current.filter((item) => item !== dateOnly)
+      : uniqueSorted([...current, dateOnly]));
+  };
+
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-[#0f1d3b]/65 p-4 backdrop-blur-[2px]" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div role="dialog" aria-modal="true" aria-label="Pilih tanggal sidang" className="flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#d9e3f7] bg-white shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-[#e4eaf6] px-6 py-5">
+          <div>
+            <h3 className="text-xl font-black text-[#17264d]">Pilih Tanggal Sidang</h3>
+            <p className="mt-1 text-sm text-[#60709a]">Klik beberapa tanggal yang tidak harus berurutan, lalu tekan Terapkan Pilihan.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Tutup kalender" className="rounded-lg border border-[#d5def1] p-2 text-[#52658f] hover:bg-[#f3f6ff]"><X className="h-5 w-5" /></button>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto p-6">
+          <div className="mx-auto max-w-3xl rounded-xl border border-[#dce4f5] bg-[#fbfcff] p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <button type="button" onClick={() => setVisibleMonth(new Date(year, month - 1, 1))} className="rounded-lg border border-[#d2dcf1] bg-white p-2 text-[#28427d] hover:bg-[#eef3ff]"><ChevronLeft className="h-5 w-5" /></button>
+              <p className="text-lg font-black capitalize text-[#1d315f]">{monthLabel}</p>
+              <button type="button" onClick={() => setVisibleMonth(new Date(year, month + 1, 1))} className="rounded-lg border border-[#d2dcf1] bg-white p-2 text-[#28427d] hover:bg-[#eef3ff]"><ChevronRight className="h-5 w-5" /></button>
+            </div>
+            <div className="grid grid-cols-7 gap-2 text-center">
+              {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((day) => <div key={day} className="py-2 text-xs font-bold uppercase tracking-wide text-[#64749a]">{day}</div>)}
+              {cells.map((date) => {
+                const dateOnly = toLocalDateOnly(date);
+                const inCurrentMonth = date.getMonth() === month;
+                const isPast = dateOnly < minDate;
+                const disabled = !inCurrentMonth || isPast;
+                const selected = selectedSet.has(dateOnly);
+                return (
+                  <button
+                    key={dateOnly}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => toggleDate(dateOnly)}
+                    className={`relative flex min-h-[58px] items-center justify-center rounded-xl border text-sm font-bold transition ${
+                      selected
+                        ? "border-[#2f63e3] bg-[#2f63e3] text-white shadow-md"
+                        : dateOnly === today
+                          ? "border-[#2f63e3] bg-[#eef3ff] text-[#244cae]"
+                          : disabled
+                            ? "border-transparent bg-transparent text-[#b5bfd4]"
+                            : "border-[#e0e7f5] bg-white text-[#263b6f] hover:border-[#7799ed] hover:bg-[#f2f6ff]"
+                    } disabled:cursor-not-allowed`}
+                  >
+                    {date.getDate()}
+                    {dateOnly === today ? <span className={`absolute bottom-1 text-[9px] ${selected ? "text-white" : "text-[#2f63e3]"}`}>Hari ini</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-xs text-[#6b7898]">Semua hari dapat dipilih secara khusus. Hanya tanggal lampau yang dinonaktifkan.</p>
+          </div>
+
+          <div className="mx-auto mt-4 max-w-3xl rounded-xl border border-[#dce4f5] p-4">
+            <div className="flex items-center justify-between gap-3"><p className="text-sm font-bold text-[#263b6f]">Tanggal dipilih ({draftDates.length})</p>{draftDates.length ? <button type="button" onClick={() => setDraftDates([])} className="text-xs font-bold text-[#b73a3a] hover:underline">Hapus semua</button> : null}</div>
+            <div className="mt-3 flex min-h-[38px] flex-wrap gap-2">
+              {draftDates.length ? draftDates.map((dateOnly) => <button key={dateOnly} type="button" onClick={() => toggleDate(dateOnly)} className="inline-flex items-center gap-1 rounded-full border border-[#c8d7f7] bg-[#eef3ff] px-3 py-1.5 text-xs font-bold text-[#274b9f]">{formatDateLabel(dateOnly)} <X className="h-3 w-3" /></button>) : <p className="text-sm text-[#7a88a9]">Belum ada tanggal yang dipilih.</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-[#e4eaf6] bg-[#f8faff] px-6 py-4">
+          <button type="button" onClick={onClose} className="rounded-lg border border-[#d2dcf1] bg-white px-4 py-2 text-sm font-bold text-[#344b7f] hover:bg-[#f1f5ff]">Batal</button>
+          <button type="button" onClick={() => { onApply(uniqueSorted(draftDates)); onClose(); }} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110">Terapkan {draftDates.length} Tanggal</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired }) {
   const todayDateOnly = useMemo(() => getJakartaTodayDateOnly(), []);
   const [activeTab, setActiveTab] = useState("periode-pendaftaran");
+  const [periodePageMode, setPeriodePageMode] = useState("list");
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [loadingQueue, setLoadingQueue] = useState(false);
   const [savingForm, setSavingForm] = useState(false);
@@ -93,6 +227,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
     tanggal_selesai_pendaftaran: "",
     catatan: "",
   });
+  const [openPeriodeErrors, setOpenPeriodeErrors] = useState({});
 
   const [editPeriodeForm, setEditPeriodeForm] = useState({
     periode: "uts",
@@ -104,8 +239,10 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
     tanggal_sidang_list: [],
     ruangan_list: [],
   });
-  const [editDatePicker, setEditDatePicker] = useState("");
+  const [editPeriodeErrors, setEditPeriodeErrors] = useState({});
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [editRoomInput, setEditRoomInput] = useState("");
+  const [editRoomError, setEditRoomError] = useState("");
 
   const fetchWithAuth = useCallback(
     async (path, options = {}) => {
@@ -251,22 +388,19 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
         ? uniqueSorted(selectedPeriode.ruangan_sidang)
         : [],
     });
-    setEditDatePicker("");
+    setCalendarOpen(false);
     setEditRoomInput("");
+    setEditRoomError("");
+    setEditPeriodeErrors({});
   }, [selectedPeriode]);
-
-  const addEditDate = useCallback(() => {
-    if (!editDatePicker) return;
-    setEditPeriodeForm((prev) => ({
-      ...prev,
-      tanggal_sidang_list: uniqueSorted([...(prev.tanggal_sidang_list || []), editDatePicker]),
-    }));
-    setEditDatePicker("");
-  }, [editDatePicker]);
 
   const addEditRoom = useCallback(() => {
     const clean = String(editRoomInput || "").trim();
-    if (!clean) return;
+    if (!clean) {
+      setEditRoomError("Ruangan sidang wajib diisi sebelum ditambahkan.");
+      return;
+    }
+    setEditRoomError("");
     setEditPeriodeForm((prev) => {
       const existing = Array.isArray(prev.ruangan_list) ? prev.ruangan_list : [];
       const lowerMap = new Map(existing.map((room) => [String(room).toLowerCase(), room]));
@@ -283,36 +417,38 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
 
   const validatePeriodForm = useCallback(
     (form) => {
+      const errors = {};
       if (!["uts", "uas"].includes(String(form.periode || "").toLowerCase())) {
-        return "Field periode wajib diisi (UTS/UAS).";
+        errors.periode = "Jenis periode wajib dipilih.";
       }
       if (!String(form.tahun_akademik || "").trim()) {
-        return "Field tahun akademik wajib diisi.";
+        errors.tahun_akademik = "Tahun akademik wajib diisi.";
+      } else if (!isValidAcademicYear(form.tahun_akademik)) {
+        errors.tahun_akademik = "Gunakan format YYYY/YYYY dengan tahun berurutan, contoh 2025/2026.";
       }
       if (!["ganjil", "genap"].includes(String(form.semester || "").toLowerCase())) {
-        return "Field semester wajib diisi (ganjil/genap).";
+        errors.semester = "Semester wajib dipilih.";
       }
-      if (!form.tanggal_mulai_pendaftaran || !form.tanggal_selesai_pendaftaran) {
-        return "Tanggal mulai dan tanggal selesai pendaftaran wajib diisi.";
+      if (!form.tanggal_mulai_pendaftaran) {
+        errors.tanggal_mulai_pendaftaran = "Tanggal mulai pendaftaran wajib diisi.";
       }
-      if (form.tanggal_mulai_pendaftaran < todayDateOnly) {
-        return "Tanggal mulai pendaftaran sidang tidak boleh sebelum hari ini.";
+      if (!form.tanggal_selesai_pendaftaran) {
+        errors.tanggal_selesai_pendaftaran = "Tanggal selesai pendaftaran wajib diisi.";
       }
-      if (form.tanggal_selesai_pendaftaran < todayDateOnly) {
-        return "Tanggal selesai pendaftaran sidang tidak boleh sebelum hari ini.";
+      if (form.tanggal_mulai_pendaftaran && form.tanggal_selesai_pendaftaran
+        && form.tanggal_selesai_pendaftaran < form.tanggal_mulai_pendaftaran) {
+        errors.tanggal_selesai_pendaftaran = "Tanggal selesai tidak boleh lebih awal dari tanggal mulai.";
       }
-      if (form.tanggal_selesai_pendaftaran < form.tanggal_mulai_pendaftaran) {
-        return "Tanggal selesai pendaftaran sidang tidak boleh lebih kecil dari tanggal mulai.";
-      }
-      return "";
+      return errors;
     },
-    [todayDateOnly]
+    []
   );
 
   const handleOpenPeriodeFromForm = async () => {
-    const validationMessage = validatePeriodForm(openPeriodeForm);
-    if (validationMessage) {
-      setError(validationMessage);
+    const validationErrors = validatePeriodForm(openPeriodeForm);
+    setOpenPeriodeErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      setError("");
       setSuccess("");
       return;
     }
@@ -328,6 +464,11 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       });
       const createBody = await createResponse.json().catch(() => null);
       if (!createResponse.ok || !createBody?.success) {
+        if (createBody?.field_errors && typeof createBody.field_errors === "object") {
+          setOpenPeriodeErrors(createBody.field_errors);
+          setError("");
+          return;
+        }
         throw new Error(createBody?.message || "Gagal membuat periode pendaftaran sidang.");
       }
 
@@ -364,6 +505,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       }
 
       setSuccess(openBody?.message || "Periode pendaftaran sidang berhasil dibuka.");
+      setOpenPeriodeErrors({});
+      setPeriodePageMode("list");
       setOpenPeriodeForm({
         periode: "uts",
         tahun_akademik: "",
@@ -384,9 +527,17 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
 
   const handleSaveSelectedPeriode = async () => {
     if (!selectedPeriode) return;
-    const validationMessage = validatePeriodForm(editPeriodeForm);
-    if (validationMessage) {
-      setError(validationMessage);
+    const tanggalSelesai = String(editPeriodeForm.tanggal_selesai_pendaftaran || "").trim();
+    const tanggalMulai = String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10);
+    const validationErrors = {};
+    if (!tanggalSelesai) {
+      validationErrors.tanggal_selesai_pendaftaran = "Tanggal selesai pendaftaran wajib diisi.";
+    } else if (tanggalMulai && tanggalSelesai < tanggalMulai) {
+      validationErrors.tanggal_selesai_pendaftaran = "Tanggal selesai tidak boleh sebelum tanggal mulai pendaftaran.";
+    }
+    setEditPeriodeErrors(validationErrors);
+    if (Object.keys(validationErrors).length > 0) {
+      setError("");
       setSuccess("");
       return;
     }
@@ -398,19 +549,21 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       const response = await fetchWithAuth(`/api/sekretaris/sidang/periode/${selectedPeriode.id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          periode: editPeriodeForm.periode,
-          tahun_akademik: editPeriodeForm.tahun_akademik,
-          semester: editPeriodeForm.semester,
-          tanggal_mulai_pendaftaran: editPeriodeForm.tanggal_mulai_pendaftaran,
-          tanggal_selesai_pendaftaran: editPeriodeForm.tanggal_selesai_pendaftaran,
-          catatan: editPeriodeForm.catatan,
+          tanggal_selesai_pendaftaran: tanggalSelesai,
         }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body?.success) {
+        if (body?.field_errors && typeof body.field_errors === "object") {
+          setEditPeriodeErrors(body.field_errors);
+          setError("");
+          return;
+        }
         throw new Error(body?.message || "Gagal memperbarui periode sidang.");
       }
       setSuccess(body?.message || "Periode sidang berhasil diperbarui.");
+      setEditPeriodeErrors({});
+      setPeriodePageMode("list");
       await loadOverview();
       await loadQueueByPeriode(selectedPeriode.id);
     } catch (actionError) {
@@ -437,7 +590,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       return;
     }
     if (roomList.length === 0) {
-      setError("Masukkan minimal 1 ruangan sidang.");
+      setEditRoomError("Tambahkan minimal satu ruangan sidang.");
+      setError("");
       setSuccess("");
       return;
     }
@@ -446,6 +600,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       setSavingForm(true);
       setError("");
       setSuccess("");
+      setEditRoomError("");
       const response = await fetchWithAuth(`/api/sekretaris/sidang/periode/${selectedPeriode.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -470,6 +625,23 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
 
   const handleOpenSelectedPeriode = async () => {
     if (!selectedPeriode) return;
+    const dateList = Array.isArray(editPeriodeForm.tanggal_sidang_list)
+      ? uniqueSorted(editPeriodeForm.tanggal_sidang_list)
+      : [];
+    const roomList = Array.isArray(editPeriodeForm.ruangan_list)
+      ? uniqueSorted(editPeriodeForm.ruangan_list)
+      : [];
+    if (dateList.length === 0) {
+      setError("Pilih minimal 1 tanggal sidang dari kalender sebelum membuka periode.");
+      setSuccess("");
+      return;
+    }
+    if (roomList.length === 0) {
+      setEditRoomError("Tambahkan minimal satu ruangan sidang sebelum membuka periode.");
+      setError("");
+      setSuccess("");
+      return;
+    }
     const confirm = window.confirm(
       `Buka periode sidang ${selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)}?`
     );
@@ -479,6 +651,18 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       setSavingForm(true);
       setError("");
       setSuccess("");
+      setEditRoomError("");
+      const settingsResponse = await fetchWithAuth(`/api/sekretaris/sidang/periode/${selectedPeriode.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          tanggal_sidang_list: dateList,
+          ruangan_list: roomList,
+        }),
+      });
+      const settingsBody = await settingsResponse.json().catch(() => null);
+      if (!settingsResponse.ok || !settingsBody?.success) {
+        throw new Error(settingsBody?.message || "Gagal menyimpan hari dan ruangan sidang.");
+      }
       const response = await fetchWithAuth(`/api/sekretaris/sidang/periode/${selectedPeriode.id}/open`, {
         method: "POST",
         body: JSON.stringify({}),
@@ -519,6 +703,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
         throw new Error(body?.message || "Gagal menutup periode sidang.");
       }
       setSuccess(body?.message || "Periode sidang berhasil ditutup.");
+      setPeriodePageMode("list");
       await loadOverview();
       await loadQueueByPeriode(selectedPeriode.id);
     } catch (actionError) {
@@ -620,208 +805,263 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       </section>
 
       {activeTab === "periode-pendaftaran" ? (
+        <section className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setPeriodePageMode("list");
+                setOpenPeriodeErrors({});
+                setError("");
+                setSuccess("");
+              }}
+              disabled={periodePageMode === "list"}
+              aria-label="Kembali ke daftar periode pendaftaran sidang"
+              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              disabled={loadingOverview || loadingQueue}
+              onClick={() => {
+                loadOverview().catch(() => {});
+                if (selectedPeriodeId) loadQueueByPeriode(Number(selectedPeriodeId)).catch(() => {});
+              }}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Refresh
+            </button>
+            <button
+              type="button"
+              disabled={savingForm}
+              onClick={() => {
+                setPeriodePageMode("open");
+                setOpenPeriodeErrors({});
+                setError("");
+                setSuccess("");
+              }}
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                periodePageMode === "open"
+                  ? "bg-[#2f63e3] text-white"
+                  : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+              } disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              <CalendarRange className="h-4 w-4" />
+              Buka Periode Baru
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "periode-pendaftaran" ? (
         <>
-          <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-lg font-black text-[#1b274b]">Buka Periode Pendaftaran Sidang</h3>
-              <button
-                type="button"
-                onClick={() => {
-                  loadOverview().catch(() => {});
-                  if (selectedPeriodeId) {
-                    loadQueueByPeriode(Number(selectedPeriodeId)).catch(() => {});
-                  }
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                Refresh
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
-              <select
-                value={openPeriodeForm.periode}
-                onChange={(event) =>
-                  setOpenPeriodeForm((prev) => ({ ...prev, periode: event.target.value }))
-                }
-                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              >
-                <option value="uts">UTS</option>
-                <option value="uas">UAS</option>
-              </select>
-              <input
-                type="text"
-                value={openPeriodeForm.tahun_akademik}
-                onChange={(event) =>
-                  setOpenPeriodeForm((prev) => ({ ...prev, tahun_akademik: event.target.value }))
-                }
-                placeholder="Tahun akademik (contoh 2026/2027)"
-                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              />
-              <select
-                value={openPeriodeForm.semester}
-                onChange={(event) =>
-                  setOpenPeriodeForm((prev) => ({ ...prev, semester: event.target.value }))
-                }
-                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              >
-                <option value="ganjil">Ganjil</option>
-                <option value="genap">Genap</option>
-              </select>
-              <input
-                type="date"
-                value={openPeriodeForm.tanggal_mulai_pendaftaran}
-                min={todayDateOnly}
-                onChange={(event) =>
-                  setOpenPeriodeForm((prev) => ({
-                    ...prev,
-                    tanggal_mulai_pendaftaran: event.target.value,
-                  }))
-                }
-                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              />
-              <input
-                type="date"
-                value={openPeriodeForm.tanggal_selesai_pendaftaran}
-                min={openPeriodeForm.tanggal_mulai_pendaftaran || todayDateOnly}
-                onChange={(event) =>
-                  setOpenPeriodeForm((prev) => ({
-                    ...prev,
-                    tanggal_selesai_pendaftaran: event.target.value,
-                  }))
-                }
-                className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              />
-            </div>
-
-            <textarea
-              rows={2}
-              value={openPeriodeForm.catatan}
-              onChange={(event) =>
-                setOpenPeriodeForm((prev) => ({ ...prev, catatan: event.target.value }))
-              }
-              placeholder="Catatan periode (opsional)"
-              className="mt-3 w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-            />
-
-            <div className="mt-3">
-              <button
-                type="button"
-                disabled={savingForm}
-                onClick={() => {
-                  handleOpenPeriodeFromForm().catch(() => {});
-                }}
-                className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <Plus className="h-4 w-4" />
-                {savingForm ? "Memproses..." : "Buka Periode Pendaftaran Sidang"}
-              </button>
-            </div>
-
-            {overview?.active_periode ? (
-              <div className="mt-3 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm text-[#7a5a00]">
-                <p className="font-bold">Pengingat Periode Aktif</p>
-                <p className="mt-1">
-                  Saat ini ada periode pendaftaran sidang yang sedang aktif:{" "}
-                  <span className="font-semibold">
-                    {overview.active_periode.label_periode || formatPeriodeSidangLabel(overview.active_periode)}
-                  </span>{" "}
-                  ({formatDateLabel(overview.active_periode.tanggal_mulai_pendaftaran)} s/d{" "}
-                  {formatDateLabel(overview.active_periode.tanggal_selesai_pendaftaran)}).
+          {periodePageMode === "open" ? (
+            <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+              <div>
+                <h3 className="text-lg font-black text-[#1b274b]">Detail Periode Pendaftaran Sidang</h3>
+                <p className="mt-1 text-sm text-[#66769a]">
+                  Isi identitas periode dan rentang waktu pendaftaran sidang. Semua field bertanda * wajib diisi.
                 </p>
               </div>
-            ) : null}
-          </section>
 
-          <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-black text-[#1b274b]">Periode Tersedia</h3>
-              {loadingOverview ? <span className="text-sm text-[#6f7ea6]">Memuat...</span> : null}
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {(overview?.periodes || []).map((item) => (
-                <button
-                  key={`periode-chip-${item.id}`}
-                  type="button"
-                  onClick={() => setSelectedPeriodeId(String(item.id))}
-                  className={`rounded-full border px-3 py-1 text-xs font-bold ${
-                    String(selectedPeriodeId) === String(item.id)
-                      ? "border-[#2f63e3] bg-[#2f63e3] text-white"
-                      : "border-[#cfd8ef] bg-white text-[#2f4477]"
-                  }`}
-                >
-                  {formatPeriodeSidangLabel(item)} - {item.status}
-                </button>
-              ))}
-            </div>
-
-            {selectedPeriode ? (
-              <div className="mt-3 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-3">
-                <p className="text-sm font-bold text-[#233a74]">Edit Periode Terpilih</p>
-                <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-5">
-                  <select
-                    value={editPeriodeForm.periode}
-                    onChange={(event) =>
-                      setEditPeriodeForm((prev) => ({ ...prev, periode: event.target.value }))
-                    }
-                    className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                  >
-                    <option value="uts">UTS</option>
-                    <option value="uas">UAS</option>
-                  </select>
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <label className="block text-sm font-semibold text-[#29385f]">
+                  Tahun Akademik <span className="text-[#b73a3a]">*</span>
                   <input
                     type="text"
-                    value={editPeriodeForm.tahun_akademik}
-                    onChange={(event) =>
-                      setEditPeriodeForm((prev) => ({ ...prev, tahun_akademik: event.target.value }))
-                    }
-                    className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                    value={openPeriodeForm.tahun_akademik}
+                    inputMode="numeric"
+                    maxLength={9}
+                    onChange={(event) => {
+                      setOpenPeriodeForm((prev) => ({ ...prev, tahun_akademik: event.target.value }));
+                      setOpenPeriodeErrors((prev) => ({ ...prev, tahun_akademik: "" }));
+                    }}
+                    placeholder="Contoh: 2025/2026"
+                    aria-invalid={Boolean(openPeriodeErrors.tahun_akademik)}
+                    className={fieldClass(openPeriodeErrors.tahun_akademik)}
                   />
+                  <FieldError message={openPeriodeErrors.tahun_akademik} />
+                </label>
+                <label className="block text-sm font-semibold text-[#29385f]">
+                  Semester <span className="text-[#b73a3a]">*</span>
                   <select
-                    value={editPeriodeForm.semester}
-                    onChange={(event) =>
-                      setEditPeriodeForm((prev) => ({ ...prev, semester: event.target.value }))
-                    }
-                    className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                    value={openPeriodeForm.semester}
+                    onChange={(event) => {
+                      setOpenPeriodeForm((prev) => ({ ...prev, semester: event.target.value }));
+                      setOpenPeriodeErrors((prev) => ({ ...prev, semester: "" }));
+                    }}
+                    aria-invalid={Boolean(openPeriodeErrors.semester)}
+                    className={`${fieldClass(openPeriodeErrors.semester)} bg-white`}
                   >
                     <option value="ganjil">Ganjil</option>
                     <option value="genap">Genap</option>
                   </select>
+                  <FieldError message={openPeriodeErrors.semester} />
+                </label>
+                <label className="block text-sm font-semibold text-[#29385f] md:col-span-2">
+                  Jenis Periode Sidang <span className="text-[#b73a3a]">*</span>
+                  <select
+                    value={openPeriodeForm.periode}
+                    onChange={(event) => {
+                      setOpenPeriodeForm((prev) => ({ ...prev, periode: event.target.value }));
+                      setOpenPeriodeErrors((prev) => ({ ...prev, periode: "" }));
+                    }}
+                    aria-invalid={Boolean(openPeriodeErrors.periode)}
+                    className={`${fieldClass(openPeriodeErrors.periode)} bg-white`}
+                  >
+                    <option value="uts">UTS</option>
+                    <option value="uas">UAS</option>
+                  </select>
+                  <FieldError message={openPeriodeErrors.periode} />
+                </label>
+                <label className="block text-sm font-semibold text-[#29385f]">
+                  Tanggal Mulai Pendaftaran <span className="text-[#b73a3a]">*</span>
                   <input
                     type="date"
-                    value={editPeriodeForm.tanggal_mulai_pendaftaran}
-                    min={todayDateOnly}
-                    onChange={(event) =>
-                      setEditPeriodeForm((prev) => ({
-                        ...prev,
-                        tanggal_mulai_pendaftaran: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                    value={openPeriodeForm.tanggal_mulai_pendaftaran}
+                    onChange={(event) => {
+                      setOpenPeriodeForm((prev) => ({ ...prev, tanggal_mulai_pendaftaran: event.target.value }));
+                      setOpenPeriodeErrors((prev) => ({ ...prev, tanggal_mulai_pendaftaran: "", tanggal_selesai_pendaftaran: "" }));
+                    }}
+                    aria-invalid={Boolean(openPeriodeErrors.tanggal_mulai_pendaftaran)}
+                    className={fieldClass(openPeriodeErrors.tanggal_mulai_pendaftaran)}
                   />
+                  <FieldError message={openPeriodeErrors.tanggal_mulai_pendaftaran} />
+                </label>
+                <label className="block text-sm font-semibold text-[#29385f]">
+                  Tanggal Selesai Pendaftaran <span className="text-[#b73a3a]">*</span>
                   <input
                     type="date"
-                    value={editPeriodeForm.tanggal_selesai_pendaftaran}
-                    min={editPeriodeForm.tanggal_mulai_pendaftaran || todayDateOnly}
-                    onChange={(event) =>
-                      setEditPeriodeForm((prev) => ({
-                        ...prev,
-                        tanggal_selesai_pendaftaran: event.target.value,
-                      }))
-                    }
-                    className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                    value={openPeriodeForm.tanggal_selesai_pendaftaran}
+                    min={openPeriodeForm.tanggal_mulai_pendaftaran || todayDateOnly}
+                    onChange={(event) => {
+                      setOpenPeriodeForm((prev) => ({ ...prev, tanggal_selesai_pendaftaran: event.target.value }));
+                      setOpenPeriodeErrors((prev) => ({ ...prev, tanggal_selesai_pendaftaran: "" }));
+                    }}
+                    aria-invalid={Boolean(openPeriodeErrors.tanggal_selesai_pendaftaran)}
+                    className={fieldClass(openPeriodeErrors.tanggal_selesai_pendaftaran)}
                   />
+                  <FieldError message={openPeriodeErrors.tanggal_selesai_pendaftaran} />
+                </label>
+                <label className="block text-sm font-semibold text-[#29385f] md:col-span-2">
+                  Catatan <span className="font-normal text-[#7582a2]">(opsional)</span>
+                  <textarea
+                    rows={3}
+                    value={openPeriodeForm.catatan}
+                    onChange={(event) => setOpenPeriodeForm((prev) => ({ ...prev, catatan: event.target.value }))}
+                    placeholder="Tambahkan catatan untuk periode ini bila diperlukan."
+                    className="mt-1 block w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm font-normal outline-none focus:border-[#2f63e3]"
+                  />
+                </label>
+              </div>
+
+              {overview?.active_periode ? (
+                <div className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm text-[#7a5a00]">
+                  <p className="font-bold">Periode aktif saat ini</p>
+                  <p className="mt-1">
+                    {overview.active_periode.label_periode || formatPeriodeSidangLabel(overview.active_periode)} ({formatDateLabel(overview.active_periode.tanggal_mulai_pendaftaran)} s/d {formatDateLabel(overview.active_periode.tanggal_selesai_pendaftaran)}).
+                  </p>
                 </div>
-                <textarea
-                  rows={2}
-                  value={editPeriodeForm.catatan}
-                  onChange={(event) =>
-                    setEditPeriodeForm((prev) => ({ ...prev, catatan: event.target.value }))
-                  }
-                  className="mt-2 w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                  placeholder="Catatan periode (opsional)"
-                />
+              ) : null}
+
+              <div className="mt-4 flex justify-end border-t border-[#e8edf8] pt-4">
+                <button
+                  type="button"
+                  disabled={savingForm}
+                  onClick={() => handleOpenPeriodeFromForm().catch(() => {})}
+                  className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Plus className="h-4 w-4" />
+                  {savingForm ? "Memproses..." : "Buka Periode Pendaftaran Sidang"}
+                </button>
+              </div>
+            </section>
+          ) : null}
+
+          {periodePageMode !== "open" ? (
+            <>
+          <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <h3 className="text-lg font-black text-[#1b274b]">Riwayat Periode Pendaftaran Sidang</h3>
+                <p className="mt-1 text-sm text-[#66769a]">Pilih periode untuk melihat pendaftar atau memperbarui rentang pendaftaran.</p>
+              </div>
+              {loadingOverview ? <span className="text-sm text-[#6f7ea6]">Memuat...</span> : null}
+            </div>
+            <div className="overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
+              <table className="w-full min-w-[980px] text-left text-sm">
+                <thead>
+                  <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Label Periode</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahun Akademik</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Semester</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Rentang Pendaftaran</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
+                    <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(overview?.periodes || []).map((item) => {
+                    const isSelected = periodePageMode === "edit" && String(selectedPeriodeId) === String(item.id);
+                    const isOpen = String(item.status || "").toLowerCase() === "open";
+                    return (
+                      <tr key={`periode-row-${item.id}`} className={`border-b border-[#eff3fb] ${isSelected ? "bg-[#f4f7ff]" : ""}`}>
+                        <td className="px-3 py-2 font-semibold text-[#1f2d53]">{item.label_periode || formatPeriodeSidangLabel(item)}</td>
+                        <td className="px-3 py-2">{item.tahun_akademik || "-"}</td>
+                        <td className="px-3 py-2 capitalize">{item.semester || "-"}</td>
+                        <td className="px-3 py-2">{formatDateLabel(item.tanggal_mulai_pendaftaran)} s/d {formatDateLabel(item.tanggal_selesai_pendaftaran)}</td>
+                        <td className="px-3 py-2">
+                          <span className={`rounded-full px-2 py-1 text-xs font-bold ${isOpen ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#eef2fb] text-[#58658d]"}`}>
+                            {isOpen ? "Aktif" : String(item.status || "-").replaceAll("_", " ")}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPeriodeId(String(item.id));
+                              setPeriodePageMode("edit");
+                              setEditPeriodeErrors({});
+                              setError("");
+                              setSuccess("");
+                            }}
+                            className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110"
+                          >
+                            <CalendarRange className="h-3.5 w-3.5" />
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              {!loadingOverview && (overview?.periodes || []).length === 0 ? (
+                <div className="flex min-h-[180px] items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                  Belum ada periode pendaftaran sidang.
+                </div>
+              ) : null}
+            </div>
+
+            {selectedPeriode && periodePageMode === "edit" ? (
+              <div className="mt-3 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-3">
+                <p className="text-sm font-bold text-[#233a74]">Edit Periode Terpilih</p>
+                <p className="mt-1 text-sm text-[#66769a]">
+                  Identitas dan tanggal mulai periode dikunci. Hanya tanggal akhir pendaftaran yang dapat diperbarui.
+                </p>
+                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-[#dce4f7] bg-white p-3 text-sm text-[#29385f]">
+                    <p className="font-semibold">Periode</p>
+                    <p className="mt-1">{selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)}</p>
+                    <p className="mt-1 text-[#66769a]">Mulai: {formatDateLabel(selectedPeriode.tanggal_mulai_pendaftaran)}</p>
+                  </div>
+                  <label className="text-sm font-semibold text-[#29385f]">Tanggal Selesai Pendaftaran *
+                    <input type="date" value={editPeriodeForm.tanggal_selesai_pendaftaran} min={String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10)} onChange={(event) => { setEditPeriodeForm((prev) => ({ ...prev, tanggal_selesai_pendaftaran: event.target.value })); setEditPeriodeErrors((prev) => ({ ...prev, tanggal_selesai_pendaftaran: "" })); }} aria-invalid={Boolean(editPeriodeErrors.tanggal_selesai_pendaftaran)} className={fieldClass(editPeriodeErrors.tanggal_selesai_pendaftaran)} />
+                    <FieldError message={editPeriodeErrors.tanggal_selesai_pendaftaran} />
+                  </label>
+                </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -1026,6 +1266,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               ) : null}
             </section>
           ) : null}
+            </>
+          ) : null}
         </>
       ) : null}
 
@@ -1096,22 +1338,15 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="rounded-lg border border-[#e2e9f8] bg-white p-3">
                     <p className="text-sm font-bold text-[#233a74]">Hari Sidang (pilih dari kalender)</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <input
-                        type="date"
-                        min={todayDateOnly}
-                        value={editDatePicker}
-                        onChange={(event) => setEditDatePicker(event.target.value)}
-                        className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                      />
-                      <button
-                        type="button"
-                        onClick={addEditDate}
-                        className="rounded-lg border border-[#d1daf0] px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
-                      >
-                        Tambah Tanggal
-                      </button>
-                    </div>
+                    <p className="mt-1 text-xs text-[#68779b]">Pilih beberapa tanggal khusus; tanggal tidak harus berurutan.</p>
+                    <button
+                      type="button"
+                      onClick={() => setCalendarOpen(true)}
+                      className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[#9db5ed] bg-[#eef3ff] px-4 py-2.5 text-sm font-bold text-[#244a9f] transition hover:border-[#2f63e3] hover:bg-[#e4edff]"
+                    >
+                      <CalendarDays className="h-4 w-4" />
+                      Buka Kalender Tanggal Sidang
+                    </button>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {(editPeriodeForm.tanggal_sidang_list || []).map((tanggal) => (
                         <button
@@ -1127,10 +1362,11 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                           }
                           className="rounded-full border border-[#c9d7f5] bg-white px-3 py-1 text-xs font-semibold text-[#2c4ca0]"
                         >
-                          {tanggal} x
+                          {formatDateLabel(tanggal)} <X className="ml-1 inline h-3 w-3" />
                         </button>
                       ))}
                     </div>
+                    {(editPeriodeForm.tanggal_sidang_list || []).length === 0 ? <p className="mt-2 text-xs font-semibold text-[#8a6a20]">Belum ada tanggal sidang yang dipilih.</p> : null}
                   </div>
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-white p-3">
@@ -1139,9 +1375,13 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                       <input
                         type="text"
                         value={editRoomInput}
-                        onChange={(event) => setEditRoomInput(event.target.value)}
+                        onChange={(event) => {
+                          setEditRoomInput(event.target.value);
+                          setEditRoomError("");
+                        }}
                         placeholder="Contoh: Ruang Sidang A"
-                        className="flex-1 rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                        aria-invalid={Boolean(editRoomError)}
+                        className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none ${editRoomError ? "border-[#dc4c4c] bg-[#fffafa] focus:border-[#c73737]" : "border-[#d1daf0] focus:border-[#2f63e3]"}`}
                       />
                       <button
                         type="button"
@@ -1151,6 +1391,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                         Tambah Ruangan
                       </button>
                     </div>
+                    <FieldError message={editRoomError} />
                     <div className="mt-2 flex flex-wrap gap-2">
                       {(editPeriodeForm.ruangan_list || []).map((ruangan) => (
                         <button
@@ -1224,6 +1465,15 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
           </section>
         </>
       ) : null}
+
+      <MultiDateCalendarModal
+        open={calendarOpen}
+        selectedDates={editPeriodeForm.tanggal_sidang_list}
+        minDate={todayDateOnly}
+        initialDate={selectedPeriode?.tanggal_selesai_pendaftaran || todayDateOnly}
+        onClose={() => setCalendarOpen(false)}
+        onApply={(dates) => setEditPeriodeForm((prev) => ({ ...prev, tanggal_sidang_list: dates }))}
+      />
     </div>
   );
 }
