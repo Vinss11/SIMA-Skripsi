@@ -1,174 +1,423 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, Download, RefreshCcw, Search, SlidersHorizontal, Upload } from "lucide-react";
+import Swal from "sweetalert2";
 
-const STATE_LABELS = {
-  available: "Data tersedia",
-  unavailable: "Data belum tersedia",
-  incomplete: "Data belum lengkap",
-  conflicted: "Data berkonflik",
-};
+const PAGE_SIZE = 10;
+const PREVIEW_PAGE_SIZE = 5;
 
-function Badge({ children, tone = "blue" }) {
-  const classes = tone === "green" ? "bg-emerald-100 text-emerald-800" : tone === "red" ? "bg-rose-100 text-rose-800" : tone === "amber" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800";
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${classes}`}>{children}</span>;
+function showSuccessToast(message) {
+  return Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "success",
+    title: message,
+    showConfirmButton: false,
+    timer: 2200,
+    timerProgressBar: true,
+  });
+}
+
+function Badge({ children, status }) {
+  const tone = status === "Lulus"
+    ? "bg-emerald-100 text-emerald-800"
+    : status === "Tidak lulus"
+      ? "bg-rose-100 text-rose-800"
+      : status === "Sedang mengambil"
+        ? "bg-blue-100 text-blue-800"
+        : "bg-amber-100 text-amber-800";
+  return <span className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold ${tone}`}>{children}</span>;
+}
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString("id-ID") : "-";
 }
 
 function StudentSummary({ data }) {
-  const snapshot = data?.snapshot;
-  if (!snapshot) return <p className="text-sm text-[#607096]">Belum ada snapshot akademik.</p>;
-  const stateTone = snapshot.data_state === "available" ? "green" : snapshot.data_state === "conflicted" ? "red" : "amber";
+  const rows = data?.rows || [];
   return (
     <div className="space-y-4">
-      {data?.refreshing ? <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm font-semibold text-blue-800">Snapshot sedang diperbarui di latar belakang. Data terbaru akan tampil setelah proses selesai.</div> : null}
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={stateTone}>{STATE_LABELS[snapshot.data_state] || snapshot.data_state}</Badge>
-        <Badge>{snapshot.calculation_status}</Badge>
-        <span className="text-xs text-[#66769a]">Dihitung {snapshot.calculated_at ? new Date(snapshot.calculated_at).toLocaleString("id-ID") : "-"}</span>
+      <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+        Nilai minimum lulus yang berlaku: <b>{data?.minimum_passing_grade || "-"}</b>.
       </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-lg bg-[#f4f7ff] p-4"><p className="text-xs font-semibold text-[#6b7898]">SKS diambil</p><p className="mt-1 text-2xl font-black text-[#26375f]">{Number(snapshot.total_sks_diambil || 0)}</p></div>
-        <div className="rounded-lg bg-[#eefaf4] p-4"><p className="text-xs font-semibold text-[#527966]">SKS lulus</p><p className="mt-1 text-2xl font-black text-[#24593c]">{Number(snapshot.total_sks_lulus || 0)}</p></div>
-        <div className="rounded-lg bg-[#fff8e8] p-4"><p className="text-xs font-semibold text-[#886d32]">Wajib lulus</p><p className="mt-1 text-2xl font-black text-[#6f5315]">{snapshot.wajib_lulus}/{snapshot.wajib_total}</p></div>
-        <div className="rounded-lg bg-[#f7f2ff] p-4"><p className="text-xs font-semibold text-[#725c91]">Metodologi</p><p className="mt-1 text-lg font-black text-[#513b71]">{snapshot.metodologi_status?.replaceAll("_", " ") || "Belum diketahui"}</p></div>
-      </div>
-      {snapshot.wajib_belum_lulus?.length ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><b>Mata kuliah wajib belum terpenuhi:</b> {snapshot.wajib_belum_lulus.join(", ")}</div> : null}
-      {snapshot.quality_issues?.length ? <div className="rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-bold text-slate-700">Kualitas data</p><ul className="mt-1 list-disc pl-5 text-sm text-slate-600">{snapshot.quality_issues.map((item) => <li key={item}>{item}</li>)}</ul></div> : null}
-      <div className="overflow-x-auto rounded-lg border border-[#dce4f4]">
-        <table className="min-w-full text-left text-sm"><thead className="bg-[#f4f7fc] text-[#445476]"><tr><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Mata kuliah</th><th className="px-3 py-2">Nilai</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">SKS lulus</th></tr></thead>
-          <tbody>{(data.attempts || []).map((row) => <tr key={row.id} className="border-t border-[#e5eaf4]"><td className="px-3 py-2">#{row.periode_akademik_id}</td><td className="px-3 py-2">#{row.mata_kuliah_id}</td><td className="px-3 py-2">{row.nilai_huruf ?? row.nilai_angka ?? "-"}</td><td className="px-3 py-2">{row.status_kelulusan}</td><td className="px-3 py-2">{Number(row.sks_lulus || 0)}</td></tr>)}</tbody>
-        </table>
-      </div>
-      <p className="text-xs text-[#6d7895]">Data ini hanya-baca. Jika ada ketidaksesuaian, hubungi Admin Prodi dan sertakan bukti akademik; perubahan dilakukan melalui alur koreksi teraudit.</p>
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#607096]">Belum ada pendaftaran dan nilai mata kuliah penjaluran.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-[#dce4f4]">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-[#f4f7fc] text-[#445476]"><tr><th className="px-3 py-2">Jenis</th><th className="px-3 py-2">Jalur & Mata Kuliah</th><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Attempt</th><th className="px-3 py-2">Nilai</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Keterangan</th></tr></thead>
+            <tbody>{rows.map((row) => (
+              <tr key={`${row.pendaftaran_id}-${row.mata_kuliah_id || "hold"}`} className="border-t border-[#e5eaf4]">
+                <td className="px-3 py-2">{row.jenis_pendaftaran_label}</td>
+                <td className="px-3 py-2"><b>{row.jalur_label}</b><br/><span className="text-xs text-slate-600">{row.kode_mata_kuliah ? `${row.kode_mata_kuliah} · ` : ""}{row.mata_kuliah}</span></td>
+                <td className="px-3 py-2">{row.periode}</td><td className="px-3 py-2">{row.attempt || "-"}</td>
+                <td className="px-3 py-2 font-bold">{row.nilai || "-"}</td><td className="px-3 py-2"><Badge status={row.status_nilai}>{row.status_nilai}</Badge></td>
+                <td className="px-3 py-2 text-xs text-slate-600">{row.reused_previous_pass ? "Hasil lulus sebelumnya tetap berlaku" : row.status_nilai === "Tidak lulus" ? "Perlu mengulang" : "-"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
 
-function AdminImport({ api, token, onChanged }) {
-  const [sources, setSources] = useState([]);
+function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
+  const [query, setQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [trackFilter, setTrackFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [filterDraft, setFilterDraft] = useState({ periodId: "", type: "", track: "", status: "" });
+  const [page, setPage] = useState(1);
+  const filterPanelRef = useRef(null);
+
+  const filteredRows = useMemo(() => rows.filter((row) => {
+    const needle = query.trim().toLowerCase();
+    const searchable = `${row.nim} ${row.nama} ${row.periode} ${row.jalur_label} ${row.mata_kuliah}`.toLowerCase();
+    return (!needle || searchable.includes(needle))
+      && (!typeFilter || row.jenis_pendaftaran === typeFilter)
+      && (!trackFilter || row.jalur === trackFilter)
+      && (!statusFilter || row.status_nilai === statusFilter);
+  }), [rows, query, typeFilter, trackFilter, statusFilter]);
+
+  const defaultPeriodId = periods.length ? String(periods[0].id) : "";
+  const activeFilterCount = [typeFilter, trackFilter, statusFilter].filter(Boolean).length
+    + (periodId && String(periodId) !== defaultPeriodId ? 1 : 0);
+  const hasActiveFilters = Boolean(query || activeFilterCount);
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const rangeStart = filteredRows.length ? (currentPage - 1) * PAGE_SIZE + 1 : 0;
+  const rangeEnd = filteredRows.length ? Math.min(currentPage * PAGE_SIZE, filteredRows.length) : 0;
+  const selectedPeriod = periods.find((period) => String(period.id) === String(periodId));
+
+  useEffect(() => { setPage(1); }, [periodId, query, typeFilter, trackFilter, statusFilter]);
+
+  useEffect(() => {
+    if (!showFilters) setFilterDraft({ periodId: String(periodId || ""), type: typeFilter, track: trackFilter, status: statusFilter });
+  }, [periodId, showFilters, statusFilter, trackFilter, typeFilter]);
+
+  useEffect(() => {
+    if (!showFilters) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!filterPanelRef.current?.contains(event.target)) setShowFilters(false);
+    };
+    const closeOnEscape = (event) => { if (event.key === "Escape") setShowFilters(false); };
+    window.addEventListener("mousedown", closeOnOutsideClick);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("mousedown", closeOnOutsideClick);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showFilters]);
+
+  const resetFilters = () => {
+    setQuery(""); setPeriodId(defaultPeriodId); setTypeFilter(""); setTrackFilter(""); setStatusFilter(""); setPage(1);
+  };
+
+  const toggleFilters = () => {
+    setFilterDraft({ periodId: String(periodId || defaultPeriodId), type: typeFilter, track: trackFilter, status: statusFilter });
+    setShowFilters((current) => !current);
+  };
+
+  const applyFilters = () => {
+    setPeriodId(filterDraft.periodId);
+    setTypeFilter(filterDraft.type);
+    setTrackFilter(filterDraft.track);
+    setStatusFilter(filterDraft.status);
+    setPage(1);
+    setShowFilters(false);
+  };
+
+  const resetDraft = () => setFilterDraft({ periodId: defaultPeriodId, type: "", track: "", status: "" });
+  const draftIsDirty = String(filterDraft.periodId) !== String(periodId || "")
+    || filterDraft.type !== typeFilter || filterDraft.track !== trackFilter || filterDraft.status !== statusFilter;
+  const hasDraftFilters = filterDraft.type || filterDraft.track || filterDraft.status
+    || (filterDraft.periodId && filterDraft.periodId !== defaultPeriodId);
+
+  return (
+    <section className="rounded-xl border border-[#dce4f4] bg-white p-4 shadow-sm">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-black text-[#1b274b]">Grid Daftar Nilai</h3>
+          <p className="text-sm text-[#5d6c91]">Menampilkan nilai mata kuliah penjaluran berdasarkan periode pendaftaran Sekprodi.</p>
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:w-[340px] sm:flex-none">
+            <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]"/>
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari NIM, nama, periode, jalur, mata kuliah..." className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"/>
+          </div>
+          <div className="relative" ref={filterPanelRef}>
+            <button type="button" onClick={toggleFilters} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${showFilters || activeFilterCount ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]" : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"}`}>
+              <SlidersHorizontal className="h-4 w-4"/>Filter{activeFilterCount ? <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">{activeFilterCount}</span> : null}
+            </button>
+            {showFilters ? (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-[70] flex max-h-[560px] w-[min(430px,calc(100vw-3rem))] flex-col rounded-xl border border-[#dbe5f8] bg-white shadow-xl">
+                <div className="border-b border-[#e5ecf9] px-4 py-3">
+                  <p className="text-base font-bold text-[#1e315f]">Filter Data Nilai</p>
+                  <p className="text-xs text-[#60709a]">Atur filter bertumpuk, lalu klik Terapkan.</p>
+                </div>
+                <div className="space-y-3 overflow-auto p-3">
+                  {[
+                    { key: "periodId", label: "Periode Pendaftaran", empty: "Periode terbaru", options: periods.map((item) => ({ value: String(item.id), label: item.label_periode })) },
+                    { key: "type", label: "Jenis Pendaftaran", empty: "Semua jenis pendaftaran", options: [{ value: "baru", label: "Baru" }, { value: "ulang", label: "Ulang" }, { value: "alih", label: "Alih" }] },
+                    { key: "track", label: "Jalur Penjaluran", empty: "Semua jalur penjaluran", options: [{ value: "penelitian", label: "Penelitian" }, { value: "magang", label: "Magang" }, { value: "perintisan_bisnis", label: "Perintisan Bisnis" }] },
+                    { key: "status", label: "Status Nilai", empty: "Semua status nilai", options: ["Belum tersedia", "Sedang mengambil", "Lulus", "Tidak lulus"].map((value) => ({ value, label: value })) },
+                  ].map((filter) => (
+                    <div key={filter.key} className="rounded-lg border border-[#e6ecf8] p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <p className="text-sm font-semibold text-[#2a4175]">{filter.label}</p>
+                        <button type="button" onClick={() => setFilterDraft((current) => ({ ...current, [filter.key]: filter.key === "periodId" ? defaultPeriodId : "" }))} className="text-xs font-semibold text-[#2f63e3] hover:underline">Reset</button>
+                      </div>
+                      <select value={filterDraft[filter.key]} onChange={(event) => setFilterDraft((current) => ({ ...current, [filter.key]: event.target.value }))} className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]">
+                        {filter.key !== "periodId" ? <option value="">{filter.empty}</option> : null}
+                        {filter.options.map((option) => <option key={`${filter.key}-${option.value}`} value={option.value}>{option.label}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-[#e5ecf9] px-3 py-3">
+                  <button type="button" onClick={resetDraft} disabled={!hasDraftFilters} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50">Reset all</button>
+                  <button type="button" onClick={applyFilters} disabled={!draftIsDirty} className="rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">Terapkan</button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <button type="button" onClick={resetFilters} disabled={!hasActiveFilters} className="rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50">Reset</button>
+        </div>
+      </div>
+
+      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[#69779d]">
+        <span>Periode: <b className="text-[#354a7e]">{selectedPeriod?.label_periode || "Belum dipilih"}</b></span>
+        {policy ? <span>Nilai minimum lulus: <b className="text-[#354a7e]">{policy.minimum_passing_grade}</b></span> : null}
+      </div>
+
+      <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
+        <table className="w-full min-w-[1650px] text-left text-sm">
+          <thead><tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+            {["No", "NIM", "Nama", "Jenis Pendaftaran", "Jalur Penjaluran", "Status Pendaftaran", "Kode Mata Kuliah", "Mata Kuliah Penjaluran", "Periode Penjaluran", "Attempt", "Nilai", "Status Nilai", "Diperbarui"].map((header) => <th key={header} className="whitespace-nowrap bg-[#f8fbff] px-3 py-2 font-semibold">{header}</th>)}
+          </tr></thead>
+          <tbody>{pagedRows.map((row, index) => (
+            <tr key={`${row.pendaftaran_id}-${row.mata_kuliah_id || "hold"}`} className="border-b border-[#eff3fb]">
+              <td className="px-3 py-2">{(currentPage - 1) * PAGE_SIZE + index + 1}</td><td className="px-3 py-2 font-semibold text-[#254080]">{row.nim || "-"}</td><td className="px-3 py-2">{row.nama || "-"}</td>
+              <td className="px-3 py-2">{row.jenis_pendaftaran_label || "-"}</td><td className="px-3 py-2">{row.jalur_label || "-"}</td><td className="px-3 py-2 capitalize">{row.status_pendaftaran || "-"}</td>
+              <td className="px-3 py-2 font-semibold text-[#354a7e]">{row.kode_mata_kuliah || "-"}</td><td className="px-3 py-2">{row.mata_kuliah || "-"}</td><td className="px-3 py-2">{row.periode || "-"}</td>
+              <td className="px-3 py-2">{row.attempt || "-"}</td><td className="px-3 py-2 font-bold">{row.nilai || "-"}</td><td className="px-3 py-2"><Badge status={row.status_nilai}>{row.status_nilai}</Badge></td><td className="whitespace-nowrap px-3 py-2">{formatDate(row.updated_at)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {filteredRows.length === 0 ? <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">Data nilai mahasiswa tidak ditemukan.</div> : null}
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+        <p className="text-sm text-[#4f5e86]">Menampilkan {rangeStart} - {rangeEnd} dari {filteredRows.length} data nilai mahasiswa.</p>
+        <div className="flex items-center gap-2">
+          <button type="button" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={currentPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50">Sebelumnya</button>
+          <span className="text-sm font-semibold text-[#314778]">Halaman {currentPage} / {totalPages}</span>
+          <button type="button" onClick={() => setPage((current) => Math.min(totalPages, current + 1))} disabled={currentPage >= totalPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50">Berikutnya</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ImportGrades({ periods, periodId, setPeriodId, preview, setPreview, file, setFile, busy, download, validate, commit }) {
+  const [previewPage, setPreviewPage] = useState(1);
+  const previewRows = preview?.rows || [];
+  const validCount = Number(preview?.counts?.valid || 0);
+  const invalidCount = Number(preview?.counts?.invalid || 0);
+  const totalPages = Math.max(1, Math.ceil(previewRows.length / PREVIEW_PAGE_SIZE));
+  const currentPage = Math.min(previewPage, totalPages);
+  const pagedRows = previewRows.slice((currentPage - 1) * PREVIEW_PAGE_SIZE, currentPage * PREVIEW_PAGE_SIZE);
+  const rangeStart = previewRows.length ? (currentPage - 1) * PREVIEW_PAGE_SIZE + 1 : 0;
+  const rangeEnd = previewRows.length ? Math.min(currentPage * PREVIEW_PAGE_SIZE, previewRows.length) : 0;
+
+  useEffect(() => { setPreviewPage(1); }, [preview]);
+
+  const rawValue = (row, ...keys) => {
+    for (const key of keys) if (row.raw_payload?.[key] !== undefined) return row.raw_payload[key];
+    return "-";
+  };
+
+  return (
+    <>
+      <section className="rounded-xl border border-[#dce4f4] bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-black text-[#16244a]">Import Nilai via Excel</h3>
+            <p className="mt-2 text-sm text-[#66769a]">Pilih periode, unduh template yang sudah berisi data mahasiswa, lalu isi hanya kolom Nilai.</p>
+            <p className="mt-1 text-xs font-semibold text-[#40527e]">Nilai yang diterima: A, B+, B, B-, B/C, C+, C, C-, C/D, D+, D, D-, D/F, F.</p>
+          </div>
+          <button type="button" disabled={!periodId || busy} onClick={() => download(`/api/admin/akademik/nilai/template?periode_pendaftaran_id=${periodId}`, `template_nilai_penjaluran_${periodId}.xlsx`)} className="inline-flex items-center gap-2 rounded-lg border border-emerald-300 px-3 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4"/>Download Template</button>
+        </div>
+
+        <label className="mt-4 block text-sm font-bold text-[#29385f]">Periode pendaftaran penjaluran
+          <select value={periodId} onChange={(event) => { setPeriodId(event.target.value); setPreview(null); }} className="mt-1 block w-full rounded-lg border border-[#d3dbef] bg-white p-2 text-sm font-normal text-[#26375f] md:w-96"><option value="">Pilih periode</option>{periods.map((period) => <option key={period.id} value={period.id}>{period.label_periode}</option>)}</select>
+        </label>
+
+        <form onSubmit={validate} className="mt-4">
+          <input required type="file" accept=".xlsx,.xls" onChange={(event) => setFile(event.target.files?.[0] || null)} className="block w-full rounded-lg border border-[#d3dbef] p-2 text-sm"/>
+          <button disabled={!periodId || !file || busy} className="mt-3 inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"><Upload className="h-4 w-4"/>{busy ? "Memproses..." : "Preview Data"}</button>
+        </form>
+
+        <div className="mt-4 rounded-lg border border-[#dce4f4] bg-[#f8fbff] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="font-bold text-[#29385f]">{preview ? `Hasil preview import #${preview.id}` : "Preview nilai akan tampil di sini setelah upload template."}</p>
+              <p className="mt-1 text-sm text-[#59698f]">Valid: {validCount} | Tidak valid: {invalidCount}</p>
+              <p className="mt-1 text-xs text-[#68779b]">Preview menampilkan maksimal {previewRows.length} data ({PREVIEW_PAGE_SIZE} data per halaman).</p>
+            </div>
+            {invalidCount > 0 ? <button type="button" onClick={() => download(`/api/admin/akademik/nilai/imports/${preview.id}/report`, `laporan_kesalahan_${preview.id}.csv`)} className="rounded-lg border border-rose-300 px-3 py-2 text-sm font-bold text-rose-700 hover:bg-rose-50">Download Laporan Perbaikan</button> : null}
+          </div>
+
+          <div className="mt-4 overflow-x-auto rounded-lg border border-[#d9e2f3] bg-white">
+            <table className="w-full min-w-[1500px] text-left text-sm">
+              <thead className="bg-[#f4f7fc] text-[#40527e]"><tr>{["No", "ID Pendaftaran", "NIM", "Nama", "Jenis", "Jalur", "Mata Kuliah", "Attempt", "Nilai Lama", "Nilai Baru", "Pesan Error"].map((header) => <th key={header} className="whitespace-nowrap px-3 py-2 font-semibold">{header}</th>)}</tr></thead>
+              <tbody>{pagedRows.map((row, index) => (
+                <tr key={row.id || `${row.row_number}-${index}`} className="border-t border-[#e8edf8]">
+                  <td className="px-3 py-2">{(currentPage - 1) * PREVIEW_PAGE_SIZE + index + 1}</td>
+                  <td className="px-3 py-2">{row.pendaftaran_penjaluran_id || rawValue(row, "ID Pendaftaran")}</td>
+                  <td className="px-3 py-2 font-semibold text-[#254080]">{rawValue(row, "NIM")}</td>
+                  <td className="px-3 py-2">{rawValue(row, "Nama")}</td>
+                  <td className="px-3 py-2">{rawValue(row, "Jenis Pendaftaran")}</td>
+                  <td className="px-3 py-2">{rawValue(row, "Jalur Penjaluran")}</td>
+                  <td className="px-3 py-2">{rawValue(row, "Mata Kuliah Penjaluran")}</td>
+                  <td className="px-3 py-2">{rawValue(row, "Attempt")}</td>
+                  <td className="px-3 py-2">{row.old_grade || "-"}</td>
+                  <td className="px-3 py-2 font-bold">{row.nilai_huruf || rawValue(row, "Nilai")}</td>
+                  <td className={`px-3 py-2 ${row.is_valid ? "text-emerald-700" : "text-rose-700"}`}>{row.is_valid ? "Valid" : (row.errors || []).join("; ")}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+            {previewRows.length === 0 ? <div className="flex min-h-[52px] items-center justify-center text-sm font-semibold text-[#7b88ab]">Belum ada data preview.</div> : null}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-[#4f5e86]">Menampilkan {rangeStart} - {rangeEnd} dari {previewRows.length} data preview.</p>
+            <div className="flex items-center gap-2"><button type="button" onClick={() => setPreviewPage((value) => Math.max(1, value - 1))} disabled={currentPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Sebelumnya</button><span className="text-sm font-semibold text-[#314778]">Halaman {currentPage} / {totalPages}</span><button type="button" onClick={() => setPreviewPage((value) => Math.min(totalPages, value + 1))} disabled={currentPage >= totalPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Berikutnya</button></div>
+          </div>
+        </div>
+      </section>
+      <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#dce4f4] bg-white p-4 shadow-sm">
+        <p className="text-sm font-semibold text-[#314778]">Data valid baru akan masuk database setelah tombol simpan ditekan.</p>
+        <button type="button" disabled={busy || !preview || preview.status === "committed" || validCount === 0} onClick={commit} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">Simpan {validCount} Data Valid</button>
+      </section>
+    </>
+  );
+}
+
+function AcademicManagement({ api, token, readOnly = false, onBack, onSessionExpired }) {
+  const [tab, setTab] = useState("list");
   const [periods, setPeriods] = useState([]);
-  const [periodDrafts, setPeriodDrafts] = useState({});
-  const [file, setFile] = useState(null);
-  const [dataset, setDataset] = useState("course_attempts");
-  const [sourceId, setSourceId] = useState("");
   const [periodId, setPeriodId] = useState("");
-  const [programKuliah, setProgramKuliah] = useState("reguler");
-  const [completeCoverage, setCompleteCoverage] = useState(false);
-  const [batch, setBatch] = useState(null);
-  const [message, setMessage] = useState("");
+  const [rows, setRows] = useState([]);
+  const [policy, setPolicy] = useState(null);
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
-  const commitKeyRef = useRef(null);
+  const [message, setMessage] = useState("");
+  const endpoint = readOnly ? "/api/sekretaris/akademik" : "/api/admin/akademik";
+  const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
-  const loadMaster = useCallback(async () => {
-    const headers = { Authorization: `Bearer ${token}` };
-    const [sourceResponse, periodResponse] = await Promise.all([fetch(`${api}/api/admin/akademik/sources`, { headers }), fetch(`${api}/api/admin/akademik/periode`, { headers })]);
-    const [sourcePayload, periodPayload] = await Promise.all([sourceResponse.json(), periodResponse.json()]);
-    const loadedPeriods = periodPayload.data || [];
-    setSources(sourcePayload.data || []); setPeriods(loadedPeriods);
-    setPeriodDrafts(Object.fromEntries(loadedPeriods.map((period) => [period.id, {
-      tanggal_mulai: period.tanggal_mulai ? String(period.tanggal_mulai).slice(0, 10) : "",
-      tanggal_selesai: period.tanggal_selesai ? String(period.tanggal_selesai).slice(0, 10) : "",
-      status: period.status || "draft",
-    }])));
-  }, [api, token]);
-  useEffect(() => { loadMaster().catch((error) => setMessage(error.message)); }, [loadMaster]);
-
-  const preview = async (event) => {
-    event.preventDefault(); if (!file || !sourceId) return;
-    if (completeCoverage && !periodId) { setMessage("Pilih periode akademik sebelum menyatakan dataset lengkap."); return; }
-    setBusy(true); setMessage(""); setBatch(null);
-    try {
-      const form = new FormData(); form.append("file", file); form.append("dataset_type", dataset); form.append("schema_version", "v1");
-      form.append("source_id", sourceId); form.append("program_kuliah", programKuliah); form.append("kode_program_studi", "INFORMATIKA");
-      form.append("completeness_scope", JSON.stringify({ scope_type: "program", is_complete: completeCoverage,
-        declared_by_source: completeCoverage, kode_program_studi: "INFORMATIKA", program_kuliah: programKuliah }));
-      if (periodId) form.append("periode_akademik_id", periodId);
-      const response = await fetch(`${api}/api/admin/akademik/imports`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": window.crypto?.randomUUID?.() || String(Date.now()) }, body: form });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.message || "Preview gagal."); setBatch(payload.data); setMessage(payload.replayed ? "Preview replay ditemukan." : "Preview berhasil dibuat.");
-    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
-  };
-  const commit = async () => {
-    if (!batch) return; setBusy(true); setMessage(""); if (!commitKeyRef.current) commitKeyRef.current = window.crypto?.randomUUID?.() || String(Date.now());
-    try {
-      const response = await fetch(`${api}/api/admin/akademik/imports/${batch.id}/commit`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "Idempotency-Key": commitKeyRef.current }, body: JSON.stringify({ validation_checksum: batch.validation_checksum }) });
-      const payload = await response.json(); if (!response.ok) { commitKeyRef.current = null; throw new Error(payload.message || "Commit gagal."); } commitKeyRef.current = null; setBatch(payload.data); setMessage(payload.replayed ? "Commit diputar ulang dengan aman." : "Data akademik berhasil di-commit."); onChanged?.();
-    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
-  };
-  const updatePeriodDraft = (id, field, value) => setPeriodDrafts((current) => ({ ...current, [id]: { ...current[id], [field]: value } }));
-  const savePeriod = async (period) => {
-    const draft = periodDrafts[period.id] || {};
-    if (!draft.tanggal_mulai || !draft.tanggal_selesai) { setMessage("Tanggal mulai dan selesai wajib diisi."); return; }
-    setBusy(true); setMessage("");
-    try {
-      const response = await fetch(`${api}/api/admin/akademik/periode/${period.id}`, { method: "PUT",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ tanggal_mulai: draft.tanggal_mulai, tanggal_selesai: draft.tanggal_selesai, status: draft.status }) });
-      const payload = await response.json(); if (!response.ok) throw new Error(payload.message || "Tanggal periode gagal disimpan.");
-      setMessage(`Tanggal resmi ${period.kode} berhasil disimpan.`); await loadMaster(); onChanged?.();
-    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
-  };
-  return <div className="space-y-4">
-    <div className="rounded-lg border border-[#dce4f4] p-4">
-      <div className="mb-3"><h3 className="font-bold text-[#29385f]">Tanggal Resmi Periode Akademik</h3><p className="text-xs text-[#68769a]">Digunakan sebagai acuan transisi semester dan jendela izin lanjut. Isi berdasarkan kalender akademik resmi.</p></div>
-      <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="bg-[#f4f7fc]"><tr><th className="px-3 py-2">Periode</th><th className="px-3 py-2">Mulai</th><th className="px-3 py-2">Selesai</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Aksi</th></tr></thead><tbody>{periods.map((period) => { const missingDates = !period.tanggal_mulai || !period.tanggal_selesai; return <tr key={period.id} className={`border-t ${missingDates ? "bg-amber-50" : ""}`}><td className="px-3 py-2 font-semibold">{period.kode}{missingDates ? <span className="ml-2 text-xs text-amber-700">Tanggal wajib dilengkapi</span> : null}</td><td className="px-3 py-2"><input aria-label={`Tanggal mulai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_mulai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_mulai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><input aria-label={`Tanggal selesai ${period.kode}`} type="date" value={periodDrafts[period.id]?.tanggal_selesai || ""} onChange={(event) => updatePeriodDraft(period.id, "tanggal_selesai", event.target.value)} className="rounded border p-2"/></td><td className="px-3 py-2"><select aria-label={`Status ${period.kode}`} value={periodDrafts[period.id]?.status || "draft"} onChange={(event) => updatePeriodDraft(period.id, "status", event.target.value)} className="rounded border p-2"><option value="draft">Draft</option><option value="active">Aktif</option><option value="closed">Ditutup</option></select></td><td className="px-3 py-2"><button type="button" disabled={busy} onClick={() => savePeriod(period)} className="rounded bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:opacity-50">Simpan</button></td></tr>; })}</tbody></table></div>
-    </div>
-    <form onSubmit={preview} className="grid gap-3 rounded-lg border border-[#dce4f4] p-4 md:grid-cols-2"><select value={dataset} onChange={(e) => setDataset(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="course_attempts">Attempt mata kuliah</option><option value="methodology_status">Status Metodologi</option></select><select required value={sourceId} onChange={(e) => setSourceId(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="">Pilih sumber</option>{sources.map((v) => <option key={v.id} value={v.id}>{v.kode} — {v.nama}</option>)}</select><select value={periodId} onChange={(e) => { setPeriodId(e.target.value); if (!e.target.value) setCompleteCoverage(false); }} className="rounded-lg border p-2 text-sm"><option value="">Periode dari setiap baris</option>{periods.map((v) => <option key={v.id} value={v.id}>{v.kode}</option>)}</select><select value={programKuliah} onChange={(e) => setProgramKuliah(e.target.value)} className="rounded-lg border p-2 text-sm"><option value="reguler">Reguler</option><option value="internasional">Internasional</option></select><label className={`flex items-center gap-2 rounded-lg border p-2 text-sm ${!periodId ? "cursor-not-allowed bg-slate-50 text-slate-400" : ""}`}><input type="checkbox" disabled={!periodId} checked={completeCoverage} onChange={(e) => setCompleteCoverage(e.target.checked)}/>Sumber menyatakan dataset periode ini lengkap</label><input required type="file" accept=".xlsx,.xls,.ods" onChange={(e) => setFile(e.target.files?.[0] || null)} className="rounded-lg border p-2 text-sm"/><button disabled={busy} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">{busy ? "Memproses…" : "Validasi & preview"}</button></form>
-    {message ? <div className="rounded-lg bg-[#f4f7ff] p-3 text-sm font-semibold text-[#334b7e]">{message}</div> : null}
-    {batch ? <div className="rounded-lg border border-[#dce4f4] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-bold text-[#29385f]">Batch #{batch.id}</p><p className="text-sm text-[#68769a]">Status {batch.status} · total {batch.counts?.total || 0} · invalid {batch.counts?.invalid || 0}</p>{batch.completeness_scope?.is_complete ? <p className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">Scope yang akan direkam saat commit: program {batch.completeness_scope.kode_program_studi}/{batch.completeness_scope.program_kuliah}, periode {periods.find((item) => Number(item.id) === Number(batch.periode_akademik_id))?.kode || `#${batch.periode_akademik_id}`}, tipe {batch.completeness_scope.scope_type}.</p> : <p className="mt-2 text-xs text-slate-500">Batch ini tidak mendeklarasikan dataset lengkap.</p>}</div><button type="button" disabled={busy || batch.status !== "validated"} onClick={commit} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Commit atomik</button></div></div> : null}
-    <AdminOperations api={api} token={token} onMessage={setMessage}/>
-  </div>;
-}
-
-function AdminOperations({ api, token, onMessage }) {
-  const [data, setData] = useState({ imports: [], conflicts: [], corrections: [], jobs: [], outbox: [], rules: [], curricula: [], courses: [] });
-  const [studentId, setStudentId] = useState(""); const [student, setStudent] = useState(null);
-  const [master, setMaster] = useState({ resource: "sources", kode: "", nama: "", sks: "3" });
-  const [assignment, setAssignment] = useState({ mahasiswa_id: "", kurikulum_id: "" });
-  const [rule, setRule] = useState({ context: "research_registration", mode: "shadow" });
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, "Content-Type": "application/json" }), [token]);
   const request = useCallback(async (path, options = {}) => {
-    const response = await fetch(`${api}${path}`, { ...options, headers: { ...headers, ...(options.headers || {}) } });
-    const payload = await response.json(); if (!response.ok) throw new Error(payload.message || "Operasi akademik gagal."); return payload.data;
-  }, [api, headers]);
-  const load = useCallback(async () => {
-    const paths = { imports: "/api/admin/akademik/imports", conflicts: "/api/admin/akademik/conflicts?status=open",
-      corrections: "/api/admin/akademik/corrections", jobs: "/api/admin/akademik/snapshot-jobs", outbox: "/api/admin/akademik/outbox",
-      rules: "/api/admin/akademik/rule-sets", curricula: "/api/admin/akademik/kurikulum", courses: "/api/admin/akademik/mata-kuliah" };
-    const entries = await Promise.all(Object.entries(paths).map(async ([key, path]) => [key, await request(path)])); setData(Object.fromEntries(entries));
-  }, [request]);
-  useEffect(() => { load().catch((error) => onMessage(error.message)); }, [load, onMessage]);
-  const mutate = async (path, body = {}, method = "POST") => { try { await request(path, { method, body: JSON.stringify(body) }); onMessage("Perubahan akademik berhasil disimpan."); await load(); } catch (error) { onMessage(error.message); } };
-  const createMaster = async (event) => {
-    event.preventDefault(); const common = { kode: master.kode, nama: master.nama };
-    const body = master.resource === "sources" ? { ...common, jenis: "manual_import", authority_level: 10 }
-      : master.resource === "kurikulum" ? { ...common, kode_program_studi: "INFORMATIKA", program_kuliah: "reguler", status: "draft" }
-        : { ...common, sks_default: Number(master.sks), kode_program_studi: "INFORMATIKA", program_kuliah: "reguler", status: "active" };
-    await mutate(`/api/admin/akademik/${master.resource}`, body); setMaster((value) => ({ ...value, kode: "", nama: "" }));
+    const response = await fetch(`${api}${path}`, { ...options, headers: { ...authHeaders, ...(options.headers || {}) } });
+    const payload = await response.json();
+    if ([401, 403].includes(response.status)) onSessionExpired?.();
+    if (!response.ok) throw new Error(payload.message || "Permintaan gagal.");
+    return payload;
+  }, [api, authHeaders, onSessionExpired]);
+
+  useEffect(() => {
+    request(`${endpoint}/nilai/periode`)
+      .then(({ data }) => {
+        setPeriods(data || []);
+        if (data?.length) setPeriodId((current) => current || String(data[0].id));
+      })
+      .catch((error) => setMessage(error.message));
+  }, [endpoint, request]);
+
+  const loadRows = useCallback(async () => {
+    if (!periodId) { setRows([]); return; }
+    try {
+      const payload = await request(`${endpoint}/nilai?periode_pendaftaran_id=${periodId}`);
+      setRows(payload.data || []); setPolicy(payload.policy || null); setMessage("");
+    } catch (error) { setRows([]); setMessage(error.message); }
+  }, [endpoint, periodId, request]);
+
+  useEffect(() => { loadRows(); }, [loadRows]);
+
+  const download = async (path, filename) => {
+    try {
+      setBusy(true); setMessage("");
+      const response = await fetch(`${api}${path}`, { headers: authHeaders });
+      if ([401, 403].includes(response.status)) onSessionExpired?.();
+      if (!response.ok) { const body = await response.json(); throw new Error(body.message || "Download gagal."); }
+      const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a");
+      link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url);
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   };
-  const lookupStudent = async () => { try { setStudent(await request(`/api/admin/akademik/mahasiswa/${Number(studentId)}`)); } catch (error) { onMessage(error.message); } };
-  const correct = async (type, record) => {
-    const raw = window.prompt("Masukkan perubahan sebagai JSON, contoh: {\"nilai_angka\":80}"); if (!raw) return;
-    const reason = window.prompt("Alasan dan dasar bukti koreksi:"); if (!reason) return;
-    try { await mutate(`/api/admin/akademik/records/${type}/${record.id}/corrections`, { expected_revision: record.version, reason, changes: JSON.parse(raw) }); await lookupStudent(); }
-    catch (error) { onMessage(error.message); }
+
+  const validate = async (event) => {
+    event.preventDefault(); if (!periodId || !file) return; setBusy(true); setMessage(""); setPreview(null);
+    try {
+      const form = new FormData(); form.append("periode_pendaftaran_id", periodId); form.append("file", file);
+      const payload = await request("/api/admin/akademik/nilai/imports", { method: "POST", body: form });
+      setPreview(payload.data); setMessage(payload.replayed ? "File ini pernah divalidasi; preview sebelumnya ditampilkan kembali." : "Validasi selesai.");
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
   };
-  const downloadReport = async (batchId) => { try { const response = await fetch(`${api}/api/admin/akademik/imports/${batchId}/report`, { headers: { Authorization: `Bearer ${token}` } }); if (!response.ok) throw new Error("Report gagal diunduh."); const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `academic_import_${batchId}_report.csv`; link.click(); URL.revokeObjectURL(url); } catch (error) { onMessage(error.message); } };
-  return <div className="space-y-4">
-    <div className="grid gap-4 lg:grid-cols-2"><form onSubmit={createMaster} className="space-y-2 rounded-lg border p-4"><h3 className="font-bold text-[#29385f]">Master Akademik</h3><select value={master.resource} onChange={(event) => setMaster({ ...master, resource: event.target.value })} className="w-full rounded border p-2"><option value="sources">Sumber data</option><option value="kurikulum">Kurikulum</option><option value="mata-kuliah">Mata kuliah</option></select><input required placeholder="Kode" value={master.kode} onChange={(event) => setMaster({ ...master, kode: event.target.value })} className="w-full rounded border p-2"/><input required placeholder="Nama" value={master.nama} onChange={(event) => setMaster({ ...master, nama: event.target.value })} className="w-full rounded border p-2"/>{master.resource === "mata-kuliah" ? <input type="number" min="0.5" step="0.5" value={master.sks} onChange={(event) => setMaster({ ...master, sks: event.target.value })} className="w-full rounded border p-2"/> : null}<button className="rounded bg-[#2f63e3] px-3 py-2 text-sm font-bold text-white">Tambah master</button></form>
-      <form onSubmit={(event) => { event.preventDefault(); mutate(`/api/admin/akademik/mahasiswa/${assignment.mahasiswa_id}/curriculum-assignment`, { kurikulum_id: Number(assignment.kurikulum_id) }); }} className="space-y-2 rounded-lg border p-4"><h3 className="font-bold text-[#29385f]">Assignment Kurikulum</h3><input required type="number" placeholder="ID mahasiswa" value={assignment.mahasiswa_id} onChange={(event) => setAssignment({ ...assignment, mahasiswa_id: event.target.value })} className="w-full rounded border p-2"/><select required value={assignment.kurikulum_id} onChange={(event) => setAssignment({ ...assignment, kurikulum_id: event.target.value })} className="w-full rounded border p-2"><option value="">Pilih kurikulum</option>{data.curricula.map((item) => <option key={item.id} value={item.id}>{item.kode} · {item.nama}</option>)}</select><button className="rounded bg-[#2f63e3] px-3 py-2 text-sm font-bold text-white">Tetapkan</button></form></div>
-    <div className="rounded-lg border p-4"><h3 className="font-bold text-[#29385f]">Konflik Terbuka</h3>{data.conflicts.length ? data.conflicts.map((item) => <div key={item.id} className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2 text-sm"><span className="mr-auto">#{item.id} · row #{item.import_row_id}</span><button onClick={() => mutate(`/api/admin/akademik/conflicts/${item.id}/resolve`, { decision: "keep_admin_correction" })} className="rounded bg-slate-700 px-2 py-1 text-white">Pertahankan koreksi</button><button onClick={() => mutate(`/api/admin/akademik/conflicts/${item.id}/resolve`, { decision: "accept_source" })} className="rounded bg-emerald-700 px-2 py-1 text-white">Terima sumber</button><button onClick={() => mutate(`/api/admin/akademik/conflicts/${item.id}/dismiss`, { decision: "dismiss_false_positive" })} className="rounded bg-amber-600 px-2 py-1 text-white">False positive</button></div>) : <p className="mt-2 text-sm text-slate-500">Tidak ada konflik terbuka.</p>}</div>
-    <div className="rounded-lg border p-4"><div className="flex gap-2"><input type="number" placeholder="ID mahasiswa" value={studentId} onChange={(event) => setStudentId(event.target.value)} className="rounded border p-2"/><button onClick={lookupStudent} className="rounded bg-slate-700 px-3 text-sm font-bold text-white">Muat fakta</button></div>{student ? <div className="mt-3 space-y-2 text-sm"><b>{student.mahasiswa?.nim} · {student.mahasiswa?.nama}</b>{student.attempts?.map((item) => <div key={`a-${item.id}`} className="flex justify-between border-t pt-2"><span>Attempt #{item.id} · MK #{item.mata_kuliah_id} · v{item.version}</span><button onClick={() => correct("course_attempt", item)} className="text-blue-700">Koreksi</button></div>)}{student.methodology_history?.filter((item) => item.is_active).map((item) => <div key={`m-${item.id}`} className="flex justify-between border-t pt-2"><span>Metodologi #{item.id} · {item.status} · v{item.version}</span><button onClick={() => correct("methodology_history", item)} className="text-blue-700">Koreksi</button></div>)}</div> : null}</div>
-    <div className="grid gap-4 lg:grid-cols-2"><div className="rounded-lg border p-4"><h3 className="font-bold">Koreksi Aktif</h3>{data.corrections.filter((item) => item.status === "active").map((item) => <div key={item.id} className="mt-2 flex justify-between border-t pt-2 text-sm"><span>#{item.id} · {item.target_entity}</span><button onClick={() => { const reason = window.prompt("Alasan revoke:"); if (reason) mutate(`/api/admin/akademik/corrections/${item.id}/revoke`, { reason }); }} className="text-rose-700">Revoke</button></div>)}</div><div className="rounded-lg border p-4"><h3 className="font-bold">Rule-set (belum enforcement)</h3><div className="mt-2 flex gap-2"><input value={rule.context} onChange={(event) => setRule({ ...rule, context: event.target.value })} className="min-w-0 flex-1 rounded border p-2"/><select value={rule.mode} onChange={(event) => setRule({ ...rule, mode: event.target.value })} className="rounded border p-2"><option value="shadow">Shadow</option><option value="informational">Informational</option></select><button onClick={() => mutate("/api/admin/akademik/rule-sets", { kode: `RULE-${Date.now()}`, context: rule.context, version: 1, mode: rule.mode, configuration: {} })} className="rounded bg-[#2f63e3] px-2 text-white">Buat</button></div>{data.rules.slice(0, 8).map((item) => <div key={item.id} className="mt-2 flex justify-between border-t pt-2 text-sm"><span>{item.context} · {item.mode} · {item.status}</span>{item.status === "draft" ? <button onClick={() => mutate(`/api/admin/akademik/rule-sets/${item.id}/activate`)} className="text-blue-700">Aktifkan</button> : null}</div>)}</div></div>
-    <div className="grid gap-4 lg:grid-cols-3"><div className="rounded-lg border p-4"><h3 className="font-bold">Batch Terbaru</h3>{data.imports.slice(0, 8).map((item) => <div key={item.id} className="mt-2 flex justify-between border-t pt-2 text-sm"><span>#{item.id} · {item.status}</span><button onClick={() => downloadReport(item.id)} className="text-blue-700">Report</button></div>)}</div><div className="rounded-lg border p-4"><h3 className="font-bold">Snapshot Jobs</h3>{data.jobs.slice(0, 8).map((item) => <div key={item.id} className="mt-2 flex justify-between border-t pt-2 text-sm"><span>#{item.id} · {item.status}</span>{item.status === "failed" ? <button onClick={() => mutate(`/api/admin/akademik/snapshot-jobs/${item.id}/retry`)} className="text-blue-700">Retry</button> : null}</div>)}</div><div className="rounded-lg border p-4"><h3 className="font-bold">Outbox</h3>{data.outbox.slice(0, 8).map((item) => <div key={item.id} className="mt-2 flex justify-between border-t pt-2 text-sm"><span>#{item.id} · {item.status}</span>{["failed", "pending"].includes(item.status) ? <button onClick={() => mutate(`/api/admin/akademik/outbox/${item.id}/retry`)} className="text-blue-700">Retry</button> : null}</div>)}</div></div>
-  </div>;
+
+  const commit = async () => {
+    if (!preview) return; setBusy(true); setMessage("");
+    try {
+      const validCount = Number(preview?.counts?.valid || 0);
+      const payload = await request(`/api/admin/akademik/nilai/imports/${preview.id}/commit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await loadRows();
+      setPreview(null);
+      setFile(null);
+      setMessage("");
+      setTab("list");
+      showSuccessToast(
+        payload.replayed
+          ? "Import ini sudah pernah disimpan; tidak ada nilai atau attempt ganda."
+          : `${validCount} data nilai berhasil disimpan.`
+      );
+    } catch (error) { setMessage(error.message); } finally { setBusy(false); }
+  };
+
+  if (readOnly) {
+    return <div className="space-y-4">{message ? <div className="rounded-lg bg-[#f4f7ff] p-3 text-sm font-semibold text-[#334b7e]">{message}</div> : null}<GradeGrid periods={periods} periodId={periodId} setPeriodId={setPeriodId} rows={rows} policy={policy}/></div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-xl border border-[#dce4f4] bg-white p-4 shadow-sm">
+        <h2 className="text-lg font-black text-[#16244a]">Menu Data Akademik</h2>
+        <p className="mt-1 text-sm text-[#66769a]">Kelola daftar nilai dan proses import nilai mata kuliah penjaluran dari satu halaman.</p>
+        <div className="mt-4 flex flex-wrap gap-2">{[["list", "Daftar Nilai"], ["import", "Import Nilai"]].map(([key, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={`rounded-full px-4 py-2 text-sm font-bold transition ${tab === key ? "bg-[#2f63e3] text-white shadow-sm" : "border border-[#d4def4] bg-white text-[#27407b] hover:bg-[#f4f7ff]"}`}>{label}</button>)}</div>
+      </section>
+      <section className="flex items-center gap-2 rounded-xl border border-[#dce4f4] bg-white p-3 shadow-sm">
+        <button type="button" onClick={onBack} aria-label="Kembali" className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#40527e] hover:bg-[#f4f7ff]"><ArrowLeft className="h-4 w-4"/></button>
+        <button type="button" onClick={loadRows} disabled={busy} className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f4f7ff] disabled:opacity-50"><RefreshCcw className="h-4 w-4"/>Refresh</button>
+      </section>
+      {message ? <div className="rounded-lg bg-[#f4f7ff] p-3 text-sm font-semibold text-[#334b7e]">{message}</div> : null}
+      {tab === "list"
+        ? <GradeGrid periods={periods} periodId={periodId} setPeriodId={setPeriodId} rows={rows} policy={policy}/>
+        : <ImportGrades periods={periods} periodId={periodId} setPeriodId={setPeriodId} preview={preview} setPreview={setPreview} file={file} setFile={setFile} busy={busy} download={download} validate={validate} commit={commit}/>}
+    </div>
+  );
 }
 
-export default function AcademicDataPanel({ mode = "student", session, apiBaseUrl, onSessionExpired }) {
-  const [data, setData] = useState(null); const [loading, setLoading] = useState(mode !== "admin"); const [error, setError] = useState("");
-  const endpoint = useMemo(() => mode === "student" ? "/api/mahasiswa/akademik" : mode === "secretary" ? "/api/sekretaris/akademik/monitoring" : null, [mode]);
-  const load = useCallback(async () => {
-    if (!endpoint) return; setLoading(true); setError("");
-    try { const response = await fetch(`${apiBaseUrl}${endpoint}`, { headers: { Authorization: `Bearer ${session.token}` } }); const payload = await response.json(); if ([401, 403].includes(response.status)) { onSessionExpired?.(); return; } if (!response.ok) throw new Error(payload.message); setData(payload.data); }
-    catch (requestError) { setError(requestError.message || "Gagal memuat data akademik."); } finally { setLoading(false); }
-  }, [apiBaseUrl, endpoint, onSessionExpired, session.token]);
-  useEffect(() => { load(); }, [load]);
-  return <section className="rounded-xl border border-[#dce4f4] bg-white p-5 shadow-sm"><div className="mb-4"><h2 className="text-lg font-black text-[#29385f]">Data Akademik Terstruktur</h2><p className="text-sm text-[#66769a]">Histori Metodologi, mata kuliah, SKS, lineage sumber, dan kualitas data.</p></div>{loading ? <p className="text-sm text-[#66769a]">Memuat data akademik…</p> : error ? <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : mode === "admin" ? <AdminImport api={apiBaseUrl} token={session.token} onChanged={load}/> : mode === "secretary" ? <div className="overflow-x-auto rounded-lg border border-[#dce4f4]"><table className="min-w-full text-left text-sm"><thead className="bg-[#f4f7fc]"><tr><th className="px-3 py-2">Mahasiswa</th><th className="px-3 py-2">Data</th><th className="px-3 py-2">Metodologi</th><th className="px-3 py-2">SKS lulus</th><th className="px-3 py-2">Wajib kurang</th></tr></thead><tbody>{(data || []).map((row) => <tr key={row.id} className="border-t"><td className="px-3 py-2"><b>{row.mahasiswa?.nim || row.mahasiswa_id}</b><br/>{row.mahasiswa?.nama || "-"}</td><td className="px-3 py-2"><Badge tone={row.data_state === "available" ? "green" : row.data_state === "conflicted" ? "red" : "amber"}>{STATE_LABELS[row.data_state] || row.data_state}</Badge></td><td className="px-3 py-2">{row.metodologi_status?.replaceAll("_", " ") || "-"}</td><td className="px-3 py-2">{Number(row.total_sks_lulus || 0)}</td><td className="px-3 py-2">{row.wajib_belum_lulus?.length || 0}</td></tr>)}</tbody></table></div> : <StudentSummary data={data}/>}</section>;
+export default function AcademicDataPanel({ mode = "student", session, apiBaseUrl, onSessionExpired, onBack }) {
+  const [data, setData] = useState(null); const [loading, setLoading] = useState(mode === "student"); const [error, setError] = useState("");
+  useEffect(() => {
+    if (mode !== "student") return undefined; let active = true; setLoading(true);
+    fetch(`${apiBaseUrl}/api/mahasiswa/akademik/mata-kuliah-penjaluran`, { headers: { Authorization: `Bearer ${session.token}` } })
+      .then(async (response) => { const payload = await response.json(); if ([401, 403].includes(response.status)) { onSessionExpired?.(); return; } if (!response.ok) throw new Error(payload.message); if (active) setData(payload.data); })
+      .catch((requestError) => { if (active) setError(requestError.message || "Gagal memuat data akademik."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [apiBaseUrl, mode, onSessionExpired, session.token]);
+
+  if (mode === "admin" || mode === "secretary") return <AcademicManagement api={apiBaseUrl} token={session.token} readOnly={mode === "secretary"} onBack={onBack} onSessionExpired={onSessionExpired}/>;
+
+  return <section className="rounded-xl border border-[#dce4f4] bg-white p-5 shadow-sm"><div className="mb-4"><h2 className="text-lg font-black text-[#29385f]">Nilai Mata Kuliah Penjaluran</h2><p className="text-sm text-[#66769a]">Satu sumber nilai untuk Data Akademik, Dokumen, dan pemeriksaan syarat sidang.</p></div>{loading ? <p className="text-sm text-[#66769a]">Memuat data akademik...</p> : error ? <div className="rounded-lg bg-rose-50 p-3 text-sm text-rose-800">{error}</div> : <StudentSummary data={data}/>}</section>;
 }

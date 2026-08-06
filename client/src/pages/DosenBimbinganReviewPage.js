@@ -420,7 +420,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
       if (!confirmation.isConfirmed) return;
     }
 
-    const actionPayload = resumeAction === "reject" ? "revisi" : "approve";
+    const actionPayload = resumeAction === "reject" ? "revision" : "approve";
 
     setSavingResume(true);
     try {

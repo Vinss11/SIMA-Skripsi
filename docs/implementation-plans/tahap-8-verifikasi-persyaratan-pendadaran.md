@@ -126,12 +126,13 @@ Beberapa aturan belum boleh diasumsikan sebagai enforcement final:
 
 1. Minimum total SKS per program kuliah dan periode.
 2. Daftar mata kuliah wajib yang harus lulus.
-3. Pengaruh final Metodologi Penelitian untuk masing-masing jalur.
-4. Approval readiness cukup P1 atau seluruh pembimbing aktif.
-5. Publikasi dan LOA diwajibkan untuk jalur serta kondisi apa.
-6. Bentuk logbook/capture yang sah per jalur.
-7. Apakah transkrip wajib diunggah ulang jika snapshot akademik resmi telah lengkap.
-8. Pihak yang memberi preliminary review untuk tiap jenis bukti.
+3. Approval readiness cukup P1 atau seluruh pembimbing aktif.
+4. Publikasi dan LOA diwajibkan untuk jalur serta kondisi apa.
+5. Bentuk logbook/capture yang sah per jalur.
+6. Apakah transkrip wajib diunggah ulang jika snapshot akademik resmi telah lengkap.
+7. Pihak yang memberi preliminary review untuk tiap jenis bukti.
+
+Status mata kuliah penjaluran sudah diputuskan sebagai persyaratan pendadaran/sidang yang wajib. Hanya attempt efektif berstatus `lulus` untuk mata kuliah yang sesuai jalur aktif terakhir yang dapat memenuhi item ini. Data hasil belum tersedia, sedang mengambil, tidak lulus, mapping bermasalah, atau data `undetermined` harus memblokir penerbitan `DefenseVerificationFact` dan penjadwalan sidang. SIMPS tidak mengevaluasi status key-in.
 
 Mekanisme policy, evaluator, snapshot, audit, dan mode shadow tetap dapat diimplementasikan. Rule yang belum disahkan wajib mempunyai:
 
@@ -198,7 +199,7 @@ Katalog awal menggunakan kode stabil berikut:
 | `ACADEMIC_SNAPSHOT_READY` | sistem | blocking | snapshot tersedia, siap, dan tidak conflicted/stale |
 | `MINIMUM_CREDITS` | sistem | shadow sampai threshold disahkan | total SKS lulus |
 | `REQUIRED_COURSES_PASSED` | sistem | shadow sampai daftar disahkan | seluruh mata kuliah wajib lulus |
-| `METHODOLOGY_STATUS` | sistem | sesuai policy jalur | status Metodologi Penelitian |
+| `TRACK_COURSE_PASSED` | sistem Tahap 5 | blocking | mata kuliah penjaluran jalur aktif terakhir telah lulus |
 | `TRANSCRIPT_EVIDENCE` | dokumen/sistem | configurable | transkrip atau bukti snapshot resmi |
 | `CEPT_CERTIFICATE` | dokumen | blocking | sertifikat CEPT tervalidasi |
 | `CEPT_MINIMUM_SCORE` | sistem dari CEPT | blocking | default awal 420, configurable |
@@ -207,7 +208,7 @@ Katalog awal menggunakan kode stabil berikut:
 | `GUIDANCE_LOGBOOK` | dokumen/sistem | configurable | logbook atau capture bimbingan |
 | `SCIENTIFIC_PUBLICATION` | dokumen | conditional | publikasi jika policy mewajibkan |
 | `LETTER_OF_ACCEPTANCE` | dokumen | conditional | LOA jika policy mewajibkan |
-| `ACADEMIC_CLEARANCE` | manual/sistem | blocking | pemeriksaan akademik/yudisium oleh pihak berwenang |
+| `DEFENSE_ACADEMIC_REVIEW` | manual/sistem | blocking jika disahkan | pemeriksaan akademik khusus pendadaran; bukan clearance yudisium |
 
 Katalog tidak menyimpan threshold yang berubah. Threshold berada pada versi policy.
 
@@ -220,6 +221,7 @@ Matriks berikut menjadi template konfigurasi, bukan konstanta source code.
 | Kesiapan bimbingan | wajib | wajib | wajib per anggota |
 | Persetujuan pembimbing | wajib | wajib | wajib per anggota |
 | Snapshot akademik | wajib | wajib | wajib |
+| Mata kuliah penjaluran | Metodologi Penelitian lulus | Manajemen Diri lulus | Metode/Metodologi Perintisan Bisnis lulus sesuai kurikulum |
 | CEPT | wajib sesuai policy | wajib sesuai policy | wajib sesuai policy |
 | Draft/laporan | draft skripsi | laporan magang | laporan bisnis/tugas akhir |
 | Logbook | configurable | logbook magang configurable | logbook kegiatan configurable |
@@ -721,7 +723,12 @@ ACADEMIC_DATA_CONFLICTED
 ACADEMIC_CALCULATION_FAILED
 MINIMUM_CREDITS_NOT_MET
 REQUIRED_COURSES_NOT_PASSED
-METHODOLOGY_NOT_PASSED
+TRACK_COURSE_MAPPING_MISSING
+TRACK_COURSE_MAPPING_AMBIGUOUS
+TRACK_COURSE_IN_PROGRESS
+TRACK_COURSE_NOT_PASSED
+TRACK_COURSE_DATA_UNAVAILABLE
+TRACK_COURSE_DATA_CONFLICTED
 CEPT_EVIDENCE_MISSING
 CEPT_SCORE_BELOW_THRESHOLD
 CEPT_EXPIRED
@@ -730,7 +737,7 @@ FINAL_REPORT_MISSING
 LOGBOOK_MISSING
 PUBLICATION_MISSING
 LOA_MISSING
-ACADEMIC_CLEARANCE_PENDING
+DEFENSE_ACADEMIC_REVIEW_PENDING
 EVIDENCE_SCAN_PENDING
 EVIDENCE_REJECTED
 MANUAL_HOLD_ACTIVE
@@ -770,7 +777,7 @@ Evaluator membaca:
 - versi dan checksum snapshot;
 - `total_sks_lulus`;
 - daftar mata kuliah wajib belum lulus;
-- status Metodologi;
+- `TrackCourseStatusProjection`, kewajiban, mapping, dan attempt efektif mata kuliah penjaluran;
 - `data_state`;
 - `calculation_status`;
 - hasil `evaluated_result` dan `effective_decision` Tahap 5.
@@ -780,6 +787,10 @@ Aturan:
 - `stale`, `failed`, `unavailable`, atau `conflicted` tidak dianggap valid;
 - tidak adanya data tidak berarti mahasiswa gagal secara akademik, tetapi menghasilkan `undetermined`;
 - rule shadow dari Tahap 5 tidak boleh berubah menjadi blocking di Tahap 8;
+- pengecualian terhadap rule shadow berlaku untuk item `TRACK_COURSE_PASSED` karena aturan ini sudah final dan selalu blocking;
+- hanya result `passed` pada mata kuliah hasil resolver jalur/kurikulum yang membuat item valid;
+- status `enrolled`, `failed`, `unknown`, missing, atau conflicted ikut membuat `all_blocking_valid = false`;
+- evaluation menyimpan kewajiban ID, mata kuliah ID, attempt ID/version, mapping ID, dan checksum agar perubahan sumber dapat menginvalidasi fact;
 - jika threshold Tahap 8 lebih spesifik dan sudah disahkan, policy ID/version harus direkam;
 - koreksi akademik menerbitkan invalidation event terhadap fact pendadaran yang bergantung pada snapshot lama.
 
@@ -1032,8 +1043,9 @@ Sebelum membuat jadwal:
 4. Pastikan tidak ada fact invalidation version yang lebih baru.
 5. Pastikan siklus dan mahasiswa sama.
 6. Evaluasi CEPT terhadap tanggal sidang target.
-7. Pastikan tidak ada hold aktif.
-8. Baru simpan jadwal.
+7. Re-resolve kewajiban dan attempt mata kuliah penjaluran; pastikan masih sama dengan dependency fact dan tetap `passed`.
+8. Pastikan tidak ada hold aktif.
+9. Baru simpan jadwal.
 
 Hal ini mencegah race antara invalidasi verifikasi dan proses penjadwalan.
 
@@ -1046,6 +1058,8 @@ Jadwal yang sudah ada tidak dihapus otomatis. Sistem:
 - membuat tindak lanjut Sekprodi;
 - memberi pilihan terkontrol untuk reverify, reschedule, atau cancel;
 - mempertahankan seluruh audit.
+
+Jika invalidasi berasal dari koreksi mata kuliah penjaluran menjadi selain `passed`, sidang tidak boleh dilaksanakan sampai data kembali valid dan verifikasi diterbitkan ulang.
 
 ## 20. Otorisasi
 
@@ -1173,6 +1187,8 @@ Halaman Persyaratan Pendadaran menampilkan:
 - daftar kekurangan dengan reason yang dapat ditindaklanjuti;
 - pemisahan rule blocking, warning, dan shadow;
 - sumber data akademik dan waktu snapshot tanpa membuka detail internal sensitif;
+- pada menu `Dokumen`, tampilkan item sistem `Mata Kuliah Penjaluran` yang membaca nilai/status langsung dari Data Akademik Tahap 5; item ini bukan file upload dan tidak dapat di-approve manual;
+- item tersebut menampilkan mata kuliah, periode, nilai, serta status `belum tersedia`, `sedang mengambil`, `lulus`, atau `tidak lulus`; hanya `lulus` yang memenuhi syarat sidang;
 - status fakta bimbingan;
 - form CEPT terstruktur;
 - upload dan histori versi dokumen;
@@ -1557,7 +1573,7 @@ Refactor khusus implementasi lama:
 - snapshot stale/failed/conflicted memblokir rule blocking;
 - SKS di bawah/tepat/di atas threshold;
 - mata kuliah wajib belum lulus;
-- Metodologi sedang mengambil/tidak lulus/lulus;
+- mata kuliah penjaluran lulus memenuhi item; hasil belum tersedia/sedang mengambil/tidak lulus/missing/conflicted memblokir eligibility pendadaran;
 - koreksi akademik setelah verify menginvalidasi fact;
 - revoke correction memicu re-evaluation;
 - rule akademik shadow tidak memblokir.
@@ -1695,21 +1711,23 @@ Tahap 8 dianggap selesai jika:
 3. Setiap verifikasi terikat mahasiswa, pendaftaran, jalur, cycle type, program, periode, dan assignment.
 4. Academic snapshot dan GuidanceReadinessFact dikonsumsi berdasarkan ID/version/checksum.
 5. Rule shadow tidak memblokir dan ditandai jelas.
-6. CEPT menyimpan skor, tanggal tes, expiry, issuer, status, reviewer, dan evidence version.
-7. Dokumen/bukti mempunyai histori versi immutable.
-8. Setiap item mempunyai status, evaluator/reviewer, waktu, reason code, dan fakta sumber.
-9. Sekprodi dapat hold, unhold, verify, invalidate, dan melihat audit.
-10. Verifikasi final menerbitkan `DefenseVerificationFact` yang berversi dan ber-checksum.
-11. Perubahan sumber menginvalidasi fact tanpa menghapus histori.
-12. Register, manual scheduling, auto scheduling, bulk scheduling, dan reschedule menolak fact tidak valid.
-13. Invalidasi setelah jadwal menghasilkan follow-up yang teraudit.
-14. Seluruh write path baru memakai idempotency dan optimistic concurrency.
-15. Penelitian, Magang, Perintisan, baru, ulang, alih, dan semester transition lulus integration test.
-16. Concurrency test dan bypass API test lulus.
-17. Histori Pengabdian tetap terbaca dan create baru ditolak.
-18. Backfill legacy idempoten dan tidak menghapus data.
-19. Build frontend, migration test, rollback test, integration test, security test, dan UAT lulus.
-20. Tidak ada mahasiswa yang dapat memperoleh jadwal baru tanpa `DefenseVerificationFact` valid.
+6. `TRACK_COURSE_PASSED` menjadi item blocking untuk seluruh jalur aktif dan hanya valid dari attempt lulus yang sesuai jalur/kurikulum.
+7. Perubahan/koreksi attempt setelah verifikasi menginvalidasi `DefenseVerificationFact` dan memblokir penjadwalan sampai diverifikasi ulang.
+8. CEPT menyimpan skor, tanggal tes, expiry, issuer, status, reviewer, dan evidence version.
+9. Dokumen/bukti mempunyai histori versi immutable.
+10. Setiap item mempunyai status, evaluator/reviewer, waktu, reason code, dan fakta sumber.
+11. Sekprodi dapat hold, unhold, verify, invalidate, dan melihat audit.
+12. Verifikasi final menerbitkan `DefenseVerificationFact` yang berversi dan ber-checksum.
+13. Perubahan sumber menginvalidasi fact tanpa menghapus histori.
+14. Register, manual scheduling, auto scheduling, bulk scheduling, dan reschedule menolak fact tidak valid.
+15. Invalidasi setelah jadwal menghasilkan follow-up yang teraudit.
+16. Seluruh write path baru memakai idempotency dan optimistic concurrency.
+17. Penelitian, Magang, Perintisan, baru, ulang, alih, dan semester transition lulus integration test.
+18. Concurrency test dan bypass API test lulus.
+19. Histori Pengabdian tetap terbaca dan create baru ditolak.
+20. Backfill legacy idempoten dan tidak menghapus data.
+21. Build frontend, migration test, rollback test, integration test, security test, dan UAT lulus.
+22. Tidak ada mahasiswa yang dapat memperoleh jadwal baru tanpa `DefenseVerificationFact` valid.
 
 ## 31. Handoff ke Tahap 9
 

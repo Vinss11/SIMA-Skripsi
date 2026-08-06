@@ -13,6 +13,9 @@ BR-AUDIT-001–004 dan Definition of Done sistem. Pengabdian tetap hold dan hany
 - Mahasiswa per jalur, periode, baru/ulang/alih, dan status.
 - Penetapan serta beban P1/P2 per semester.
 - Progres bimbingan dan izin lanjut.
+- Kewajiban mata kuliah penjaluran per jalur/kurikulum, attempt lulus/tidak lulus, serta kebutuhan repeat.
+- Mahasiswa yang clearance yudisiumnya tertahan karena mata kuliah penjaluran.
+- Mahasiswa yang belum dapat diverifikasi/dijadwalkan sidang karena mata kuliah penjaluran.
 - Eligibility/hold pendadaran.
 - Ketersediaan, beban penguji, jadwal, konflik, dan ruang.
 - Penggantian penguji/reschedule.
@@ -26,8 +29,9 @@ Filter dan agregasi dilakukan backend; export besar memakai job/streaming agar t
 1. Petakan seluruh keputusan kritis beserta aktor dan before/after.
 2. Pastikan histori tidak dapat diedit melalui endpoint umum.
 3. Buat checker untuk penetapan ganda, cache P1, kelompok, status mahasiswa, jadwal bentrok, nilai belum lengkap, dan mahasiswa lulus dengan penetapan aktif.
-4. Semua script mempunyai dry-run, output ID, mode execute eksplisit, dan aman diulang.
-5. Tetapkan retensi file, backup, serta akses data pribadi.
+4. Checker akademik minimum mendeteksi mapping jalur–mata kuliah hilang/beririsan, kewajiban ganda, hasil tanpa sumber audit, kewajiban lama aktif setelah alih, repeat setelah sudah lulus, `DefenseVerificationFact`/jadwal sidang tanpa attempt lulus yang sesuai, serta mahasiswa siap yudisium/lulus tanpa attempt lulus jalur aktif terakhir.
+5. Semua script mempunyai dry-run, output ID, mode execute eksplisit, dan aman diulang.
+6. Tetapkan retensi file, backup, serta akses data pribadi.
 
 ## 5. Test lintas sistem
 
@@ -38,6 +42,8 @@ Filter dan agregasi dilakukan backend; export besar memakai job/streaming agar t
 - Contract test API penting.
 - E2E happy path Penelitian, Magang, dan Perintisan dari pendaftaran sampai lulus.
 - E2E ulang/alih dan jalur gagal/rejected.
+- E2E submit form + pengingat Gateway → keputusan final → import hasil lulus/tidak lulus → gate sidang → repeat bila perlu → pemeriksaan ulang clearance yudisium.
+- E2E alih jalur mengganti mata kuliah tanpa menghapus histori; kegagalan mata kuliah tidak memblokir bimbingan tetapi memblokir sidang dan yudisium.
 - Security test role, forced password, upload, rate limit, dan akses objek.
 - Performance test antrean, laporan, auto-scheduling, dan kelompok.
 
@@ -60,15 +66,16 @@ Gunakan akun Admin, Sekprodi, Ketua Cluster, Pengawas Magang, Pengampu Perintisa
 
 ## 7. Decision gate release
 
-Release belum boleh dinyatakan selesai jika review topik Penelitian, detail judul mandiri, P2, kelas penguji, bobot nilai, atau gate yudisium yang memengaruhi produksi belum diputuskan.
+Release belum boleh dinyatakan selesai jika review topik Penelitian, detail judul mandiri, P2, kelas penguji, bobot nilai, mapping mata kuliah penjaluran per kurikulum, sumber hasil lulus/tidak lulus, gate sidang, atau pemeriksaan ulang yudisium yang memengaruhi produksi belum diputuskan.
 
 ## 8. Definition of Done
 
 - Tiga jalur aktif lulus E2E dari pendaftaran baru/ulang/alih sampai kelulusan.
 - Semua tahap 1–14 memenuhi Definition of Done.
 - Laporan dapat direkonsiliasi dengan data sumber.
+- Hasil mata kuliah dan sumbernya dapat ditelusuri tanpa menjadikan SIMPS sebagai pengganti Gateway atau pengelola key-in.
+- Pendaftaran penjaluran dan bimbingan tidak terblokir oleh mata kuliah penjaluran, sedangkan verifikasi/penjadwalan sidang dan clearance yudisium hanya lolos setelah mata kuliah jalur aktif terakhir lulus.
 - Audit dan checker integritas lulus tanpa anomali kritis.
 - Migration, backup, rollback, monitoring, dan runbook tersedia.
 - UAT ditandatangani pihak terkait.
 - Dokumentasi, BPMN, kode, test, dan aturan bisnis konsisten.
-

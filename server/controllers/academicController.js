@@ -7,6 +7,7 @@ const { Op } = require("sequelize");
 const db = require("../models");
 const policy = require("../services/academicPolicy");
 const academic = require("../services/academicDataService");
+const penjaluranGrades = require("../services/penjaluranGradeService");
 
 function sendError(res, error) {
   const status = error.status || 500;
@@ -377,9 +378,78 @@ exports.getMonitoring = async (req, res) => {
   } catch (e) { return sendError(res, e); }
 };
 
+exports.listPenjaluranGradesForSecretary = async (req, res) => {
+  try {
+    const periodId = Number(req.query.periode_pendaftaran_id || req.query.periode_penjaluran_id);
+    if (!periodId) throw new penjaluranGrades.PenjaluranGradeError("Periode pendaftaran penjaluran wajib dipilih.", 400, "GRADE_PERIOD_REQUIRED");
+    const rows = await penjaluranGrades.registrationRows(periodId, { programKuliah: req.user.program_kuliah });
+    return res.json({ success: true, data: rows, scope: { program_kuliah: req.user.program_kuliah }, policy: { minimum_passing_grade: penjaluranGrades.gradePolicy.MINIMUM_PASSING_GRADE, allowed_grades: penjaluranGrades.gradePolicy.ALLOWED_GRADES } });
+  } catch (error) { return sendError(res, error); }
+};
+
 exports.getFailedOperations = async (req, res) => {
   try { const [batches, jobs, outbox] = await Promise.all([db.ImportAkademikBatch.findAll({ where: { status: "failed" } }), db.PekerjaanSnapshotAkademik.findAll({ where: { status: "failed" } }), db.OutboxAkademik.findAll({ where: { status: "failed" } })]); return res.json({ success: true, data: { batches, snapshot_jobs: jobs, outbox } }); }
   catch (e) { return sendError(res, e); }
+};
+
+exports.listPenjaluranPeriods = async (req, res) => {
+  try { return res.json({ success: true, data: await penjaluranGrades.listPeriods() }); }
+  catch (error) { return sendError(res, error); }
+};
+
+exports.listPenjaluranGrades = async (req, res) => {
+  try {
+    const periodId = Number(req.query.periode_pendaftaran_id || req.query.periode_penjaluran_id);
+    if (!periodId) throw new penjaluranGrades.PenjaluranGradeError("Periode pendaftaran penjaluran wajib dipilih.", 400, "GRADE_PERIOD_REQUIRED");
+    return res.json({ success: true, data: await penjaluranGrades.registrationRows(periodId), policy: { minimum_passing_grade: penjaluranGrades.gradePolicy.MINIMUM_PASSING_GRADE, allowed_grades: penjaluranGrades.gradePolicy.ALLOWED_GRADES } });
+  } catch (error) { return sendError(res, error); }
+};
+
+exports.downloadPenjaluranGradeTemplate = async (req, res) => {
+  try {
+    const periodId = Number(req.query.periode_pendaftaran_id || req.query.periode_penjaluran_id);
+    if (!periodId) throw new penjaluranGrades.PenjaluranGradeError("Periode pendaftaran penjaluran wajib dipilih.", 400, "GRADE_PERIOD_REQUIRED");
+    const buffer = await penjaluranGrades.buildTemplate(periodId);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=template_nilai_penjaluran_${periodId}.xlsx`);
+    return res.send(buffer);
+  } catch (error) { return sendError(res, error); }
+};
+
+exports.previewPenjaluranGradeImport = async (req, res) => {
+  let filepath = req.file?.path;
+  try {
+    if (!req.file) throw new penjaluranGrades.PenjaluranGradeError("File Excel wajib diunggah.", 400, "GRADE_IMPORT_FILE_REQUIRED");
+    const bytes = fs.readFileSync(filepath);
+    const result = await penjaluranGrades.createPreview({ periodePenjaluranId: Number(req.body.periode_pendaftaran_id || req.body.periode_penjaluran_id), bytes, filename: req.file.originalname, actorId: req.user.id });
+    return res.status(result.replayed ? 200 : 201).json({ success: true, data: result.import, replayed: result.replayed });
+  } catch (error) { return sendError(res, error); }
+  finally { if (filepath) fs.promises.unlink(filepath).catch(() => {}); }
+};
+
+exports.commitPenjaluranGradeImport = async (req, res) => {
+  try { const result = await penjaluranGrades.commitImport(Number(req.params.id), req.user.id); return res.json({ success: true, data: result.import, replayed: result.replayed }); }
+  catch (error) { return sendError(res, error); }
+};
+
+exports.downloadPenjaluranGradeReport = async (req, res) => {
+  try {
+    const imported = await db.ImportNilaiPenjaluran.findByPk(req.params.id, { include: [{ model: db.ImportNilaiPenjaluranRow, as: "rows" }] });
+    if (!imported) throw new penjaluranGrades.PenjaluranGradeError("Import tidak ditemukan.", 404, "GRADE_IMPORT_NOT_FOUND");
+    const lines = ["Baris,ID Pendaftaran,NIM,Nilai,Status,Kesalahan", ...imported.rows.filter((row) => !row.is_valid).map((row) => [row.row_number, row.pendaftaran_penjaluran_id || "", row.raw_payload?.NIM || "", row.nilai_huruf || "", "Tidak valid", (row.errors || []).join(" | ")].map((value) => `"${String(policy.sanitizeSpreadsheetString(value)).replace(/"/g, '""')}"`).join(","))];
+    res.setHeader("Content-Type", "text/csv; charset=utf-8"); res.setHeader("Content-Disposition", `attachment; filename=laporan_kesalahan_nilai_${imported.id}.csv`);
+    return res.send(`\uFEFF${lines.join("\n")}`);
+  } catch (error) { return sendError(res, error); }
+};
+
+exports.getMyPenjaluranGrades = async (req, res) => {
+  try { return res.json({ success: true, data: await penjaluranGrades.getStudentData(Number(req.user.id)) }); }
+  catch (error) { return sendError(res, error); }
+};
+
+exports.getMyPenjaluranSidangRequirement = async (req, res) => {
+  try { return res.json({ success: true, data: await penjaluranGrades.getSidangRequirement(Number(req.user.id)) }); }
+  catch (error) { return sendError(res, error); }
 };
 
 module.exports.sendError = sendError;

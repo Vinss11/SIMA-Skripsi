@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CheckCircle2, Download, RefreshCcw, Search, XCircle } from "lucide-react";
+import Swal from "sweetalert2";
 
 const PAGE_SIZE = 20;
 const DOC_ORDER = ["transkrip", "cept", "draft_skripsi"];
@@ -49,6 +50,8 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
     cept: "",
     draft_skripsi: "",
   });
+  const [reviewMessages, setReviewMessages] = useState({});
+  const [reviewErrors, setReviewErrors] = useState({});
 
   const fetchWithAuth = useCallback(async (path, options = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -107,10 +110,12 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       }
       const nextDetail = payload?.data || null;
       setDetail(nextDetail);
+      setReviewMessages({});
+      setReviewErrors({});
       setReviewNotes({
-        transkrip: nextDetail?.dokumen?.transkrip?.review_note || "",
-        cept: nextDetail?.dokumen?.cept?.review_note || "",
-        draft_skripsi: nextDetail?.dokumen?.draft_skripsi?.review_note || "",
+        transkrip: "",
+        cept: "",
+        draft_skripsi: "",
       });
     } catch (detailError) {
       if (detailError.message !== "__SESSION_EXPIRED__") {
@@ -186,14 +191,40 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
 
   const handleReview = async (docKey, decision) => {
     if (!selectedMahasiswaId) return;
-    const note = String(reviewNotes[docKey] || "").trim();
-    if (decision === "revisi" && note.length < 5) {
-      setError("Catatan revisi minimal 5 karakter.");
+    const currentDocument = detail?.dokumen?.[docKey];
+    if (!currentDocument?.can_review) {
+      setReviewErrors((current) => ({
+        ...current,
+        [docKey]: currentDocument?.status === "revisi"
+          ? "Keputusan dikunci sampai mahasiswa mengunggah ulang dokumen."
+          : currentDocument?.status === "approved"
+          ? "Dokumen sudah disetujui dan keputusannya telah dikunci."
+          : "Dokumen belum siap direview.",
+      }));
       return;
     }
+    const note = String(reviewNotes[docKey] || "").trim();
+    if (decision === "revisi" && note.length < 5) {
+      setReviewErrors((current) => ({ ...current, [docKey]: "Catatan revisi minimal 5 karakter." }));
+      return;
+    }
+    const confirmation = await Swal.fire({
+      title: decision === "approve" ? "Setujui dokumen ini?" : "Kembalikan dokumen untuk revisi?",
+      text: decision === "approve"
+        ? "Mahasiswa tidak dapat mengunggah ulang setelah dokumen disetujui."
+        : "Dosen tidak dapat memberi keputusan lagi sampai mahasiswa mengunggah versi baru.",
+      icon: decision === "approve" ? "question" : "warning",
+      showCancelButton: true,
+      confirmButtonText: decision === "approve" ? "Ya, Approve" : "Ya, Minta Revisi",
+      cancelButtonText: "Batal",
+      confirmButtonColor: decision === "approve" ? "#137748" : "#b73a3a",
+    });
+    if (!confirmation.isConfirmed) return;
     try {
       setSavingDocKey(docKey);
       setError("");
+      setReviewErrors((current) => ({ ...current, [docKey]: "" }));
+      setReviewMessages((current) => ({ ...current, [docKey]: "" }));
       const response = await fetchWithAuth(`/api/dosen/dokumen-sidang/${selectedMahasiswaId}/review`, {
         method: "POST",
         body: JSON.stringify({
@@ -206,10 +237,24 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       if (!response.ok || !payload?.success) {
         throw new Error(payload?.message || "Gagal menyimpan review dokumen.");
       }
-      await Promise.all([loadRows(), loadDetail(selectedMahasiswaId)]);
+      setDetail((current) => current ? {
+        ...current,
+        gate: payload.data?.gate || current.gate,
+        summary: payload.data?.summary || current.summary,
+        status_pendaftaran_sidang: payload.data?.status_pendaftaran_sidang || current.status_pendaftaran_sidang,
+        dokumen: payload.data?.dokumen || current.dokumen,
+      } : current);
+      setReviewNotes((current) => ({ ...current, [docKey]: "" }));
+      setReviewMessages((current) => ({
+        ...current,
+        [docKey]: decision === "approve"
+          ? "Dokumen berhasil disetujui. Keputusan dikunci dan mahasiswa tidak dapat mengunggah ulang."
+          : "Permintaan revisi berhasil dikirim. Menunggu mahasiswa mengunggah ulang sebelum review berikutnya.",
+      }));
+      await loadRows();
     } catch (reviewError) {
       if (reviewError.message !== "__SESSION_EXPIRED__") {
-        setError(reviewError.message || "Gagal menyimpan review dokumen.");
+        setReviewErrors((current) => ({ ...current, [docKey]: reviewError.message || "Gagal menyimpan review dokumen." }));
       }
     } finally {
       setSavingDocKey("");
@@ -399,6 +444,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
               {DOC_ORDER.map((docKey) => {
                 const doc = detail?.dokumen?.[docKey];
                 if (!doc) return null;
+                const canDecide = detail?.can_review !== false && doc.can_review === true;
                 return (
                   <div key={`detail-doc-${docKey}`} className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -410,18 +456,36 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
 
                     <div className="mt-2 space-y-1 text-sm text-[#42588f]">
                       <p>
-                        <span className="font-semibold">File:</span> {doc.file_name || "-"}
+                        <span className="font-semibold">Nama File:</span> {doc.file_name || "-"}
                       </p>
                       <p>
-                        <span className="font-semibold">Terakhir Upload:</span> {formatDateTime(doc.uploaded_at)}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Catatan Review:</span> {doc.review_note || "-"}
+                        <span className="font-semibold">Tanggal Upload:</span> {formatDateTime(doc.uploaded_at)}
                       </p>
                     </div>
 
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        disabled={!doc.has_file || savingDocKey === docKey}
+                        onClick={() => {
+                          handleDownload(docKey, doc.file_name).catch(() => {});
+                        }}
+                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Download className="h-4 w-4" />
+                        Unduh File
+                      </button>
+                    </div>
+
+                    {doc.review_note ? (
+                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${doc.status === "revisi" ? "border-red-200 bg-red-50 text-red-700" : "border-[#dce4f7] bg-[#f8fbff] text-[#42588f]"}`}>
+                        <p className="font-semibold">Catatan keputusan terakhir</p>
+                        <p className="mt-1 whitespace-pre-wrap">{doc.review_note}</p>
+                      </div>
+                    ) : null}
+
                     <div className="mt-3 rounded-lg border border-[#dce4f7] bg-[#f8fbff] p-3">
-                      <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Catatan Revisi Dosen</label>
+                      <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Catatan Dosen</label>
                       <textarea
                         rows={3}
                         value={reviewNotes[docKey] || ""}
@@ -433,25 +497,15 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                         }
                         className="w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm text-[#1f2d53] outline-none focus:border-[#2f63e3]"
                         placeholder="Isi catatan jika dokumen perlu revisi..."
-                        disabled={detail?.can_review === false}
+                        disabled={!canDecide || savingDocKey === docKey}
                       />
+                      {reviewErrors[docKey] ? <p className="mt-2 text-sm font-semibold text-red-600">{reviewErrors[docKey]}</p> : null}
                     </div>
 
                     <div className="mt-3 flex flex-wrap items-center gap-2">
                       <button
                         type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey}
-                        onClick={() => {
-                          handleDownload(docKey, doc.file_name).catch(() => {});
-                        }}
-                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <Download className="h-4 w-4" />
-                        Unduh
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey || detail?.can_review === false}
+                        disabled={!canDecide || savingDocKey === docKey}
                         onClick={() => {
                           handleReview(docKey, "approve").catch(() => {});
                         }}
@@ -462,7 +516,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                       </button>
                       <button
                         type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey || detail?.can_review === false}
+                        disabled={!canDecide || savingDocKey === docKey}
                         onClick={() => {
                           handleReview(docKey, "revisi").catch(() => {});
                         }}
@@ -472,6 +526,22 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                         {savingDocKey === docKey ? "Menyimpan..." : "Revisi"}
                       </button>
                     </div>
+
+                    {doc.status === "revisi" ? (
+                      <div className="mt-3 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#7a5a00]">
+                        Menunggu mahasiswa mengunggah ulang. Approve dan Revisi dinonaktifkan sampai ada file baru.
+                      </div>
+                    ) : null}
+                    {doc.status === "approved" ? (
+                      <div className="mt-3 rounded-lg border border-[#d6f1e2] bg-[#ecfaf2] px-3 py-2 text-sm font-semibold text-[#196a45]">
+                        Dokumen sudah disetujui. Keputusan dan upload mahasiswa telah dikunci.
+                      </div>
+                    ) : null}
+                    {reviewMessages[docKey] ? (
+                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${doc.status === "approved" ? "border-[#d6f1e2] bg-[#ecfaf2] text-[#196a45]" : "border-[#f2dfb3] bg-[#fff9e9] text-[#7a5a00]"}`}>
+                        {reviewMessages[docKey]}
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

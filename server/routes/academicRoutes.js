@@ -30,6 +30,12 @@ admin.post("/mata-kuliah/:id/aliases", controller.createAlias);
 admin.post("/equivalence-groups", controller.createEquivalenceGroup);
 admin.put("/equivalences/:id", controller.upsertEquivalence);
 admin.post("/mahasiswa/:id/curriculum-assignment", controller.assignCurriculum);
+admin.get("/nilai/periode", controller.listPenjaluranPeriods);
+admin.get("/nilai/template", controller.downloadPenjaluranGradeTemplate);
+admin.get("/nilai", controller.listPenjaluranGrades);
+admin.post("/nilai/imports", (req, res, next) => upload.single("file")(req, res, (error) => error ? res.status(400).json({ success: false, code: "GRADE_IMPORT_FILE_INVALID", message: error.message }) : next()), controller.previewPenjaluranGradeImport);
+admin.post("/nilai/imports/:id/commit", controller.commitPenjaluranGradeImport);
+admin.get("/nilai/imports/:id/report", controller.downloadPenjaluranGradeReport);
 admin.get("/templates/:dataset", controller.downloadTemplate);
 admin.post("/imports", (req, res, next) => upload.single("file")(req, res, (error) => error ? res.status(400).json({ success: false, code: "ACADEMIC_IMPORT_FILE_INVALID", message: error.message }) : next()), controller.createImport);
 admin.get("/imports", controller.listImports);
@@ -56,12 +62,16 @@ admin.get("/operations/failed", controller.getFailedOperations);
 
 const secretary = express.Router();
 secretary.use(authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess);
+secretary.get("/nilai/periode", controller.listPenjaluranPeriods);
+secretary.get("/nilai", controller.listPenjaluranGradesForSecretary);
 secretary.get("/monitoring", controller.getMonitoring);
 secretary.get("/mahasiswa/:id", controller.getStudentDetailAdmin);
 
 const student = express.Router();
 student.use(authenticateToken, authorizeRole("mahasiswa"));
 student.get("/", controller.getMyAcademic);
+student.get("/mata-kuliah-penjaluran", controller.getMyPenjaluranGrades);
+student.get("/persyaratan-sidang", controller.getMyPenjaluranSidangRequirement);
 student.get("/eligibility", controller.getMyEligibility);
 
 module.exports = { admin, secretary, student };

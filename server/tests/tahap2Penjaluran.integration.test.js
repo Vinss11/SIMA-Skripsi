@@ -339,6 +339,7 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
         pendaftaran: "baru",
         jenis_jalur_diambil: "penelitian",
         dosen_pembimbing_akademik_id: dpa.id,
+        calon_dosen_pembimbing_id: dpa.id,
       },
     }, submitted);
     assert.equal(submitted.statusCode, 201);
@@ -356,6 +357,8 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
       where: { mahasiswa_id: student.id, periode_penjaluran_id: periodId },
     });
     assert.ok(registration);
+    assert.equal(registration.calon_dosen_pembimbing_id, dpa.id, "preferensi calon pembimbing tersimpan");
+    assert.equal(registration.dosen_pembimbing_ta_id, null, "preferensi tidak menjadi pembimbing final");
     registrationIds.push(registration.id);
 
     const duplicateCheck = responseRecorder();

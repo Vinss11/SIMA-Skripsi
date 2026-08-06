@@ -532,6 +532,7 @@ controller Perintisan ─┘          │
                     ├── jalankan perubahan khusus jalur
                     ├── aktifkan penetapan
                     ├── sinkronkan status dan cache
+                    ├── buat kewajiban MK aktif
                     ├── tulis histori dan notifikasi
                     └── simpan hasil idempotensi
 ```
@@ -548,13 +549,14 @@ Service melakukan:
 8. membuat serta mengaktifkan penetapan semester pertama;
 9. menyinkronkan cache P1;
 10. memperbarui status pengajuan/form, kelompok, pendaftaran bila diperlukan, dan status jalur mahasiswa;
-11. menulis histori keputusan;
-12. membuat pemberitahuan dengan deduplication key;
-13. membentuk fingerprint keputusan dari sumber, keputusan, topik bila relevan, P1, P2, dan scope aktor;
-14. menyimpan fingerprint/idempotency key bersama hasil final yang dapat dibaca ulang;
-15. mengembalikan hasil lama dengan `replayed: true` bila keputusan identik sudah berhasil;
-16. melempar `409 IDEMPOTENCY_CONFLICT` bila request ulang membawa keputusan atau komposisi berbeda;
-17. rollback seluruh perubahan ketika satu langkah gagal.
+11. resolve kurikulum mahasiswa dan mata kuliah penjaluran sesuai jalur, lalu membuat `KewajibanMataKuliahPenjaluran` berstatus `active` untuk setiap mahasiswa yang difinalisasi;
+12. menulis histori keputusan;
+13. tidak membuat antrean/tugas/status key-in; pengingat Gateway sudah ditampilkan saat form awal berhasil dikirim;
+14. membentuk fingerprint keputusan dari sumber, keputusan, topik bila relevan, P1, P2, mata kuliah hasil resolver, dan scope aktor;
+15. menyimpan fingerprint/idempotency key bersama hasil final yang dapat dibaca ulang;
+16. mengembalikan hasil lama dengan `replayed: true` bila keputusan identik sudah berhasil;
+17. melempar `409 IDEMPOTENCY_CONFLICT` bila request ulang membawa keputusan atau komposisi berbeda;
+18. rollback seluruh perubahan ketika satu langkah gagal.
 
 Adapter per jalur hanya bertanggung jawab menyiapkan konteks dan aksi spesifik, seperti penetapan topik `taken` atau penyelesaian aggregate kelompok.
 
@@ -567,7 +569,7 @@ Hasil: tiga jalur mempunyai semantik final approval, error, audit, dan idempoten
    - mahasiswa authenticated: membuat/melihat pendaftaran dan form miliknya, termasuk akun existing;
    - penanggung jawab: melihat/memutus antrean periode tugasnya;
    - Sekprodi: melihat/memutus final sesuai program kuliah;
-   - Admin: tidak membuat keputusan akademik final.
+   - Admin: tidak membuat keputusan akademik final, tetapi menangani antrean operasional key-in mata kuliah penjaluran dan konfirmasi/import bukti Gateway.
 2. Jangan menyediakan kandidat P1/P2 melalui endpoint publik.
 3. Endpoint kandidat Sekprodi melakukan query terbaru dan mengembalikan eligibility serta kapasitas.
 4. Semua detail dan download dokumen memverifikasi object-level authorization.
@@ -594,10 +596,13 @@ Hasil: aktor hanya dapat melihat dan melakukan aksi sesuai perannya.
    - Form terkirim;
    - Review penanggung jawab;
    - Keputusan final Sekprodi;
-   - Pembimbing aktif.
+   - Pembimbing aktif;
+   - Mata kuliah penjaluran menunggu/sudah key-in.
 7. Tampilkan alasan penolakan dan next action dari API.
 8. Setelah bootstrap sukses, tampilkan instruksi login awal menggunakan NIM dan arahkan ke forced-change; jangan menyimpan password di browser storage.
 9. Untuk Perintisan, anggota melihat status kelompok readonly dan ketua mempunyai aksi edit/submit.
+10. Tampilkan nama mata kuliah penjaluran sesuai jalur dan pengingat bahwa mahasiswa harus mengecek Gateway. Jika hasil akademik belum masuk, tampilkan `Data belum tersedia` tanpa menyimpulkan status key-in.
+11. Setelah pendaftaran berhasil dibuat, projection Data Akademik Admin langsung dapat menampilkan mahasiswa dengan `Jenis Pendaftaran`, `Jalur Penjaluran`, mata kuliah hasil mapping, dan nilai `Belum tersedia`; jangan membuat attempt atau nilai sebelum sumber akademik resmi masuk.
 
 #### Penanggung jawab jalur
 
@@ -613,6 +618,14 @@ Hasil: aktor hanya dapat melihat dan melakukan aksi sesuai perannya.
 4. Tampilkan alasan dosen tidak eligible tanpa membocorkan data sensitif.
 5. Untuk Perintisan, tampilkan jumlah slot yang akan digunakan pada P1 dan P2.
 6. Setelah berhasil, hapus item dari antrean, refresh kapasitas, dan tampilkan tautan penetapan aktif.
+
+#### Admin
+
+1. Admin melakukan key-in langsung di Gateway di luar SIMPS.
+2. Tidak ada antrean, export, konfirmasi, atau status key-in pada SIMPS.
+3. Setelah hasil resmi tersedia, Admin mengimpor data akademik melalui halaman Data Akademik yang disederhanakan pada Tahap 5.
+4. Konfirmasi tidak mengubah nilai atau status kelulusan mata kuliah.
+5. Konflik kurikulum, mata kuliah tidak ditemukan, atau mahasiswa sudah key-in masuk tindak lanjut, bukan dipaksa sukses.
 
 Hasil: UI mengikuti response state machine dan tidak membuat keputusan bisnis sendiri.
 
@@ -634,6 +647,9 @@ Hasil: UI mengikuti response state machine dan tidak membuat keputusan bisnis se
    - penetapan aktif tetapi form belum final approved;
    - cache P1 tidak cocok dengan penetapan;
    - status jalur mahasiswa berisi jenis pendaftaran, bukan jalur akademik.
+   - keputusan final tanpa kewajiban mata kuliah penjaluran;
+   - kewajiban mata kuliah tidak sesuai jalur/kurikulum;
+   - kewajiban mata kuliah `fulfilled` tanpa attempt lulus dari sumber akademik resmi.
 6. Sediakan mode dry-run dan execute; dry-run menampilkan jumlah, ID, alasan, serta aksi yang akan dilakukan.
 7. Jangan menghapus data historis sah. State ambigu dipindahkan ke laporan manual review bila tidak dapat ditentukan secara aman.
 
@@ -648,7 +664,9 @@ Tahap 14 akan menyempurnakan pengalaman menu universal. Tahap 2 tetap wajib memb
 - keputusan approve/reject penanggung jawab;
 - pengajuan masuk antrean Sekprodi;
 - keputusan final;
-- penetapan P1/P2 aktif.
+- penetapan P1/P2 aktif;
+- konfirmasi form awal kepada mahasiswa yang memuat pengingat mengecek Gateway;
+- hasil lulus/tidak lulus, kebutuhan repeat, atau perubahan mata kuliah setelah alih.
 
 Setiap pemberitahuan mempunyai jenis, penerima, ringkasan, referensi objek, waktu, dan deduplication key. Pembuatan notifikasi berada dalam transaksi finalisasi atau memakai transactional outbox jika pengiriman eksternal ditambahkan kemudian.
 
@@ -690,11 +708,15 @@ Uji minimal:
 14. Perubahan status/ketersediaan setelah modal dibuka menghasilkan stale conflict dan tidak membuat data parsial.
 15. P1 dan P2 yang sama ditolak sesuai BR-PENETAPAN-002.
 16. Notifikasi mahasiswa, P1, dan P2 dibuat dengan referensi keputusan/penetapan yang benar.
-17. Pemanggilan final approval kedua dengan payload identik berhasil dengan `replayed: true` tanpa menggandakan histori, pemakaian kuota, penetapan, cache, atau notifikasi.
-18. Pemanggilan kedua dengan keputusan atau P1/P2 berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
-19. Kegagalan notifikasi atau update terakhir menyebabkan rollback lengkap.
-20. Sekprodi program lain tidak dapat melihat atau memutus pengajuan.
-21. Response list, detail, dan aksi selalu mempunyai `workflow_stage` serta `raw_workflow_status` yang benar.
+17. Final approval membuat tepat satu kewajiban mata kuliah penjaluran `active` per mahasiswa tanpa membuat tugas atau status key-in.
+18. Mapping Penelitian, Magang, dan Perintisan masing-masing menghasilkan Metodologi Penelitian, Manajemen Diri, dan Metode/Metodologi Perintisan sesuai kurikulum.
+19. Pemanggilan final approval kedua dengan payload identik berhasil dengan `replayed: true` tanpa menggandakan histori, pemakaian kuota, penetapan, kewajiban mata kuliah, cache, atau notifikasi.
+20. Pemanggilan kedua dengan keputusan atau P1/P2 berbeda menghasilkan `409 IDEMPOTENCY_CONFLICT`.
+21. Kegagalan notifikasi, pembuatan kewajiban mata kuliah, atau update terakhir menyebabkan rollback lengkap.
+22. Sekprodi program lain tidak dapat melihat atau memutus pengajuan.
+23. Response list, detail, dan aksi selalu mempunyai `workflow_stage` serta `raw_workflow_status` yang benar.
+
+Assertion tambahan: response/halaman sukses submit form awal menampilkan pengingat Gateway, sedangkan final approval tidak membuat pengingat awal kedua; notifikasi baru hanya muncul ketika hasil, repeat, atau mata kuliah berubah.
 
 ### 9.3 Integration test Penelitian
 
@@ -816,6 +838,9 @@ Tahap dinyatakan selesai apabila:
 - Sekprodi dapat melihat seluruh histori review dan menetapkan P1 serta opsional P2;
 - status, ketersediaan, cluster/bidang, dan kuota P1/P2 divalidasi ulang dalam transaksi final;
 - keputusan final langsung menghasilkan penetapan aktif tanpa surat tugas;
+- keputusan final juga menghasilkan kewajiban mata kuliah penjaluran `active` yang sesuai jalur/kurikulum tanpa menunda aktivasi pembimbing;
+- SIMPS tidak mempunyai antrean/status key-in; mahasiswa sudah menerima pengingat Gateway setelah submit form;
+- hasil mata kuliah hanya berubah berdasarkan import/integrasi/koreksi akademik resmi yang dapat diaudit;
 - finalisasi Perintisan menghasilkan komposisi P1/P2 yang sama untuk seluruh anggota atau rollback seluruhnya;
 - status jalur mahasiswa, cache P1, form, kelompok, histori, dan notifikasi konsisten setelah finalisasi;
 - satu mahasiswa tidak mempunyai pendaftaran ganda pada periode yang sama atau lebih dari satu penetapan aktif;

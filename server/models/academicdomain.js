@@ -74,7 +74,8 @@ module.exports = (sequelize, DataTypes) => {
       version: { ...integer(), defaultValue: 1 }, previous_version_id: integer(true), superseded_at: date(), metadata: json(),
     }],
     PercobaanMataKuliahMahasiswa: ["PercobaanMataKuliahMahasiswas", {
-      mahasiswa_id: integer(), mata_kuliah_id: integer(), periode_akademik_id: integer(), source_id: integer(),
+      mahasiswa_id: integer(), pendaftaran_penjaluran_id: integer(true), mata_kuliah_id: integer(), periode_akademik_id: integer(), source_id: integer(),
+      nilai_penjaluran_import_row_id: integer(true),
       import_row_id: integer(true), external_record_id: string(true, 160), external_revision: string(true),
       kelas_normalized: { ...string(false, 80), defaultValue: "DEFAULT" }, attempt_ke: integer(),
       attempt_number_source: string(false, 20), sks_diambil: decimal(), sks_lulus: { ...decimal(), defaultValue: 0 },
@@ -86,6 +87,25 @@ module.exports = (sequelize, DataTypes) => {
       version: { ...integer(), defaultValue: 1 }, previous_version_id: integer(true), is_active: boolean(),
       superseded_at: date(), metadata: json(),
     }],
+    MappingMataKuliahPenjaluran: ["MappingMataKuliahPenjalurans", {
+      kurikulum_id: integer(true), jalur: string(false, 40), mata_kuliah_id: integer(),
+      periode_berlaku_id: integer(true), program_kuliah: { ...string(false, 30), defaultValue: "reguler" },
+      is_active: boolean(), metadata: json(),
+    }, [{ unique: true, fields: ["kurikulum_id", "jalur", "program_kuliah", "periode_berlaku_id"] }]],
+    KewajibanMataKuliahPenjaluran: ["KewajibanMataKuliahPenjalurans", {
+      mahasiswa_id: integer(), pendaftaran_penjaluran_id: integer(), mata_kuliah_id: integer(),
+      status: status("belum_tersedia"), fulfilled_attempt_id: integer(true),
+    }, [{ unique: true, fields: ["pendaftaran_penjaluran_id", "mata_kuliah_id"] }]],
+    ImportNilaiPenjaluran: ["ImportNilaiPenjalurans", {
+      periode_penjaluran_id: integer(), original_filename: string(false, 255), file_sha256: string(false, 64),
+      status: status("validated"), counts: json(), uploaded_by: integer(), committed_by: integer(true), committed_at: date(),
+    }, [{ unique: true, fields: ["periode_penjaluran_id", "file_sha256"] }]],
+    ImportNilaiPenjaluranRow: ["ImportNilaiPenjaluranRows", {
+      import_id: integer(), row_number: integer(), pendaftaran_penjaluran_id: integer(true),
+      mata_kuliah_id: integer(true), nilai_huruf: string(true, 10), is_valid: boolean(false),
+      errors: json([]), raw_payload: json(), expected_payload: json(), old_grade: string(true, 10),
+      result_attempt_id: integer(true),
+    }, [{ unique: true, fields: ["import_id", "row_number"] }]],
     RiwayatMetodologiPenelitian: ["RiwayatMetodologiPenelitians", {
       mahasiswa_id: integer(), periode_akademik_id: integer(), attempt_id: integer(true), source_id: integer(),
       import_row_id: integer(true), status: string(false, 30), nilai_huruf: string(true, 10), nilai_angka: decimal(true),
@@ -150,6 +170,12 @@ module.exports = (sequelize, DataTypes) => {
   };
   models.ImportAkademikRow.associate = (all) => {
     models.ImportAkademikRow.belongsTo(all.ImportAkademikBatch, { foreignKey: "batch_id", as: "batch" });
+  };
+  models.ImportNilaiPenjaluran.associate = (all) => {
+    models.ImportNilaiPenjaluran.hasMany(all.ImportNilaiPenjaluranRow, { foreignKey: "import_id", as: "rows" });
+  };
+  models.ImportNilaiPenjaluranRow.associate = (all) => {
+    models.ImportNilaiPenjaluranRow.belongsTo(all.ImportNilaiPenjaluran, { foreignKey: "import_id", as: "import" });
   };
   return models.SumberDataAkademik;
 };

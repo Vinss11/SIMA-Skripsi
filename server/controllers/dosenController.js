@@ -321,15 +321,18 @@ function isKetuaClusterReviewTurnForDosen(submission, dosenId) {
   );
 }
 
-function getPendingKetuaClusterTopikForDosen(submission, dosenId) {
-  const pendingRow = (submission.riwayat || [])
+function getPendingKetuaClusterTopikForDosen(submission, dosenId, requestedTopikSlot = null) {
+  const pendingRows = (submission.riwayat || [])
     .filter(
       (item) =>
         Number(item.dosen_id) === Number(dosenId) &&
         getRiwayatApprovalType(item) === "koordinator" &&
         String(item.status || "").toLowerCase() === "pending"
     )
-    .sort((left, right) => Number(left.topik_slot || 0) - Number(right.topik_slot || 0))[0];
+    .sort((left, right) => Number(left.topik_slot || 0) - Number(right.topik_slot || 0));
+  const pendingRow = requestedTopikSlot
+    ? pendingRows.find((item) => Number(item.topik_slot) === Number(requestedTopikSlot)) || null
+    : pendingRows[0] || null;
   if (!pendingRow) return null;
   return buildTopikList(submission).find((item) => Number(item.slot) === Number(pendingRow.topik_slot)) || null;
 }
@@ -955,6 +958,13 @@ async function resolveEffectiveApprovalStage({
   approvalStage,
   transaction,
 }) {
+  // Review topik berjalan per slot. Ketua cluster yang sudah memiliki antrean
+  // pending harus dapat memproses slotnya walaupun dosen pada slot lain belum
+  // memberikan keputusan.
+  if (isTopikDosen && isKetuaClusterReviewTurnForDosen(submission, dosenId)) {
+    return "pending_ketua_klaster";
+  }
+
   if (!requiresKetuaCluster || approvalStage !== "pending_dosen_pembimbing") {
     return approvalStage;
   }
@@ -1344,7 +1354,6 @@ exports.getDosenSubmissions = async (req, res) => {
           .sort((left, right) => Number(left.topik_slot || 0) - Number(right.topik_slot || 0));
         const isKetuaClusterReviewer =
           submission.status === "pending" &&
-          approvalStage === "pending_ketua_klaster" &&
           pendingKetuaRowsForDosen.length > 0;
         const clusterReviewTopik = isKetuaClusterReviewer
           ? topikList.find((item) => Number(item.slot) === Number(pendingKetuaRowsForDosen[0].topik_slot)) || null
@@ -1399,6 +1408,7 @@ exports.getDosenSubmissions = async (req, res) => {
         base.reviewer_status = reviewerDecision?.reviewer_status || null;
         base.status_dosen = isKetuaClusterReviewer ? "pending" : completedReviewerStatus || reviewerDecision?.reviewer_status || null;
         base.review_context = isKetuaClusterReviewer ? "ketua_klaster" : "calon_pembimbing";
+        if (isKetuaClusterReviewer) base.tahap_approval = "pending_ketua_klaster";
         base.reviewer_note = reviewerDecision?.reviewer_note || null;
         base.reminder_count = Math.max(
           0,
@@ -1691,7 +1701,7 @@ exports.approveSubmission = async (req, res) => {
       }
     }
 
-    if (Number(submission.dosen_saat_ini) !== Number(dosen_id)) {
+    if (!isKetuaClusterReviewTurn && Number(submission.dosen_saat_ini) !== Number(dosen_id)) {
       await t.rollback();
       return res.status(403).json({
         success: false,
@@ -1958,7 +1968,7 @@ exports.approveSubmission = async (req, res) => {
     let approvalType = "calon_pembimbing";
 
     if (requiresKetuaCluster && effectiveApprovalStage === "pending_ketua_klaster" && isTopikDosen) {
-      finalTopik = getPendingKetuaClusterTopikForDosen(submission, dosen_id);
+      finalTopik = getPendingKetuaClusterTopikForDosen(submission, dosen_id, requestedTopikSlot);
       if (!finalTopik) {
         await t.rollback();
         return res.status(409).json({
@@ -2369,7 +2379,7 @@ exports.rejectSubmission = async (req, res) => {
       }
     }
 
-    if (Number(submission.dosen_saat_ini) !== Number(dosen_id)) {
+    if (!isKetuaClusterReviewTurn && Number(submission.dosen_saat_ini) !== Number(dosen_id)) {
       await t.rollback();
       return res.status(403).json({
         success: false,
@@ -2445,7 +2455,7 @@ exports.rejectSubmission = async (req, res) => {
     let clusterRejectedTopik = null;
 
     if (requiresKetuaCluster && effectiveApprovalStage === "pending_ketua_klaster" && isTopikDosen) {
-      const topikWaitingCluster = getPendingKetuaClusterTopikForDosen(submission, dosen_id);
+      const topikWaitingCluster = getPendingKetuaClusterTopikForDosen(submission, dosen_id, requestedTopikSlot);
       if (!topikWaitingCluster) {
         await t.rollback();
         return res.status(409).json({

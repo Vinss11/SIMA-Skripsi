@@ -553,11 +553,22 @@ Penetapan diakhiri karena salah satu kondisi berikut:
 
 Alasan berakhir dibuat otomatis oleh sistem; Sekretaris Prodi tidak diwajibkan menulis alasan bebas untuk kejadian yang sudah diketahui sistem.
 
-## 15. Metodologi Penelitian dan data akademik
+## 15. Mata kuliah penjaluran dan data akademik
 
-### BR-AKADEMIK-001 — Histori Metodologi Penelitian
+### BR-AKADEMIK-001 — Histori mata kuliah penjaluran
 
-**Status: Final untuk kebutuhan data; detail pengaruh ke eligibility Penelitian masih menunggu konfirmasi**
+**Status: Final**
+
+Setiap jalur mempunyai tepat satu mata kuliah penjaluran yang menjadi syarat kelulusan:
+
+| Jalur | Mata kuliah penjaluran |
+| --- | --- |
+| Penelitian | Metodologi Penelitian |
+| Pengabdian Masyarakat | Metode/Metodologi Pengabdian Masyarakat sesuai versi kurikulum |
+| Perintisan Bisnis | Metode/Metodologi Perintisan Bisnis sesuai versi kurikulum |
+| Magang | Manajemen Diri |
+
+Nama dan kode aktual mengikuti kurikulum mahasiswa; perbedaan istilah ditangani melalui master, versi kurikulum, dan alias, bukan pencocokan teks bebas.
 
 Sistem menyimpan histori status:
 
@@ -567,7 +578,9 @@ Sistem menyimpan histori status:
 - tidak lulus;
 - mengulang.
 
-Data menyimpan periode, nilai jika tersedia, sumber data, dan waktu perubahan. Status tidak boleh hanya disimpan sebagai alasan ulang berbentuk teks bebas.
+Data menyimpan mata kuliah, jalur, siklus penjaluran, periode, attempt, nilai jika tersedia, sumber data, dan waktu perubahan. Status tidak boleh hanya disimpan sebagai alasan ulang berbentuk teks bebas.
+
+Mata kuliah ini berlangsung sebagai attempt akademik satu semester. Status tidak lulus mewajibkan attempt mata kuliah yang sama pada semester akademik berikutnya, tetapi tidak otomatis membuat ulang jalur, mengakhiri pembimbing, atau mereset progres. Normalnya sidang belum dapat terjadi sebelum lulus; bila koreksi data setelah sidang menemukan ketidaksesuaian, hasil sidang tidak dihapus otomatis tetapi jadwal/kelulusan masuk hold dan wajib ditindaklanjuti secara teraudit.
 
 ### BR-AKADEMIK-002 — Sumber data
 
@@ -591,25 +604,49 @@ Data akademik menggunakan `PeriodeAkademik` dengan rentang tahun mulai–selesai
 
 **Status: Final untuk mekanisme; prioritas antarsumber menunggu keputusan**
 
-Attempt, histori Metodologi, dan koreksi tidak diubah atau dihapus secara in-place. Koreksi Admin membuat versi baru, menyimpan before/after, alasan, aktor, waktu, serta hubungan ke versi sebelumnya. Import tidak boleh menimpa koreksi aktif secara diam-diam dan harus masuk antrean konflik.
+Attempt, histori mata kuliah penjaluran, kewajiban, dan koreksi tidak diubah atau dihapus secara in-place. Koreksi Admin membuat versi baru, menyimpan before/after, alasan, aktor, waktu, serta hubungan ke versi sebelumnya. Import tidak boleh menimpa koreksi aktif secara diam-diam dan harus masuk antrean konflik.
 
 ### BR-AKADEMIK-006 — Snapshot dan kualitas data
 
 **Status: Final**
 
-Total SKS, mata kuliah wajib, dan status Metodologi untuk konsumsi workflow berasal dari snapshot akademik berversi. Status proses kalkulasi dipisahkan dari kualitas data. Snapshot `failed` atau `stale` tidak dianggap sebagai data lengkap.
+Total SKS, mata kuliah wajib, dan status mata kuliah penjaluran untuk konsumsi workflow berasal dari snapshot akademik berversi. Status proses kalkulasi dipisahkan dari kualitas data. Snapshot `failed` atau `stale` tidak dianggap sebagai data lengkap.
 
-### BR-AKADEMIK-007 — Keputusan eligibility
+### BR-AKADEMIK-007 — Dampak terhadap workflow dan kelulusan
 
-**Status: Final untuk kontrak; threshold dan enforcement menunggu keputusan**
+**Status: Final**
 
-Evaluasi akademik selalu membedakan `evaluated_result` (`eligible`, `blocked`, atau `undetermined`) dari `effective_decision` (`allow`, `warn`, atau `block`). Rule yang belum disahkan hanya boleh berjalan dalam mode informational/shadow; hasil shadow tidak memblokir workflow utama.
+Status mata kuliah penjaluran tidak memblokir pendaftaran penjaluran, penetapan pembimbing, bimbingan, atau izin lanjut. Status tersebut menjadi blocking gate pada verifikasi/pendaftaran sidang dan diperiksa kembali ketika mahasiswa akan dinyatakan siap yudisium/lulus. Mahasiswa hanya dapat memperoleh `DefenseVerificationFact`, dijadwalkan, mengikuti sidang, dan memenuhi clearance yudisium jika mata kuliah yang diwajibkan oleh jalur aktif terakhir berstatus `lulus` pada attempt efektif.
+
+Evaluasi akademik tetap membedakan `evaluated_result` (`eligible`, `blocked`, atau `undetermined`) dari `effective_decision` (`allow`, `warn`, atau `block`). Enforcement berlaku pada konteks `defense_verification`, `defense_scheduling`, dan `graduation_clearance`; konteks lain hanya informasional.
 
 ### BR-AKADEMIK-008 — Alias, ekuivalensi, dan pengakuan kredit
 
 **Status: Final untuk mekanisme**
 
 Alias menunjuk satu mata kuliah kanonik yang sama, sedangkan ekuivalensi merupakan pengakuan substitusi berversi. Kredit transfer, konversi, MBKM, waived, atau exempted hanya dihitung setelah status pengakuannya sah. Mata kuliah dalam kelompok ekuivalensi tidak boleh menggandakan total SKS.
+
+### BR-AKADEMIK-009 — Key-in oleh Admin dan informasi Gateway
+
+**Status: Final**
+
+Setelah keputusan final jalur, sistem membuat kewajiban mata kuliah penjaluran berstatus `active`. Admin melakukan key-in langsung pada sistem akademik/Gateway di luar SIMPS. SIMPS tidak membuat antrean, tugas, status, atau konfirmasi key-in; SIMPS hanya menerima hasil registrasi/nilai melalui import, integrasi, atau koreksi resmi yang dapat diaudit.
+
+Instruksi untuk mengecek Gateway secara berkala sudah ditampilkan segera setelah mahasiswa berhasil mengirim form awal pendaftaran penjaluran. Finalisasi tidak mengirim pengingat yang sama untuk kedua kalinya. Selama hasil akademik belum masuk, SIMPS menampilkan `data_belum_tersedia` dan tidak menyimpulkan apakah key-in sudah dilakukan.
+
+Pendaftaran baru, ulang, atau alih yang berhasil langsung dapat dibaca pada grid Data Akademik melalui projection pendaftaran dan mapping mata kuliah. Projection ini tidak membuat nilai atau attempt akademik. Nilai yang diimpor Admin menjadi satu sumber yang sama untuk grid Admin, menu Data Akademik mahasiswa, dan item sistem `Mata Kuliah Penjaluran` pada menu Dokumen/Persyaratan Sidang.
+
+Admin memilih periode pendaftaran penjaluran yang dibuat Sekretaris Prodi, mengunduh template mahasiswa, dan hanya mengisi kolom `Nilai`. Nilai yang diterima adalah `A`, `B+`, `B`, `B-`, `B/C`, `C+`, `C`, `C-`, `C/D`, `D+`, `D`, `D-`, `D/F`, atau `F`. Batas kelulusan wajib berasal dari satu konfigurasi backend yang disahkan Prodi. Import dilakukan melalui preview dan menyimpan baris valid secara versioned; identitas, jalur, dan mata kuliah pada template tidak boleh dipercaya tanpa validasi ulang server.
+
+### BR-AKADEMIK-010 — Ulang dan alih jalur
+
+**Status: Final**
+
+- Jika mata kuliah penjaluran tidak lulus, sistem membuat kebutuhan repeat untuk mata kuliah yang sama pada semester berikutnya setelah periode akademik tersedia.
+- Ulang mata kuliah tidak sama dengan ulang penjaluran dan tidak membuat siklus/pembimbing baru.
+- Ulang jalur pada jalur yang sama mempertahankan mata kuliah penjaluran yang sama; attempt baru hanya diperlukan jika belum lulus.
+- Alih jalur mengakhiri kewajiban aktif lama dengan alasan `track_changed` dan membuat kewajiban baru sesuai jalur tujuan berstatus `active` bila belum dipenuhi melalui ekuivalensi resmi. Mahasiswa kembali diarahkan memeriksa Gateway untuk mata kuliah tujuan tanpa pembuatan tugas key-in di SIMPS.
+- Attempt dan nilai jalur lama tetap menjadi histori serta tidak dihapus. Kelulusan mata kuliah jalur lama tidak otomatis memenuhi mata kuliah jalur tujuan kecuali terdapat ekuivalensi kurikulum resmi.
 
 ## 16. Akun dan password
 
@@ -696,7 +733,7 @@ Setiap bimbingan harus dapat ditelusuri ke:
 - Target P1/P2 saat permohonan dibuat bersifat historis dan tidak boleh ditimpa.
 - Hak mutasi berasal dari anggota penetapan yang menjadi reviewer efektif.
 - Pergantian pembimbing atau semester memindahkan resume yang belum selesai ke pengganti dengan urutan P1/P2 yang sama dan mencatat transfer append-only.
-- Jika pengganti dengan peran yang sama tidak tersedia, bimbingan masuk `needs_reviewer_resolution`; sistem tidak memindahkannya lintas peran secara otomatis.
+- Jika pengganti dengan peran yang sama tidak tersedia, sistem memakai P1 aktif pada assignment pengganti sebagai fallback deterministik dan mencatat reason `cross_role_system_fallback`. Jika P1 aktif belum tersedia, proses menjadi hold dan dilanjutkan otomatis setelah assignment lengkap; tidak ada pemilihan reviewer manual dari halaman tata kelola.
 - Setelah transfer efektif, dosen lama hanya mempunyai akses histori sesuai kewenangan dan tidak dapat memproses permohonan atau resume.
 
 ### BR-BIMBINGAN-004 — Validasi sesi dan versi resume
@@ -714,6 +751,7 @@ Setiap bimbingan harus dapat ditelusuri ke:
 
 - Minimum bimbingan disimpan sebagai policy berversi dengan scope program studi, program kuliah, jalur, dan periode akademik.
 - Nilai delapan dimigrasikan sebagai policy legacy awal, bukan konstanta controller.
+- Policy merupakan konfigurasi internal yang ditetapkan melalui migration/release teruji, bukan dikelola Sekretaris Prodi melalui halaman khusus.
 - Sistem menampilkan progres per semester dan kumulatif per siklus.
 - Pilihan enforcement `cycle` atau `semester` dan approval readiness P1 atau seluruh pembimbing aktif harus disahkan sebelum diaktifkan pada production.
 
@@ -725,6 +763,17 @@ Setiap bimbingan harus dapat ditelusuri ke:
 - Retry identik mengembalikan hasil pertama; key sama dengan payload berbeda ditolak.
 - Mutation kritis menghasilkan event dan notifikasi atomik tanpa menyalin isi resume atau catatan sensitif ke notifikasi.
 - Tahap 7 hanya menerbitkan fakta kesiapan bimbingan berversi/checksum. Fakta tersebut tidak sama dengan verifikasi pendadaran dan tidak langsung menjadwalkan sidang.
+
+### BR-BIMBINGAN-007 — Tanpa halaman tata kelola bimbingan
+
+**Status: Final**
+
+- Menu dan halaman `Tata Kelola Bimbingan` tidak digunakan.
+- Mahasiswa menjalankan permohonan dan resume pada halaman bimbingan.
+- Dosen memproses tugas pada `Review Bimbingan`.
+- Sekretaris Prodi melihat progres melalui `Mahasiswa Bimbingan` dan histori melalui `Riwayat Bimbingan`.
+- Pergantian reviewer diselesaikan otomatis dari assignment aktif. Sekretaris Prodi memperbaiki assignment melalui flow pergantian pembimbing yang sudah ada, bukan memilih reviewer pada halaman terpisah.
+- Approval resume tidak dihapus manual. Koreksi membuat versi resume/keputusan baru oleh reviewer yang berwenang; invalidasi teknis hanya melalui service ter-audit ketika sumber menjadi tidak sah.
 
 ## 18. Persyaratan pendadaran
 
@@ -739,7 +788,7 @@ Mahasiswa hanya dapat dijadwalkan jika seluruh persyaratan wajib valid, meliputi
 - transkrip;
 - total SKS;
 - seluruh mata kuliah wajib lulus;
-- status Metodologi Penelitian;
+- mata kuliah penjaluran yang sesuai dengan jalur aktif terakhir telah lulus;
 - sertifikat CEPT;
 - skor CEPT minimal, dengan nilai awal acuan 420;
 - CEPT belum kedaluwarsa, dengan acuan masa berlaku dua tahun;
@@ -747,7 +796,9 @@ Mahasiswa hanya dapat dijadwalkan jika seluruh persyaratan wajib valid, meliputi
 - capture atau logbook bimbingan;
 - publikasi ilmiah jika diwajibkan;
 - LOA jika diwajibkan;
-- pemeriksaan akademik/yudisium.
+- pemeriksaan akademik khusus pendadaran yang telah disahkan.
+
+Mata kuliah penjaluran merupakan blocker pendadaran/sidang dan diperiksa kembali pada yudisium sesuai BR-AKADEMIK-007. Status selain `lulus`, termasuk data `undetermined`, tidak boleh menghasilkan izin sidang.
 
 Batas skor dan masa berlaku harus disimpan sebagai konfigurasi agar dapat diubah tanpa mengubah kode.
 
@@ -869,7 +920,7 @@ Alur akhir:
 2. Mahasiswa menerima hasil dan revisi.
 3. Mahasiswa menyelesaikan revisi.
 4. Pembimbing/otoritas memvalidasi revisi.
-5. Persyaratan akhir diperiksa.
+5. Persyaratan akhir diperiksa, termasuk kelulusan mata kuliah penjaluran yang sesuai dengan jalur aktif terakhir.
 6. Mahasiswa berstatus siap yudisium/lulus.
 7. Penetapan pembimbing diakhiri.
 
@@ -893,6 +944,8 @@ Pemberitahuan minimal dibuat untuk:
 - ulang/alih;
 - review pengampu;
 - keputusan final;
+- permintaan, konfirmasi, kegagalan, dan pengulangan key-in mata kuliah penjaluran;
+- pengingat Gateway pada konfirmasi keberhasilan submit form awal serta pembaruan ketika status berubah;
 - penetapan/pergantian pembimbing;
 - bimbingan;
 - izin lanjut;
@@ -966,6 +1019,7 @@ Sistem dianggap selesai sesuai scope apabila:
 - setiap sidang memiliki tepat tiga dosen tanpa bentrok;
 - perubahan penguji dan reschedule mempunyai histori;
 - nilai, revisi, dan kelulusan tercatat;
+- mata kuliah penjaluran mengikuti jalur aktif terakhir; SIMPS membaca hasil akademik resmi tanpa mengelola key-in, hasil tidak lulus menghasilkan repeat semester berikutnya, serta memblokir sidang dan clearance yudisium/kelulusan;
 - role dan otorisasi diuji;
 - operasi kritis transaksional dan idempotent;
 - BPMN, dokumentasi, UI, backend, dan test menyatakan aturan yang sama;
@@ -977,5 +1031,7 @@ Release tiga jalur aktif belum dapat dinyatakan selesai sebelum aturan Penelitia
 
 | Versi | Tanggal | Perubahan |
 | --- | --- | --- |
+| 1.3 | 2026-08-05 | Halaman Tata Kelola Bimbingan dihapus; policy menjadi konfigurasi internal, reviewer pengganti di-resolve otomatis, dan koreksi approval memakai versi baru. |
+| 1.2 | 2026-08-05 | Mata kuliah penjaluran ditetapkan sebagai hard gate sidang dan diperiksa kembali saat yudisium; pengingat Gateway ditempatkan setelah submit form awal dan tidak diduplikasi saat finalisasi. |
 | 1.1 | 2026-07-28 | Scope aktif diubah menjadi Penelitian, Magang, dan Perintisan Bisnis sampai kelulusan/yudisium; Pengabdian Masyarakat berstatus hold. |
 | 1.0 | 2026-07-27 | Dokumen awal berdasarkan catatan bimbingan pertama dan keputusan pengembangan tanpa surat tugas; Penelitian ditunda. |

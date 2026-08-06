@@ -1,5 +1,5 @@
 const { Op } = require("sequelize");
-const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment } = require("../services/dosenStatusService");
+const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment, validateDosenForNewAssignment } = require("../services/dosenStatusService");
 const { countActiveSupervisions } = require("../services/supervisorAccessService");
 const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const {
@@ -375,7 +375,7 @@ exports.getDosenDropdown = async (req, res) => {
               }))
             : [],
         };
-      }))).sort((a, b) => {
+      }))).filter((dosen) => !dosen.is_kuota_penuh).sort((a, b) => {
         // Prioritas: dosen tanpa mahasiswa bimbingan, lalu yang kuotanya masih tersedia
         if (a.is_no_bimbingan !== b.is_no_bimbingan) return a.is_no_bimbingan ? -1 : 1;
         if (a.is_kuota_penuh !== b.is_kuota_penuh) return a.is_kuota_penuh ? 1 : -1;
@@ -693,6 +693,8 @@ async function createKelompokPerintisanRegistration({
         penjaluran_baru:
           participant.jenis_pendaftaran === "alih" ? "perintisan_bisnis" : null,
         dosen_pembimbing_ta_id: null,
+        calon_dosen_pembimbing_id:
+          participant.posisi === "ketua" ? (participant.calon_dosen_pembimbing_id || null) : null,
         dosen_pembimbing_ta_sebelumnya_id:
           participant.jenis_pendaftaran === "baru"
             ? null
@@ -760,6 +762,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     const jenisJalurUlang = normalizeJenisJalur(req.body.jenis_jalur_ulang);
     const penjaluranSebelumnya = normalizeJenisJalur(req.body.penjaluran_sebelumnya);
     const penjaluranBaru = normalizeJenisJalur(req.body.penjaluran_baru);
+    const calonDosenPembimbingId = Number(req.body.calon_dosen_pembimbing_id) || 0;
     const dosenPembimbingTAId = Number(req.body.dosen_pembimbing_ta_id) || 0;
     const dosenTASebelumnyaId = Number(req.body.dosen_pembimbing_ta_sebelumnya_id) || 0;
     const dosenTABaruId = Number(req.body.dosen_pembimbing_ta_baru_id) || 0;
@@ -917,6 +920,21 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         await t.rollback();
         return res.status(403).json(buildPeriodeWindowErrorPayload(periodeWindow));
       }
+      if (calonDosenPembimbingId) {
+        const candidateValidation = await validateDosenForNewAssignment(calonDosenPembimbingId, periodeAktif.id, {
+          transaction: t,
+          activityLabel: "calon bimbingan baru",
+        });
+        if (!candidateValidation.allowed) {
+          await t.rollback();
+          return res.status(409).json({
+            success: false,
+            code: "TEMPORARY_SUPERVISOR_NOT_ELIGIBLE",
+            message: candidateValidation.message,
+            detail: { field: "calon_dosen_pembimbing_id" },
+          });
+        }
+      }
 
       const groupResult = await createKelompokPerintisanRegistration({
         body: req.body,
@@ -926,6 +944,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
           nim: authenticatedMahasiswa.nim,
           nama: authenticatedMahasiswa.nama,
           dosen_pembimbing_akademik_id: authenticatedMahasiswa.dosen_pembimbing_akademik_id,
+          calon_dosen_pembimbing_id: calonDosenPembimbingId || null,
           penjaluran_sebelumnya: penjaluranSebelumnya,
         },
         periodeAktif,
@@ -1013,6 +1032,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
 
     const masterDpaId = Number(existingMahasiswa.dosen_pembimbing_akademik_id);
     const dosenIds = new Set([masterDpaId]);
+    if (calonDosenPembimbingId) dosenIds.add(calonDosenPembimbingId);
     if (dosenPembimbingTAId) dosenIds.add(dosenPembimbingTAId);
     if (dosenTASebelumnyaId) dosenIds.add(dosenTASebelumnyaId);
     if (dosenTABaruId) dosenIds.add(dosenTABaruId);
@@ -1025,6 +1045,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     });
     const dosenMap = new Map(dosens.map((item) => [item.id, item]));
     const dosenPembimbingAkademik = dosenMap.get(masterDpaId);
+    const calonDosenPembimbing = dosenMap.get(calonDosenPembimbingId);
     const dosenPembimbingTA = dosenMap.get(dosenPembimbingTAId);
     const dosenTASebelumnya = dosenMap.get(dosenTASebelumnyaId);
     const dosenTABaru = dosenMap.get(dosenTABaruId);
@@ -1080,6 +1101,29 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       await t.rollback();
       return res.status(403).json(buildPeriodeWindowErrorPayload(periodeWindow));
     }
+    if (calonDosenPembimbingId) {
+      if (!calonDosenPembimbing) {
+        await t.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Calon dosen pembimbing tidak ditemukan.",
+          detail: { field: "calon_dosen_pembimbing_id" },
+        });
+      }
+      const candidateValidation = await validateDosenForNewAssignment(calonDosenPembimbingId, periodeAktif.id, {
+        transaction: t,
+        activityLabel: "calon bimbingan baru",
+      });
+      if (!candidateValidation.allowed) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "TEMPORARY_SUPERVISOR_NOT_ELIGIBLE",
+          message: candidateValidation.message,
+          detail: { field: "calon_dosen_pembimbing_id" },
+        });
+      }
+    }
 
     const angkatan = deriveAngkatanFromNim(nim);
     const semesterMahasiswa = deriveSemesterMahasiswa(angkatan, periodeAktif);
@@ -1098,6 +1142,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         dosen_pembimbing_akademik_id: dosenPembimbingAkademik.id,
         jenis_jalur_diambil: pendaftaran === "baru" ? jenisJalurDiambil : pendaftaran === "ulang" ? jenisJalurUlang : null,
         dosen_pembimbing_ta_id: pendaftaran === "baru" && dosenPembimbingTA ? dosenPembimbingTA.id : null,
+        calon_dosen_pembimbing_id: pendaftaran === "baru" ? (calonDosenPembimbing?.id || null) : null,
         penjaluran_sebelumnya: pendaftaran === "alih" ? penjaluranSebelumnya : null,
         penjaluran_baru: pendaftaran === "alih" ? penjaluranBaru : null,
         dosen_pembimbing_ta_sebelumnya_id: pendaftaran !== "baru" ? dosenTASebelumnya.id : null,
@@ -1140,6 +1185,14 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
                   id: dosenPembimbingTA.id,
                   nama: dosenPembimbingTA.nama,
                   nik: dosenPembimbingTA.nik,
+                }
+              : null,
+          calon_dosen_pembimbing:
+            pendaftaran === "baru" && calonDosenPembimbing
+              ? {
+                  id: calonDosenPembimbing.id,
+                  nama: calonDosenPembimbing.nama,
+                  nik: calonDosenPembimbing.nik,
                 }
               : null,
           dosen_pembimbing_ta_sebelumnya:

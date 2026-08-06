@@ -1981,7 +1981,9 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
             {!loading && !mustChangePassword && activeTab === "notifications" ? (
               <NotificationPage
                 notificationState={notificationState}
-                onNavigate={() => setActiveTab("dashboard")}
+                onNavigate={(notification) => {
+                  setActiveTab(notification?.action_key === "student_defense_documents" ? "dokumen" : "dashboard");
+                }}
               />
             ) : null}
 

@@ -4,6 +4,8 @@
 
 Mencatat nilai setiap penilai, menghitung hasil akhir, mengunci keputusan sidang, dan menghasilkan daftar revisi secara aman.
 
+Nilai sidang berbeda dari nilai mata kuliah penjaluran. Penguncian hasil sidang tidak menulis atau menyimpulkan kelulusan Metodologi Penelitian, Manajemen Diri, maupun mata kuliah metode jalur lain; hasil mata kuliah tersebut hanya berasal dari data akademik Tahap 5.
+
 ## 2. Acuan
 
 BR-NILAI-001–002. Bobot nilai dan pihak pengunci merupakan decision gate akademik yang harus dikonfirmasi sebelum aktivasi produksi.
@@ -26,6 +28,7 @@ BR-NILAI-001–002. Bobot nilai dan pihak pengunci merupakan decision gate akade
 6. Penguncian dan buka kunci berotorisasi, beralasan, dan ter-audit.
 7. Setelah dikunci, hasil dan revisi tampil kepada mahasiswa sesuai waktu publikasi.
 8. Berita acara dihasilkan dari data terkunci; bukan surat tugas pembimbing.
+9. Terbitkan hasil sidang untuk Tahap 13 tanpa mengubah kewajiban atau attempt mata kuliah penjaluran.
 
 ## 5. Pengujian
 
@@ -34,4 +37,3 @@ Uji nilai di luar rentang, penilai asing, komponen kurang, bobot tidak 100%, sub
 ## 6. Definition of Done
 
 Setiap hasil dapat direkonstruksi dari nilai penilai dan versi rubrik; nilai terkunci aman dari perubahan langsung dan revisi tercatat untuk tahap berikutnya.
-

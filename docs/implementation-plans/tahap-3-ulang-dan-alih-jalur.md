@@ -557,6 +557,12 @@ Hasil: pamit tidak dapat dipakai dua kali dan tidak ada pendaftaran tanpa root s
 6. Penetapan pertama pada siklus baru menggunakan `semester_penjaluran_ke = 1`.
 7. Progres bimbingan baru dimulai kosong dan setiap record baru mengikat `pendaftaran_penjaluran_id` dari assignment aktif.
 8. Histori UI menyediakan tautan ke siklus lama tanpa mencampurkan perhitungan progres.
+9. Pada finalisasi `ulang` dengan jalur sama, resolver mata kuliah penjaluran memeriksa attempt efektif:
+   - jika sudah `lulus`, kewajiban tetap terpenuhi dan tidak membuat attempt baru;
+   - jika `tidak_lulus`, tandai kebutuhan repeat semester berikutnya; attempt baru hanya dibuat ketika data akademik resmi masuk;
+   - jika masih `sedang_mengambil`/menunggu hasil, pertahankan kewajiban existing dan jangan membuat data buatan.
+10. Pada finalisasi `alih`, akhiri kewajiban aktif mata kuliah jalur lama dengan `track_changed`, pertahankan seluruh attempt/nilai lama, lalu buat kewajiban mata kuliah jalur tujuan `active` tanpa menganggap ekuivalensi secara otomatis.
+11. Perubahan kewajiban mata kuliah tidak mereset progres siklus lama dan bukan alasan otomatis mengulang mata kuliah jika mata kuliah target sudah terbukti lulus melalui ekuivalensi resmi.
 
 Jika dibutuhkan audit lebih eksplisit, perluas enum sumber assignment dengan `ulang` dan `alih`; jika tidak, gunakan `penjaluran` dan baca jenis dari relasi pendaftaran.
 
@@ -683,6 +689,9 @@ Notifikasi minimum dibuat untuk:
 - pamit disetujui/ditolak;
 - penetapan lama berakhir;
 - pendaftaran ulang/alih berhasil;
+- perubahan kewajiban mata kuliah penjaluran akibat alih;
+- repeat mata kuliah penjaluran akibat tidak lulus;
+- pengingat Gateway kepada mahasiswa tanpa tugas key-in di SIMPS;
 - anggota diundang/terikat ke kelompok Perintisan baru bila flow membutuhkan;
 - keputusan final dan pembimbing baru dari Tahap 2.
 
@@ -710,6 +719,8 @@ Sediakan dry-run dan execute untuk mendeteksi:
 - anggota Perintisan tanpa pendaftaran periode/target yang sesuai;
 - assignment pertama siklus baru dengan semester bukan 1;
 - progres lama yang terhubung ke pendaftaran baru.
+- alih jalur tanpa pengakhiran kewajiban mata kuliah lama atau tanpa kewajiban mata kuliah tujuan;
+- ulang jalur yang menggandakan kewajiban meskipun mata kuliah sudah lulus;
 - `BimbinganSkripsi` tanpa pendaftaran atau mempunyai lebih dari satu kandidat siklus;
 - query progres aktif yang masih tidak memakai scope pendaftaran.
 
@@ -762,14 +773,17 @@ Uji minimal:
 6. Ulang ke jalur berbeda ditolak.
 7. Pengabdian sebagai target ditolak selama hold.
 8. Same-period duplicate ditolak termasuk dua request paralel.
-9. Workflow aktif dan gate semester memblokir pendaftaran.
-10. Jika assignment aktif ada, pamit pending/rejected/milik siklus lain ditolak.
-11. Jika tidak ada assignment aktif dan histori valid, pendaftaran dapat dibuat tanpa pamit.
-12. Pamit consumed tidak dapat dipakai lagi pada periode berikutnya.
-13. Pamit berubah menjadi consumed tepat ketika pendaftaran berhasil commit.
-14. Kegagalan pendaftaran me-rollback konsumsi pamit.
-15. Retry identik mengembalikan pendaftaran yang sama tanpa duplikasi.
-16. Pamit dari periode tujuan lama ditolak pada periode baru.
+9. Alih jalur mengganti kewajiban mata kuliah ke mapping jalur tujuan dan mempertahankan histori attempt lama tanpa membuat tugas key-in.
+10. Ulang jalur tidak membuat repeat mata kuliah jika attempt efektif sudah lulus.
+11. Mata kuliah tidak lulus menghasilkan kebutuhan repeat semester berikutnya; attempt baru mengikuti data akademik resmi tanpa menciptakan ulang penjaluran tambahan.
+12. Workflow aktif dan gate semester memblokir pendaftaran.
+13. Jika assignment aktif ada, pamit pending/rejected/milik siklus lain ditolak.
+14. Jika tidak ada assignment aktif dan histori valid, pendaftaran dapat dibuat tanpa pamit.
+15. Pamit consumed tidak dapat dipakai lagi pada periode berikutnya.
+16. Pamit berubah menjadi consumed tepat ketika pendaftaran berhasil commit.
+17. Kegagalan pendaftaran me-rollback konsumsi pamit.
+18. Retry identik mengembalikan pendaftaran yang sama tanpa duplikasi.
+19. Pamit dari periode tujuan lama ditolak pada periode baru.
 
 ### 9.4 Integration test siklus dan jalur
 
@@ -891,6 +905,11 @@ Tahap dinyatakan selesai apabila:
 - query progres aktif tidak mencampurkan bimbingan atau dokumen dari siklus lama;
 - approval pamit tidak otomatis melepas topik `taken` tanpa aturan bisnis eksplisit;
 - kelompok Perintisan lama tidak digunakan ulang dan setiap anggota baru tervalidasi individual;
+- Alih mengakhiri kewajiban mata kuliah penjaluran jalur lama, mempertahankan seluruh attempt/nilai sebagai histori, dan membuat kewajiban jalur tujuan;
+- Ulang pada jalur yang sama tidak membuat kewajiban atau attempt baru apabila mata kuliah penjaluran sudah lulus;
+- mata kuliah penjaluran yang tidak lulus menghasilkan kebutuhan mengulang mata kuliah pada semester berikutnya tanpa otomatis membuat ulang penjaluran, mengganti pembimbing, atau mereset progres;
+- mahasiswa menerima informasi mata kuliah tujuan dan pengingat untuk memeriksa Gateway; SIMPS tidak membuat tugas key-in untuk Admin;
+- pendaftaran ulang/alih yang berhasil langsung muncul sebagai konteks baru pada grid Data Akademik; alih memakai mata kuliah tujuan, sedangkan histori nilai jalur lama tetap read-only;
 - assignment pertama siklus baru menggunakan semester penjaluran ke-1;
 - pembimbing baru hanya aktif setelah final Sekprodi melalui workflow Tahap 2;
 - retry identik tidak menggandakan pamit, pendaftaran, kelompok, histori, assignment, atau notifikasi;

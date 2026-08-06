@@ -179,9 +179,15 @@ async function submitResumeVersion({ guidanceId, mahasiswaId, resume, expectedVe
 }
 
 async function reviewResumeVersion({ guidanceId, dosenId, action, catatan, expectedVersion, idempotencyKey }) {
-  if (!["approve", "revision"].includes(action)) throw new GuidanceWorkflowError("Keputusan review tidak valid.", 400, "GUIDANCE_REVIEW_ACTION_INVALID");
+  const requestedAction = String(action || "").trim().toLowerCase();
+  const canonicalAction = ["approve", "approved"].includes(requestedAction)
+    ? "approve"
+    : ["revision", "revisi", "reject", "rejected", "revision_required"].includes(requestedAction)
+    ? "revision"
+    : null;
+  if (!canonicalAction) throw new GuidanceWorkflowError("Keputusan review tidak valid.", 400, "GUIDANCE_REVIEW_ACTION_INVALID");
   return db.sequelize.transaction(async (transaction) => {
-    const normalized = action === "approve" ? "approved" : "revision_required";
+    const normalized = canonicalAction === "approve" ? "approved" : "revision_required";
     const payload = { guidanceId, action: normalized, catatan, expectedVersion }; const state = await claimReceipt({ actorType: "dosen", actorId: dosenId, operation: "review_resume", idempotencyKey, payload, transaction });
     if (state.replay) return { status: state.status, data: state.payload, replayed: true };
     const row = await db.BimbinganSkripsi.findByPk(guidanceId, { transaction, lock: transaction.LOCK.UPDATE }); if (!row) throw new GuidanceWorkflowError("Data bimbingan tidak ditemukan.", 404, "GUIDANCE_NOT_FOUND");
@@ -192,10 +198,19 @@ async function reviewResumeVersion({ guidanceId, dosenId, action, catatan, expec
     version.status = normalized; version.reviewed_by_assignment_member_id = member.id; version.reviewed_by_dosen_id = dosenId; version.reviewed_at = new Date(); version.review_note = String(catatan || "").trim() || null; await version.save({ transaction });
     row.status_resume = normalized === "approved" ? "approved" : "revisi"; row.catatan_review_resume = version.review_note; row.tanggal_review_resume = version.reviewed_at;
     if (normalized === "approved") { row.occurred_at = row.occurred_at || row.scheduled_at || new Date(); row.occurrence_source = "approved_resume"; }
-    const registration = await db.PendaftaranPenjaluran.findByPk(row.pendaftaran_penjaluran_id, { transaction });
-    const policy = await resolvePolicy({ kodeProgramStudi: resolveProgramStudiCode(registration), programKuliah: registration?.program_kuliah || null,
-      jalur: row.jalur_snapshot, periodeAkademikId: row.periode_akademik_id, transaction });
-    await evaluateGuidance({ guidance: row, resumeVersion: version, policy, transaction }); row.row_version += 1; await row.save({ transaction });
+    if (normalized === "approved") {
+      const registration = await db.PendaftaranPenjaluran.findByPk(row.pendaftaran_penjaluran_id, { transaction });
+      const policy = await resolvePolicy({ kodeProgramStudi: resolveProgramStudiCode(registration), programKuliah: registration?.program_kuliah || null,
+        jalur: row.jalur_snapshot, periodeAkademikId: row.periode_akademik_id, transaction });
+      await evaluateGuidance({ guidance: row, resumeVersion: version, policy, transaction });
+    } else {
+      await db.GuidanceProgressEvaluation.update({ superseded_at: new Date() }, {
+        where: { guidance_id: row.id, superseded_at: null }, transaction,
+      });
+      row.is_counted = false;
+      row.progress_policy_id = null;
+    }
+    row.row_version += 1; await row.save({ transaction });
     await event({ guidanceId: row.id, type: normalized === "approved" ? "resume_approved" : "resume_revision_requested", actorType: "dosen", actorId: dosenId,
       role: "dosen", from: "submitted", to: normalized, assignmentId: row.effective_reviewer_assignment_id, memberId: member.id, key: state.key, metadata: { version_number: version.version_number }, transaction });
     await createSystemNotification({ recipientType: "mahasiswa", recipientId: row.mahasiswa_id, type: NOTIFICATION_TYPES.GUIDANCE_RESUME_DECIDED_STUDENT,

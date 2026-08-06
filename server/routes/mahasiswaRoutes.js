@@ -4,6 +4,7 @@ const mahasiswaController = require("../controllers/mahasiswaController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const academicController = require("../controllers/academicController");
 const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
 const sidangDokumenUpload = require("../middlewares/sidangDokumenUploadMiddleware");
 const { authenticateToken, authorizeRole } = require("../middlewares/authMiddleware");
@@ -52,6 +53,7 @@ router.post("/bimbingan/:id/resume", authenticateToken, authorizeRole("mahasiswa
 router.post("/bimbingan/:id/resume-versions", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.submitResumeMahasiswaBimbingan);
 
 // ========== DOKUMEN SIDANG ==========
+router.get("/dokumen/persyaratan-sidang", authenticateToken, authorizeRole("mahasiswa"), academicController.getMyPenjaluranSidangRequirement);
 router.get(
   "/dokumen-sidang",
   authenticateToken,

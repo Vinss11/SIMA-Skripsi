@@ -70,7 +70,7 @@ const TAB_HEADERS = {
   akademik: {
     icon: GraduationCap,
     title: "Data Akademik",
-    subtitle: "Kelola sumber, template, preview, commit, dan lineage import akademik.",
+    subtitle: "Kelola daftar dan import nilai mata kuliah penjaluran mahasiswa.",
   },
 };
 
@@ -1775,7 +1775,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         ) : null}
 
         {!loading && activeTab === "akademik" ? (
-          <AcademicDataPanel mode="admin" session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
+          <AcademicDataPanel mode="admin" session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} onBack={() => setActiveTab("dashboard")} />
         ) : null}
 
         {!loading && activeTab === "statistik" ? (

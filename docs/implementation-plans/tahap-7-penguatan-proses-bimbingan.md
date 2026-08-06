@@ -13,6 +13,23 @@ Tahap 7 memperkuat proses bimbingan agar setiap permohonan, sesi, resume, valida
 
 Hasil tahap ini bukan sekadar memperbaiki tampilan bimbingan. Backend harus menjadi sumber kebenaran untuk kewenangan, keterkaitan histori, perhitungan progres, dan status persetujuan pembimbing.
 
+### Keputusan penyederhanaan 5 Agustus 2026
+
+Halaman `Tata Kelola Bimbingan` dihapus karena tidak menjadi pekerjaan operasional harian dan mencampurkan konfigurasi teknis dengan proses akademik. Model policy, evaluasi, event, serta reviewer transfer tetap dipertahankan sebagai mekanisme internal; yang dihapus adalah menu, halaman konfigurasi/monitoring khusus, dan keputusan manual yang seharusnya dapat diturunkan dari assignment.
+
+Distribusi fungsi setelah halaman dihapus:
+
+| Kebutuhan | Lokasi/flow baru |
+| --- | --- |
+| Permohonan, jadwal, dan resume mahasiswa | halaman bimbingan mahasiswa |
+| Tugas menerima, reschedule, dan review resume | `Review Bimbingan` dosen |
+| Ringkasan progres mahasiswa | `Mahasiswa Bimbingan` Sekretaris Prodi |
+| Histori sesi dan resume | `Riwayat Bimbingan` |
+| Pergantian pembimbing/reviewer | flow pergantian pembimbing dan assignment aktif |
+| Minimum bimbingan | policy internal berversi yang dipasang melalui migration/release |
+| Koreksi resume approved | versi/keputusan baru oleh reviewer berwenang; bukan tombol invalidasi Sekprodi |
+| Anomali sistem | notifikasi dan laporan rekonsiliasi teknis, bukan halaman operasional baru |
+
 ## 2. Acuan aturan bisnis
 
 Rancangan mengacu pada:
@@ -36,7 +53,7 @@ Aturan final yang wajib dijaga:
 6. Histori harus dapat dibaca per semester, jalur, P1/P2, dan masa penetapan.
 7. Status dosen menentukan apakah bimbingan lama dapat dilanjutkan.
 8. P2 masih opsional.
-9. Jumlah minimum bimbingan merupakan konfigurasi, bukan konstanta controller.
+9. Jumlah minimum bimbingan merupakan konfigurasi internal berversi, bukan konstanta controller dan bukan form Sekretaris Prodi.
 10. Operasi lintas entitas wajib transaksional dan retry tidak boleh menggandakan data.
 
 ## 3. Keputusan yang belum boleh diasumsikan
@@ -52,7 +69,7 @@ Rancangan data harus dapat mendukung pilihan tersebut, tetapi production enforce
 - P1 wajib dan P2 tetap opsional;
 - progres ditampilkan dalam dua bentuk: per semester dan kumulatif per siklus;
 - workflow siap sidang dapat dibangun di balik feature flag atau mode shadow;
-- kebijakan approval scope dan count scope harus tersimpan sebagai konfigurasi eksplisit, bukan default tersembunyi.
+- kebijakan approval scope dan count scope harus tersimpan sebagai konfigurasi eksplisit yang dikelola melalui migration/release, bukan UI pengguna.
 
 ## 4. Batas tahap
 
@@ -69,13 +86,14 @@ Rancangan data harus dapat mendukung pilihan tersebut, tetapi production enforce
 - pemisahan progres ulang/alih;
 - fakta kesiapan bimbingan dan persetujuan pembimbing untuk dikonsumsi Tahap 8;
 - audit event, notifikasi, idempotensi, concurrency control, dan rekonsiliasi;
-- UI mahasiswa, dosen, serta histori read-only Sekretaris Prodi;
+- UI mahasiswa dan dosen serta ringkasan/histori melalui halaman Sekretaris Prodi yang sudah ada; tidak membuat halaman tata kelola khusus;
 - migration, backfill, integration test, security test, dan UAT.
 
 ### 4.2 Tidak termasuk Tahap 7
 
 - pengembangan workflow baru Pengabdian Masyarakat selama jalur tersebut berstatus hold;
-- verifikasi transkrip, SKS, mata kuliah wajib, Metodologi, CEPT, publikasi, LOA, dan dokumen pendadaran lain;
+- verifikasi transkrip, SKS, mata kuliah wajib, CEPT, publikasi, LOA, dan dokumen pendadaran lain;
+- key-in dan histori mata kuliah penjaluran (ditangani Tahap 5); Tahap 7 tidak memblokir bimbingan, tetapi Tahap 8 wajib mengonsumsinya sebagai gate pendadaran/sidang;
 - keputusan final kelayakan pendadaran;
 - penjadwalan sidang;
 - penentuan penguji;
@@ -599,12 +617,11 @@ Dosen lama kehilangan hak mutasi setelah reviewer transfer efektif, walaupun dos
 
 Sekretaris Prodi dapat:
 
-- melihat timeline dan progres lintas mahasiswa;
-- melihat reason code, assignment transition, reviewer transfer, dan audit;
-- menjalankan rekonsiliasi/penyelesaian data ambigu melalui endpoint khusus;
-- menetapkan reviewer pengganti melalui workflow pergantian pembimbing.
+- melihat ringkasan progres melalui `Mahasiswa Bimbingan`;
+- melihat timeline melalui `Riwayat Bimbingan`;
+- memperbaiki pembimbing melalui workflow pergantian pembimbing yang sudah ada.
 
-Sekretaris Prodi tidak dapat mengubah resume, menyetujui sesi, atau mengesahkan resume atas nama pembimbing. Jika orang yang sama juga dosen target, akses mutasi berasal dari relasi dosen dan membership, bukan role Sekretaris Prodi.
+Sekretaris Prodi tidak mengelola policy, memilih reviewer efektif, menginvalidasi approval resume, mengubah resume, menyetujui sesi, atau mengesahkan resume atas nama pembimbing. Jika orang yang sama juga dosen target, akses mutasi berasal dari relasi dosen dan membership, bukan role Sekretaris Prodi.
 
 ## 9. Workflow target
 
@@ -667,8 +684,8 @@ Dalam transaksi aktivasi assignment pengganti:
 3. pending atau jadwal mendatang tanpa resume dibatalkan dengan cancelled_supervisor_change;
 4. resume submitted/revision_required yang sesinya sudah terjadi dipindahkan ke replacement member dengan urutan/peran sama;
 5. P1 lama dipindahkan ke P1 baru dan P2 lama ke P2 baru;
-6. jika peran pengganti tidak tersedia, row menjadi needs_reviewer_resolution dan tidak otomatis dialihkan lintas peran;
-7. Sekretaris Prodi memilih penyelesaian melalui workflow khusus bila diizinkan;
+6. jika peran pengganti tidak tersedia, pilih P1 aktif pada assignment baru sebagai fallback deterministik dengan reason `cross_role_system_fallback`;
+7. jika P1 aktif juga belum tersedia, row menjadi `waiting_for_active_reviewer`; worker mengulang resolusi setelah assignment diperbaiki melalui flow pergantian pembimbing;
 8. target awal tidak ditimpa; hanya effective reviewer yang berubah;
 9. buat GuidanceReviewerTransfer dari assignment/member lama ke assignment/member baru;
 10. update effective reviewer pair, event, assignment transition, notifikasi, dan audit dibuat atomik.
@@ -690,7 +707,7 @@ Pada saat assignment semester baru efektif, transition service juga mengklasifik
 2. sesi yang sudah terjadi dengan resume submitted/revision_required tetap pada semester asal, tetapi effective reviewer dapat dipetakan ke membership baru dengan peran sama agar penyelesaian tidak buntu;
 3. request pending atau jadwal pada/setelah batas semester baru dibatalkan dengan reason semester_transition dan mahasiswa membuat request baru pada assignment baru;
 4. request tidak boleh dipindahkan dengan mengubah semester snapshot atau assignment asal;
-5. bila batas efektif semester atau mapping reviewer ambigu, row masuk needs_reviewer_resolution dan tidak dihitung sampai diselesaikan.
+5. bila batas efektif semester atau mapping reviewer ambigu, resolver memakai member dengan peran sama lalu P1 aktif sebagai fallback; bila assignment belum lengkap, row menunggu assignment aktif dan tidak dihitung.
 
 Pemetaan pada butir 2 wajib membuat GuidanceReviewerTransfer berjenis semester_transition. target assignment/member tetap menunjuk semester asal, sedangkan effective reviewer assignment/member menunjuk assignment semester baru.
 
@@ -825,13 +842,7 @@ Membuat event dan notifikasi di transaction yang sama. Jika pengiriman eksternal
 
 ### 11.3 Sekretaris Prodi
 
-| Method | Endpoint | Fungsi |
-| --- | --- | --- |
-| GET | /api/sekretaris/bimbingan/monitoring | progres lintas mahasiswa |
-| GET | /api/sekretaris/bimbingan/:id/history | timeline read-only |
-| GET | /api/sekretaris/bimbingan/reconciliation | data ambigu/stale |
-| POST | /api/sekretaris/bimbingan/:id/resolve-reviewer | penyelesaian reviewer yang tidak dapat dipetakan |
-| GET/POST | /api/sekretaris/bimbingan/policies | policy sesuai capability konfigurasi |
+Tidak ada API khusus halaman tata kelola. Halaman `Mahasiswa Bimbingan` dan `Riwayat Bimbingan` memakai endpoint existing untuk summary/detail read-only. Mutasi assignment tetap melalui API pergantian pembimbing Tahap 1/4. Endpoint publik pembuatan/aktivasi/retire policy, pemilihan reviewer manual, dan invalidasi approval resume tidak menjadi bagian kontrak UI.
 
 Seluruh mutating endpoint baru wajib menerima Idempotency-Key. Seluruh update aggregate yang sudah ada wajib menerima expected_version atau If-Match yang dibandingkan dengan row_version; create menginisialisasi row_version = 1. Mutation tanpa precondition ditolak, kecuali create aggregate baru. Setiap command memakai GuidanceCommandReceipt. Error code minimum:
 
@@ -948,18 +959,18 @@ Row ambiguous tidak dihitung sampai diselesaikan. Script mendukung dry-run, repo
 3. Batalkan pending/future request secara atomik.
 4. Pertahankan sesi validated.
 5. Transfer submitted/revision_required dengan event dan notification.
-6. Tandai needs_reviewer_resolution bila peran tidak tersedia.
+6. Terapkan fallback P1 aktif dan `waiting_for_active_reviewer` bila assignment belum lengkap; tidak membuat antrean keputusan reviewer manual.
 7. Pastikan dosen lama tidak dapat mutate setelah commit.
 8. Uji rollback aktivasi assignment jika transfer/event/notifikasi gagal.
 
 ### Paket 7 — Policy minimum dan progres
 
-1. Buat UI/configuration policy dengan versioning dan approval.
+1. Hapus UI konfigurasi policy; seed/migrasikan policy berversi melalui release teruji.
 2. Definisikan precedence program studi, program_kuliah, jalur, dan periode.
 3. Sajikan progres semester serta siklus.
 4. Migrasikan BimbinganPage, monitoring dosen, dokumen sidang, dan sidang akhir ke service yang sama.
-5. Tolak activation policy yang ambigu/tumpang tindih.
-6. Audit perubahan policy.
+5. Tolak policy seed/activation yang ambigu atau tumpang tindih pada startup/migration validation.
+6. Audit perubahan policy berdasarkan deployment/migration reference.
 
 Nilai 8 dapat dimigrasikan sebagai policy legacy awal agar perilaku tidak berubah, tetapi harus diberi source dan tidak dianggap keputusan final baru.
 
@@ -1003,13 +1014,7 @@ Dosen:
 - version comparison resume;
 - readiness task hanya jika diwajibkan policy.
 
-Sekretaris Prodi:
-
-- monitoring read-only;
-- filter jalur, periode, semester, siklus, pembimbing, progress;
-- detail reason codes dan audit;
-- queue needs_reviewer_resolution;
-- tidak ada tombol edit isi akademik.
+Sekretaris Prodi tidak mempunyai halaman frontend baru. Ringkasan progres tetap berada pada `Mahasiswa Bimbingan`, histori pada `Riwayat Bimbingan`, dan pergantian pembimbing pada flow tindak lanjut yang sudah ada. Menu `Tata Kelola Bimbingan`, tab policy, queue reviewer manual, dan tombol invalidasi approval dihapus.
 
 ### Paket 11 — Rekonsiliasi dan constraint final
 
@@ -1095,7 +1100,7 @@ Setelah laporan bersih, wajibkan foreign key untuk data baru dan hentikan dual-w
 2. Pending/future request dosen lama dibatalkan.
 3. Submitted resume ditransfer ke pengganti peran sama.
 4. Transfer mempertahankan target assignment/member dan memperbarui effective reviewer assignment/member melalui GuidanceReviewerTransfer.
-5. P2 hilang menghasilkan needs_reviewer_resolution.
+5. P2 pengganti tidak tersedia memakai P1 aktif sebagai fallback teraudit; jika assignment belum mempunyai P1 aktif, proses menunggu assignment diperbaiki tanpa pilihan reviewer manual.
 6. Semester kedua membuat request pada assignment baru.
 7. Pending/future request pada batas semester dibatalkan tanpa memindahkan snapshot semester.
 8. Submitted resume semester lama dapat diselesaikan reviewer baru dengan peran sama dan transfer type semester_transition.
@@ -1206,7 +1211,7 @@ Setelah laporan bersih, wajibkan foreign key untuk data baru dan hentikan dual-w
 6. Jalankan progress evaluator dalam shadow mode, simpan GuidanceProgressEvaluation, dan bandingkan dengan tiga consumer lama.
 7. Selesaikan mismatch; jangan enforce jika cycle lama masih ikut terhitung.
 8. Aktifkan workflow request/resume baru, mandatory precondition version, serta GuidanceCommandReceipt.
-9. Aktifkan replacement integration dan pantau needs_reviewer_resolution.
+9. Aktifkan replacement integration dan pantau `waiting_for_active_reviewer` serta fallback P1 otomatis.
 10. Migrasikan frontend dan seluruh consumer minimum.
 11. Aktifkan policy evaluator sebagai source of truth.
 12. Aktifkan readiness dan GuidanceReadinessFact handoff hanya setelah approval/count scope disahkan; jika belum, pertahankan shadow.
@@ -1286,7 +1291,7 @@ Tahap 7 selesai apabila:
 - readiness menghasilkan GuidanceReadinessFact berversi/checksum tanpa melewati verifikasi Tahap 8;
 - invalidation fakta diterbitkan sebagai versi baru dan dapat membuat consumer Tahap 8 stale/hold;
 - approval scope yang belum final tidak diaktifkan secara diam-diam;
-- Sekretaris Prodi mempunyai monitoring read-only dan bukan reviewer akademik otomatis;
+- Sekretaris Prodi memakai halaman progres/histori existing, tanpa halaman tata kelola dan bukan reviewer akademik otomatis;
 - seluruh write path baru memakai row_version/precondition wajib dan GuidanceCommandReceipt;
 - exact retry setelah commit mengembalikan hasil pertama, sedangkan fingerprint berbeda ditolak;
 - setiap mutation kritis transaksional dan idempotent;
@@ -1309,9 +1314,9 @@ Tahap 7 selesai apabila:
 | Approval siap sidang | Mendukung P1 atau seluruh pembimbing aktif; enforcement menunggu keputusan final |
 | P2 per jalur | Tetap opsional sampai aturan bisnis diperbarui |
 | Transfer resume P1/P2 | Pertahankan urutan/peran; jangan selalu ke P1 |
-| Pengganti peran tidak ada | needs_reviewer_resolution, bukan fallback otomatis lintas peran |
+| Pengganti peran tidak ada | Gunakan P1 aktif sebagai fallback sistem teraudit; bila P1 belum tersedia, tunggu assignment diperbaiki |
 | Penarikan request pending | Pertahankan aturan berjalan sampai keputusan baru dicatat |
-| Penghapusan approval | Hanya invalidation beraudit; tidak menghapus histori |
+| Koreksi approval | Reviewer sah membuat versi/keputusan koreksi baru; Sekretaris Prodi tidak mempunyai tombol invalidasi |
 | Akses histori co-supervisor | Read-only dan harus diputuskan policy; tidak memberi hak task/mutation |
 | Retention resume/event | Mengikuti kebijakan akademik/audit institusi; tidak boleh merusak histori sah |
 

@@ -13,6 +13,9 @@ const {
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
 const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
+const { getSidangRequirement: getPenjaluranGradeRequirement } = require("../services/penjaluranGradeService");
+const { createSystemNotification } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 
 const SERVER_ROOT_DIR = path.resolve(__dirname, "..");
 const SIDANG_UPLOAD_ROOT = process.env.VERCEL
@@ -167,6 +170,9 @@ function serializeDokumenPayload(dokumenRow) {
       review_note: row[cfg.reviewNoteField] || null,
       reviewed_at: row[cfg.reviewedAtField] || null,
       has_file: Boolean(row[cfg.pathField] && row[cfg.nameField]),
+      can_upload: status !== "approved",
+      can_review: status === "submitted" && Boolean(row[cfg.pathField] && row[cfg.nameField]),
+      awaiting_reupload: status === "revisi",
     };
   });
 
@@ -219,7 +225,7 @@ async function resolveAuthorizedDosenId(req) {
 exports.getMahasiswaDokumenSidang = async (req, res) => {
   try {
     const mahasiswaId = Number(req.user.id);
-    const countedSessions = await countValidBimbinganSessions(mahasiswaId);
+    const [countedSessions, mataKuliahPenjaluran] = await Promise.all([countValidBimbinganSessions(mahasiswaId), getPenjaluranGradeRequirement(mahasiswaId)]);
     const gate = buildGate(countedSessions);
 
     const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, {
@@ -268,6 +274,7 @@ exports.getMahasiswaDokumenSidang = async (req, res) => {
           : null),
         supervision_access: supervisionAccess,
         dokumen,
+        persyaratan_sistem: { mata_kuliah_penjaluran: mataKuliahPenjaluran },
       },
     });
   } catch (error) {
@@ -323,15 +330,51 @@ exports.uploadMahasiswaDokumenSidang = async (req, res) => {
 
     const dokumenRow = await findOrCreateDokumenSidang(mahasiswaId, transaction);
     const cfg = DOKUMEN_FIELD_MAP[dokumenKey];
+    const currentStatus = String(dokumenRow[cfg.statusField] || "belum_upload").toLowerCase();
+    if (currentStatus === "approved") {
+      cleanupUploadedFileFromRequest(req);
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${cfg.label} sudah disetujui dan tidak dapat diunggah ulang.`,
+      });
+    }
     const oldStoredPath = dokumenRow[cfg.pathField];
 
+    const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, {
+      attributes: ["id", "nim", "nama"],
+      transaction,
+    });
+    const uploadedAt = new Date();
+    const isReupload = Boolean(oldStoredPath);
     dokumenRow[cfg.pathField] = safeRelativePathFromAbsolute(req.file.path);
     dokumenRow[cfg.nameField] = String(req.file.originalname || req.file.filename || "").slice(0, 255);
     dokumenRow[cfg.statusField] = "submitted";
-    dokumenRow[cfg.uploadedAtField] = new Date();
-    dokumenRow[cfg.reviewNoteField] = null;
-    dokumenRow[cfg.reviewedAtField] = null;
+    dokumenRow[cfg.uploadedAtField] = uploadedAt;
     await dokumenRow.save({ transaction });
+
+    await createSystemNotification({
+      recipientType: "dosen",
+      recipientId: Number(supervisionAccess.current_supervisor.id),
+      type: NOTIFICATION_TYPES.DEFENSE_DOCUMENT_SUBMITTED_LECTURER,
+      message: `${mahasiswa?.nama || "Mahasiswa bimbingan"} (${mahasiswa?.nim || "-"}) ${
+        isReupload ? "mengunggah ulang" : "mengunggah"
+      } ${cfg.label}. Dokumen siap direview.`,
+      referenceType: "dokumen_sidang",
+      referenceId: Number(dokumenRow.id),
+      actionKey: "defense_document_review",
+      metadata: {
+        mahasiswa_id: mahasiswaId,
+        nim: mahasiswa?.nim || null,
+        nama_mahasiswa: mahasiswa?.nama || null,
+        document_key: dokumenKey,
+        document_label: cfg.label,
+        file_name: dokumenRow[cfg.nameField],
+        upload_type: isReupload ? "reupload" : "initial",
+      },
+      deduplicationKey: `dokumen-sidang:${dokumenRow.id}:${dokumenKey}:upload:${uploadedAt.getTime()}`,
+      transaction,
+    });
 
     await transaction.commit();
     cleanupFileIfExists(oldStoredPath);
@@ -661,10 +704,58 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
       });
     }
 
+    if (currentStatus === "revisi") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${cfg.label} sedang menunggu upload ulang mahasiswa sebelum dapat direview kembali.`,
+      });
+    }
+
+    if (currentStatus === "approved") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${cfg.label} sudah disetujui dan keputusannya telah dikunci.`,
+      });
+    }
+
+    if (currentStatus !== "submitted") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${cfg.label} belum berada dalam antrean review dosen.`,
+      });
+    }
+
+    const reviewedAt = new Date();
     dokumenRow[cfg.statusField] = decision === "approve" ? "approved" : "revisi";
     dokumenRow[cfg.reviewNoteField] = note || null;
-    dokumenRow[cfg.reviewedAtField] = new Date();
+    dokumenRow[cfg.reviewedAtField] = reviewedAt;
     await dokumenRow.save({ transaction });
+
+    const decisionMessage = decision === "approve"
+      ? `${cfg.label} Anda telah disetujui dosen pembimbing. Dokumen tersebut kini dikunci.`
+      : `${cfg.label} Anda perlu direvisi. Catatan dosen: ${note}`;
+    await createSystemNotification({
+      recipientType: "mahasiswa",
+      recipientId: mahasiswaId,
+      type: NOTIFICATION_TYPES.DEFENSE_DOCUMENT_DECIDED_STUDENT,
+      message: decisionMessage,
+      referenceType: "dokumen_sidang",
+      referenceId: Number(dokumenRow.id),
+      actionKey: "student_defense_documents",
+      metadata: {
+        document_key: dokumenKey,
+        document_label: cfg.label,
+        file_name: dokumenRow[cfg.nameField],
+        decision: decision === "approve" ? "approved" : "revisi",
+        review_note: note || null,
+        reviewer_id: dosenId,
+      },
+      deduplicationKey: `dokumen-sidang:${dokumenRow.id}:${dokumenKey}:review:${reviewedAt.getTime()}`,
+      transaction,
+    });
 
     await transaction.commit();
 

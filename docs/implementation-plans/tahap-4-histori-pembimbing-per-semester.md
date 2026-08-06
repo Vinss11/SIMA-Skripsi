@@ -543,6 +543,23 @@ Untuk Perintisan, jangan memakai default transaksi per mahasiswa sebelum aturan 
 
 Hasil: semester ke-2 mempunyai record mandiri tanpa kehilangan progres semester ke-1.
 
+### Paket 6A — Sinkronisasi mata kuliah penjaluran saat pergantian semester
+
+Transisi assignment pembimbing dan pengulangan mata kuliah penjaluran merupakan dua proses yang terpisah. Resolver semester melakukan pemeriksaan berikut setelah `PeriodeAkademik` tujuan tersedia:
+
+1. baca kewajiban mata kuliah penjaluran yang berlaku untuk jalur aktif terakhir;
+2. jika attempt efektif sudah `lulus`, jangan membuat kewajiban atau attempt baru;
+3. jika hasil final `tidak_lulus`, tandai kebutuhan repeat pada periode akademik berikutnya tanpa membuat tugas key-in di SIMPS;
+4. jika attempt masih `enrolled` atau data hasil belum lengkap, pertahankan record dan jangan membuat duplikasi;
+5. jika mapping jalur–mata kuliah atau periode tujuan tidak ditemukan, tandai `data_issue` untuk rekonsiliasi; jangan menebak mata kuliah maupun periode;
+6. kirim pemberitahuan kepada mahasiswa mengenai kebutuhan mengulang dan pengingat memeriksa Gateway setelah Admin melakukan key-in;
+7. simpan hubungan ke kewajiban/attempt sebelumnya agar seluruh semester dapat ditelusuri;
+8. jalankan proses secara idempotent dan aman terhadap eksekusi worker berulang.
+
+Kegagalan mata kuliah penjaluran tidak menggagalkan carry-forward pembimbing, tidak mengakhiri assignment, dan tidak mereset progres bimbingan. Namun mahasiswa tidak dapat memperoleh izin atau jadwal sidang sampai attempt efektif berstatus lulus; status tersebut diperiksa kembali pada clearance kelulusan/yudisium.
+
+Hasil: kebutuhan mengulang mata kuliah mengikuti semester akademik tanpa mencampur lifecycle akademik dengan lifecycle pembimbing.
+
 ### Paket 7 — Pengajuan izin lanjut semester ke-3
 
 1. Mahasiswa hanya dapat mengajukan dari assignment active semester ke-2.
@@ -949,6 +966,9 @@ Tahap dinyatakan selesai apabila:
 - satu-satunya aktivator assignment awal adalah finalizer keputusan Sekprodi Tahap 2; ulang/alih masuk melalui finalizer yang sama setelah flow Tahap 3 selesai;
 - nomor semester dihitung per pendaftaran, bukan dari histori global mahasiswa;
 - perpindahan semester 1 ke 2 membuat record baru walaupun P1/P2 sama;
+- mata kuliah penjaluran yang lulus tidak digandakan pada semester berikutnya;
+- hasil `tidak_lulus` membuat kebutuhan repeat pada semester berikutnya secara idempotent tanpa antrean Admin di SIMPS;
+- status mata kuliah penjaluran yang belum lulus tidak menggagalkan carry-forward pembimbing, mengakhiri assignment, atau mereset progres;
 - carry-forward masa depan menghasilkan scheduled assignment dan tidak mengakhiri assignment lama sebelum `effective_at`;
 - carry-forward memvalidasi hak melanjutkan dosen, bukan ketersediaan mahasiswa baru;
 - semester ke-3 hanya dapat aktif melalui izin approved yang terikat pada siklus yang sama;

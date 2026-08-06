@@ -2,6 +2,7 @@
 
 const { Notifikasi } = require("../models");
 const { NOTIFICATION_TYPES, NOTIFICATION_TITLES } = require("../constants/notificationTypes");
+const { formatDosenFullName } = require("../utils/dosenIdentity");
 
 function memberDosenId(member) {
   return Number(member?.dosen_id || member?.dosen?.id || 0);
@@ -9,6 +10,16 @@ function memberDosenId(member) {
 
 function memberOrder(member) {
   return Number(member?.urutan || 0);
+}
+
+function memberIdentity(member) {
+  const dosen = member?.dosen || null;
+  return {
+    dosen_id: memberDosenId(member),
+    urutan: memberOrder(member),
+    nama: formatDosenFullName(dosen?.nama, dosen?.gelar) || `Dosen #${memberDosenId(member)}`,
+    nik: dosen?.nik || null,
+  };
 }
 
 function formatEffectiveDate(value) {
@@ -88,7 +99,7 @@ async function createSupervisorReplacementNotifications({
     ? NOTIFICATION_TYPES.SUPERVISOR_EXTENDED_STUDENT
     : NOTIFICATION_TYPES.SUPERVISOR_REPLACED_STUDENT;
   const studentMessage = isInitialAssignment
-    ? `Pembimbing skripsi Anda telah ditetapkan mulai ${effectiveLabel}.`
+    ? "Pembimbing skripsi Anda telah ditetapkan oleh Sekretaris Prodi."
     : isExtension
     ? `Penetapan pembimbing skripsi Anda diperbarui untuk periode berikutnya mulai ${effectiveLabel}.`
     : `Pembimbing skripsi Anda telah diperbarui mulai ${effectiveLabel}. Progres bimbingan sebelumnya tetap tersimpan.`;
@@ -98,6 +109,9 @@ async function createSupervisorReplacementNotifications({
     mahasiswa_nim: mahasiswa.nim,
     penetapan_pembimbing_id: assignmentId,
     effective_date: effectiveLabel,
+    appointed_supervisors: [...newById.values()]
+      .sort((left, right) => memberOrder(left) - memberOrder(right))
+      .map(memberIdentity),
   };
 
   const created = [];

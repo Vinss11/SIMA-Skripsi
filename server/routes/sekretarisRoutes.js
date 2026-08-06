@@ -5,17 +5,7 @@ const mitraMagangController = require("../controllers/mitraMagangController");
 const jalurController = require("../controllers/jalurController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
 const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
-const guidanceGovernanceController = require("../controllers/guidanceGovernanceController");
 const { authenticateToken, authorizeRole, authorizeSekretarisAccess } = require("../middlewares/authMiddleware");
-
-router.get("/bimbingan/monitoring", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.getMonitoring);
-router.get("/bimbingan/policies", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.getPolicies);
-router.post("/bimbingan/policies", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.createPolicy);
-router.post("/bimbingan/policies/:id/activate", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.activatePolicy);
-router.post("/bimbingan/policies/:id/retire", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.retirePolicy);
-router.get("/bimbingan/:id/reviewer-candidates", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.getReviewerCandidates);
-router.post("/bimbingan/:id/resolve-reviewer", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.resolveReviewer);
-router.post("/bimbingan/:id/resume-approval/invalidate", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, guidanceGovernanceController.invalidateResumeApproval);
 
 router.get("/pendaftaran", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPendaftaranList);
 router.get("/pendaftaran/export", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.exportPendaftaran);

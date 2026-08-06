@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 export default function useNotifications({ apiBaseUrl, token, onSessionExpired }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [readCount, setReadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
@@ -29,6 +30,7 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
     try {
       const data = await request("/api/notifications/unread-count");
       setUnreadCount(Number(data?.unread_count || 0));
+      setReadCount(Number(data?.read_count || 0));
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") setError(loadError.message);
     }
@@ -61,6 +63,7 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
     const data = await request(`/api/notifications/${id}/read`, { method: "PATCH" });
     setNotifications((rows) => rows.map((item) => Number(item.id) === Number(id) ? data : item));
     setUnreadCount((count) => Math.max(0, count - (data?.read_at ? 1 : 0)));
+    setReadCount((count) => count + (data?.read_at ? 1 : 0));
     await loadUnreadCount();
     return data;
   }, [loadUnreadCount, request]);
@@ -71,6 +74,27 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
     setUnreadCount(0);
     await loadNotifications();
   }, [loadNotifications, request]);
+
+  const refreshAfterDelete = useCallback(async () => {
+    if (page > 1) setPage(1);
+    else await loadNotifications();
+    await loadUnreadCount();
+  }, [loadNotifications, loadUnreadCount, page]);
+
+  const deleteAllRead = useCallback(async () => {
+    const data = await request("/api/notifications/read", { method: "DELETE" });
+    await refreshAfterDelete();
+    return data;
+  }, [refreshAfterDelete, request]);
+
+  const deleteSelectedRead = useCallback(async (ids) => {
+    const data = await request("/api/notifications/selected", {
+      method: "DELETE",
+      body: JSON.stringify({ ids }),
+    });
+    await refreshAfterDelete();
+    return data;
+  }, [refreshAfterDelete, request]);
 
   useEffect(() => { loadNotifications(); }, [loadNotifications]);
   useEffect(() => {
@@ -85,7 +109,8 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
   }, [loadUnreadCount]);
 
   return {
-    notifications, unreadCount, loading, error, page, totalPages, total, filter,
+    notifications, unreadCount, readCount, loading, error, page, totalPages, total, filter,
     setFilter, setPage, loadNotifications, loadUnreadCount, markAsRead, markAllAsRead,
+    deleteAllRead, deleteSelectedRead,
   };
 }

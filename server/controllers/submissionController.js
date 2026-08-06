@@ -1262,7 +1262,6 @@ exports.getSubmissionById = async (req, res) => {
     const canReviewKetuaClusterTopik =
       submission.tipe_pengajuan === "topik_dosen" &&
       submission.status === "pending" &&
-      topikApprovalStage === "pending_ketua_klaster" &&
       pendingKetuaClusterRows.length > 0;
     const canReviewNonTopik =
       submission.tipe_pengajuan !== "topik_dosen" &&
@@ -1293,7 +1292,7 @@ exports.getSubmissionById = async (req, res) => {
       jenis_jalur: submission.jenis_jalur,
       tipe_pengajuan: submission.tipe_pengajuan,
       status: submission.status,
-      tahap_approval: topikApprovalStage,
+      tahap_approval: canReviewKetuaClusterTopik ? "pending_ketua_klaster" : topikApprovalStage,
       diajukan_pada: submission.createdAt,
       diperbarui_pada: supervisorContext.replacement?.recorded_at || submission.updatedAt,
       penetapan_pembimbing_aktif: supervisorContext.active,

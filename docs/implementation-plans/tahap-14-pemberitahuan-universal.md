@@ -29,11 +29,22 @@ Notifikasi bukan sumber kebenaran status bisnis; detail selalu dimuat dari objek
 
 Status dosen, pamit, ulang/alih, kelompok, review jalur, keputusan final, penetapan/pergantian, bimbingan, izin lanjut, persyaratan sidang, jadwal, penggantian penguji, reschedule, nilai, revisi, yudisium, dan kelulusan.
 
+Event mata kuliah penjaluran minimum:
+
+- pengingat Gateway pada konfirmasi keberhasilan submit form awal, bukan menunggu keputusan final;
+- pembaruan kepada mahasiswa ketika hasil akademik berubah, repeat diperlukan, atau mata kuliah berubah karena alih;
+- status sedang mengambil, lulus, atau tidak lulus;
+- kebutuhan mengulang pada semester berikutnya;
+- kewajiban berubah karena alih jalur;
+- clearance yudisium tertahan atau terpenuhi;
+- verifikasi/pendaftaran sidang tertahan atau terbuka karena hasil mata kuliah penjaluran.
+
+Judul dibuat oleh sistem dan payload menyimpan `kewajiban_id`, `mata_kuliah_id`, `periode_akademik_id`, serta `jalur_snapshot` bila relevan. Retry dan bulk key-in tidak boleh menghasilkan notifikasi ganda.
+
 ## 6. Pengujian
 
 Uji penerima, idempotensi, unread count lintas tab, mark read, referensi terhapus/nonaktif, rollback transaksi, pagination, otorisasi detail, dan aksesibilitas indikator.
 
 ## 7. Definition of Done
 
-Seluruh event kritis mempunyai template dan test penerima; tidak ada notifikasi ganda karena retry; menu serta lonceng konsisten dan tautan selalu diotorisasi.
-
+Seluruh event kritis mempunyai template dan test penerima; pengingat Gateway tampil setelah submit form tanpa diduplikasi saat finalisasi, mahasiswa menerima perubahan hasil/repeat/alih, dan Sekprodi menerima hold sidang/yudisium yang relevan; SIMPS tidak membuat notifikasi tugas key-in Admin; tidak ada notifikasi ganda karena retry; menu serta lonceng konsisten dan tautan selalu diotorisasi.

@@ -240,6 +240,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [submittingRequest, setSubmittingRequest] = useState(false);
 
   const [resumeDraft, setResumeDraft] = useState({});
+  const [resumeErrors, setResumeErrors] = useState({});
   const [submittingResumeId, setSubmittingResumeId] = useState(null);
   const [expiringRequestId, setExpiringRequestId] = useState(null);
 
@@ -524,18 +525,21 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
   const handleSubmitResume = async (rowId) => {
     if (!canSubmitResume) {
-      setError(supervisionAccess?.reason || "Resume belum dapat dikirim.");
+      const message = supervisionAccess?.reason || "Resume belum dapat dikirim.";
+      setResumeErrors((current) => ({ ...current, [rowId]: message }));
       return;
     }
     const resume = String(resumeDraft[rowId] || "").trim();
     if (resume.length < 20) {
-      setError("Resume minimal 20 karakter.");
+      const message = `Resume minimal 20 karakter. Saat ini baru ${resume.length} karakter.`;
+      setResumeErrors((current) => ({ ...current, [rowId]: message }));
       return;
     }
 
     const currentRow = rows.find((item) => Number(item.id) === Number(rowId)) || selectedRow;
     if (!canSubmitResumeNow(currentRow)) {
-      setError("Resume hanya bisa diisi saat sesi bimbingan sudah dimulai.");
+      const message = "Resume hanya bisa diisi saat sesi bimbingan sudah dimulai.";
+      setResumeErrors((current) => ({ ...current, [rowId]: message }));
       return;
     }
 
@@ -551,6 +555,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     if (!confirmation.isConfirmed) return;
 
     setError("");
+    setResumeErrors((current) => ({ ...current, [rowId]: "" }));
     try {
       setSubmittingResumeId(rowId);
       resumeCommandKeysRef.current[rowId] ||= newCommandKey();
@@ -598,7 +603,8 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     } catch (resumeError) {
       if (resumeError.receivedResponse) delete resumeCommandKeysRef.current[rowId];
       if (resumeError.message !== "__SESSION_EXPIRED__") {
-        setError(resumeError.message || "Gagal mengirim resume.");
+        const message = resumeError.message || "Gagal mengirim resume.";
+        setResumeErrors((current) => ({ ...current, [rowId]: message }));
       }
     } finally {
       setSubmittingResumeId(null);
@@ -720,7 +726,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Jalur: {String(guidanceContext.cycle?.jalur || "-").replaceAll("_", " ")}</span>
               <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Siklus: {guidanceContext.cycle?.type || "-"}</span>
               <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Semester penjaluran: {guidanceContext.assignment?.semester_penjaluran_ke || "-"}</span>
-              <span className="rounded-full bg-[#edf2ff] px-2.5 py-1">Policy v{guidanceProgress?.policy?.version || "-"} ({guidanceProgress?.policy?.count_scope || "-"})</span>
             </div>
           ) : null}
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-[#dfe6f7]">
@@ -1319,15 +1324,25 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                   <textarea
                     rows={4}
                     value={resumeDraft[selectedRow.id] || ""}
-                    onChange={(event) =>
-                      setResumeDraft((prev) => ({
-                        ...prev,
-                        [selectedRow.id]: event.target.value,
-                      }))
-                    }
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setResumeDraft((prev) => ({ ...prev, [selectedRow.id]: value }));
+                      if (String(value).trim().length >= 20) {
+                        setResumeErrors((current) => ({ ...current, [selectedRow.id]: "" }));
+                      }
+                    }}
                     placeholder="Tuliskan ringkasan hasil diskusi dan rencana tindak lanjut..."
-                    className="mt-2 w-full rounded-lg border border-[#cfdaf0] px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3]"
+                    aria-invalid={Boolean(resumeErrors[selectedRow.id])}
+                    className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${resumeErrors[selectedRow.id] ? "border-red-400 bg-red-50/40" : "border-[#cfdaf0]"}`}
                   />
+                  <div className="mt-1 flex items-start justify-between gap-3 text-xs">
+                    <p className={resumeErrors[selectedRow.id] ? "font-semibold text-red-600" : "text-[#667393]"}>
+                      {resumeErrors[selectedRow.id] || "Resume wajib berisi minimal 20 karakter."}
+                    </p>
+                    <p className={`shrink-0 font-semibold ${String(resumeDraft[selectedRow.id] || "").trim().length < 20 ? "text-[#9b6d00]" : "text-[#1f8a58]"}`}>
+                      {String(resumeDraft[selectedRow.id] || "").trim().length}/20 karakter
+                    </p>
+                  </div>
                   <div className="mt-3 flex justify-end">
                     <button
                       type="button"
@@ -1354,7 +1369,7 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {selectedRow.status_resume === "approved" && selectedRow.is_counted ? (
                 <div className="inline-flex items-center gap-2 rounded-md bg-[#e8f8ef] px-3 py-2 text-sm font-semibold text-[#1f8a58]">
                   <CheckCircle2 className="h-4 w-4" />
-                  Sesi ini sudah dihitung ke progres minimum {stats?.target_minimum || 0} bimbingan sesuai policy aktif.
+                  Sesi ini sudah dihitung ke progres minimum {stats?.target_minimum || 0} bimbingan.
                 </div>
               ) : null}
 

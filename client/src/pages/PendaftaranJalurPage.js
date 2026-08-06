@@ -120,7 +120,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     program_kuliah: "",
     pendaftaran: "baru",
     jenis_jalur_diambil: "",
-    dosen_pembimbing_ta_mode: "pilih_dosen",
+    dosen_pembimbing_ta_mode: "belum_dapat",
     dosen_pembimbing_ta_id: "",
     jenis_jalur_ulang: "",
     dosen_pembimbing_ta_sebelumnya_id: "",
@@ -606,7 +606,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
             disabled={disabled}
             onChange={(event) => {
               const { name: inputName, value: inputValue } = event.target;
-              setFormData((prev) => ({ ...prev, [inputName]: inputValue }));
+              setFormData((prev) => ({
+                ...prev,
+                [inputName]: inputValue,
+                ...(inputName === "dosen_pembimbing_ta_mode" && inputValue === "belum_dapat"
+                  ? { dosen_pembimbing_ta_id: "" }
+                  : {}),
+              }));
               setFieldErrors((prev) => ({ ...prev, [inputName]: "" }));
               if (
                 ["jenis_jalur_diambil", "jenis_jalur_ulang", "penjaluran_baru"].includes(inputName) &&
@@ -912,7 +918,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       setFormData((prev) => ({
         ...prev,
         jenis_jalur_diambil: "",
-        dosen_pembimbing_ta_mode: "pilih_dosen",
+        dosen_pembimbing_ta_mode: "belum_dapat",
         dosen_pembimbing_ta_id: "",
         penjaluran_sebelumnya: "",
         penjaluran_baru: "",
@@ -923,7 +929,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setFormData((prev) => ({
       ...prev,
       jenis_jalur_diambil: "",
-      dosen_pembimbing_ta_mode: "pilih_dosen",
+      dosen_pembimbing_ta_mode: "belum_dapat",
       dosen_pembimbing_ta_id: "",
       jenis_jalur_ulang: "",
     }));
@@ -940,7 +946,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       program_kuliah: "",
       pendaftaran: "baru",
       jenis_jalur_diambil: "",
-      dosen_pembimbing_ta_mode: "pilih_dosen",
+      dosen_pembimbing_ta_mode: "belum_dapat",
       dosen_pembimbing_ta_id: "",
       jenis_jalur_ulang: "",
       dosen_pembimbing_ta_sebelumnya_id: "",
@@ -1114,6 +1120,12 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         setError("Lengkapi field lanjutan untuk jalur baru.");
         return;
       }
+      if (formData.dosen_pembimbing_ta_mode === "pilih_dosen" && !formData.dosen_pembimbing_ta_id) {
+        setTouchedFields((prev) => ({ ...prev, dosen_pembimbing_ta_id: true }));
+        setFieldErrors((prev) => ({ ...prev, dosen_pembimbing_ta_id: "Calon dosen pembimbing wajib dipilih." }));
+        setError("Pilih calon dosen pembimbing atau ubah pilihan menjadi belum memiliki.");
+        return;
+      }
     } else if (formData.pendaftaran === "ulang") {
       if (
         !formData.jenis_jalur_ulang ||
@@ -1164,6 +1176,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           dosen_pembimbing_akademik_id: Number(formData.dosen_pembimbing_akademik_id),
           jenis_jalur_diambil: formData.jenis_jalur_diambil,
           jenis_jalur_ulang: formData.jenis_jalur_ulang,
+          calon_dosen_pembimbing_id:
+            formData.dosen_pembimbing_ta_mode === "pilih_dosen"
+              ? Number(formData.dosen_pembimbing_ta_id)
+              : null,
           dosen_pembimbing_ta_id: null,
           dosen_pembimbing_ta_sebelumnya_id: null,
           dosen_pembimbing_ta_baru_id: null,
@@ -1201,7 +1217,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       resetForm();
       onRegisterSuccess?.(registerPayload);
     } catch (submitError) {
-      if (["nim", "nama", "dosen_pembimbing_akademik_id", "program_kuliah"].includes(submitError.field)) {
+      if (submitError.field === "calon_dosen_pembimbing_id") {
+        setTouchedFields((prev) => ({ ...prev, dosen_pembimbing_ta_id: true }));
+        setFieldErrors((prev) => ({ ...prev, dosen_pembimbing_ta_id: submitError.message || "Calon dosen pembimbing tidak valid." }));
+        setError("");
+      } else if (["nim", "nama", "dosen_pembimbing_akademik_id", "program_kuliah"].includes(submitError.field)) {
         setTouchedFields((prev) => ({ ...prev, [submitError.field]: true }));
         setFieldErrors((prev) => ({
           ...prev,
@@ -1440,9 +1460,32 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     options: JALUR_OPTIONS,
                   })}
                 </div>
-                <p className="mt-4 rounded-lg border border-[#d8e3fb] bg-[#f5f8ff] px-3 py-2 text-sm text-[#40598f]">
-                  Pembimbing 1 wajib dan Pembimbing 2 opsional akan ditetapkan pada keputusan final Sekprodi.
-                </p>
+                <div className="mt-4 rounded-lg border border-[#d8e3fb] bg-[#f8faff] p-3">
+                  <label className="block text-sm font-semibold text-[#324c86]">Apakah sudah memiliki calon dosen pembimbing?</label>
+                  {renderRadioGroup({
+                    name: "dosen_pembimbing_ta_mode",
+                    value: formData.dosen_pembimbing_ta_mode,
+                    options: [
+                      { value: "belum_dapat", label: "Tidak memiliki" },
+                      { value: "pilih_dosen", label: "Sudah memiliki" },
+                    ],
+                  })}
+                  {formData.dosen_pembimbing_ta_mode === "pilih_dosen" ? (
+                    <div className="mt-3">
+                      {renderDosenSelect({
+                        name: "dosen_pembimbing_ta_id",
+                        label: "Calon Dosen Pembimbing Sementara",
+                        value: formData.dosen_pembimbing_ta_id,
+                        prioritizeNoBimbingan: true,
+                        error: fieldErrors.dosen_pembimbing_ta_id,
+                        required: true,
+                      })}
+                    </div>
+                  ) : null}
+                  <p className="mt-3 text-xs text-[#526895]">
+                    Pilihan ini hanya dicatat sebagai preferensi awal. Pembimbing 1 dan Pembimbing 2 tetap ditetapkan final oleh Sekprodi.
+                  </p>
+                </div>
               </section>
             ) : null}
 

@@ -752,6 +752,14 @@ function toCompactRow(item) {
           gelar: item.dosenPembimbingTA.gelar || null,
         }
       : null,
+    calon_dosen_pembimbing: item.calonDosenPembimbing
+      ? {
+          id: item.calonDosenPembimbing.id,
+          nik: item.calonDosenPembimbing.nik,
+          nama: item.calonDosenPembimbing.nama,
+          gelar: item.calonDosenPembimbing.gelar || null,
+        }
+      : null,
     dosen_pembimbing_ta_sebelumnya: item.dosenPembimbingTASebelumnya
       ? {
           id: item.dosenPembimbingTASebelumnya.id,
@@ -1129,6 +1137,12 @@ exports.getPendaftaranList = async (req, res) => {
         },
         {
           model: Dosen,
+          as: "calonDosenPembimbing",
+          attributes: ["id", "nik", "nama", "gelar"],
+          required: false,
+        },
+        {
+          model: Dosen,
           as: "dosenPembimbingTASebelumnya",
           attributes: ["id", "nik", "nama", "gelar"],
           required: false,
@@ -1245,6 +1259,12 @@ exports.exportPendaftaran = async (req, res) => {
         },
         {
           model: Dosen,
+          as: "calonDosenPembimbing",
+          attributes: ["nama", "gelar", "nik"],
+          required: false,
+        },
+        {
+          model: Dosen,
           as: "dosenPembimbingTASebelumnya",
           attributes: ["nama", "gelar", "nik"],
           required: false,
@@ -1288,6 +1308,8 @@ exports.exportPendaftaran = async (req, res) => {
         "Penjaluran Baru": item.penjaluran_baru || "-",
         "Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nama || "-",
         "NIK Dosen Pembimbing Akademik": item.dosenPembimbingAkademik?.nik || "-",
+        "Calon Dosen Pembimbing Sementara": item.calonDosenPembimbing?.nama || "-",
+        "NIK Calon Dosen Pembimbing Sementara": item.calonDosenPembimbing?.nik || "-",
         "Dosen Pembimbing TA": item.dosenPembimbingTA?.nama || "-",
         "NIK Dosen Pembimbing TA": item.dosenPembimbingTA?.nik || "-",
         "Dosen Pembimbing TA Sebelumnya": item.dosenPembimbingTASebelumnya?.nama || "-",
@@ -1798,8 +1820,18 @@ exports.getPeriodeOverview = async (req, res) => {
 
     const activePeriode = mappedPeriodes.find((item) => item.status === "active") || null;
     const draftPeriode = mappedPeriodes.find((item) => item.status === "draft") || null;
+    const researchClusterCodesByDosen = new Map();
+    for (const row of dosenKlasterRows) {
+      const clusterCode = resolveResearchClusterCode(row.klaster);
+      const dosenId = Number(row.dosen_id || row.dosen?.id);
+      if (!clusterCode || !dosenId) continue;
+      const currentCodes = researchClusterCodesByDosen.get(dosenId) || [];
+      if (!currentCodes.includes(clusterCode)) currentCodes.push(clusterCode);
+      researchClusterCodesByDosen.set(dosenId, currentCodes);
+    }
     const dosenOptionsWithCapacity = await Promise.all(dosenOptions.map(async (dosen) => ({
       ...dosen.toJSON(),
+      cluster_codes: researchClusterCodesByDosen.get(Number(dosen.id)) || [],
       kuota: await dosen.getKuotaInfo(),
     })));
     const availableSupervisorRows = activePeriode
@@ -3858,6 +3890,7 @@ function formatPenelitianFinalRow(submission) {
     tipe_pengajuan: submission.tipe_pengajuan,
     status: submission.status,
     program_kuliah: submission.pendaftaranPenjaluran?.program_kuliah || "reguler",
+    cluster_penelitian: submission.cluster_mandiri || null,
     diajukan_pada: submission.createdAt,
     diperbarui_pada: submission.updatedAt,
     mahasiswa: submission.mahasiswa || null,
@@ -3937,6 +3970,31 @@ async function assertResearchSupervisorCluster(supervisorIds, clusterCode, trans
     error.statusCode = 409;
     error.code = "SUPERVISOR_CLUSTER_MISMATCH";
     error.detail = { cluster: normalizedCode, dosen_ids: invalidIds };
+    throw error;
+  }
+}
+
+async function assertResearchSupervisorsAvailable(supervisorIds, registration, mahasiswaId, transaction) {
+  const periodeId = Number(registration?.periode_penjaluran_id || 0);
+  if (!periodeId) {
+    const error = new Error("Periode pendaftaran penelitian tidak ditemukan.");
+    error.statusCode = 409;
+    error.code = "RESEARCH_REGISTRATION_PERIOD_NOT_RESOLVED";
+    throw error;
+  }
+
+  for (const dosenId of supervisorIds) {
+    const validation = await validateDosenForNewAssignment(dosenId, periodeId, {
+      transaction,
+      activityLabel: "bimbingan mahasiswa baru",
+      excludeMahasiswaId: mahasiswaId,
+    });
+    if (validation.allowed) continue;
+
+    const error = new Error(validation.message || "Dosen tidak dapat menerima bimbingan mahasiswa baru.");
+    error.statusCode = 409;
+    error.code = "RESEARCH_SUPERVISOR_NOT_AVAILABLE";
+    error.detail = { dosen_id: Number(dosenId), reason: validation.reason || null };
     throw error;
   }
 }
@@ -4080,7 +4138,15 @@ exports.approvePenelitianFinal = async (req, res) => {
       });
     }
 
+    await assertResearchSupervisorsAvailable(
+      supervisorIds,
+      assignmentRegistration,
+      submission.mahasiswa_id,
+      t
+    );
+
     let winner = getFinalResearchWinner(submission);
+    let decisionTopikSlot = null;
     let sekprodiRow = null;
     if (submission.tipe_pengajuan === "topik_dosen") {
       const targetSlot = Number(req.body?.topik_slot);
@@ -4103,6 +4169,7 @@ exports.approvePenelitianFinal = async (req, res) => {
           message: "Topik ini belum siap direview Sekprodi atau sudah diproses.",
         });
       }
+      decisionTopikSlot = targetSlot;
       await sekprodiRow.update(
         {
           status: "approved",
@@ -4153,6 +4220,7 @@ exports.approvePenelitianFinal = async (req, res) => {
       registration: assignmentRegistration,
       track: "penelitian",
       decisionSource: submission,
+      decisionTopikSlot,
       supervisorIds,
       currentDecisionStatus: submission.status,
       createdBySekretarisId: req.user?.sekretaris_prodi_id || null,

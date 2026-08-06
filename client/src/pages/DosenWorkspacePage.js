@@ -40,7 +40,6 @@ import DosenDokumenSidangReviewPage from "./DosenDokumenSidangReviewPage";
 import DosenSidangKetersediaanPage from "./DosenSidangKetersediaanPage";
 import SekretarisSidangManagementPage from "./SekretarisSidangManagementPage";
 import AcademicDataPanel from "../components/AcademicDataPanel";
-import GuidanceGovernancePanel from "../components/GuidanceGovernancePanel";
 
 const TOPIK_PAGE_SIZE = 20;
 const MASTER_TOPIK_PAGE_SIZE = 20;
@@ -496,7 +495,11 @@ function ReplacementDosenCombobox({
               Tidak ada pembimbing kedua
             </button>
           ) : null}
-          {filteredCandidates.length > 0 ? filteredCandidates.map((candidate) => (
+          {filteredCandidates.length > 0 ? filteredCandidates.map((candidate) => {
+            const capacity = candidate.kuota && typeof candidate.kuota === "object" ? candidate.kuota : null;
+            const remainingCapacity = candidate.sisa ?? capacity?.sisa ?? 0;
+            const totalCapacity = candidate.kuota_total ?? capacity?.total ?? candidate.kuota ?? 0;
+            return (
             <button
               key={`${inputId}-${candidate.id}`}
               type="button"
@@ -513,9 +516,10 @@ function ReplacementDosenCombobox({
               }`}
             >
               <span className="min-w-0"><span className="block truncate text-sm font-bold text-[#263a66]">{formatDosenFullName(candidate.nama, candidate.gelar)}</span><span className="block text-xs text-[#7282a8]">{candidate.kode_dosen || candidate.nik || candidate.email || "-"}</span></span>
-              <span className="shrink-0 text-xs font-semibold text-[#526184]">Sisa {candidate.sisa}/{candidate.kuota}</span>
+              <span className="shrink-0 text-xs font-semibold text-[#526184]">Sisa {remainingCapacity}/{totalCapacity}</span>
             </button>
-          )) : (
+            );
+          }) : (
             <p className="px-3 py-4 text-center text-sm font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
           )}
         </div>
@@ -1821,7 +1825,6 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         { id: "mahasiswa-dpa", label: "Mahasiswa DPA", icon: UserCircle2 },
         { id: "mahasiswa-bimbingan", label: "Riwayat Bimbingan", icon: ListChecks },
         { id: "bimbingan-review", label: "Review Bimbingan", icon: MessageSquareText },
-        { id: "bimbingan-governance", label: "Tata Kelola Bimbingan", icon: SlidersHorizontal },
         { id: "submissions", label: "Pengajuan Mahasiswa", icon: ClipboardList },
         { id: "approval-penelitian", label: "Keputusan Final Sekprodi", icon: ListChecks },
         { id: "permohonan-extend", label: "Permohonan Extend", icon: ShieldAlert },
@@ -1885,11 +1888,6 @@ function buildTabHeaders(isSekretaris) {
       icon: MessageSquareText,
       title: "Review Bimbingan",
       subtitle: "Terima, jadwalkan, dan review sesi bimbingan mahasiswa.",
-    },
-    "bimbingan-governance": {
-      icon: SlidersHorizontal,
-      title: "Tata Kelola Bimbingan",
-      subtitle: "Kelola policy, reviewer efektif, invalidasi approval, dan context bimbingan lintas siklus.",
     },
     "dokumen-sidang-review": {
       icon: FileSpreadsheet,
@@ -1967,7 +1965,7 @@ function buildTabHeaders(isSekretaris) {
     akademik: {
       icon: FileSpreadsheet,
       title: "Monitoring Akademik",
-      subtitle: "Pantau status Metodologi, SKS, mata kuliah wajib, dan kualitas data secara readonly.",
+      subtitle: "Pantau nilai mata kuliah penjaluran mahasiswa sesuai program secara read-only.",
     },
     "master-dosen": {
       icon: Users,
@@ -3980,6 +3978,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         row.periode?.tahun_akademik,
         row.periode?.semester,
         row.dosen_pembimbing_akademik?.nama,
+        row.calon_dosen_pembimbing?.nama,
       ]
         .filter(Boolean)
         .join(" ")
@@ -4413,6 +4412,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     () => (Array.isArray(periodeOverview.ketua_klaster_options) ? periodeOverview.ketua_klaster_options : []),
     [periodeOverview.ketua_klaster_options]
   );
+  const finalResearchClusterCode = useMemo(() => {
+    const explicitCluster = normalizeTopikClusterCode(
+      finalResearchFocusedTopic?.cluster || finalResearchDetail?.cluster_penelitian
+    );
+    return explicitCluster || resolveTopikClusterFromKode(finalResearchFocusedTopic?.kode)?.code || "";
+  }, [finalResearchDetail?.cluster_penelitian, finalResearchFocusedTopic?.cluster, finalResearchFocusedTopic?.kode]);
+  const finalResearchSupervisorOptions = useMemo(() => {
+    if (!finalResearchClusterCode) return [];
+    return periodeDosenPembimbingOptions.filter((dosen) => {
+      const clusterCodes = Array.isArray(dosen.cluster_codes) ? dosen.cluster_codes : [];
+      const isClusterMember = clusterCodes.some(
+        (code) => normalizeResearchClusterCode(code) === finalResearchClusterCode
+      );
+      return isClusterMember && dosen.kuota?.is_penuh !== true;
+    });
+  }, [finalResearchClusterCode, periodeDosenPembimbingOptions]);
   const periodeDosenMap = useMemo(
     () => new Map(periodeDosenPembimbingOptions.map((item) => [Number(item.id), item])),
     [periodeDosenPembimbingOptions]
@@ -4461,6 +4476,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     finalResearchPrimarySupervisorId,
     finalResearchSecondarySupervisorId,
     periodeDosenPembimbingOptions,
+  ]);
+  useEffect(() => {
+    const eligibleIds = new Set(finalResearchSupervisorOptions.map((dosen) => Number(dosen.id)));
+    let removedSelection = false;
+    if (finalResearchPrimarySupervisorId && !eligibleIds.has(Number(finalResearchPrimarySupervisorId))) {
+      setFinalResearchPrimarySupervisorId("");
+      removedSelection = true;
+    }
+    if (finalResearchSecondarySupervisorId && !eligibleIds.has(Number(finalResearchSecondarySupervisorId))) {
+      setFinalResearchSecondarySupervisorId("");
+      removedSelection = true;
+    }
+    if (removedSelection) {
+      showInfoToast("Pilihan pembimbing dihapus karena tidak sesuai cluster atau tidak menerima bimbingan baru.");
+    }
+  }, [
+    finalResearchPrimarySupervisorId,
+    finalResearchSecondarySupervisorId,
+    finalResearchSupervisorOptions,
   ]);
   const selectedFinalNonPenelitianDosen = useMemo(
     () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbingId || 0)) || null,
@@ -8077,10 +8111,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               </section>
             ) : null}
 
-            {!loading && isSekretaris && activeTab === "bimbingan-governance" ? (
-              <GuidanceGovernancePanel session={session} apiBaseUrl={apiBaseUrl} onSessionExpired={onSessionExpired} />
-            ) : null}
-
             {loading ? (
               <div className="rounded-xl border border-[#dce4f7] bg-white p-4 text-sm font-semibold text-[#55658f] shadow-sm">
                 Memuat data dashboard...
@@ -8129,6 +8159,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 onNavigate={(notification) => {
                   if (["lecturer_supervised_student", "lecturer_supervision_history"].includes(notification?.action_key)) {
                     setActiveTab("monitoring-mahasiswa");
+                  } else if (notification?.action_key === "defense_document_review") {
+                    setActiveTab("dokumen-sidang-review");
                   }
                 }}
               />
@@ -8902,55 +8934,43 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <div className="mb-3 grid gap-3 md:grid-cols-2">
                               <div>
                                 <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                                  Pembimbing 1
+                                  Pembimbing 1 <span className="text-[#b73a3a]">*</span>
                                 </label>
-                                <select
+                                <ReplacementDosenCombobox
+                                  inputId="final-research-primary-supervisor"
+                                  candidates={finalResearchSupervisorOptions.filter(
+                                    (dosen) => Number(dosen.id) !== Number(finalResearchSecondarySupervisorId || 0)
+                                  )}
                                   value={finalResearchPrimarySupervisorId}
-                                  onChange={(event) => {
-                                    setFinalResearchPrimarySupervisorId(event.target.value);
+                                  onChange={(value) => {
+                                    setFinalResearchPrimarySupervisorId(value);
                                     setFinalResearchDecisionError("");
                                   }}
-                                  className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                                >
-                                  <option value="">Pilih Pembimbing 1</option>
-                                  {periodeDosenPembimbingOptions.map((dosen) => (
-                                    <option
-                                      key={`research-primary-${dosen.id}`}
-                                      value={dosen.id}
-                                      disabled={dosen.kuota?.is_penuh === true}
-                                    >
-                                      {formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - {dosen.kuota?.is_penuh
-                                        ? "Kuota penuh"
-                                        : `Sisa kuota: ${dosen.kuota?.sisa ?? 0}`}
-                                    </option>
-                                  ))}
-                                </select>
+                                  hasError={finalResearchDecisionError.startsWith("Pembimbing 1")}
+                                  placeholder="Cari nama, kode, atau NIK dosen..."
+                                />
                               </div>
                               <div>
                                 <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
                                   Pembimbing 2 <span className="font-normal text-[#7582a2]">(opsional)</span>
                                 </label>
-                                <select
+                                <ReplacementDosenCombobox
+                                  inputId="final-research-secondary-supervisor"
+                                  candidates={finalResearchSupervisorOptions.filter(
+                                    (dosen) => Number(dosen.id) !== Number(finalResearchPrimarySupervisorId || 0)
+                                  )}
                                   value={finalResearchSecondarySupervisorId}
-                                  onChange={(event) => setFinalResearchSecondarySupervisorId(event.target.value)}
-                                  className="w-full rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                                >
-                                  <option value="">Tanpa Pembimbing 2</option>
-                                  {periodeDosenPembimbingOptions
-                                    .filter((dosen) => Number(dosen.id) !== Number(finalResearchPrimarySupervisorId))
-                                    .map((dosen) => (
-                                      <option
-                                        key={`research-secondary-${dosen.id}`}
-                                        value={dosen.id}
-                                        disabled={dosen.kuota?.is_penuh === true}
-                                      >
-                                        {formatDosenFullName(dosen.nama, dosen.gelar) || "-"} - {dosen.kuota?.is_penuh
-                                          ? "Kuota penuh"
-                                          : `Sisa kuota: ${dosen.kuota?.sisa ?? 0}`}
-                                      </option>
-                                    ))}
-                                </select>
+                                  onChange={(value) => {
+                                    setFinalResearchSecondarySupervisorId(value);
+                                    setFinalResearchDecisionError("");
+                                  }}
+                                  placeholder="Cari nama, kode, atau NIK dosen..."
+                                  allowEmpty
+                                />
                               </div>
+                              <p className="md:col-span-2 text-xs font-semibold text-[#60709a]">
+                                Hanya menampilkan dosen cluster {finalResearchClusterCode || "topik terpilih"} yang menerima bimbingan baru dan masih memiliki kuota.
+                              </p>
                             </div>
                           ) : null}
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
@@ -13236,7 +13256,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   </div>
 
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="w-full min-w-[1900px] text-left text-sm">
+                  <table className="w-full min-w-[2100px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal</th>
@@ -13250,6 +13270,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Penjaluran</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kelompok</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">DPA</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Calon Pembimbing Sementara</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                       </tr>
                     </thead>
@@ -13300,6 +13321,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   )}
                                 </td>
                                 <td className="px-3 py-2">{formatDosenFullName(row.dosen_pembimbing_akademik?.nama, row.dosen_pembimbing_akademik?.gelar) || "-"}</td>
+                                <td className="px-3 py-2">
+                                  {formatDosenFullName(row.calon_dosen_pembimbing?.nama, row.calon_dosen_pembimbing?.gelar) || "Belum memiliki"}
+                                </td>
                                 <td className="px-3 py-2">
                                   {row.status === "submitted" ? (
                                     <div className="flex items-center gap-2">

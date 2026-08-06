@@ -293,39 +293,15 @@ test("Tahap 7: workflow terikat siklus, idempoten, versioned, dan hanya reviewer
     peran: "utama", status: "draft" });
   await activateSupervisorAssignment({ penetapanId: p1Only.id }); await unresolvedRow.reload();
   assert.equal((await db.BimbinganSkripsi.findByPk(sameDayPast.data.id)).request_status, "pending");
-  assert.equal(unresolvedRow.reviewer_resolution_status, "needs_reviewer_resolution");
-  assert.equal(unresolvedRow.reviewer_resolution_reason_code, "SAME_ROLE_REPLACEMENT_NOT_AVAILABLE");
-  assert.equal(await db.GuidanceEvent.count({ where: { guidance_id: unresolvedRow.id, event_type: "reviewer_resolution_required" } }), 1);
-  assert.equal(await db.Notifikasi.count({ where: { reference_type: "bimbingan", reference_id: unresolvedRow.id,
-    type: "guidance_reviewer_resolution_required" } }), 2);
-  const secretaryUser = { id: secretary.id, sekretaris_prodi_id: secretary.id };
-  await dosens[0].update({ status_keaktifan: "inactive", continue_existing_supervision: false });
-  const filteredCandidates = await invoke(governance.getReviewerCandidates, { params: { id: unresolvedRow.id }, user: secretaryUser });
-  assert.equal(filteredCandidates.statusCode, 200); assert.equal(filteredCandidates.payload.data.rows.length, 0);
-  const ineligibleResolution = await invoke(governance.resolveReviewer, { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: (await db.PenetapanPembimbingDosen.findOne({ where: { penetapan_pembimbing_id: p1Only.id } })).id,
-      expected_version: unresolvedRow.row_version }, operationKey: `s7-resolution-ineligible-${suffix}` });
-  assert.equal(ineligibleResolution.statusCode, 409); assert.equal(ineligibleResolution.payload.code, "GUIDANCE_REVIEWER_UNAVAILABLE");
-  await dosens[0].update({ status_keaktifan: "active", continue_existing_supervision: true });
   const p1OnlyMember = await db.PenetapanPembimbingDosen.findOne({ where: { penetapan_pembimbing_id: p1Only.id } });
-  const resolutionPayload = { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version },
-    operationKey: `s7-resolution-parallel-${suffix}` };
-  const resolvedParallel = await Promise.all([invoke(governance.resolveReviewer, resolutionPayload), invoke(governance.resolveReviewer, resolutionPayload)]);
-  assert.equal(resolvedParallel[0].statusCode, 200); assert.equal(resolvedParallel[1].statusCode, 200);
-  assert.equal(resolvedParallel.filter((response) => response.payload.replayed).length, 1);
-  await unresolvedRow.reload(); assert.equal(unresolvedRow.reviewer_resolution_status, "resolved");
+  assert.equal(unresolvedRow.reviewer_resolution_status, "resolved");
   assert.equal(unresolvedRow.reviewer_resolution_reason_code, null);
-  assert.equal(await db.Notifikasi.count({ where: { reference_type: "bimbingan", reference_id: unresolvedRow.id,
-    type: "guidance_reviewer_transferred" } }), 2);
-  const manualTransfer = await db.GuidanceReviewerTransfer.findOne({ where: { guidance_id: unresolvedRow.id, transition_type: "manual_resolution" } });
-  assert.equal(manualTransfer.reason_code, "CROSS_ROLE_FALLBACK_APPROVED_BY_SEKPRODI");
-  const manualEvent = await db.GuidanceEvent.findByPk(manualTransfer.event_id);
-  assert.equal(manualEvent.metadata.from_urutan, 2); assert.equal(manualEvent.metadata.to_urutan, 1);
-  const duplicateResolution = await invoke(governance.resolveReviewer, { params: { id: unresolvedRow.id }, user: secretaryUser,
-    body: { target_assignment_member_id: p1OnlyMember.id, expected_version: unresolvedRow.row_version },
-    operationKey: `s7-resolution-after-terminal-${suffix}` });
-  assert.equal(duplicateResolution.statusCode, 409); assert.equal(duplicateResolution.payload.code, "GUIDANCE_REVIEWER_RESOLUTION_NOT_REQUIRED");
+  assert.equal(unresolvedRow.effective_reviewer_assignment_member_id, p1OnlyMember.id);
+  const automaticTransfer = await db.GuidanceReviewerTransfer.findOne({ where: { guidance_id: unresolvedRow.id, transition_type: "supervisor_replacement" } });
+  assert.equal(automaticTransfer.reason_code, "CROSS_ROLE_SYSTEM_FALLBACK_TO_P1");
+  const automaticEvent = await db.GuidanceEvent.findByPk(automaticTransfer.event_id);
+  assert.equal(automaticEvent.metadata.from_urutan, 2); assert.equal(automaticEvent.metadata.to_urutan, 1);
+  assert.equal(automaticEvent.metadata.cross_role_system_fallback, true);
 
   // Backfill execute dapat diulang tanpa menggandakan resume, evaluation, atau event audit.
   const backfillLegacy = await db.BimbinganSkripsi.create({ mahasiswa_id: student.id, dosen_id: dosens[0].id,

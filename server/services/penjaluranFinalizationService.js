@@ -62,6 +62,7 @@ async function lockAndValidateDecisionSource({
   registration,
   track,
   decisionSource,
+  decisionTopikSlot,
   currentDecisionStatus,
   transaction,
 }) {
@@ -94,13 +95,34 @@ async function lockAndValidateDecisionSource({
         "DECISION_SOURCE_STALE"
       );
     }
-    const hasPendingFinalDecision = rawStatus === "pending"
-      ? await RiwayatPersetujuan.count({
-          where: { pengajuan_id: source.id, tipe_approval: "sekprodi", status: "pending" },
+    const targetSlot = Number(decisionTopikSlot || 0);
+    let hasProgressiveFinalDecision = false;
+    if (rawStatus === "pending" && Number.isInteger(targetSlot) && targetSlot > 0) {
+      const [approvedSekprodiCount, approvedClusterCount] = await Promise.all([
+        RiwayatPersetujuan.count({
+          where: {
+            pengajuan_id: source.id,
+            tipe_approval: "sekprodi",
+            topik_slot: targetSlot,
+            status: "approved",
+          },
           transaction,
-        }) > 0
-      : rawStatus === "menunggu_approval_sekprodi";
-    if (!["approved", "rejected"].includes(rawStatus) && !hasPendingFinalDecision) {
+        }),
+        RiwayatPersetujuan.count({
+          where: {
+            pengajuan_id: source.id,
+            tipe_approval: "koordinator",
+            topik_slot: targetSlot,
+            status: "approved",
+          },
+          transaction,
+        }),
+      ]);
+      hasProgressiveFinalDecision = approvedSekprodiCount > 0 && approvedClusterCount > 0;
+    }
+    const isReadyForFinalDecision =
+      rawStatus === "menunggu_approval_sekprodi" || hasProgressiveFinalDecision;
+    if (!["approved", "rejected"].includes(rawStatus) && !isReadyForFinalDecision) {
       throw new PenjaluranFinalizationError(
         "Workflow Penelitian belum menunggu keputusan final Sekretaris Prodi.",
         409,
@@ -313,6 +335,7 @@ async function finalizePenjaluranDecision({
   supervisorIds,
   currentDecisionStatus,
   decisionSource = null,
+  decisionTopikSlot = null,
   createdBySekretarisId = null,
   transaction,
 }) {
@@ -339,6 +362,7 @@ async function finalizePenjaluranDecision({
     registration: targets.find((item) => Number(item.id) === Number(registration.id)) || targets[0],
     track: normalizedTrack,
     decisionSource,
+    decisionTopikSlot,
     currentDecisionStatus,
     transaction,
   });

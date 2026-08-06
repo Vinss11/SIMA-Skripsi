@@ -6,7 +6,7 @@ Seluruh rencana mengacu pada [`aturan-bisnis-simps.md`](../business-rules/aturan
 2. [Finalisasi Penjaluran Tiga Jalur Aktif](./tahap-2-finalisasi-penjaluran-tiga-jalur-aktif.md)
 3. [Ulang dan Alih Jalur](./tahap-3-ulang-dan-alih-jalur.md)
 4. [Histori Pembimbing per Semester](./tahap-4-histori-pembimbing-per-semester.md)
-5. [Metodologi Penelitian dan Data Akademik](./tahap-5-metodologi-penelitian-dan-data-akademik.md)
+5. [Mata Kuliah Penjaluran dan Data Akademik](./tahap-5-metodologi-penelitian-dan-data-akademik.md)
 6. [Wajib Ganti dan Reset Password](./tahap-6-wajib-ganti-dan-reset-password.md)
 7. [Penguatan Proses Bimbingan](./tahap-7-penguatan-proses-bimbingan.md)
 8. [Verifikasi Persyaratan Pendadaran](./tahap-8-verifikasi-persyaratan-pendadaran.md)
@@ -26,4 +26,3 @@ Seluruh rencana mengacu pada [`aturan-bisnis-simps.md`](../business-rules/aturan
 - Scope aktif adalah Penelitian, Magang, dan Perintisan Bisnis.
 - Surat tugas pembimbing tidak menjadi dependensi tahap mana pun.
 - Tahap hanya dinyatakan selesai setelah backend, frontend, migration, test, dokumentasi, dan UAT terkait konsisten.
-

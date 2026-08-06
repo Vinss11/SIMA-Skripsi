@@ -89,35 +89,39 @@ async function handleGuidanceAfterSupervisorReplacement({
     }
     if (!["submitted", "revisi"].includes(row.status_resume)) continue;
     const oldMember = oldById.get(Number(row.effective_reviewer_assignment_member_id)) || oldByDosen.get(Number(row.reviewer_dosen_id || row.dosen_id));
-    const replacement = oldMember ? newByOrder.get(Number(oldMember.urutan)) : null;
+    const sameRoleReplacement = oldMember ? newByOrder.get(Number(oldMember.urutan)) : null;
+    const replacement = sameRoleReplacement || newByOrder.get(1) || null;
     if (!replacement) {
-      const reasonCode = "SAME_ROLE_REPLACEMENT_NOT_AVAILABLE";
+      const reasonCode = "ACTIVE_REVIEWER_NOT_AVAILABLE";
       const candidateMetadata = { required_urutan: oldMember?.urutan || row.target_urutan_snapshot || null,
         available_candidates: [...newByOrder.values()].map((candidate) => ({ assignment_member_id: candidate.id, dosen_id: candidate.dosen_id, urutan: candidate.urutan })) };
-      row.reviewer_resolution_status = "needs_reviewer_resolution"; row.reviewer_resolution_reason_code = reasonCode;
+      row.reviewer_resolution_status = "waiting_for_active_reviewer"; row.reviewer_resolution_reason_code = reasonCode;
       row.row_version = Number(row.row_version || 1) + 1; await row.save({ transaction });
       await GuidanceEvent.create({ guidance_id: row.id, event_type: "reviewer_resolution_required", actor_type: "system", actor_role: "system",
-        from_state: "resolved", to_state: "needs_reviewer_resolution", assignment_id: newAssignmentId, occurred_at: new Date(),
+        from_state: "resolved", to_state: "waiting_for_active_reviewer", assignment_id: newAssignmentId, occurred_at: new Date(),
         reason_code: reasonCode, metadata: { old_assignment_id: oldAssignmentId, new_assignment_id: newAssignmentId,
           effective_transition_at: effectiveAt.toISOString(), ...candidateMetadata } }, { transaction });
       await createSystemNotification({ recipientType: "mahasiswa", recipientId: mahasiswaId, type: NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED,
-        message: "Reviewer resume Anda perlu ditetapkan ulang oleh Sekretaris Prodi setelah pergantian pembimbing.", referenceType: "bimbingan", referenceId: row.id,
+        message: "Resume Anda menunggu pembimbing aktif setelah pergantian pembimbing.", referenceType: "bimbingan", referenceId: row.id,
         actionKey: "guidance_detail", metadata: { reason_code: reasonCode },
         deduplicationKey: `guidance:${row.id}:reviewer-resolution:mahasiswa:${mahasiswaId}:${newAssignmentId}`, transaction });
       if (reassignedBySekretarisId) await createSystemNotification({ recipientType: "sekretaris_prodi", recipientId: reassignedBySekretarisId,
         type: NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED,
-        message: "Ada resume bimbingan yang memerlukan resolusi reviewer setelah pergantian assignment.", referenceType: "bimbingan", referenceId: row.id,
-        actionKey: "guidance_governance", metadata: { reason_code: reasonCode, ...candidateMetadata },
+        message: "Ada resume bimbingan yang menunggu assignment pembimbing aktif.", referenceType: "bimbingan", referenceId: row.id,
+        actionKey: "lecturer_supervised_student", metadata: { reason_code: reasonCode, ...candidateMetadata },
         deduplicationKey: `guidance:${row.id}:reviewer-resolution:sekretaris:${reassignedBySekretarisId}:${newAssignmentId}`, transaction });
       unresolved += 1; continue;
     }
+    const crossRoleFallback = !sameRoleReplacement && Number(replacement.urutan) === 1;
+    const transferReasonCode = crossRoleFallback ? "CROSS_ROLE_SYSTEM_FALLBACK_TO_P1" : "SAME_ROLE_REVIEWER_TRANSFER";
     const before = Number(row.row_version || 1); const after = before + 1;
     const guidanceEvent = await GuidanceEvent.create({ guidance_id: row.id, event_type: "reviewer_transferred", actor_type: "sekretaris_prodi",
       actor_id: reassignedBySekretarisId || null, actor_role: "sekretaris_prodi", from_state: String(oldMember?.id || ""), to_state: String(replacement.id),
-      assignment_id: newAssignmentId, assignment_member_id: replacement.id, occurred_at: new Date(), reason_code: transitionType,
-      metadata: { from_assignment_id: oldAssignmentId, to_assignment_id: newAssignmentId, preserved_urutan: replacement.urutan } }, { transaction });
+      assignment_id: newAssignmentId, assignment_member_id: replacement.id, occurred_at: new Date(), reason_code: transferReasonCode,
+      metadata: { from_assignment_id: oldAssignmentId, to_assignment_id: newAssignmentId, from_urutan: oldMember?.urutan || null,
+        to_urutan: replacement.urutan, cross_role_system_fallback: crossRoleFallback } }, { transaction });
     await GuidanceReviewerTransfer.create({ guidance_id: row.id, from_assignment_id: oldAssignmentId, from_assignment_member_id: oldMember?.id || null,
-      to_assignment_id: newAssignmentId, to_assignment_member_id: replacement.id, transition_type: transitionType, reason_code: "SAME_ROLE_REVIEWER_TRANSFER",
+      to_assignment_id: newAssignmentId, to_assignment_member_id: replacement.id, transition_type: transitionType, reason_code: transferReasonCode,
       effective_at: effectiveAt, transferred_by_actor_type: "sekretaris_prodi", transferred_by_actor_id: reassignedBySekretarisId || null,
       event_id: guidanceEvent.id, row_version_before: before, row_version_after: after }, { transaction });
     row.effective_reviewer_assignment_id = newAssignmentId; row.effective_reviewer_assignment_member_id = replacement.id;

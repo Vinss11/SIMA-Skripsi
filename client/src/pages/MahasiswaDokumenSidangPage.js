@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, FileUp, RefreshCcw } from "lucide-react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, Eye, FileUp, RefreshCcw } from "lucide-react";
 
 const DOKUMEN_ORDER = ["transkrip", "cept", "draft_skripsi"];
 
@@ -54,6 +54,7 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     cept: null,
     draft_skripsi: null,
   });
+  const fileInputRefs = useRef({});
 
   const fetchWithAuth = useCallback(async (path, options = {}) => {
     const response = await fetch(`${apiBaseUrl}${path}`, {
@@ -125,6 +126,7 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
   const target = Number(gate.target_minimum || 8);
   const progressPercent = Math.max(0, Math.min(100, Math.round((counted / Math.max(target, 1)) * 100)));
   const canRegisterSidang = Boolean(sidangStatus?.can_register) && canRegisterWithSupervisor;
+  const mataKuliahPenjaluran = data?.persyaratan_sistem?.mata_kuliah_penjaluran || sidangStatus?.eligibility?.mata_kuliah_penjaluran || null;
 
   const handlePickFile = (docKey, file) => {
     setSelectedFiles((prev) => ({
@@ -177,6 +179,9 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
         ...prev,
         [docKey]: null,
       }));
+      if (fileInputRefs.current[docKey]) {
+        fileInputRefs.current[docKey].value = "";
+      }
       setFieldMessages((prev) => ({
         ...prev,
         [docKey]: "Dokumen berhasil diunggah dan masuk antrean review dosen pembimbing.",
@@ -214,6 +219,33 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
     } catch (downloadError) {
       if (downloadError.message !== "__SESSION_EXPIRED__") {
         setError(downloadError.message || "Gagal mengunduh dokumen.");
+      }
+    }
+  };
+
+  const handleView = async (docKey) => {
+    const previewWindow = window.open("about:blank", "_blank");
+    if (previewWindow) previewWindow.opener = null;
+    try {
+      setError("");
+      const response = await fetchWithAuth(`/api/mahasiswa/dokumen-sidang/${docKey}/download`);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || "Gagal membuka dokumen.");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      if (previewWindow) {
+        previewWindow.location.href = url;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (viewError) {
+      previewWindow?.close();
+      if (viewError.message !== "__SESSION_EXPIRED__") {
+        setError(viewError.message || "Gagal membuka dokumen.");
       }
     }
   };
@@ -304,7 +336,7 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
           <div>
             <h3 className="text-lg font-black text-[#1b274b]">Pendaftaran Sidang</h3>
             <p className="text-sm text-[#5d6c91]">
-              Daftar sidang dibuka saat semua dokumen disetujui dosen pembimbing dan periode sidang sedang open.
+              Daftar sidang dibuka saat semua dokumen disetujui, mata kuliah penjaluran lulus, dan periode sidang sedang open.
             </p>
           </div>
           <button
@@ -366,6 +398,14 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
       </section>
 
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><h3 className="text-lg font-black text-[#1b274b]">Mata Kuliah Penjaluran</h3><p className="text-sm text-[#5d6c91]">Syarat otomatis dari Data Akademik. Item ini bukan dokumen upload dan tidak dapat di-approve manual.</p></div>
+          <span className={`rounded-full px-3 py-1 text-xs font-bold ${mataKuliahPenjaluran?.fulfilled ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>{mataKuliahPenjaluran?.syarat_sidang || (mataKuliahPenjaluran?.fulfilled ? "Terpenuhi" : "Belum terpenuhi")}</span>
+        </div>
+        <div className="mt-3 grid gap-2 rounded-lg bg-[#f8fbff] p-3 text-sm text-[#42588f] md:grid-cols-3"><p><span className="font-semibold">Mata kuliah:</span> {mataKuliahPenjaluran?.mata_kuliah || "-"}</p><p><span className="font-semibold">Nilai:</span> {mataKuliahPenjaluran?.nilai || "-"}</p><p><span className="font-semibold">Status:</span> {mataKuliahPenjaluran?.status || "Belum tersedia"}</p></div>
+      </section>
+
+      <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">Unggah Dokumen Kelayakan Sidang</h3>
         <p className="mt-1 text-sm text-[#5d6c91]">
           Unggah dokumen Transkrip Nilai, Sertifikat CEPT, dan Draft Skripsi. Setiap dokumen direview dosen secara terpisah.
@@ -395,9 +435,6 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
                   <p>
                     <span className="font-semibold">Terakhir Upload:</span> {formatDateTime(item.uploaded_at)}
                   </p>
-                  <p>
-                    <span className="font-semibold">Pesan Dosen Pembimbing:</span> {item.review_note || "-"}
-                  </p>
                 </div>
 
                 {String(item.status || "").toLowerCase() === "revisi" ? (
@@ -410,9 +447,22 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
                   </div>
                 ) : null}
 
+                {String(item.status || "").toLowerCase() === "submitted" && item.review_note ? (
+                  <div className="mt-2 rounded-lg border border-[#dce4f7] bg-white px-3 py-2 text-sm text-[#42588f]">
+                    <p className="font-semibold">Catatan revisi sebelumnya</p>
+                    <p className="mt-1 whitespace-pre-wrap">{item.review_note}</p>
+                  </div>
+                ) : null}
+
                 {String(item.status || "").toLowerCase() === "submitted" ? (
                   <div className="mt-2 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm text-[#7a5a00]">
                     Dokumen sedang menunggu review dosen pembimbing.
+                  </div>
+                ) : null}
+
+                {String(item.status || "").toLowerCase() === "approved" ? (
+                  <div className="mt-2 rounded-lg border border-[#d6f1e2] bg-[#ecfaf2] px-3 py-2 text-sm font-semibold text-[#196a45]">
+                    Dokumen telah disetujui dosen pembimbing.
                   </div>
                 ) : null}
 
@@ -430,22 +480,42 @@ function MahasiswaDokumenSidangPage({ session, apiBaseUrl, onSessionExpired }) {
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <input
+                    ref={(element) => {
+                      fileInputRefs.current[item.key] = element;
+                    }}
                     type="file"
                     accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    disabled={!gate.unlocked || !canUploadDocument || uploadingKey === item.key}
+                    disabled={!gate.unlocked || !canUploadDocument || item.can_upload === false || uploadingKey === item.key}
                     onChange={(event) => handlePickFile(item.key, event.target.files?.[0] || null)}
                     className="max-w-[350px] rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm text-[#2e406e]"
                   />
                   <button
                     type="button"
-                    disabled={!gate.unlocked || !canUploadDocument || uploadingKey === item.key}
+                    disabled={!gate.unlocked || !canUploadDocument || item.can_upload === false || uploadingKey === item.key}
                     onClick={() => {
                       handleUpload(item.key).catch(() => {});
                     }}
                     className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <FileUp className="h-4 w-4" />
-                    {uploadingKey === item.key ? "Mengunggah..." : item.has_file ? "Upload Ulang" : "Upload"}
+                    {uploadingKey === item.key
+                      ? "Mengunggah..."
+                      : item.can_upload === false
+                      ? "Upload Dikunci"
+                      : item.has_file
+                      ? "Upload Ulang"
+                      : "Upload"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!item.has_file || uploadingKey === item.key}
+                    onClick={() => {
+                      handleView(item.key).catch(() => {});
+                    }}
+                    className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Eye className="h-4 w-4" />
+                    Lihat File
                   </button>
                   <button
                     type="button"
