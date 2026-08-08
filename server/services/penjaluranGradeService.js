@@ -206,10 +206,33 @@ async function commitImport(importId, actorId) {
 async function getStudentData(mahasiswaId) { return { rows: await registrationRows(null, { mahasiswaId }), minimum_passing_grade: gradePolicy.MINIMUM_PASSING_GRADE }; }
 async function getSidangRequirement(mahasiswaId, transaction = null) {
   const rows = await registrationRows(null, { mahasiswaId, transaction });
-  const row = rows.find((item) => item.status_pendaftaran !== "rejected" && item.mata_kuliah_id);
-  if (!row) return { required: false, fulfilled: true, label: "Mata Kuliah Penjaluran", status: "Tidak berlaku" };
-  return { required: true, fulfilled: row.status_nilai === "Lulus", label: "Mata Kuliah Penjaluran", mata_kuliah: row.mata_kuliah,
-    nilai: row.nilai, status: row.status_nilai, syarat_sidang: row.status_nilai === "Lulus" ? "Terpenuhi" : "Belum terpenuhi", manual_approval_allowed: false };
+  const row = rows.find((item) => !["rejected", "cancelled"].includes(String(item.status_pendaftaran || "").toLowerCase()));
+  if (!row) {
+    return {
+      required: false,
+      fulfilled: true,
+      label: "Mata Kuliah Wajib Penjaluran",
+      status: "Tidak berlaku",
+      minimum_passing_grade: gradePolicy.MINIMUM_PASSING_GRADE,
+    };
+  }
+
+  const required = row.jalur !== "pengabdian";
+  const fulfilled = !required || (Boolean(row.mata_kuliah_id) && row.status_nilai === "Lulus");
+  return {
+    required,
+    fulfilled,
+    label: "Mata Kuliah Wajib Penjaluran",
+    jalur: row.jalur,
+    jalur_label: row.jalur_label,
+    kode_mata_kuliah: row.kode_mata_kuliah,
+    mata_kuliah: row.mata_kuliah,
+    nilai: row.nilai,
+    status: required ? row.status_nilai : "Tidak berlaku",
+    minimum_passing_grade: gradePolicy.MINIMUM_PASSING_GRADE,
+    syarat_sidang: fulfilled ? "Terpenuhi" : "Belum terpenuhi",
+    manual_approval_allowed: false,
+  };
 }
 
 module.exports = { PenjaluranGradeError, HEADERS, listPeriods, registrationRows, buildTemplate, createPreview, commitImport, getStudentData, getSidangRequirement, gradePolicy };

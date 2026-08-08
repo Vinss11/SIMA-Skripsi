@@ -29,6 +29,7 @@ import NotificationMenuBadge from "../components/NotificationMenuBadge";
 import NotificationPage from "./NotificationPage";
 import useNotifications from "../hooks/useNotifications";
 import AcademicDataPanel from "../components/AcademicDataPanel";
+import MahasiswaSidangRegistrationPage from "./MahasiswaSidangRegistrationPage";
 
 const JALUR_OPTIONS = [
   { value: "penelitian", label: "Penelitian" },
@@ -83,6 +84,11 @@ const TAB_HEADERS = {
     icon: GraduationCap,
     title: "Data Akademik",
     subtitle: "Lihat histori Metodologi, SKS, mata kuliah wajib, sumber, dan kualitas data.",
+  },
+  sidang: {
+    icon: CalendarDays,
+    title: "Pendaftaran Sidang",
+    subtitle: "Pilih periode, periksa kelayakan, dan kirim pendaftaran sidang Anda.",
   },
 };
 
@@ -1571,6 +1577,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
       { id: "status", label: "Status", icon: Activity },
       { id: "bimbingan", label: "Bimbingan", icon: MessageSquare },
       { id: "dokumen", label: "Dokumen", icon: FolderOpen },
+      { id: "sidang", label: "Pendaftaran Sidang", icon: CalendarDays },
       { id: "akademik", label: "Data Akademik", icon: GraduationCap },
     ];
   }, []);
@@ -2046,6 +2053,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
             ) : null}
             {!loading && !mustChangePassword && activeTab === "dokumen" ? (
               <MahasiswaDokumenSidangPage
+                session={session}
+                apiBaseUrl={apiBaseUrl}
+                onSessionExpired={onSessionExpired}
+              />
+            ) : null}
+            {!loading && !mustChangePassword && activeTab === "sidang" ? (
+              <MahasiswaSidangRegistrationPage
                 session={session}
                 apiBaseUrl={apiBaseUrl}
                 onSessionExpired={onSessionExpired}

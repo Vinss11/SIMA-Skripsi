@@ -81,6 +81,18 @@ router.get(
 
 // ========== PENDAFTARAN SIDANG AKHIR ==========
 router.get(
+  "/sidang/periode",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  sidangAkhirController.getMahasiswaSidangPeriods
+);
+router.get(
+  "/sidang/periode/:id",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  sidangAkhirController.getMahasiswaSidangPeriodDetail
+);
+router.get(
   "/sidang/status",
   authenticateToken,
   authorizeRole("mahasiswa"),

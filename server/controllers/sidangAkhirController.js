@@ -172,8 +172,18 @@ async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) 
     has_record: Boolean(doc),
     approved_count: 0,
     all_approved: false,
+    documents: [
+      { key: "transkrip", label: "Transkrip Nilai", status: "belum_upload", approved: false },
+      { key: "cept", label: "Sertifikat CEPT", status: "belum_upload", approved: false },
+      { key: "draft_skripsi", label: "Draft Skripsi", status: "belum_upload", approved: false },
+    ],
   };
   if (!doc) return summary;
+  summary.documents = [
+    { key: "transkrip", label: "Transkrip Nilai", status: String(doc.transkrip_status || "belum_upload"), approved: String(doc.transkrip_status || "").toLowerCase() === "approved" },
+    { key: "cept", label: "Sertifikat CEPT", status: String(doc.cept_status || "belum_upload"), approved: String(doc.cept_status || "").toLowerCase() === "approved" },
+    { key: "draft_skripsi", label: "Draft Skripsi", status: String(doc.draft_skripsi_status || "belum_upload"), approved: String(doc.draft_skripsi_status || "").toLowerCase() === "approved" },
+  ];
   let approved = 0;
   DOKUMEN_APPROVAL_FIELDS.forEach((field) => {
     if (String(doc[field] || "").toLowerCase() === "approved") approved += 1;
@@ -203,6 +213,7 @@ async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null, { 
     dokumen_approved_count: dokumen.approved_count,
     dokumen_total_required: DOKUMEN_APPROVAL_FIELDS.length,
     dokumen_ready: dokumen.all_approved,
+    dokumen: dokumen.documents,
     academic: academicEligibility,
     mata_kuliah_penjaluran: penjaluranCourse,
     checklist: [
@@ -213,6 +224,45 @@ async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null, { 
     ],
     eligible,
   };
+}
+
+function buildSidangRegistrationValidationErrors(eligibility) {
+  const errors = [];
+  if (!eligibility?.bimbingan_ready) {
+    errors.push({
+      code: "BIMBINGAN_BELUM_CUKUP",
+      field: "bimbingan",
+      message: `Bimbingan tervalidasi baru ${Number(eligibility?.counted_sessions || 0)} dari minimal ${Number(eligibility?.target_minimum || 0)} sesi.`,
+    });
+  }
+  (eligibility?.dokumen || []).forEach((document) => {
+    if (!document.approved) {
+      errors.push({
+        code: `DOKUMEN_${String(document.key || "").toUpperCase()}_BELUM_DISETUJUI`,
+        field: document.key,
+        message: `${document.label} belum disetujui dosen pembimbing.`,
+      });
+    }
+  });
+  if (eligibility?.academic?.effective_decision === "block") {
+    errors.push({
+      code: "DATA_AKADEMIK_BELUM_MEMENUHI",
+      field: "data_akademik",
+      message: "Data akademik belum memenuhi syarat otomatis pendaftaran sidang.",
+    });
+  }
+  if (eligibility?.mata_kuliah_penjaluran?.required && !eligibility?.mata_kuliah_penjaluran?.fulfilled) {
+    const course = eligibility.mata_kuliah_penjaluran;
+    const gradeDescription = course.nilai
+      ? `Nilai ${course.nilai} belum mencapai minimum ${course.minimum_passing_grade || "C"}`
+      : "Nilai belum tersedia";
+    errors.push({
+      code: "MATA_KULIAH_PENJALURAN_BELUM_LULUS",
+      field: "mata_kuliah_penjaluran",
+      message: `${course.mata_kuliah || "Mata kuliah wajib penjaluran"}: ${gradeDescription}.`,
+    });
+  }
+  return errors;
 }
 
 async function getOpenPeriodeSidang(transaction = null) {
@@ -331,6 +381,108 @@ function serializeJadwalRow(row) {
       : null,
   };
 }
+
+exports.getMahasiswaSidangPeriods = async (req, res) => {
+  try {
+    const mahasiswaId = Number(req.user?.id || 0);
+    const nowDate = nowJakartaDateTime().date;
+    const periodes = await PeriodeSidang.findAll({
+      where: { status: { [Op.in]: ["open", "closed"] } },
+      order: [["activated_at", "DESC"], ["updatedAt", "DESC"]],
+    });
+    const periodeIds = periodes.map((item) => Number(item.id));
+    const registrations = periodeIds.length
+      ? await PendaftaranSidang.findAll({
+          where: { mahasiswa_id: mahasiswaId, periode_sidang_id: { [Op.in]: periodeIds } },
+          include: [{ model: JadwalSidangPenguji, as: "jadwalSidang" }],
+          order: [["createdAt", "DESC"]],
+        })
+      : [];
+    const registrationByPeriod = new Map();
+    registrations.forEach((item) => {
+      const periodId = Number(item.periode_sidang_id);
+      if (!registrationByPeriod.has(periodId)) registrationByPeriod.set(periodId, item);
+    });
+    return res.json({
+      success: true,
+      data: {
+        rows: periodes.map((periode) => {
+          const registration = registrationByPeriod.get(Number(periode.id)) || null;
+          return {
+            ...serializePeriode(periode),
+            registration_window_open: isOpenRegistrationWindow(periode, nowDate),
+            pendaftaran: registration
+              ? {
+                  id: registration.id,
+                  status: registration.status,
+                  registered_at: registration.registered_at,
+                  assigned_at: registration.assigned_at,
+                  jadwal_sidang: serializeJadwalRow(registration.jadwalSidang),
+                }
+              : null,
+          };
+        }),
+      },
+    });
+  } catch (error) {
+    console.error("Error di getMahasiswaSidangPeriods:", error);
+    return res.status(500).json({ success: false, message: "Terjadi kesalahan saat memuat periode pendaftaran sidang.", error: error.message });
+  }
+};
+
+exports.getMahasiswaSidangPeriodDetail = async (req, res) => {
+  try {
+    const mahasiswaId = Number(req.user?.id || 0);
+    const periodeId = Number(req.params?.id || 0);
+    if (!periodeId) return res.status(400).json({ success: false, message: "ID periode sidang tidak valid." });
+    const [periode, eligibility, supervisionAccess, registration] = await Promise.all([
+      PeriodeSidang.findOne({ where: { id: periodeId, status: { [Op.in]: ["open", "closed"] } } }),
+      getMahasiswaSidangEligibility(mahasiswaId),
+      getMahasiswaSupervisionAccess(mahasiswaId),
+      PendaftaranSidang.findOne({
+        where: { mahasiswa_id: mahasiswaId, periode_sidang_id: periodeId },
+        include: [{
+          model: JadwalSidangPenguji,
+          as: "jadwalSidang",
+          include: [
+            { model: Dosen, as: "penguji1", attributes: ["id", "nama", "nik"] },
+            { model: Dosen, as: "penguji2", attributes: ["id", "nama", "nik"] },
+          ],
+        }],
+      }),
+    ]);
+    if (!periode) return res.status(404).json({ success: false, message: "Periode sidang tidak ditemukan." });
+    const validationErrors = buildSidangRegistrationValidationErrors(eligibility);
+    if (supervisionAccess?.can_register_defense === false) {
+      validationErrors.push({ code: "PEMBIMBING_TIDAK_AKTIF", field: "pembimbing", message: supervisionAccess.reason || "Pembimbing skripsi belum aktif." });
+    }
+    const registrationWindowOpen = isOpenRegistrationWindow(periode, nowJakartaDateTime().date);
+    const hasActiveRegistration = Boolean(registration && String(registration.status || "").toLowerCase() !== "cancelled");
+    return res.json({
+      success: true,
+      data: {
+        periode_sidang: serializePeriode(periode),
+        registration_window_open: registrationWindowOpen,
+        eligibility,
+        validation_errors: validationErrors,
+        can_register: registrationWindowOpen && validationErrors.length === 0 && !hasActiveRegistration,
+        pendaftaran: registration
+          ? {
+              id: registration.id,
+              status: registration.status,
+              registered_at: registration.registered_at,
+              assigned_at: registration.assigned_at,
+              catatan: registration.catatan,
+              jadwal_sidang: serializeJadwalRow(registration.jadwalSidang),
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getMahasiswaSidangPeriodDetail:", error);
+    return res.status(500).json({ success: false, message: "Terjadi kesalahan saat memuat detail pendaftaran sidang.", error: error.message });
+  }
+};
 
 exports.getMahasiswaSidangStatus = async (req, res) => {
   try {
@@ -504,15 +656,23 @@ exports.registerMahasiswaSidang = async (req, res) => {
 
     const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction, { persistAcademic: true });
     if (!eligibility.eligible) {
+      const validationErrors = buildSidangRegistrationValidationErrors(eligibility);
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: `Belum memenuhi syarat daftar sidang. Selesaikan ${eligibility.target_minimum} bimbingan valid, pastikan 3 dokumen disetujui, dan lulus mata kuliah penjaluran.`,
-        data: { eligibility },
+        message: "Pendaftaran belum dapat dikirim karena masih ada syarat yang belum terpenuhi.",
+        data: { eligibility, validation_errors: validationErrors },
       });
     }
 
-    const openPeriode = await getOpenPeriodeSidang(transaction);
+    const requestedPeriodeId = Number(req.body?.periode_sidang_id || 0);
+    const openPeriode = requestedPeriodeId
+      ? await PeriodeSidang.findOne({
+          where: { id: requestedPeriodeId, status: "open" },
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+      : await getOpenPeriodeSidang(transaction);
     if (!openPeriode) {
       await transaction.rollback();
       return res.status(409).json({
