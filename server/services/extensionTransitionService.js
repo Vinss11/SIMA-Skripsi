@@ -21,7 +21,6 @@ const {
 } = require("./semesterAssignmentService");
 const { createSystemNotification } = require("./notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
-const { evaluateEligibility: evaluateAcademicEligibility } = require("./academicDataService");
 
 const EXTENSION_WINDOW_DAYS = 30;
 
@@ -174,15 +173,7 @@ async function submitExtensionRequest({ mahasiswaId, alasanPengajuan, idempotenc
       return { izin: raced, replayed: true };
     }
     await notifyExtensionMembers({ izin, source, phase: "submitted", transaction: t });
-    const academicEligibility = await evaluateAcademicEligibility({
-      mahasiswaId,
-      context: "extension",
-      referenceType: "izin_lanjut_skripsi",
-      referenceId: izin.id,
-      persist: true,
-      transaction: t,
-    });
-    return { izin, academic_eligibility: academicEligibility, replayed: false };
+    return { izin, replayed: false };
   };
   return transaction ? run(transaction) : sequelize.transaction(run);
 }

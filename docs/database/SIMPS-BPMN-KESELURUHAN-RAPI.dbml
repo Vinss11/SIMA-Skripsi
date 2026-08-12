@@ -1,0 +1,458 @@
+// SIMPS / SIMA-Skripsi — RELASI DATABASE KESELURUHAN (BUSINESS-FLOW VIEW)
+// Urutan: 01 Persiapan → 02 Penjaluran → 03 Review/Pembimbing →
+//         04 Bimbingan/Dokumen → 05 Penjadwalan → 06 Nilai/Revisi/Yudisium
+// Biru = CURRENT (sudah ada) | Oranye = PROPOSED (perlu ditambahkan)
+// Hanya kolom penggerak relasi dan status proses yang ditampilkan.
+
+Project SIMPS_BPMN_KESELURUHAN {
+  database_type: 'PostgreSQL'
+  Note: 'Satu diagram end-to-end berdasarkan SIMPS BPMN V1.2. Tabel teknis keamanan, notifikasi, outbox, dan audit detail sengaja tidak ditampilkan.'
+}
+
+// ============================================================================
+// AKTOR UTAMA
+// ============================================================================
+
+Table Admins [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nip varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  role varchar(20) [not null]
+}
+
+Table Dosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode_dosen varchar(255) [not null, unique]
+  nama varchar(255) [not null]
+  status_keaktifan varchar(30) [not null]
+  account_is_active boolean [not null]
+  kuota_bimbingan integer [not null]
+}
+
+Table SekretarisProdis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nik varchar(9) [not null, unique]
+  nama varchar(100) [not null]
+}
+
+Table Mahasiswas [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini varchar(40) [not null]
+}
+
+// ============================================================================
+// 01 — PERSIAPAN MASTER, STATUS DOSEN, DAN PERIODE
+// BPMN: Admin kelola dosen → Sekprodi membuat periode/ketersediaan → aktifkan
+// ============================================================================
+
+Table RiwayatStatusDosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  status_baru varchar(30) [not null]
+  effective_at date
+  reason text
+  changed_by integer [ref: > Admins.id]
+}
+
+Table PeriodeAkademiks [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode varchar(40) [not null, unique]
+  tahun_akademik varchar(20) [not null]
+  semester varchar(10) [not null]
+  status varchar(20) [not null]
+}
+
+Table PeriodePenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_akademik_id integer [ref: > PeriodeAkademiks.id]
+  label_periode varchar(50) [not null, unique]
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  status varchar(20) [not null]
+}
+
+Table DosenKetersediaanPeriodes [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  tersedia_membimbing boolean [not null]
+  configuration_status varchar(30)
+  updated_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+}
+
+Table Klasters [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode varchar(20) [not null, unique]
+  nama varchar(120) [not null, unique]
+}
+
+Table KlasterKetuaPeriodes [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  klaster_id integer [not null, ref: > Klasters.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  assigned_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+}
+
+Table Topiks [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode varchar(20) [not null, unique]
+  judul varchar(255) [not null]
+  cluster varchar(20) [not null]
+  status varchar(20) [not null]
+  dosen_id integer [not null, ref: > Dosens.id]
+}
+
+// ============================================================================
+// 02 — PENDAFTARAN JALUR DAN PENGAJUAN
+// BPMN: Pilih DPA/jalur → isi topik/judul/mitra/kelompok → validasi/reservasi
+// ============================================================================
+
+Table PendaftaranPenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  pendaftaran_asal_id integer [ref: > PendaftaranPenjalurans.id]
+  jalur varchar(20) [not null]
+  jenis_jalur_diambil varchar(40)
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  status varchar(30) [not null]
+  form_lanjutan_status varchar(40) [not null]
+}
+
+Table Pengajuans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  tipe_pengajuan varchar(30) [not null]
+  topik_1_kode varchar(20)
+  topik_2_kode varchar(20)
+  topik_3_kode varchar(20)
+  judul_mandiri varchar(500)
+  prospective_supervisor_id integer [ref: > Dosens.id]
+  status varchar(40) [not null]
+}
+
+Table MitraMagangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nama varchar(180) [not null, unique]
+  posisi_magang varchar(180)
+  quota_magang integer
+  status varchar(20) [not null]
+}
+
+Table PendaftaranMagangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  mitra_magang_id integer [not null, ref: > MitraMagangs.id]
+  posisi_dilamar varchar(180)
+  surat_penerimaan_file_path varchar(500)
+  Note: 'PROPOSED — detail relasional jalur magang'
+}
+
+Table PendaftaranPengabdians [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  nama_mitra_masyarakat varchar(180) [not null]
+  lokasi varchar(255) [not null]
+  proposal_file_path varchar(500)
+  Note: 'PROPOSED — detail relasional jalur pengabdian'
+}
+
+Table KelompokPerintisanBisnis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  ketua_mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  status varchar(30) [not null]
+}
+
+Table AnggotaKelompokPerintisans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kelompok_id integer [not null, ref: > KelompokPerintisanBisnis.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  posisi varchar(20) [not null]
+  peran_tim varchar(20) [not null]
+}
+
+// ============================================================================
+// 03 — REVIEW JALUR DAN PENETAPAN PEMBIMBING
+// BPMN: Reviewer jalur memutuskan → final review Sekprodi → tetapkan P1/P2
+// ============================================================================
+
+Table RiwayatPersetujuans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  pengajuan_id integer [not null, ref: > Pengajuans.id]
+  dosen_id integer [ref: > Dosens.id]
+  sekretaris_prodi_id integer [ref: > SekretarisProdis.id]
+  tipe_approval varchar(30) [not null]
+  status varchar(20) [not null]
+  tanggal_keputusan timestamptz [not null]
+}
+
+Table SuratTugasPembimbings [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [ref: > PeriodePenjalurans.id]
+  nomor_surat varchar(150) [unique]
+  status varchar(20) [not null]
+  issued_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+}
+
+Table PenetapanPembimbings [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  surat_tugas_id integer [ref: > SuratTugasPembimbings.id]
+  previous_assignment_id integer [ref: > PenetapanPembimbings.id]
+  created_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  status varchar(20) [not null]
+  effective_at timestamptz
+}
+
+Table PenetapanPembimbingDosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  urutan integer [not null]
+  peran varchar(20) [not null]
+  status varchar(20) [not null]
+}
+
+// ============================================================================
+// 04 — BIMBINGAN, DOKUMEN, DAN KELAYAKAN SIDANG
+// BPMN: Log bimbingan → verifikasi → hitung kuota → upload/review dokumen
+// ============================================================================
+
+Table BimbinganSkripsis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  penetapan_pembimbing_id integer [ref: > PenetapanPembimbings.id]
+  reviewer_dosen_id integer [ref: > Dosens.id]
+  permintaan_tanggal date [not null]
+  status_permohonan varchar(40) [not null]
+  status_resume varchar(30) [not null]
+  is_counted boolean [not null]
+}
+
+Table DokumenSidangVersions [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_dokumen varchar(40) [not null]
+  version_number integer [not null]
+  file_path varchar(500) [not null]
+  status varchar(30) [not null]
+
+  Indexes {
+    (pendaftaran_penjaluran_id, jenis_dokumen, version_number) [unique]
+  }
+  Note: 'PROPOSED — versi upload dan re-upload dokumen'
+}
+
+Table ReviewDokumenSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  dokumen_version_id bigint [not null, ref: > DokumenSidangVersions.id]
+  reviewer_dosen_id integer [not null, ref: > Dosens.id]
+  penetapan_pembimbing_dosen_id integer [ref: > PenetapanPembimbingDosens.id]
+  keputusan varchar(30) [not null]
+  decided_at timestamptz [not null]
+  Note: 'PROPOSED — approval pembimbing per versi dokumen'
+}
+
+// ============================================================================
+// 05 — PERIODE DAN PENJADWALAN SIDANG
+// BPMN: Buka periode/hari/ruang → ketersediaan penguji → daftar → auto-schedule
+// ============================================================================
+
+Table PeriodeSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  label_periode varchar(120) [not null, unique]
+  tanggal_mulai_pendaftaran date [not null]
+  tanggal_selesai_pendaftaran date [not null]
+  status varchar(20) [not null]
+  created_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+}
+
+Table PeriodeSidangHaris [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  tanggal_sidang date [not null]
+}
+
+Table PeriodeSidangRuangans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  nama_ruangan varchar(120) [not null]
+}
+
+Table KetersediaanPengujiSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+}
+
+Table PendaftaranSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_pembimbing_id integer [ref: > Dosens.id]
+  status varchar(20) [not null]
+  registered_at timestamptz [not null]
+}
+
+Table JadwalSidangPengujis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  pendaftaran_sidang_id integer [not null, unique, ref: - PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+  ruangan varchar(120) [not null]
+  penguji1_dosen_id integer [not null, ref: > Dosens.id]
+  penguji2_dosen_id integer [not null, ref: > Dosens.id]
+  assignment_status varchar(20) [not null]
+}
+
+// ============================================================================
+// 06 — PENILAIAN, REVISI, DAN YUDISIUM
+// BPMN: Input nilai → hitung hasil → revisi/approval → verifikasi → yudisium
+// ============================================================================
+
+Table RubrikPenilaianSidangs [headercolor: #D97706] {
+  id integer [pk, increment]
+  kode varchar(40) [not null, unique]
+  nama varchar(160) [not null]
+  bobot decimal(5,2) [not null]
+  is_active boolean [not null]
+  Note: 'PROPOSED — master komponen nilai'
+}
+
+Table PenilaianSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, ref: > JadwalSidangPengujis.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  peran_penilai varchar(20) [not null]
+  status varchar(20) [not null]
+  nilai_total decimal(5,2)
+  Note: 'PROPOSED — lembar nilai per penguji'
+}
+
+Table DetailNilaiSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  penilaian_sidang_id bigint [not null, ref: > PenilaianSidangs.id]
+  rubrik_penilaian_sidang_id integer [not null, ref: > RubrikPenilaianSidangs.id]
+  nilai decimal(5,2) [not null]
+  Note: 'PROPOSED — nilai per komponen rubrik'
+}
+
+Table HasilSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, unique, ref: - JadwalSidangPengujis.id]
+  nilai_akhir decimal(5,2)
+  status_hasil varchar(30) [not null]
+  batas_revisi_at timestamptz
+  finalized_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  Note: 'PROPOSED — hasil agregat dan keputusan sidang'
+}
+
+Table RevisiSkripsis [headercolor: #D97706] {
+  id bigint [pk, increment]
+  hasil_sidang_id bigint [not null, ref: > HasilSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  version_number integer [not null]
+  file_path varchar(500) [not null]
+  status varchar(30) [not null]
+  Note: 'PROPOSED — versi revisi pasca-sidang'
+}
+
+Table PersetujuanRevisiSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  revisi_skripsi_id bigint [not null, ref: > RevisiSkripsis.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  peran_penilai varchar(20) [not null]
+  keputusan varchar(30) [not null]
+  decided_at timestamptz [not null]
+  Note: 'PROPOSED — approval revisi oleh dosen'
+}
+
+Table Yudisiums [headercolor: #D97706] {
+  id bigint [pk, increment]
+  hasil_sidang_id bigint [not null, unique, ref: - HasilSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_akademik_id integer [not null, ref: > PeriodeAkademiks.id]
+  status varchar(20) [not null]
+  nomor_keputusan varchar(120)
+  tanggal_yudisium date
+  verified_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  Note: 'PROPOSED — keputusan akademik final'
+}
+
+// ============================================================================
+// PENGELOMPOKAN VISUAL SESUAI URUTAN BPMN
+// ============================================================================
+
+TableGroup "00 Aktor Utama" {
+  Admins
+  Dosens
+  SekretarisProdis
+  Mahasiswas
+}
+
+TableGroup "01 Persiapan dan Periode" {
+  RiwayatStatusDosens
+  PeriodeAkademiks
+  PeriodePenjalurans
+  DosenKetersediaanPeriodes
+  Klasters
+  KlasterKetuaPeriodes
+  Topiks
+}
+
+TableGroup "02 Pendaftaran Jalur" {
+  PendaftaranPenjalurans
+  Pengajuans
+  MitraMagangs
+  PendaftaranMagangs
+  PendaftaranPengabdians
+  KelompokPerintisanBisnis
+  AnggotaKelompokPerintisans
+}
+
+TableGroup "03 Review dan Pembimbing" {
+  RiwayatPersetujuans
+  SuratTugasPembimbings
+  PenetapanPembimbings
+  PenetapanPembimbingDosens
+}
+
+TableGroup "04 Bimbingan dan Dokumen" {
+  BimbinganSkripsis
+  DokumenSidangVersions
+  ReviewDokumenSidangs
+}
+
+TableGroup "05 Penjadwalan Sidang" {
+  PeriodeSidangs
+  PeriodeSidangHaris
+  PeriodeSidangRuangans
+  KetersediaanPengujiSidangs
+  PendaftaranSidangs
+  JadwalSidangPengujis
+}
+
+TableGroup "06 Nilai sampai Yudisium" {
+  RubrikPenilaianSidangs
+  PenilaianSidangs
+  DetailNilaiSidangs
+  HasilSidangs
+  RevisiSkripsis
+  PersetujuanRevisiSidangs
+  Yudisiums
+}

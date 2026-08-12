@@ -1,0 +1,120 @@
+// SIMPS BPMN V1.2 — TAHAP 03: Pendaftaran Jalur dan Pengajuan Mahasiswa
+// Urutan BPMN: Mahasiswa memilih DPA dan jalur → mengisi topik/judul/mitra/kelompok → submit → sistem memvalidasi kelayakan dan mereservasi slot
+// Biru = CURRENT (sudah ada) | Oranye = PROPOSED (belum dimigrasikan)
+// View ini hanya menampilkan kolom penggerak relasi/proses agar diagram terbaca.
+
+Project SIMPS_BPMN_03 {
+  database_type: 'PostgreSQL'
+  Note: 'Pendaftaran Jalur dan Pengajuan Mahasiswa'
+}
+
+Table Dosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode_dosen varchar(255) [not null, unique]
+  nama varchar(255) [not null]
+  status_keaktifan varchar(30) [not null]
+  account_is_active boolean [not null]
+  kuota_bimbingan integer [not null]
+  Note: 'CURRENT — dosen, pembimbing, penguji, dan penanggung jawab jalur'
+}
+
+Table Mahasiswas [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini varchar(40) [not null]
+  pengajuan_aktif_id integer
+  Note: 'CURRENT — mahasiswa dan pointer status proses aktif'
+}
+
+Table PeriodePenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  label_periode varchar(50) [not null, unique]
+  status varchar(20) [not null]
+  Note: 'CURRENT — periode tujuan pendaftaran'
+}
+
+Table PendaftaranPenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  pendaftaran_asal_id integer [ref: > PendaftaranPenjalurans.id]
+  jalur varchar(20) [not null]
+  jenis_jalur_diambil varchar(40)
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  status varchar(30) [not null]
+  form_lanjutan_status varchar(40) [not null]
+  Note: 'CURRENT — header satu siklus pendaftaran mahasiswa'
+}
+
+Table Topiks [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode varchar(20) [not null, unique]
+  judul varchar(255) [not null]
+  status varchar(20) [not null]
+  dosen_id integer [not null, ref: > Dosens.id]
+  Note: 'CURRENT — opsi topik dosen'
+}
+
+Table Pengajuans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  pengajuan_sebelumnya_id integer [ref: > Pengajuans.id]
+  tipe_pengajuan varchar(30) [not null]
+  topik_1_kode varchar(20)
+  topik_2_kode varchar(20)
+  topik_3_kode varchar(20)
+  judul_mandiri varchar(500)
+  prospective_supervisor_id integer [ref: > Dosens.id]
+  status varchar(40) [not null]
+  Note: 'CURRENT — pengajuan topik dosen atau judul mandiri'
+}
+
+Table MitraMagangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nama varchar(180) [not null, unique]
+  posisi_magang varchar(180)
+  quota_magang integer
+  status varchar(20) [not null]
+  Note: 'CURRENT — master mitra magang'
+}
+
+Table PendaftaranMagangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  mitra_magang_id integer [not null, ref: > MitraMagangs.id]
+  posisi_dilamar varchar(180)
+  surat_penerimaan_file_path varchar(500)
+  Note: 'PROPOSED — detail relasional jalur magang'
+}
+
+Table PendaftaranPengabdians [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  nama_mitra_masyarakat varchar(180) [not null]
+  lokasi varchar(255) [not null]
+  proposal_file_path varchar(500)
+  Note: 'PROPOSED — detail relasional jalur pengabdian'
+}
+
+Table KelompokPerintisanBisnis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  ketua_mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  status varchar(30) [not null]
+  Note: 'CURRENT — kelompok jalur perintisan bisnis'
+}
+
+Table AnggotaKelompokPerintisans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kelompok_id integer [not null, ref: > KelompokPerintisanBisnis.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  posisi varchar(20) [not null]
+  peran_tim varchar(20) [not null]
+  Note: 'CURRENT — anggota dan pendaftaran kelompok'
+}
+

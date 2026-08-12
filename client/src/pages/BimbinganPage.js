@@ -216,8 +216,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
   const [supervisionAccess, setSupervisionAccess] = useState(null);
   const [guidanceContext, setGuidanceContext] = useState(null);
   const [guidanceProgress, setGuidanceProgress] = useState(null);
-  const [guidanceReadiness, setGuidanceReadiness] = useState(null);
-  const [requestingReadiness, setRequestingReadiness] = useState(false);
   const createRequestKeyRef = useRef(null);
   const resumeCommandKeysRef = useRef({});
   const withdrawCommandKeysRef = useRef({});
@@ -283,10 +281,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
     try {
       setLoading(true);
       setError("");
-      const [payload, contextPayload, readinessPayload] = await Promise.all([
+      const [payload, contextPayload] = await Promise.all([
         fetchWithAuth("/api/mahasiswa/bimbingan"),
         fetchWithAuth("/api/mahasiswa/bimbingan/context").catch(() => null),
-        fetchWithAuth("/api/mahasiswa/bimbingan/readiness/current").catch(() => null),
       ]);
       const data = payload?.data || {};
       const fetchedRows = Array.isArray(data.rows) ? data.rows : [];
@@ -296,7 +293,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setSupervisionAccess(data.supervision_access || null);
       setGuidanceProgress(data.progress || null);
       setGuidanceContext(contextPayload?.data || null);
-      setGuidanceReadiness(readinessPayload?.data || null);
       return fetchedRows;
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
@@ -307,17 +303,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
       setLoading(false);
     }
   }, [fetchWithAuth]);
-
-  const handleRequestReadiness = useCallback(async () => {
-    try {
-      setRequestingReadiness(true); setError("");
-      const payload = await fetchWithAuth("/api/mahasiswa/bimbingan/readiness", { method: "POST",
-        headers: { "Idempotency-Key": `readiness-${session.user?.id}-${Date.now()}` }, body: JSON.stringify({}) });
-      setGuidanceReadiness({ mode: payload?.data?.mode, enabled: payload?.data?.mode === "enabled", request: payload?.data?.request });
-      showSuccessToast(payload?.data?.mode === "shadow" ? "Snapshot readiness shadow berhasil dibuat." : "Permintaan readiness berhasil dikirim.");
-    } catch (requestError) { if (requestError.message !== "__SESSION_EXPIRED__") setError(requestError.message); }
-    finally { setRequestingReadiness(false); }
-  }, [fetchWithAuth, session.user?.id]);
 
   useEffect(() => {
     loadData();
@@ -676,26 +661,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               Kelola pengajuan sesi bimbingan, pantau status, dan kirim resume sesuai progres.
             </p>
           </div>
-        </div>
-      </section>
-
-      <section className="rounded-xl border border-[#dce6ff] bg-[#f7faff] p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-black text-[#1b274b]">Status Kesiapan Tahap Berikutnya</h3>
-            <p className="mt-1 text-sm text-[#51648f]">
-              Mode: <span className="font-bold uppercase">{guidanceReadiness?.mode || guidanceContext?.readiness?.mode || "shadow"}</span>
-              {guidanceReadiness?.request ? ` • Status: ${String(guidanceReadiness.request.status || "-").replaceAll("_", " ")}` : " • Belum ada snapshot"}
-            </p>
-            {(guidanceReadiness?.mode || guidanceContext?.readiness?.mode) === "shadow" ? (
-              <p className="mt-1 text-xs font-semibold text-[#8a6512]">Shadow hanya merekam kesiapan; belum membuka atau memblokir proses berikutnya.</p>
-            ) : null}
-          </div>
-          <button type="button" onClick={() => handleRequestReadiness().catch(() => {})}
-            disabled={requestingReadiness || !guidanceProgress?.enforcement?.sufficient}
-            className="rounded-lg bg-[#2f63e3] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
-            {requestingReadiness ? "Menyimpan..." : guidanceReadiness?.request ? "Perbarui Snapshot" : "Buat Snapshot Readiness"}
-          </button>
         </div>
       </section>
 

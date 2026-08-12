@@ -44,8 +44,6 @@ router.get("/penetapan-pembimbing", authenticateToken, authorizeRole("mahasiswa"
 // ========== BIMBINGAN SKRIPSI ==========
 router.get("/bimbingan/context", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceContext);
 router.get("/bimbingan/progress", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceProgress);
-router.post("/bimbingan/readiness", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.requestMahasiswaGuidanceReadiness);
-router.get("/bimbingan/readiness/current", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaGuidanceReadiness);
 router.get("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.getMahasiswaBimbingan);
 router.post("/bimbingan", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.createMahasiswaBimbingan);
 router.post("/bimbingan/:id/expire", authenticateToken, authorizeRole("mahasiswa"), bimbinganController.expireMahasiswaBimbingan);

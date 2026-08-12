@@ -27,10 +27,20 @@ const JENIS_JALUR_OPTIONS = ["penelitian", "perintisan_bisnis", "magang"];
 const PERAN_TIM_PERINTISAN = ["hustler", "hipster", "hacker"];
 const PROGRAM_KULIAH_OPTIONS = ["reguler", "internasional"];
 const EMAIL_DOMAIN_MAHASISWA = "students.uii.ac.id";
+const NIM_PATTERN = /^\d{2}523\d{3}$/;
+const NIM_FORMAT_MESSAGE =
+  "NIM harus berbentuk Angkatan (2 digit), Kode Prodi 523, dan Nomor Urut Mahasiswa (3 digit). Contoh: 22523001.";
 
 function normalizeText(value) {
   if (typeof value !== "string") return "";
   return value.trim();
+}
+
+function getNimValidationError(nim) {
+  const normalizedNim = normalizeText(nim);
+  if (!normalizedNim) return "NIM wajib diisi.";
+  if (!NIM_PATTERN.test(normalizedNim)) return NIM_FORMAT_MESSAGE;
+  return "";
 }
 
 function normalizeJenisJalur(value) {
@@ -401,10 +411,12 @@ exports.getDosenDropdown = async (req, res) => {
 exports.checkNimAvailability = async (req, res) => {
   try {
     const nim = normalizeText(req.query.nim);
-    if (!nim) {
+    const nimValidationError = getNimValidationError(nim);
+    if (nimValidationError) {
       return res.status(400).json({
         success: false,
-        message: "NIM wajib diisi.",
+        code: "NIM_FORMAT_INVALID",
+        message: nimValidationError,
         detail: { field: "nim" },
       });
     }
@@ -571,6 +583,10 @@ async function createKelompokPerintisanRegistration({
     nama: normalizeText(item?.nama),
     dosen_pembimbing_akademik_id: Number(item?.dosen_pembimbing_akademik_id) || 0,
   }));
+  const invalidMemberNim = normalizedMembers.find((item) => getNimValidationError(item.nim));
+  if (invalidMemberNim) {
+    return { error: getNimValidationError(invalidMemberNim.nim) };
+  }
   const roles = [ketuaPeranTim, ...normalizedMembers.map((item) => item.peran_tim)];
   if (
     roles.some((role) => !PERAN_TIM_PERINTISAN.includes(role)) ||
@@ -754,7 +770,6 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     const nim = normalizeText(req.body.nim);
     const nama = normalizeText(req.body.nama);
     const email = normalizeText(req.body.email).toLowerCase();
-    const accountPassword = String(req.body.account_password || "");
     const pendaftaran = normalizeText(req.body.pendaftaran).toLowerCase() || "baru";
     const programKuliah = normalizeText(req.body.program_kuliah).toLowerCase();
     const dosenPembimbingAkademikId = Number(req.body.dosen_pembimbing_akademik_id) || 0;
@@ -790,11 +805,23 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       });
     }
 
-    if (!nim || !PROGRAM_KULIAH_OPTIONS.includes(programKuliah)) {
+    const nimValidationError = getNimValidationError(nim);
+    if (nimValidationError) {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Field wajib: nim dan program_kuliah.",
+        code: "NIM_FORMAT_INVALID",
+        message: nimValidationError,
+        detail: { field: "nim" },
+      });
+    }
+
+    if (!PROGRAM_KULIAH_OPTIONS.includes(programKuliah)) {
+      await t.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Program kuliah wajib diisi.",
+        detail: { field: "program_kuliah" },
       });
     }
 
@@ -803,15 +830,16 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
-    const accountCreated = !authenticatedMahasiswa;
-    if (authenticatedMahasiswa && (!accountPassword || !(await authenticatedMahasiswa.comparePassword(accountPassword)))) {
+    if (authenticatedMahasiswa) {
       await t.rollback();
-      return res.status(401).json({
+      return res.status(409).json({
         success: false,
-        code: "MASTER_ACCOUNT_AUTH_FAILED",
-        message: "Password akun master mahasiswa tidak valid.",
+        code: "NIM_ALREADY_EXISTS",
+        message: "NIM sudah terdaftar.",
+        detail: { field: "nim" },
       });
     }
+    const accountCreated = true;
 
     if (!authenticatedMahasiswa) {
       if (!nama) {

@@ -1,0 +1,105 @@
+// SIMPS BPMN V1.2 — TAHAP 05: Bimbingan dan Kelayakan Sidang
+// Urutan BPMN: Mahasiswa mengajukan/log bimbingan → dosen memverifikasi resume → sistem menghitung bimbingan valid → mahasiswa upload dokumen → dosen review/revisi → sistem memberi eligibility sidang
+// Biru = CURRENT (sudah ada) | Oranye = PROPOSED (belum dimigrasikan)
+// View ini hanya menampilkan kolom penggerak relasi/proses agar diagram terbaca.
+
+Project SIMPS_BPMN_05 {
+  database_type: 'PostgreSQL'
+  Note: 'Bimbingan dan Kelayakan Sidang'
+}
+
+Table Dosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode_dosen varchar(255) [not null, unique]
+  nama varchar(255) [not null]
+  status_keaktifan varchar(30) [not null]
+  account_is_active boolean [not null]
+  kuota_bimbingan integer [not null]
+  Note: 'CURRENT — dosen, pembimbing, penguji, dan penanggung jawab jalur'
+}
+
+Table Mahasiswas [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini varchar(40) [not null]
+  pengajuan_aktif_id integer
+  Note: 'CURRENT — mahasiswa dan pointer status proses aktif'
+}
+
+Table PendaftaranPenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_jalur_diambil varchar(40)
+  status varchar(30) [not null]
+  Note: 'CURRENT — siklus penjaluran aktif'
+}
+
+Table PenetapanPembimbings [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  status varchar(20) [not null]
+  Note: 'CURRENT — penetapan pembimbing aktif'
+}
+
+Table PenetapanPembimbingDosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  urutan integer [not null]
+  status varchar(20) [not null]
+  Note: 'CURRENT — reviewer P1/P2'
+}
+
+Table BimbinganSkripsis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  penetapan_pembimbing_id integer [ref: > PenetapanPembimbings.id]
+  target_assignment_member_id integer [ref: > PenetapanPembimbingDosens.id]
+  permintaan_tanggal date [not null]
+  status_permohonan varchar(40) [not null]
+  status_resume varchar(30) [not null]
+  reviewer_dosen_id integer [ref: > Dosens.id]
+  is_counted boolean [not null]
+  Note: 'CURRENT — permohonan, pertemuan, resume, dan validitas bimbingan'
+}
+
+Table DokumenSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, unique, ref: - Mahasiswas.id]
+  transkrip_status varchar(30) [not null]
+  cept_status varchar(30) [not null]
+  draft_skripsi_status varchar(30) [not null]
+  Note: 'CURRENT — snapshot dokumen sidang saat ini'
+}
+
+Table DokumenSidangVersions [headercolor: #D97706] {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_dokumen varchar(40) [not null]
+  version_number integer [not null]
+  file_path varchar(500) [not null]
+  status varchar(30) [not null]
+
+  Indexes {
+    (pendaftaran_penjaluran_id, jenis_dokumen, version_number) [unique]
+  }
+  Note: 'PROPOSED — versi upload/re-upload dokumen'
+}
+
+Table ReviewDokumenSidangs [headercolor: #D97706] {
+  id bigint [pk, increment]
+  dokumen_version_id bigint [not null, ref: > DokumenSidangVersions.id]
+  reviewer_dosen_id integer [not null, ref: > Dosens.id]
+  penetapan_pembimbing_dosen_id integer [ref: > PenetapanPembimbingDosens.id]
+  keputusan varchar(30) [not null]
+  decided_at timestamptz [not null]
+  Note: 'PROPOSED — keputusan pembimbing per versi dokumen'
+}
+

@@ -36,8 +36,6 @@ module.exports = (sequelize, DataTypes) => {
       BimbinganSkripsi.belongsTo(models.PenetapanPembimbing, { foreignKey: "effective_reviewer_assignment_id", as: "effectiveReviewerAssignment" });
       BimbinganSkripsi.belongsTo(models.PenetapanPembimbingDosen, { foreignKey: "effective_reviewer_assignment_member_id", as: "effectiveReviewerMember" });
       BimbinganSkripsi.belongsTo(models.PeriodeAkademik, { foreignKey: "periode_akademik_id", as: "periodeAkademik" });
-      BimbinganSkripsi.hasMany(models.GuidanceResumeVersion, { foreignKey: "guidance_id", as: "resumeVersions" });
-      BimbinganSkripsi.hasMany(models.GuidanceEvent, { foreignKey: "guidance_id", as: "guidanceEvents" });
     }
   }
 
@@ -79,13 +77,10 @@ module.exports = (sequelize, DataTypes) => {
       occurrence_source: DataTypes.STRING(40),
       cancelled_at: DataTypes.DATE,
       cancellation_reason_code: DataTypes.STRING(100),
-      current_resume_version_id: DataTypes.BIGINT,
-      progress_policy_id: DataTypes.INTEGER,
       legacy_context_status: { type: DataTypes.STRING(20), allowNull: false, defaultValue: "ambiguous" },
       reviewer_resolution_status: { type: DataTypes.STRING(30), allowNull: false, defaultValue: "resolved" },
       reviewer_resolution_reason_code: DataTypes.STRING(100),
       row_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
-      correlation_id: DataTypes.UUID,
       permintaan_pesan: {
         type: DataTypes.TEXT,
         allowNull: false,

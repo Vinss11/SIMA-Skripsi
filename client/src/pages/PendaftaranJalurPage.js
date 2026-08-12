@@ -33,9 +33,13 @@ const PERAN_TIM_OPTIONS = [
 const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
 const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
 const ANGGOTA_NAMA_REGEX = /^[a-zA-Z\s]+$/;
+const NIM_REGEX = /^\d{2}523\d{3}$/;
+const NIM_FORMAT_ERROR =
+  "NIM harus berbentuk Angkatan (2 digit), Kode Prodi 523, dan Nomor Urut Mahasiswa (3 digit). Contoh: 22523001.";
 const getNimValidationError = (nim) => {
   const normalizedNim = String(nim || "").trim();
   if (!normalizedNim) return "NIM wajib diisi.";
+  if (!NIM_REGEX.test(normalizedNim)) return NIM_FORMAT_ERROR;
   return "";
 };
 const getNamaValidationError = (nama) => {
@@ -187,21 +191,9 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           throw new Error(data?.message || "Gagal memeriksa NIM.");
         }
         const accountStatus = data.data?.status;
-        if (["new_account_allowed", "existing_account_auth_required"].includes(accountStatus)) {
+        if (accountStatus === "new_account_allowed") {
           setNimAvailability("available");
-          setNimAccountMode(accountStatus === "new_account_allowed" ? "new" : "existing");
-          const master = data.data?.mahasiswa;
-          if (master) {
-            setFormData((prev) => ({
-              ...prev,
-              nama: master.nama || "",
-              email: master.email || buildMahasiswaEmailFromNim(nim),
-              dosen_pembimbing_akademik_id: master.dosen_pembimbing_akademik_id || "",
-              dosen_pembimbing_akademik_nama: master.dosen_pembimbing_akademik
-                ? formatDosenFullName(master.dosen_pembimbing_akademik.nama, master.dosen_pembimbing_akademik.gelar)
-                : "",
-            }));
-          }
+          setNimAccountMode("new");
           setFieldErrors((prev) => ({
             ...prev,
             nim: "",
@@ -211,7 +203,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           setNimAccountMode("already_registered");
           setFieldErrors((prev) => ({
             ...prev,
-            nim: "NIM sudah terdaftar pada periode aktif.",
+            nim: "NIM sudah terdaftar.",
           }));
         }
       } catch (checkError) {
@@ -506,6 +498,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     let { value } = event.target;
 
     if (name === "nim") {
+      value = value.replace(/\D/g, "").slice(0, 8);
       const generatedEmail = buildMahasiswaEmailFromNim(value);
       setNimAccountMode("unknown");
       setDosenSearchQueryByField((prev) => ({
@@ -530,7 +523,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       }));
       setFieldErrors((prev) => ({
         ...prev,
-        nim: touchedFields.nim ? getNimValidationError(value) : "",
+        nim: touchedFields.nim || value.length === 8 ? getNimValidationError(value) : "",
         account_password: "",
       }));
       return;
@@ -1033,10 +1026,20 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       nimAvailability === "unavailable"
         ? fieldErrors.nim || "NIM belum memenuhi syarat pendaftaran."
         : getNimValidationError(nim);
+    if (nimError) {
+      setTouchedFields((prev) => ({ ...prev, nim: true }));
+      setFieldErrors((prev) => ({
+        ...prev,
+        nim: nimError,
+        account_password: "",
+        nama: "",
+        dosen_pembimbing_akademik_id: "",
+        program_kuliah: "",
+      }));
+      return "Periksa kembali informasi umum.";
+    }
     const namaError = getNamaValidationError(nama);
-    const passwordError = nimAccountMode === "existing" && !formData.account_password
-      ? "Password akun master wajib diisi."
-      : "";
+    const passwordError = "";
     const dpaError = formData.dosen_pembimbing_akademik_id
       ? ""
       : "Dosen Pembimbing Akademik wajib diisi.";
@@ -1303,10 +1306,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     <input
                       name="nim"
                       type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={8}
                       value={formData.nim}
                       onChange={handleChange}
                       onBlur={() => handleFieldBlur("nim")}
-                      placeholder="Masukkan NIM"
+                      placeholder="Contoh: 22523001"
                       aria-invalid={Boolean(fieldErrors.nim)}
                       aria-describedby={fieldErrors.nim ? "nim-error" : undefined}
                       className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
@@ -1327,30 +1333,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       </p>
                     ) : null}
                   </div>
-                  {nimAccountMode === "existing" ? <div>
-                    <RequiredLabel>Password Akun Master</RequiredLabel>
-                    <input
-                      name="account_password"
-                      type="password"
-                      value={formData.account_password}
-                      onChange={handleChange}
-                      onBlur={() => handleFieldBlur("account_password")}
-                      autoComplete="current-password"
-                      placeholder="Password akun mahasiswa"
-                      className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 ${
-                        fieldErrors.account_password
-                          ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
-                          : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
-                      }`}
-                    />
-                    {fieldErrors.account_password ? (
-                      <p className="mt-1 text-xs font-semibold text-[#c43f3f]">{fieldErrors.account_password}</p>
-                    ) : (
-                      <p className="mt-1 text-xs text-[#6477a8]">
-                        Jika password belum pernah diganti, gunakan NIM sebagai password awal.
-                      </p>
-                    )}
-                  </div> : null}
                   <div>
                     <RequiredLabel>Nama</RequiredLabel>
                     <input
@@ -1391,9 +1373,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                         readOnly
                         value={formData.dosen_pembimbing_akademik_nama}
                         placeholder={
-                          nimAccountMode === "existing"
-                            ? "Mengikuti master mahasiswa"
-                            : "Isi NIM terlebih dahulu"
+                          "Isi NIM yang belum terdaftar terlebih dahulu"
                         }
                         className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
                       />
@@ -1679,6 +1659,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                                 <input
                                   type="text"
                                   inputMode="numeric"
+                                  pattern="[0-9]*"
                                   maxLength={8}
                                   value={anggota.nim}
                                    onChange={(event) =>

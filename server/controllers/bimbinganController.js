@@ -25,7 +25,6 @@ const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbi
 const guidanceWorkflow = require("../services/guidanceWorkflowService");
 const { resolveActiveGuidanceContext } = require("../services/guidanceContextService");
 const { getProgress, DEFAULT_MINIMUM } = require("../services/guidanceProgressService");
-const guidanceReadiness = require("../services/guidanceReadinessService");
 
 async function ensureExistingSupervisionAccess(dosenId, transaction = null) {
   return getExistingSupervisionPermission(dosenId, transaction);
@@ -152,11 +151,9 @@ function serializeRow(row) {
     reviewer_dosen_id: item.reviewer_dosen_id,
     reassigned_reviewer_at: item.reassigned_reviewer_at,
     is_counted: Boolean(item.is_counted),
-    resume_versions: (item.resumeVersions || []).slice().sort((a, b) => Number(b.version_number) - Number(a.version_number)).map((version) => ({
-      id: version.id, version_number: version.version_number, resume_text: version.resume_text, status: version.status,
-      submitted_at: version.submitted_at, reviewed_at: version.reviewed_at, review_note: version.review_note,
-      invalidated_at: version.invalidated_at, invalidation_reason: version.invalidation_reason,
-    })),
+    resume_versions: item.resume_mahasiswa ? [{ id: item.id, version_number: 1, resume_text: item.resume_mahasiswa,
+      status: item.status_resume, submitted_at: item.updatedAt, reviewed_at: item.tanggal_review_resume,
+      review_note: item.catatan_review_resume }] : [],
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     mahasiswa: item.mahasiswa
@@ -309,7 +306,6 @@ exports.getMahasiswaBimbingan = async (req, res) => {
           as: "pengajuan",
           attributes: ["id", "jenis_jalur", "tipe_pengajuan", "status"],
         },
-        { model: require("../models").GuidanceResumeVersion, as: "resumeVersions", required: false },
       ],
       order: [["createdAt", "DESC"]],
     });
@@ -1202,8 +1198,7 @@ exports.getMahasiswaGuidanceContext = async (req, res) => {
       assignment: { id: context.assignment.id, semester_penjaluran_ke: context.assignment.semester_penjaluran_ke, periode_akademik_id: context.snapshot.periode_akademik_id },
       supervisors: context.members.map((member) => ({ assignment_member_id: member.id, dosen_id: member.dosen_id, urutan: member.urutan,
         peran: member.peran, nama: member.dosen?.nama, status: member.status, status_keaktifan: member.dosen?.status_keaktifan,
-        can_continue_existing_supervision: member.dosen?.continue_existing_supervision !== false })), program: context.program,
-      readiness: { mode: guidanceReadiness.mode(), enabled: guidanceReadiness.mode() === "enabled" } } });
+        can_continue_existing_supervision: member.dosen?.continue_existing_supervision !== false })), program: context.program } });
   } catch (error) { return sendGuidanceError(res, error); }
 };
 
@@ -1214,40 +1209,6 @@ exports.getMahasiswaGuidanceProgress = async (req, res) => {
       context: { kodeProgramStudi: context.program.kode_program_studi, programKuliah: context.program.program_kuliah,
         jalur: context.snapshot.jalur_snapshot, periodeAkademikId: context.snapshot.periode_akademik_id } });
     return res.json({ success: true, data: progress });
-  } catch (error) { return sendGuidanceError(res, error); }
-};
-
-exports.requestMahasiswaGuidanceReadiness = async (req, res) => {
-  try {
-    const result = await guidanceReadiness.requestReadiness({ mahasiswaId: req.user.id, idempotencyKey: idempotencyKey(req) });
-    return res.status(result.replayed ? 200 : 201).json({ success: true, replayed: result.replayed, data: { request: result.request, mode: result.mode, progress: result.progress } });
-  } catch (error) { return sendGuidanceError(res, error); }
-};
-
-exports.getMahasiswaGuidanceReadiness = async (req, res) => {
-  try {
-    const models = require("../models");
-    const row = await models.GuidanceReadinessRequest.findOne({ where: { mahasiswa_id: req.user.id }, order: [["createdAt", "DESC"]],
-      include: [{ model: models.GuidanceReadinessApproval, as: "approvals", required: false }, { model: models.GuidanceReadinessFact, as: "facts", required: false }] });
-    return res.json({ success: true, data: { request: row, mode: guidanceReadiness.mode(), enabled: guidanceReadiness.mode() === "enabled", downstream_gate_enabled: false } });
-  } catch (error) { return sendGuidanceError(res, error); }
-};
-
-exports.getDosenGuidanceReadinessTasks = async (req, res) => {
-  try {
-    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Identitas dosen tidak tersedia." });
-    const members = await PenetapanPembimbingDosen.findAll({ where: { dosen_id: dosenId }, attributes: ["id"] });
-    const approvals = await require("../models").GuidanceReadinessApproval.findAll({ where: { assignment_member_id: { [Op.in]: members.map((m) => m.id) }, decision: "pending" }, order: [["createdAt", "ASC"]] });
-    return res.json({ success: true, data: { mode: guidanceReadiness.mode(), rows: approvals } });
-  } catch (error) { return sendGuidanceError(res, error); }
-};
-
-exports.decideDosenGuidanceReadiness = async (req, res) => {
-  try {
-    const dosenId = await resolveAuthenticatedDosenId(req); if (!dosenId) return res.status(403).json({ success: false, code: "GUIDANCE_REVIEWER_NOT_AUTHORIZED", message: "Identitas dosen tidak tersedia." });
-    const result = await guidanceReadiness.decideReadiness({ readinessId: req.params.id, dosenId, decision: req.body?.decision,
-      note: req.body?.note, expectedVersion: expectedVersion(req), idempotencyKey: idempotencyKey(req) });
-    return res.json({ success: true, replayed: result.replayed, data: result.request });
   } catch (error) { return sendGuidanceError(res, error); }
 };
 

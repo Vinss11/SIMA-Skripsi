@@ -24,7 +24,6 @@ test("Tahap 5 baru: template periode, import idempoten, koreksi versi, dan alih 
   const created = { students: [], academicPeriods: [], periods: [], registrations: [], imports: [] };
   t.after(async () => {
     const importRows = await db.ImportNilaiPenjaluranRow.findAll({ where: { import_id: { [Op.in]: created.imports } }, attributes: ["id"] });
-    await db.KewajibanMataKuliahPenjaluran.destroy({ where: { pendaftaran_penjaluran_id: { [Op.in]: created.registrations } }, force: true });
     await db.PercobaanMataKuliahMahasiswa.destroy({ where: { pendaftaran_penjaluran_id: { [Op.in]: created.registrations } }, force: true });
     await db.ImportNilaiPenjaluranRow.destroy({ where: { id: { [Op.in]: importRows.map((row) => row.id) } }, force: true });
     await db.ImportNilaiPenjaluran.destroy({ where: { id: { [Op.in]: created.imports } }, force: true });
@@ -40,8 +39,8 @@ test("Tahap 5 baru: template periode, import idempoten, koreksi versi, dan alih 
   assert.equal(service.gradePolicy.isPassingGrade("C-"), false);
 
   const startYear = 2120 + Math.floor(Math.random() * 50);
-  const academic = await db.PeriodeAkademik.create({ kode: `${startYear}-${startYear + 1}-GANJIL-${suffix}`, tahun_mulai: null, tahun_selesai: null,
-    tahun_akademik: `${startYear}/${startYear + 1}-${suffix}`, semester: "ganjil", status: "draft", sumber: "test", metadata: {} });
+  const academic = await db.PeriodeAkademik.create({ kode: `${startYear}-${startYear + 1}-GANJIL-${suffix}`,
+    tahun_akademik: `${startYear}/${startYear + 1}-${suffix}`, semester: "ganjil", status: "draft" });
   created.academicPeriods.push(academic.id);
   const period = await db.PeriodePenjaluran.create({ tahun_akademik: `${startYear}/${startYear + 1}`, semester: "ganjil", label_periode: `Stage5 ${suffix} A`, status: "closed", is_active: false, periode_akademik_id: academic.id });
   const switchPeriod = await db.PeriodePenjaluran.create({ tahun_akademik: `${startYear}/${startYear + 1}`, semester: "genap", label_periode: `Stage5 ${suffix} B`, status: "closed", is_active: false, periode_akademik_id: academic.id });
@@ -69,7 +68,7 @@ test("Tahap 5 baru: template periode, import idempoten, koreksi versi, dan alih 
   assert.ok(templateRows.some((row) => Number(row["ID Pendaftaran"]) === registration.id));
 
   const firstFile = fillTemplate(template, { [student.nim]: " b ", [invalidStudent.nim]: "Z" });
-  const preview = await service.createPreview({ periodePenjaluranId: period.id, bytes: firstFile, filename: "nilai.xlsx", actorId: 9001 });
+  const preview = await service.createPreview({ periodePenjaluranId: period.id, bytes: firstFile, actorId: 9001 });
   created.imports.push(preview.import.id);
   assert.deepEqual(preview.import.counts, { total: 2, valid: 1, invalid: 1 });
   const committed = await service.commitImport(preview.import.id, 9001);
@@ -78,10 +77,10 @@ test("Tahap 5 baru: template periode, import idempoten, koreksi versi, dan alih 
   const replayCommit = await service.commitImport(preview.import.id, 9001);
   assert.equal(replayCommit.replayed, true);
   assert.equal(await db.PercobaanMataKuliahMahasiswa.count({ where: { pendaftaran_penjaluran_id: registration.id, is_active: true } }), 1);
-  assert.equal((await service.createPreview({ periodePenjaluranId: period.id, bytes: firstFile, filename: "sama.xlsx", actorId: 9001 })).replayed, true);
+  assert.equal((await service.createPreview({ periodePenjaluranId: period.id, bytes: firstFile, actorId: 9001 })).replayed, true);
 
   const correctionFile = fillTemplate(await service.buildTemplate(period.id), { [student.nim]: "A", [invalidStudent.nim]: "Z" });
-  const correction = await service.createPreview({ periodePenjaluranId: period.id, bytes: correctionFile, filename: "koreksi.xlsx", actorId: 9001 });
+  const correction = await service.createPreview({ periodePenjaluranId: period.id, bytes: correctionFile, actorId: 9001 });
   created.imports.push(correction.import.id); await service.commitImport(correction.import.id, 9001);
   const versions = await db.PercobaanMataKuliahMahasiswa.findAll({ where: { pendaftaran_penjaluran_id: registration.id }, order: [["version", "ASC"]] });
   assert.equal(versions.length, 2); assert.equal(versions[0].is_active, false); assert.equal(versions[1].nilai_huruf, "A"); assert.equal(versions[1].previous_version_id, versions[0].id);

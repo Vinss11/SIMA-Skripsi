@@ -87,7 +87,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPas
               />
             </div>
 
-            <h1 className="mt-4 text-center text-4xl font-black tracking-wide text-[#10224f]">SIMP UII</h1>
+            <h1 className="mt-4 text-center text-4xl font-black tracking-wide text-[#10224f]">SIMPS UII</h1>
             <p className="mt-2 text-center text-sm font-semibold text-[#4a5671] sm:text-lg">
               Sistem Informasi Manajemen Pengurusan Skripsi
             </p>
@@ -136,7 +136,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPas
                 disabled={isLoading}
                 className="group mt-1 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#1d4ac6] via-[#1a43b4] to-[#173b98] text-base font-bold text-white shadow-[0_14px_28px_-12px_rgba(20,56,118,0.8)] transition hover:scale-[1.01] hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-70"
               >
-                {isLoading ? "Memproses..." : "Masuk ke SIMP UII"}
+                {isLoading ? "Memproses..." : "Masuk ke SIMPS UII"}
                 <ArrowRight className="h-5 w-5 transition group-hover:translate-x-1" />
               </button>
             </form>

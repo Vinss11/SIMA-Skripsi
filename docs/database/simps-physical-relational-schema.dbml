@@ -1,0 +1,1575 @@
+// SIMPS / SIMA-Skripsi — Physical Relational Database Schema
+// Format: DBML for dbdiagram.io
+// Generated from backend models on 2026-08-11 and completed against SIMPS BPMN V1.2.
+// IMPORTANT: CURRENT = implemented physical table; PROPOSED = recommendation, not migrated yet.
+// REFERENCE ONLY: untuk diagram yang terbaca, gunakan file 01-07 di folder bpmn-flow.
+
+Project SIMPS_SIMA_Skripsi {
+  database_type: 'PostgreSQL'
+  Note: 'Physical relational schema. Actor tables remain separate; polymorphic security/notification actor IDs intentionally have no FK.'
+}
+
+// ENUMS USED BY CURRENT PHYSICAL TABLES
+
+Enum admins_role_enum {
+  koordinator
+  staff
+}
+
+Enum dosens_status_keaktifan_enum {
+  active
+  inactive
+  study_leave
+  retired
+}
+
+Enum mahasiswas_status_jalur_saat_ini_enum {
+  belum_mengajukan
+  sedang_mengajukan
+  baru
+  ulang
+  ekstensi
+  penelitian
+  magang
+  perintisan_bisnis
+  selesai
+}
+
+Enum periode_akademiks_semester_enum {
+  ganjil
+  genap
+}
+
+Enum periode_akademiks_status_enum {
+  draft
+  active
+  closed
+}
+
+Enum periode_penjalurans_semester_enum {
+  ganjil
+  genap
+}
+
+Enum periode_penjalurans_status_enum {
+  active
+  closed
+}
+
+Enum dosen_ketersediaan_periodes_configuration_status_enum {
+  ready
+  needs_review
+  locked_by_master_status
+}
+
+Enum riwayat_ketersediaan_membimbings_sumber_perubahan_enum {
+  period_opening
+  manual_update
+  master_status_change
+  new_dosen
+}
+
+Enum riwayat_status_dosens_status_sebelumnya_enum {
+  active
+  inactive
+  study_leave
+  retired
+}
+
+Enum riwayat_status_dosens_status_baru_enum {
+  active
+  inactive
+  study_leave
+  retired
+}
+
+Enum tindak_lanjut_status_dosens_status_enum {
+  open
+  resolved
+}
+
+Enum tindak_lanjut_status_dosens_resolution_type_enum {
+  resolved
+  resolved_with_exception
+}
+
+Enum topiks_cluster_enum {
+  Sirkel
+  Siber
+  ITSC
+  MVK
+}
+
+Enum topiks_status_enum {
+  available
+  reserved
+  taken
+  unavailable
+}
+
+Enum mitra_magangs_status_enum {
+  active
+  inactive
+}
+
+Enum kelompok_perintisan_bisnis_status_enum {
+  draft
+  submitted
+  approved
+  rejected
+  needs_review
+}
+
+Enum anggota_kelompok_perintisans_posisi_enum {
+  ketua
+  anggota
+}
+
+Enum anggota_kelompok_perintisans_peran_tim_enum {
+  hustler
+  hipster
+  hacker
+}
+
+Enum anggota_kelompok_perintisans_jenis_pendaftaran_enum {
+  baru
+  ulang
+  alih
+}
+
+Enum pendaftaran_penjalurans_jalur_enum {
+  baru
+  ulang
+  alih
+}
+
+Enum pendaftaran_penjalurans_program_kuliah_enum {
+  reguler
+  internasional
+}
+
+Enum pendaftaran_penjalurans_status_enum {
+  submitted
+  processed
+  approved
+  rejected
+}
+
+Enum pendaftaran_penjalurans_jenis_jalur_diambil_enum {
+  penelitian
+  pengabdian
+  perintisan_bisnis
+  magang
+}
+
+Enum pendaftaran_penjalurans_penjaluran_sebelumnya_enum {
+  penelitian
+  pengabdian
+  perintisan_bisnis
+  magang
+}
+
+Enum pendaftaran_penjalurans_penjaluran_baru_enum {
+  penelitian
+  pengabdian
+  perintisan_bisnis
+  magang
+}
+
+Enum pendaftaran_penjalurans_form_lanjutan_status_enum {
+  pending
+  draft
+  submitted
+  review_dosen_magang
+  review_sekprodi
+  approved
+  rejected
+}
+
+Enum pengajuans_jenis_jalur_enum {
+  baru
+  ulang
+  ekstensi
+}
+
+Enum pengajuans_tipe_pengajuan_enum {
+  topik_dosen
+  judul_mandiri
+}
+
+Enum pengajuans_status_enum {
+  pending
+  menunggu_set_ketua_cluster
+  menunggu_approval_sekprodi
+  approved
+  rejected
+  completed
+}
+
+Enum riwayat_persetujuans_tipe_approval_enum {
+  dospem_akademik
+  calon_pembimbing
+  koordinator
+  sekprodi
+}
+
+Enum riwayat_persetujuans_status_enum {
+  approved
+  rejected
+  pending
+  cancelled
+}
+
+Enum pamit_ulangs_status_enum {
+  pending
+  approved
+  rejected
+  consumed
+  cancelled
+}
+
+Enum pamit_ulangs_status_dpa_enum {
+  pending
+  approved
+  rejected
+}
+
+Enum pamit_ulangs_status_dospem_enum {
+  pending
+  approved
+  rejected
+}
+
+Enum izin_lanjut_skripsis_status_enum {
+  pending
+  approved
+  rejected
+}
+
+Enum surat_tugas_pembimbings_status_enum {
+  draft
+  issued
+  cancelled
+}
+
+Enum penetapan_pembimbings_status_enum {
+  draft
+  scheduled
+  active
+  ended
+  cancelled
+}
+
+Enum penetapan_pembimbings_sumber_data_enum {
+  penjaluran
+  perpanjangan
+  pergantian
+  legacy_backfill
+}
+
+Enum penetapan_pembimbing_dosens_peran_enum {
+  utama
+  pendamping
+}
+
+Enum penetapan_pembimbing_dosens_status_enum {
+  draft
+  scheduled
+  active
+  ended
+  cancelled
+}
+
+Enum assignment_activation_attempts_status_enum {
+  pending
+  activation_failed
+  activated
+}
+
+Enum bimbingan_skripsis_status_permohonan_enum {
+  pending
+  approved
+  rescheduled
+  rejected
+  expired
+  cancelled_supervisor_change
+}
+
+Enum bimbingan_skripsis_status_resume_enum {
+  belum_diisi
+  submitted
+  approved
+  revisi
+  rejected
+}
+
+Enum dokumen_sidangs_transkrip_status_enum {
+  belum_upload
+  submitted
+  revisi
+  approved
+}
+
+Enum dokumen_sidangs_cept_status_enum {
+  belum_upload
+  submitted
+  revisi
+  approved
+}
+
+Enum dokumen_sidangs_draft_skripsi_status_enum {
+  belum_upload
+  submitted
+  revisi
+  approved
+}
+
+Enum periode_sidangs_periode_enum {
+  uts
+  uas
+}
+
+Enum periode_sidangs_semester_enum {
+  ganjil
+  genap
+}
+
+Enum periode_sidangs_status_enum {
+  draft
+  open
+  closed
+}
+
+Enum preferensi_penguji_sidangs_mobilitas_ruangan_enum {
+  dapat_berpindah
+  satu_ruangan
+}
+
+Enum ketersediaan_penguji_sidangs_tipe_penilaian_enum {
+  ketat
+  santai
+}
+
+Enum ketersediaan_penguji_sidangs_kondisi_fisik_enum {
+  fit
+  tidak_fit
+}
+
+Enum pendaftaran_sidangs_status_enum {
+  submitted
+  scheduled
+  cancelled
+}
+
+Enum jadwal_sidang_pengujis_assignment_status_enum {
+  assigned
+  finalized
+  cancelled
+}
+
+// ============================================================================
+// AKTOR DAN AKUN
+// ============================================================================
+
+Table Admins {
+  id integer [pk, increment]
+  nip varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  is_default_password boolean [default: true]
+  credential_state varchar(20) [not null, default: 'default']
+  credential_version integer [not null, default: 1]
+  password_changed_at timestamptz
+  password_origin varchar(30)
+  force_change_reason varchar(120)
+  security_updated_at timestamptz
+  security_updated_by_type varchar(30)
+  security_updated_by_id integer
+  recovery_email_verified_at timestamptz
+  recovery_email_verification_source varchar(80)
+  role admins_role_enum [not null, default: 'staff']
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table Dosens {
+  id integer [pk, increment, not null]
+  kode_dosen varchar(255) [not null, unique]
+  nik varchar(9) [unique]
+  nama varchar(255) [not null]
+  gelar varchar(255)
+  email varchar(255) [not null, unique]
+  password varchar(255) [not null]
+  is_default_password boolean [default: true]
+  credential_state varchar(20) [not null, default: 'default']
+  credential_version integer [not null, default: 1]
+  password_changed_at timestamptz
+  password_origin varchar(30)
+  force_change_reason varchar(120)
+  security_updated_at timestamptz
+  security_updated_by_type varchar(30)
+  security_updated_by_id integer
+  recovery_email_verified_at timestamptz
+  recovery_email_verification_source varchar(80)
+  jabatan_struktural varchar(255)
+  kuota_bimbingan integer [not null, default: 5]
+  status_keaktifan dosens_status_keaktifan_enum [not null, default: 'active']
+  account_is_active boolean [not null, default: true]
+  continue_existing_supervision boolean [not null, default: true]
+  status_effective_at date
+  status_reason text
+  status_updated_by integer
+  status_updated_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table SekretarisProdis {
+  id integer [pk, increment]
+  nik varchar(9) [not null, unique]
+  nama varchar(100) [not null]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  is_default_password boolean [not null, default: true]
+  credential_state varchar(20) [not null, default: 'default']
+  credential_version integer [not null, default: 1]
+  password_changed_at timestamptz
+  password_origin varchar(30)
+  force_change_reason varchar(120)
+  security_updated_at timestamptz
+  security_updated_by_type varchar(30)
+  security_updated_by_id integer
+  recovery_email_verified_at timestamptz
+  recovery_email_verification_source varchar(80)
+  jabatan varchar(100)
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table Mahasiswas {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  is_default_password boolean [default: true]
+  credential_state varchar(20) [not null, default: 'default']
+  credential_version integer [not null, default: 1]
+  password_changed_at timestamptz
+  password_origin varchar(30)
+  force_change_reason varchar(120)
+  security_updated_at timestamptz
+  security_updated_by_type varchar(30)
+  security_updated_by_id integer
+  recovery_email_verified_at timestamptz
+  recovery_email_verification_source varchar(80)
+  angkatan varchar(10)
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini mahasiswas_status_jalur_saat_ini_enum [not null, default: 'belum_mengajukan']
+  pengajuan_aktif_id integer [ref: > Pengajuans.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// PERIODE DAN TATA KELOLA
+// ============================================================================
+
+Table PeriodeAkademiks {
+  id integer [pk, increment]
+  kode varchar(40) [not null, unique]
+  external_id varchar(120)
+  tahun_mulai integer
+  tahun_selesai integer
+  tahun_akademik varchar(20) [not null]
+  semester periode_akademiks_semester_enum [not null]
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  status periode_akademiks_status_enum [not null, default: 'draft']
+  sumber varchar(80) [not null, default: 'manual']
+  metadata jsonb [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PeriodePenjalurans {
+  id integer [pk, increment]
+  tahun_akademik varchar(20) [not null]
+  semester periode_penjalurans_semester_enum [not null]
+  label_periode varchar(50) [not null, unique]
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  is_active boolean [not null, default: true]
+  status periode_penjalurans_status_enum [not null, default: 'active']
+  ketua_penelitian_dosen_id integer [ref: > Dosens.id]
+  pengawas_magang_dosen_id integer [ref: > Dosens.id]
+  pengawas_pengabdian_dosen_id integer [ref: > Dosens.id]
+  pengawas_perintisan_bisnis_dosen_id integer [ref: > Dosens.id]
+  periode_akademik_id integer [ref: > PeriodeAkademiks.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table Klasters {
+  id integer [pk, increment, not null]
+  kode varchar(20) [not null, unique]
+  nama varchar(120) [not null, unique]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table DosenKlasters {
+  dosen_id integer [pk, not null, ref: > Dosens.id]
+  klaster_id integer [pk, not null, ref: > Klasters.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table KlasterKetuaPeriodes {
+  id integer [pk, increment, not null]
+  klaster_id integer [not null, ref: > Klasters.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  assigned_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table MasterPenanggungJawabPenjalurans {
+  id integer [pk, increment, not null]
+  ketua_itsc_dosen_id integer [ref: > Dosens.id]
+  ketua_sirkel_dosen_id integer [ref: > Dosens.id]
+  ketua_siber_dosen_id integer [ref: > Dosens.id]
+  ketua_mvk_dosen_id integer [ref: > Dosens.id]
+  pengawas_magang_dosen_id integer [ref: > Dosens.id]
+  pengawas_pengabdian_dosen_id integer [ref: > Dosens.id]
+  pengawas_perintisan_bisnis_dosen_id integer [ref: > Dosens.id]
+  updated_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table DosenKetersediaanPeriodes {
+  id integer [pk, increment, not null]
+  dosen_id integer [ref: > Dosens.id]
+  periode_penjaluran_id integer [ref: > PeriodePenjalurans.id]
+  tersedia_membimbing boolean
+  updated_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  configuration_status dosen_ketersediaan_periodes_configuration_status_enum
+  reviewed_at timestamptz
+  reviewed_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  review_note text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table RiwayatKetersediaanMembimbings {
+  id integer [pk, increment, not null]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  tersedia_sebelumnya boolean
+  tersedia_baru boolean [not null]
+  changed_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  sumber_perubahan riwayat_ketersediaan_membimbings_sumber_perubahan_enum [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table RiwayatStatusDosens {
+  id integer [pk, increment, not null]
+  dosen_id integer [ref: > Dosens.id]
+  status_sebelumnya riwayat_status_dosens_status_sebelumnya_enum
+  status_baru riwayat_status_dosens_status_baru_enum
+  account_is_active_sebelumnya boolean
+  account_is_active_baru boolean
+  continue_existing_supervision_sebelumnya boolean
+  continue_existing_supervision_baru boolean
+  changed_fields jsonb
+  effective_at date
+  reason text
+  changed_by integer [ref: > Admins.id]
+  impact_snapshot jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table TindakLanjutStatusDosens {
+  id integer [pk, increment, not null]
+  dosen_id integer [ref: > Dosens.id]
+  riwayat_status_dosen_id integer [ref: > RiwayatStatusDosens.id]
+  status tindak_lanjut_status_dosens_status_enum
+  impact_snapshot jsonb
+  catatan_penyelesaian text
+  resolved_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  resolved_at timestamptz
+  resolution_type tindak_lanjut_status_dosens_resolution_type_enum
+  resolution_decisions jsonb [not null]
+  remaining_impact_snapshot jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// PENJALURAN DAN PENGAJUAN
+// ============================================================================
+
+Table Topiks {
+  id integer [pk, increment, not null]
+  kode varchar(20) [not null, unique]
+  judul varchar(255) [not null]
+  deskripsi text
+  keyword varchar(500)
+  cluster topiks_cluster_enum [not null]
+  status topiks_status_enum [not null, default: 'available']
+  dosen_id integer [not null, ref: > Dosens.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table MitraMagangs {
+  id integer [pk, increment, not null]
+  nama varchar(180) [not null, unique]
+  bidang_jenis varchar(180)
+  lokasi varchar(180)
+  email_kontak varchar(180)
+  website varchar(255)
+  posisi_magang varchar(180)
+  quota_magang integer
+  kriteria text
+  prosedur_perusahaan text
+  status mitra_magangs_status_enum [not null, default: 'active']
+  is_active boolean [not null, default: true]
+  catatan text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table KelompokPerintisanBisnis {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  ketua_mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  status kelompok_perintisan_bisnis_status_enum [not null, default: 'draft']
+  review_reason_code varchar(80)
+  review_detail json
+  review_requested_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AnggotaKelompokPerintisans {
+  id integer [pk, increment]
+  kelompok_id integer [not null, ref: > KelompokPerintisanBisnis.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  posisi anggota_kelompok_perintisans_posisi_enum [not null]
+  peran_tim anggota_kelompok_perintisans_peran_tim_enum [not null]
+  jenis_pendaftaran anggota_kelompok_perintisans_jenis_pendaftaran_enum [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PendaftaranPenjalurans {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_asal_id integer [ref: > PendaftaranPenjalurans.id]
+  change_idempotency_key varchar(255)
+  change_fingerprint varchar(64)
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  jalur pendaftaran_penjalurans_jalur_enum [not null, default: 'baru']
+  program_kuliah pendaftaran_penjalurans_program_kuliah_enum [not null, default: 'reguler']
+  semester_mahasiswa integer [not null]
+  nomor_whatsapp varchar(20)
+  catatan text
+  status pendaftaran_penjalurans_status_enum [not null, default: 'submitted']
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  jenis_jalur_diambil pendaftaran_penjalurans_jenis_jalur_diambil_enum
+  dosen_pembimbing_ta_id integer [ref: > Dosens.id]
+  calon_dosen_pembimbing_id integer [ref: > Dosens.id]
+  penjaluran_sebelumnya pendaftaran_penjalurans_penjaluran_sebelumnya_enum
+  penjaluran_baru pendaftaran_penjalurans_penjaluran_baru_enum
+  dosen_pembimbing_ta_sebelumnya_id integer [ref: > Dosens.id]
+  dosen_pembimbing_ta_baru_id integer [ref: > Dosens.id]
+  reviewed_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  reviewed_at timestamptz
+  approval_note text
+  form_lanjutan_status pendaftaran_penjalurans_form_lanjutan_status_enum [not null, default: 'draft']
+  form_lanjutan_submitted_at timestamptz
+  form_lanjutan_payload jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table Pengajuans {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_jalur pengajuans_jenis_jalur_enum [not null, default: 'baru']
+  tipe_pengajuan pengajuans_tipe_pengajuan_enum [not null, default: 'topik_dosen']
+  topik_1_kode varchar(20)
+  topik_1_judul varchar(255)
+  topik_2_kode varchar(20)
+  topik_2_judul varchar(255)
+  topik_3_kode varchar(20)
+  topik_3_judul varchar(255)
+  judul_mandiri varchar(500)
+  deskripsi_mandiri text
+  keyword_mandiri varchar(500)
+  cluster_mandiri varchar(20)
+  prospective_supervisor_id integer [ref: > Dosens.id]
+  is_approved_by_supervisor boolean [default: false]
+  dosen_pilihan_1 integer [ref: > Dosens.id]
+  dosen_1_nama varchar(100)
+  dosen_pilihan_2 integer [ref: > Dosens.id]
+  dosen_2_nama varchar(100)
+  dosen_pilihan_3 integer [ref: > Dosens.id]
+  dosen_3_nama varchar(100)
+  dosen_saat_ini integer [ref: > Dosens.id]
+  pengajuan_sebelumnya_id integer [ref: > Pengajuans.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  alasan_ulang text
+  surat_pengunduran_diri text
+  status pengajuans_status_enum [not null, default: 'pending']
+  alasan_penolakan text
+  alasan_persetujuan text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  pamit_ulang_id integer [ref: > PamitUlangs.id]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table RiwayatPersetujuans {
+  id integer [pk, increment]
+  pengajuan_id integer [not null, ref: > Pengajuans.id]
+  dosen_id integer [ref: > Dosens.id]
+  sekretaris_prodi_id integer [ref: > SekretarisProdis.id]
+  tipe_approval riwayat_persetujuans_tipe_approval_enum [not null, default: 'calon_pembimbing']
+  status riwayat_persetujuans_status_enum [not null]
+  keterangan text
+  topik_slot integer
+  topik_kode varchar(255)
+  tanggal_keputusan timestamptz [not null, default: `now()`]
+  reminder_count integer [not null, default: 0]
+  last_reminded_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table RiwayatWorkflowPenjalurans {
+  id integer [pk, increment, not null]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  jalur varchar(40) [not null]
+  raw_status varchar(80) [not null]
+  workflow_stage varchar(80) [not null]
+  event_type varchar(80) [not null]
+  actor_type varchar(40) [not null]
+  actor_id integer
+  note text
+  metadata jsonb [not null]
+  occurred_at timestamptz [not null, default: `now()`]
+  deduplication_key varchar(255) [not null, unique]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PamitUlangs {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pengajuan_sebelumnya_id integer [ref: > Pengajuans.id]
+  periode_tujuan_id integer [ref: > PeriodePenjalurans.id]
+  pendaftaran_lama_id integer [ref: > PendaftaranPenjalurans.id]
+  pendaftaran_baru_id integer [ref: > PendaftaranPenjalurans.id]
+  penetapan_lama_id integer [ref: > PenetapanPembimbings.id]
+  reviewer_p1_id integer [ref: > Dosens.id]
+  jenis_perubahan varchar(16)
+  jalur_asal varchar(40)
+  jalur_tujuan varchar(40)
+  status pamit_ulangs_status_enum [not null, default: 'pending']
+  submitted_at timestamptz
+  decided_at timestamptz
+  consumed_at timestamptz
+  cancellation_reason text
+  idempotency_key varchar(255)
+  metadata jsonb [not null]
+  pengajuan_baru_id integer [ref: > Pengajuans.id]
+  pesan_ke_dosen_pembimbing text [not null]
+  alasan_ulang text [not null]
+  catatan_tambahan text
+  status_dpa pamit_ulangs_status_dpa_enum [not null, default: 'pending']
+  status_dospem pamit_ulangs_status_dospem_enum [not null, default: 'pending']
+  keterangan_dpa text
+  keterangan_dospem text
+  tanggal_approval_dpa timestamptz
+  tanggal_approval_dospem timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table RiwayatPamitPenjalurans {
+  id integer [pk, increment, not null]
+  pamit_ulang_id integer [not null, ref: > PamitUlangs.id]
+  from_status varchar(30)
+  to_status varchar(30) [not null]
+  event_type varchar(60) [not null]
+  actor_type varchar(30) [not null]
+  actor_id integer
+  note text
+  metadata jsonb [not null]
+  occurred_at timestamptz [not null, default: `now()`]
+  deduplication_key varchar(255) [not null, unique]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table IzinLanjutSkripsis {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_pembimbing_skripsi_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [ref: > PeriodePenjalurans.id]
+  semester_penjaluran_ke integer [not null]
+  status izin_lanjut_skripsis_status_enum [not null, default: 'pending']
+  alasan_pengajuan text [not null]
+  keterangan_dosen text
+  tanggal_pengajuan timestamptz [not null, default: `now()`]
+  tanggal_keputusan timestamptz
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  penetapan_asal_id integer [ref: > PenetapanPembimbings.id]
+  reviewer_p1_id integer [ref: > Dosens.id]
+  penetapan_hasil_id integer [ref: > PenetapanPembimbings.id]
+  idempotency_key varchar(160)
+  request_fingerprint varchar(64)
+  decision_idempotency_key varchar(160)
+  decision_request_fingerprint varchar(64)
+  decided_by_actor_type varchar(40)
+  decided_by_actor_id integer
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// PENETAPAN PEMBIMBING
+// ============================================================================
+
+Table SuratTugasPembimbings {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [ref: > PeriodePenjalurans.id]
+  nomor_surat varchar(150) [unique]
+  tanggal_surat date
+  tanggal_berlaku_mulai date
+  tanggal_berlaku_selesai date
+  file_path varchar(500)
+  status surat_tugas_pembimbings_status_enum [not null, default: 'draft']
+  issued_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  catatan text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PenetapanPembimbings {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  periode_mulai_id integer [ref: > PeriodePenjalurans.id]
+  semester_penjaluran_ke integer
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  status penetapan_pembimbings_status_enum [not null, default: 'draft']
+  alasan_berakhir text
+  sumber_data penetapan_pembimbings_sumber_data_enum [not null, default: 'penjaluran']
+  catatan_pergantian text
+  surat_tugas_id integer [ref: > SuratTugasPembimbings.id]
+  created_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  previous_assignment_id integer [ref: > PenetapanPembimbings.id]
+  end_reason_code varchar(64)
+  assignment_transition_code varchar(64)
+  semester_outcome_code varchar(64)
+  izin_lanjut_id integer [ref: > IzinLanjutSkripsis.id]
+  effective_at timestamptz
+  activated_at timestamptz
+  decision_at timestamptz
+  idempotency_key varchar(160)
+  request_fingerprint varchar(64)
+  ended_by_actor_type varchar(40)
+  ended_by_actor_id integer
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PenetapanPembimbingDosens {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  urutan integer [not null]
+  peran penetapan_pembimbing_dosens_peran_enum [not null]
+  status penetapan_pembimbing_dosens_status_enum [not null, default: 'draft']
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AssignmentActivationAttempts {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, unique, ref: > PenetapanPembimbings.id]
+  status assignment_activation_attempts_status_enum [not null, default: 'pending']
+  attempt_count integer [not null, default: 0]
+  last_attempt_at timestamptz
+  activated_at timestamptz
+  error_code varchar(80)
+  error_message text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// NILAI MATA KULIAH PENJALURAN
+// ============================================================================
+
+Table MataKuliahs {
+  id integer [pk, increment]
+  kode varchar(80) [not null]
+  nama varchar(180) [not null]
+  sks_default decimal(8,3) [not null]
+  kode_program_studi varchar(40) [not null, default: 'INFORMATIKA']
+  program_kuliah varchar(30) [not null, default: 'reguler']
+  role_akademik varchar(40)
+  status varchar(40) [not null, default: 'active']
+  metadata jsonb [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table MappingMataKuliahPenjalurans {
+  id integer [pk, increment]
+  jalur varchar(40) [not null]
+  mata_kuliah_id integer [not null, ref: > MataKuliahs.id]
+  periode_berlaku_id integer [ref: > PeriodeAkademiks.id]
+  program_kuliah varchar(30) [not null, default: 'reguler']
+  is_active boolean [not null, default: true]
+  metadata jsonb [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table ImportNilaiPenjalurans {
+  id integer [pk, increment]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  original_filename varchar(255) [not null]
+  file_sha256 varchar(64) [not null]
+  status varchar(40) [not null, default: 'validated']
+  counts jsonb [not null]
+  uploaded_by integer [not null]
+  committed_by integer
+  committed_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table ImportNilaiPenjaluranRows {
+  id integer [pk, increment]
+  import_id integer [not null, ref: > ImportNilaiPenjalurans.id]
+  row_number integer [not null]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  mata_kuliah_id integer [ref: > MataKuliahs.id]
+  nilai_huruf varchar(10)
+  is_valid boolean [not null, default: false]
+  errors jsonb [not null]
+  raw_payload jsonb [not null]
+  expected_payload jsonb [not null]
+  old_grade varchar(10)
+  result_attempt_id integer [ref: > PercobaanMataKuliahMahasiswas.id]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PercobaanMataKuliahMahasiswas {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  mata_kuliah_id integer [not null, ref: > MataKuliahs.id]
+  periode_akademik_id integer [not null, ref: > PeriodeAkademiks.id]
+  nilai_penjaluran_import_row_id integer [ref: > ImportNilaiPenjaluranRows.id]
+  external_record_id varchar(160)
+  kelas_normalized varchar(80) [not null, default: 'PENJALURAN']
+  attempt_ke integer [not null]
+  attempt_number_source varchar(20) [not null, default: 'system']
+  sks_diambil decimal(8,3) [not null]
+  sks_lulus decimal(8,3) [not null, default: 0]
+  nilai_huruf varchar(10)
+  nilai_angka decimal(8,3)
+  status_registrasi varchar(30) [not null]
+  status_kelulusan varchar(20) [not null, default: 'unknown']
+  credit_origin varchar(30) [not null, default: 'regular']
+  recognition_status varchar(30) [not null, default: 'not_required']
+  effective_at timestamptz [not null]
+  academic_effective_at timestamptz [not null]
+  recorded_at timestamptz [not null]
+  version integer [not null, default: 1]
+  previous_version_id integer [ref: > PercobaanMataKuliahMahasiswas.id]
+  is_active boolean [not null, default: true]
+  superseded_at timestamptz
+  metadata jsonb [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// BIMBINGAN DAN KELAYAKAN SIDANG
+// ============================================================================
+
+Table BimbinganSkripsis {
+  id integer [pk, increment, not null]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  pengajuan_id integer [ref: > Pengajuans.id]
+  pendaftaran_penjaluran_id integer [ref: > PendaftaranPenjalurans.id]
+  penetapan_pembimbing_id integer [ref: > PenetapanPembimbings.id]
+  target_assignment_id integer [ref: > PenetapanPembimbings.id]
+  target_assignment_member_id integer [ref: > PenetapanPembimbingDosens.id]
+  target_urutan_snapshot integer
+  effective_reviewer_assignment_id integer [ref: > PenetapanPembimbings.id]
+  effective_reviewer_assignment_member_id integer [ref: > PenetapanPembimbingDosens.id]
+  periode_akademik_id integer [ref: > PeriodeAkademiks.id]
+  semester_penjaluran_ke_snapshot integer
+  jalur_snapshot varchar(40)
+  cycle_type_snapshot varchar(20)
+  request_status varchar(40)
+  request_decided_at timestamptz
+  scheduled_at timestamptz
+  occurred_at timestamptz
+  occurrence_source varchar(40)
+  cancelled_at timestamptz
+  cancellation_reason_code varchar(100)
+  legacy_context_status varchar(20) [not null, default: 'ambiguous']
+  reviewer_resolution_status varchar(30) [not null, default: 'resolved']
+  reviewer_resolution_reason_code varchar(100)
+  row_version integer [not null, default: 1]
+  correlation_id uuid
+  permintaan_pesan text [not null]
+  permintaan_tanggal date [not null]
+  permintaan_jam varchar(5) [not null]
+  status_permohonan bimbingan_skripsis_status_permohonan_enum [not null, default: 'pending']
+  catatan_dosen text
+  lokasi_bimbingan varchar(255)
+  tanggal_keputusan timestamptz
+  status_resume bimbingan_skripsis_status_resume_enum [not null, default: 'belum_diisi']
+  resume_mahasiswa text
+  catatan_review_resume text
+  tanggal_review_resume timestamptz
+  reviewer_dosen_id integer [ref: > Dosens.id]
+  reassigned_reviewer_at timestamptz
+  reassigned_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  is_counted boolean [not null, default: false]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table DokumenSidangs {
+  id integer [pk, increment, not null]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  transkrip_file_path varchar(500)
+  transkrip_file_name varchar(255)
+  transkrip_status dokumen_sidangs_transkrip_status_enum [not null, default: 'belum_upload']
+  transkrip_uploaded_at timestamptz
+  transkrip_review_note text
+  transkrip_reviewed_at timestamptz
+  cept_file_path varchar(500)
+  cept_file_name varchar(255)
+  cept_status dokumen_sidangs_cept_status_enum [not null, default: 'belum_upload']
+  cept_uploaded_at timestamptz
+  cept_review_note text
+  cept_reviewed_at timestamptz
+  draft_skripsi_file_path varchar(500)
+  draft_skripsi_file_name varchar(255)
+  draft_skripsi_status dokumen_sidangs_draft_skripsi_status_enum [not null, default: 'belum_upload']
+  draft_skripsi_uploaded_at timestamptz
+  draft_skripsi_review_note text
+  draft_skripsi_reviewed_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// PERIODE DAN PENJADWALAN SIDANG
+// ============================================================================
+
+Table PeriodeSidangs {
+  id integer [pk, increment, not null]
+  label_periode varchar(120) [not null, unique]
+  periode periode_sidangs_periode_enum [not null, default: 'uts']
+  tahun_akademik varchar(20) [not null, default: '-']
+  semester periode_sidangs_semester_enum [not null, default: 'ganjil']
+  tanggal_mulai_pendaftaran date [not null]
+  tanggal_selesai_pendaftaran date [not null]
+  status periode_sidangs_status_enum [not null, default: 'draft']
+  catatan text
+  created_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  activated_at timestamptz
+  closed_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PeriodeSidangHaris {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  tanggal_sidang date [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PeriodeSidangRuangans {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  nama_ruangan varchar(120) [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PreferensiPengujiSidangs {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  mobilitas_ruangan preferensi_penguji_sidangs_mobilitas_ruangan_enum [not null, default: 'dapat_berpindah']
+  maksimal_sesi_per_hari integer [not null, default: 5]
+  membutuhkan_jeda boolean [not null, default: false]
+  submitted_at timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table KetersediaanPengujiSidangs {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+  tipe_penilaian ketersediaan_penguji_sidangs_tipe_penilaian_enum [not null, default: 'santai']
+  kondisi_fisik ketersediaan_penguji_sidangs_kondisi_fisik_enum [not null, default: 'fit']
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PendaftaranSidangs {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_pembimbing_id integer [ref: > Dosens.id]
+  status pendaftaran_sidangs_status_enum [not null, default: 'submitted']
+  registered_at timestamptz [not null]
+  assigned_at timestamptz
+  catatan text
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table JadwalSidangPengujis {
+  id integer [pk, increment, not null]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  pendaftaran_sidang_id integer [not null, ref: > PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_pembimbing_id integer [ref: > Dosens.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+  sesi_mulai varchar(5) [not null]
+  sesi_selesai varchar(5) [not null]
+  ruangan varchar(120) [not null]
+  penguji1_dosen_id integer [not null, ref: > Dosens.id]
+  penguji2_dosen_id integer [not null, ref: > Dosens.id]
+  assignment_status jadwal_sidang_pengujis_assignment_status_enum [not null, default: 'assigned']
+  generated_at timestamptz [not null]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// NOTIFIKASI DAN KEAMANAN
+// ============================================================================
+
+Table Notifikasis {
+  id integer [pk, increment]
+  recipient_type varchar(30) [not null]
+  recipient_id integer [not null]
+  type varchar(80) [not null]
+  title varchar(180) [not null]
+  message text [not null]
+  reference_type varchar(80)
+  reference_id integer
+  action_key varchar(100)
+  metadata jsonb [not null]
+  read_at timestamptz
+  deduplication_key varchar(255) [not null, unique]
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AuthSessions {
+  id uuid [pk]
+  account_type varchar(255)
+  account_id integer
+  role_snapshot jsonb
+  credential_version integer
+  last_used_at timestamptz
+  absolute_expires_at timestamptz
+  idle_expires_at timestamptz
+  revoked_at timestamptz
+  revoked_by_type varchar(255)
+  revoked_by_id integer
+  revoked_reason varchar(255)
+  ip_fingerprint varchar(255)
+  user_agent_fingerprint varchar(255)
+  remember_me boolean [default: false]
+  metadata jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table PasswordResetTokens {
+  id uuid [pk]
+  account_type varchar(255)
+  account_id integer
+  purpose varchar(255)
+  selector varchar(255)
+  token_hash varchar(255)
+  requested_at timestamptz
+  expires_at timestamptz
+  used_at timestamptz
+  revoked_at timestamptz
+  revoked_reason varchar(255)
+  correlation_id uuid
+  attempt_count integer [default: 0]
+  last_attempted_at timestamptz
+  metadata jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AuthOutboxes {
+  id uuid [pk]
+  reset_token_id uuid [ref: > PasswordResetTokens.id]
+  event_type varchar(255)
+  template_id varchar(255)
+  recipient_reference varchar(255)
+  correlation_id uuid
+  ciphertext text
+  encryption_iv varchar(255)
+  encryption_tag varchar(255)
+  key_version varchar(255)
+  status varchar(255) [default: 'pending']
+  attempt_count integer [default: 0]
+  available_at timestamptz
+  claimed_at timestamptz
+  sent_at timestamptz
+  last_error_code varchar(255)
+  metadata jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AuthSecurityEvents {
+  id uuid [pk]
+  event_type varchar(255)
+  actor_type varchar(255)
+  actor_id integer
+  target_type varchar(255)
+  target_id integer
+  session_id uuid [ref: > AuthSessions.id]
+  correlation_id uuid
+  outcome varchar(255)
+  reason_code varchar(255)
+  metadata jsonb
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+Table AuthRateLimitBuckets {
+  id bigint [pk, increment]
+  scope varchar(255)
+  key_hash varchar(255)
+  window_started_at timestamptz
+  attempt_count integer [default: 0]
+  blocked_until timestamptz
+  createdAt timestamptz [not null]
+  updatedAt timestamptz [not null]
+  Note: 'CURRENT — tabel fisik yang didefinisikan backend Sequelize/migration'
+}
+
+// ============================================================================
+// USULAN PENAMBAHAN — MELENGKAPI FLOW BPMN V1.2
+// Belum ada di migration/backend saat file ini dihasilkan.
+// ============================================================================
+
+Enum jenis_dokumen_sidang_enum {
+  transkrip
+  cept
+  draft_skripsi
+  revisi_skripsi
+  lembar_pengesahan
+}
+
+Enum status_review_dokumen_enum {
+  submitted
+  revision_required
+  approved
+  rejected
+}
+
+Enum peran_penilai_sidang_enum {
+  pembimbing
+  penguji_1
+  penguji_2
+}
+
+Enum status_penilaian_sidang_enum {
+  draft
+  submitted
+  locked
+}
+
+Enum status_hasil_sidang_enum {
+  pending
+  lulus_tanpa_revisi
+  lulus_dengan_revisi
+  tidak_lulus
+}
+
+Enum status_revisi_skripsi_enum {
+  required
+  submitted
+  revision_required
+  approved
+}
+
+Enum status_yudisium_enum {
+  pending
+  verified
+  formalized
+  cancelled
+}
+
+Table PendaftaranMagangs {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  mitra_magang_id integer [not null, ref: > MitraMagangs.id]
+  posisi_dilamar varchar(180)
+  surat_penerimaan_file_path varchar(500)
+  tanggal_mulai date
+  tanggal_selesai date
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+  Note: 'PROPOSED — mengganti penyimpanan detail mitra magang yang sekarang berada di form_lanjutan_payload JSONB'
+}
+
+Table PendaftaranPengabdians {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  nama_mitra_masyarakat varchar(180) [not null]
+  lokasi varchar(255) [not null]
+  kontak_mitra varchar(180)
+  skema_pengabdian varchar(120)
+  proposal_file_path varchar(500)
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+  Note: 'PROPOSED — detail relasional jalur pengabdian; tabel ini belum ada pada backend saat ini'
+}
+
+Table DokumenSidangVersions {
+  id bigint [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  pendaftaran_sidang_id integer [ref: > PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_dokumen jenis_dokumen_sidang_enum [not null]
+  version_number integer [not null]
+  file_path varchar(500) [not null]
+  file_name varchar(255) [not null]
+  file_sha256 varchar(64) [not null]
+  status status_review_dokumen_enum [not null, default: 'submitted']
+  uploaded_at timestamptz [not null, default: `now()`]
+  superseded_at timestamptz
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (pendaftaran_penjaluran_id, jenis_dokumen, version_number) [unique]
+    (pendaftaran_penjaluran_id, jenis_dokumen, status)
+  }
+  Note: 'PROPOSED — menormalkan upload/re-upload dokumen yang pada tabel lama masih berupa kolom tetap'
+}
+
+Table ReviewDokumenSidangs {
+  id bigint [pk, increment]
+  dokumen_version_id bigint [not null, ref: > DokumenSidangVersions.id]
+  reviewer_dosen_id integer [not null, ref: > Dosens.id]
+  penetapan_pembimbing_dosen_id integer [ref: > PenetapanPembimbingDosens.id]
+  keputusan status_review_dokumen_enum [not null]
+  catatan text
+  decided_at timestamptz [not null, default: `now()`]
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (dokumen_version_id, reviewer_dosen_id) [unique]
+  }
+  Note: 'PROPOSED — keputusan pembimbing atas setiap versi dokumen sidang'
+}
+
+Table RubrikPenilaianSidangs {
+  id integer [pk, increment]
+  kode varchar(40) [not null, unique]
+  nama varchar(160) [not null]
+  bobot decimal(5,2) [not null]
+  nilai_maksimum decimal(5,2) [not null, default: 100]
+  is_active boolean [not null, default: true]
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+  Note: 'PROPOSED — master komponen/rubrik agar rumus nilai tidak ditanam sebagai kolom tetap'
+}
+
+Table PenilaianSidangs {
+  id bigint [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, ref: > JadwalSidangPengujis.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  peran_penilai peran_penilai_sidang_enum [not null]
+  status status_penilaian_sidang_enum [not null, default: 'draft']
+  nilai_total decimal(5,2)
+  catatan text
+  submitted_at timestamptz
+  locked_at timestamptz
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (jadwal_sidang_penguji_id, dosen_id, peran_penilai) [unique]
+  }
+  Note: 'PROPOSED — satu lembar nilai per penilai pada satu jadwal sidang'
+}
+
+Table DetailNilaiSidangs {
+  id bigint [pk, increment]
+  penilaian_sidang_id bigint [not null, ref: > PenilaianSidangs.id]
+  rubrik_penilaian_sidang_id integer [not null, ref: > RubrikPenilaianSidangs.id]
+  nilai decimal(5,2) [not null]
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (penilaian_sidang_id, rubrik_penilaian_sidang_id) [unique]
+  }
+  Note: 'PROPOSED — detail nilai ternormalisasi per komponen rubrik'
+}
+
+Table HasilSidangs {
+  id bigint [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, unique, ref: - JadwalSidangPengujis.id]
+  nilai_akhir decimal(5,2)
+  status_hasil status_hasil_sidang_enum [not null, default: 'pending']
+  batas_revisi_at timestamptz
+  berita_acara_file_path varchar(500)
+  finalized_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  finalized_at timestamptz
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+  Note: 'PROPOSED — hasil agregat dan keputusan kelulusan sidang'
+}
+
+Table RevisiSkripsis {
+  id bigint [pk, increment]
+  hasil_sidang_id bigint [not null, ref: > HasilSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  version_number integer [not null]
+  ringkasan_perubahan text [not null]
+  file_path varchar(500) [not null]
+  file_sha256 varchar(64) [not null]
+  status status_revisi_skripsi_enum [not null, default: 'submitted']
+  submitted_at timestamptz [not null, default: `now()`]
+  approved_at timestamptz
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (hasil_sidang_id, version_number) [unique]
+  }
+  Note: 'PROPOSED — versi unggahan revisi pasca-sidang'
+}
+
+Table PersetujuanRevisiSidangs {
+  id bigint [pk, increment]
+  revisi_skripsi_id bigint [not null, ref: > RevisiSkripsis.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  peran_penilai peran_penilai_sidang_enum [not null]
+  keputusan status_review_dokumen_enum [not null]
+  catatan text
+  decided_at timestamptz [not null, default: `now()`]
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+
+  Indexes {
+    (revisi_skripsi_id, dosen_id, peran_penilai) [unique]
+  }
+  Note: 'PROPOSED — approval revisi per pembimbing/penguji'
+}
+
+Table Yudisiums {
+  id bigint [pk, increment]
+  hasil_sidang_id bigint [not null, unique, ref: - HasilSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_akademik_id integer [not null, ref: > PeriodeAkademiks.id]
+  status status_yudisium_enum [not null, default: 'pending']
+  nomor_keputusan varchar(120)
+  tanggal_yudisium date
+  verified_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  verified_at timestamptz
+  formalized_at timestamptz
+  catatan text
+  createdAt timestamptz [not null, default: `now()`]
+  updatedAt timestamptz [not null, default: `now()`]
+  Note: 'PROPOSED — verifikasi akademik final dan formalisasi yudisium'
+}
+

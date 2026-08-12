@@ -1,0 +1,544 @@
+// SIMPS / SIMA-Skripsi Physical Relational Database Schema
+// Format: DBML (Database Markup Language) for dbdiagram.io
+// 100% MATCHING CURRENT BACKEND MODELS & PHYSICAL TABLES (CHRONOLOGICALLY ORDERED)
+
+Project SIMS_SIMA_Skripsi {
+  database_type: 'PostgreSQL'
+  Note: 'Physical Database Schema 100% Matching Backend Models (No Abstraction Users Table)'
+}
+
+// ============================================================================
+// ENUMS DEFINITIONS
+// ============================================================================
+Enum status_akademik_enum {
+  aktif
+  lulus
+  drop_out
+}
+
+Enum status_keaktifan_dosen_enum {
+  aktif
+  cuti
+  studi_lanjut
+  pensiun
+}
+
+Enum status_jalur_mahasiswa_enum {
+  belum_mengajukan
+  sedang_mengajukan
+  baru
+  ulang
+  ekstensi
+  penelitian
+  magang
+  perintisan_bisnis
+  selesai
+}
+
+Enum semester_enum {
+  ganjil
+  genap
+}
+
+Enum status_periode_enum {
+  draft
+  aktif
+  ditutup
+}
+
+Enum jalur_enum {
+  penelitian
+  magang
+  perintisan_bisnis
+  pengabdian_masyarakat
+}
+
+Enum status_pendaftaran_enum {
+  draft
+  submitted
+  approved
+  rejected
+  cancelled
+}
+
+Enum status_topik_enum {
+  available
+  reserved
+  taken
+  disabled
+}
+
+Enum status_review_enum {
+  pending
+  approved
+  rejected
+}
+
+Enum peran_pembimbing_enum {
+  pembimbing_1
+  pembimbing_2
+}
+
+Enum status_penetapan_enum {
+  aktif
+  diganti
+  selesai
+}
+
+Enum status_verifikasi_enum {
+  pending
+  approved
+  rejected
+}
+
+Enum status_izin_enum {
+  belum_memenuhi
+  eligible
+  acc_granted
+}
+
+Enum status_pendaftaran_sidang_enum {
+  submitted
+  lolos_pendaftaran_sidang
+  revisi_berkas
+  ditolak
+}
+
+Enum status_kelulusan_sidang_enum {
+  pending
+  lulus_tanpa_revisi
+  lulus_dengan_revisi
+  tidak_lulus
+}
+
+Enum status_pengesahan_enum {
+  draft
+  in_progress
+  completed
+}
+
+Enum recipient_type_enum {
+  mahasiswa
+  dosen
+  sekretaris_prodi
+  admin
+}
+
+
+// ============================================================================
+// FASE 0: TABEL PENGGUNA TERPISAH (AKTOR UTAMA AKADEMIK)
+// ============================================================================
+Table Admins {
+  id integer [pk, increment]
+  username varchar(50) [not null, unique]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik: Admin System (Kredensial Login Mandiri)'
+}
+
+Table Dosens {
+  id integer [pk, increment]
+  nip_nik varchar(30) [not null, unique]
+  nama varchar(150) [not null]
+  gelar varchar(50)
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  status_keaktifan status_keaktifan_dosen_enum [default: 'aktif']
+  is_menerima_bimbingan_baru boolean [default: true]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik: Dosen Pembimbing & Penguji (Kredensial Login Mandiri)'
+}
+
+Table SekretarisProdis {
+  id integer [pk, increment]
+  dosen_id integer [not null, unique, ref: - Dosens.id]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  periode_jabatan varchar(50)
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik: Sekretaris Prodi (Terhubung ke Dosen)'
+}
+
+Table Mahasiswas {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  email varchar(100) [not null, unique]
+  password varchar(255) [not null]
+  is_default_password boolean [default: true]
+  credential_state varchar(20) [default: 'default']
+  angkatan varchar(10)
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini status_jalur_mahasiswa_enum [default: 'belum_mengajukan']
+  pengajuan_aktif_id integer
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik: Mahasiswa (Kredensial Login Mandiri)'
+}
+
+
+// ============================================================================
+// FASE 1: PERSIAPAN PERIODE AKADEMIK & TATA KELOLA JALUR
+// ============================================================================
+Table PeriodeAkademiks {
+  id integer [pk, increment]
+  tahun_ajaran varchar(10) [not null]
+  semester semester_enum [not null]
+  is_active boolean [default: false]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table Klasters {
+  id integer [pk, increment]
+  nama_klaster varchar(100) [not null]
+  kode varchar(20) [not null, unique]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table DosenKlasters {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  klaster_id integer [not null, ref: > Klasters.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table PeriodePenjalurans {
+  id integer [pk, increment]
+  periode_akademik_id integer [not null, ref: > PeriodeAkademiks.id]
+  nama_periode varchar(100) [not null]
+  tanggal_buka datetime [not null]
+  tanggal_tutup datetime [not null]
+  status status_periode_enum [default: 'draft']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table KlasterKetuaPeriodes {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  klaster_id integer [not null, ref: > Klasters.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table MasterPenanggungJawabPenjalurans {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  jalur jalur_enum [not null]
+  klaster_id integer [ref: > Klasters.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+
+// ============================================================================
+// FASE 2: PUBLIKASI TOPIK & PENDAFTARAN PENJALURAN
+// ============================================================================
+Table Topiks {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  klaster_id integer [not null, ref: > Klasters.id]
+  judul_topik varchar(255) [not null]
+  deskripsi text
+  kuota integer [default: 1]
+  status status_topik_enum [default: 'available']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table MitraMagangs {
+  id integer [pk, increment]
+  nama_mitra varchar(150) [not null]
+  alamat text
+  kontak_person varchar(100)
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table KelompokPerintisanBisnises {
+  id integer [pk, increment]
+  nama_bisnis varchar(150) [not null]
+  kategori_bisnis varchar(100)
+  status status_review_enum [default: 'pending']
+  ketua_mahasiswa_id integer [ref: > Mahasiswas.id]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table AnggotaKelompokPerintisans {
+  id integer [pk, increment]
+  kelompok_perintisan_id integer [not null, ref: > KelompokPerintisanBisnises.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  peran_anggota varchar(50)
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table PendaftaranPenjalurans {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  jalur_dipilih jalur_enum [not null]
+  status_pendaftaran status_pendaftaran_enum [default: 'submitted']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table Pengajuans {
+  id integer [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  topik_id integer [ref: > Topiks.id]
+  judul_usulan varchar(255) [not null]
+  ringkasan_proposal text
+  mitra_magang_id integer [ref: > MitraMagangs.id]
+  kelompok_perintisan_id integer [ref: > KelompokPerintisanBisnises.id]
+  status_review_jalur status_review_enum [default: 'pending']
+  catatan_reviewer text
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+// UPCOMING FEATURE: PENGABDIAN MASYARAKAT
+Table PengajuanPengabdians {
+  id integer [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, unique, ref: - PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  nama_mitra_masyarakat varchar(150) [not null]
+  lokasi_pengabdian varchar(255) [not null]
+  skema_pengabdian varchar(100)
+  file_proposal_pengabdian varchar(255)
+  status_review_pengampu status_review_enum [default: 'pending']
+  created_at timestamp [default: `now()`]
+  Note: 'Upcoming Feature: Jalur Pengabdian Masyarakat'
+}
+
+
+// ============================================================================
+// FASE 3: PENETAPAN DOSEN PEMBIMBING & SURAT TUGAS
+// ============================================================================
+Table PenetapanPembimbings {
+  id integer [pk, increment]
+  pendaftaran_penjaluran_id integer [not null, ref: > PendaftaranPenjalurans.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  sekretaris_prodi_id integer [not null, ref: > SekretarisProdis.id]
+  tanggal_penetapan datetime [not null]
+  status status_penetapan_enum [default: 'aktif']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table PenetapanPembimbingDosens {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  peran peran_pembimbing_enum [not null]
+  urutan integer [default: 1]
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+// UPCOMING FEATURE: SURAT TUGAS
+Table SuratTugasPembimbings {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, unique, ref: - PenetapanPembimbings.id]
+  nomor_surat_tugas varchar(100) [not null, unique]
+  tanggal_terbit date [not null]
+  file_surat_pdf varchar(255) [not null]
+  penandatangan_nama varchar(150)
+  penandatangan_nip varchar(30)
+  is_addendum boolean [default: false]
+  created_at timestamp [default: `now()`]
+  Note: 'Upcoming Feature: Surat Tugas Pembimbing PDF'
+}
+
+
+// ============================================================================
+// FASE 4: PELAKSANAAN BIMBINGAN SKRIPSI & ACC SIDANG
+// ============================================================================
+Table BimbinganSkripsis {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  tanggal_bimbingan date [not null]
+  catatan_kemajuan text [not null]
+  file_draft_skripsi varchar(255)
+  status_verifikasi status_verifikasi_enum [default: 'pending']
+  catatan_dosen text
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table IzinLanjutSkripsis {
+  id integer [pk, increment]
+  penetapan_pembimbing_id integer [not null, ref: > PenetapanPembimbings.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  is_acc_pembimbing_1 boolean [default: false]
+  is_acc_pembimbing_2 boolean [default: false]
+  status_izin status_izin_enum [default: 'belum_memenuhi']
+  tanggal_acc_final datetime
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+
+// ============================================================================
+// FASE 5: PERSIAPAN & PENDAFTARAN SIDANG AKHIR
+// ============================================================================
+Table PeriodeSidangs {
+  id integer [pk, increment]
+  periode_akademik_id integer [not null, ref: > PeriodeAkademiks.id]
+  nama_periode_sidang varchar(100) [not null]
+  status status_periode_enum [default: 'draft']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table PeriodeSidangHaris {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  tanggal_sidang date [not null]
+}
+
+Table PeriodeSidangRuangans {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  nama_ruangan varchar(50) [not null]
+  kuota_per_hari integer [default: 4]
+}
+
+Table KetersediaanPengujiSidangs {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  tanggal_sidang date [not null]
+  sesi_jam varchar(20) [not null]
+  is_available boolean [default: true]
+}
+
+Table PendaftaranSidangs {
+  id integer [pk, increment]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  status_pendaftaran_sidang status_pendaftaran_sidang_enum [default: 'submitted']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+Table DokumenSidangs {
+  id integer [pk, increment]
+  pendaftaran_sidang_id integer [not null, ref: > PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  jenis_dokumen varchar(50) [not null]
+  file_path varchar(255) [not null]
+  status_verifikasi status_verifikasi_enum [default: 'pending']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+
+// ============================================================================
+// FASE 6: PELAKSANAAN SIDANG & PENJADWALAN OTOMATIS
+// ============================================================================
+Table JadwalSidangPengujis {
+  id integer [pk, increment]
+  pendaftaran_sidang_id integer [not null, ref: > PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  periode_sidang_ruangan_id integer [not null, ref: > PeriodeSidangRuangans.id]
+  tanggal_sidang date [not null]
+  sesi_jam varchar(20) [not null]
+  dosen_penguji_1_id integer [not null, ref: > Dosens.id]
+  dosen_penguji_2_id integer [not null, ref: > Dosens.id]
+  nilai_akhir_sidang decimal(4,2)
+  status_kelulusan_sidang status_kelulusan_sidang_enum [default: 'pending']
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+}
+
+
+// ============================================================================
+// FASE 7: PASCA-SIDANG, REVISI & KELULUSAN
+// ============================================================================
+// UPCOMING FEATURE: TRACKING REVISI
+Table RevisiSkripsis {
+  id integer [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, ref: > JadwalSidangPengujis.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  catatan_revisi text [not null]
+  file_revisi_mahasiswa varchar(255)
+  status_approval_revisi status_verifikasi_enum [default: 'pending']
+  tanggal_approval datetime
+  Note: 'Upcoming Feature: Tracking Revisi Pasca-Sidang Per Dosen'
+}
+
+// UPCOMING FEATURE: LEMBAR PENGESAHAN DIGITAL
+Table LembarPengesahans {
+  id integer [pk, increment]
+  jadwal_sidang_penguji_id integer [not null, unique, ref: - JadwalSidangPengujis.id]
+  file_lembar_pengesahan_pdf varchar(255) [not null]
+  is_signed_pembimbing_1 boolean [default: false]
+  is_signed_pembimbing_2 boolean [default: false]
+  is_signed_penguji_1 boolean [default: false]
+  is_signed_penguji_2 boolean [default: false]
+  is_signed_dekan_kaprodi boolean [default: false]
+  status_pengesahan status_pengesahan_enum [default: 'draft']
+  Note: 'Upcoming Feature: Digital Signature Lembar Pengesahan'
+}
+
+
+// ============================================================================
+// FASE 8: SYSTEM SUPPORT & AUTENTIKASI SESI
+// ============================================================================
+Table AuthSessions {
+  id uuid [pk]
+  account_type recipient_type_enum [not null]
+  account_id integer [not null]
+  role_snapshot jsonb
+  last_used_at datetime
+  absolute_expires_at datetime
+  revoked_at datetime
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik Backend: Manajemen Sesi Login Polymorphic'
+}
+
+Table Notifikasis {
+  id integer [pk, increment]
+  recipient_type recipient_type_enum [not null]
+  recipient_id integer [not null]
+  type varchar(100) [not null]
+  message text [not null]
+  reference_type varchar(50)
+  reference_id integer
+  deduplication_key varchar(255) [not null, unique]
+  read_at datetime
+  created_at timestamp [default: `now()`]
+  updated_at timestamp [default: `now()`]
+  Note: 'Tabel Fisik Backend: In-App System Notification Hub'
+}
+
+// UPCOMING FEATURE: AUDIT LOGS
+Table AuditLogs {
+  id integer [pk, increment]
+  actor_type recipient_type_enum
+  actor_id integer
+  action varchar(100) [not null]
+  table_name varchar(50) [not null]
+  record_id integer [not null]
+  old_values text
+  new_values text
+  ip_address varchar(45)
+  created_at timestamp [default: `now()`]
+  Note: 'Upcoming Feature: System Audit Trail Transaksi'
+}

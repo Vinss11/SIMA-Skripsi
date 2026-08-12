@@ -18,60 +18,30 @@ function academicMutationRateLimit(req, res, next) {
   return next();
 }
 
+function gradeUpload(req, res, next) {
+  return upload.single("file")(req, res, (error) => error
+    ? res.status(400).json({ success: false, code: "GRADE_IMPORT_FILE_INVALID", message: error.message })
+    : next());
+}
+
 const admin = express.Router();
 admin.use(authenticateToken, authorizeRole("admin"));
 admin.use((req, res, next) => ["POST", "PUT", "PATCH", "DELETE"].includes(req.method) ? academicMutationRateLimit(req, res, next) : next());
-["periode", "sources", "kurikulum", "mata-kuliah"].forEach((resource) => {
-  admin.get(`/${resource}`, (req, res, next) => { req.params.resource = resource; return controller.listMaster(req, res, next); });
-  admin.post(`/${resource}`, (req, res, next) => { req.params.resource = resource; return controller.createMaster(req, res, next); });
-  admin.put(`/${resource}/:id`, (req, res, next) => { req.params.resource = resource; return controller.updateMaster(req, res, next); });
-});
-admin.post("/mata-kuliah/:id/aliases", controller.createAlias);
-admin.post("/equivalence-groups", controller.createEquivalenceGroup);
-admin.put("/equivalences/:id", controller.upsertEquivalence);
-admin.post("/mahasiswa/:id/curriculum-assignment", controller.assignCurriculum);
 admin.get("/nilai/periode", controller.listPenjaluranPeriods);
 admin.get("/nilai/template", controller.downloadPenjaluranGradeTemplate);
 admin.get("/nilai", controller.listPenjaluranGrades);
-admin.post("/nilai/imports", (req, res, next) => upload.single("file")(req, res, (error) => error ? res.status(400).json({ success: false, code: "GRADE_IMPORT_FILE_INVALID", message: error.message }) : next()), controller.previewPenjaluranGradeImport);
+admin.post("/nilai/imports", gradeUpload, controller.previewPenjaluranGradeImport);
 admin.post("/nilai/imports/:id/commit", controller.commitPenjaluranGradeImport);
 admin.get("/nilai/imports/:id/report", controller.downloadPenjaluranGradeReport);
-admin.get("/templates/:dataset", controller.downloadTemplate);
-admin.post("/imports", (req, res, next) => upload.single("file")(req, res, (error) => error ? res.status(400).json({ success: false, code: "ACADEMIC_IMPORT_FILE_INVALID", message: error.message }) : next()), controller.createImport);
-admin.get("/imports", controller.listImports);
-admin.get("/imports/:id/preview", controller.getImportPreview);
-admin.post("/imports/:id/revalidate", controller.revalidateImport);
-admin.post("/imports/:id/cancel", controller.cancelImport);
-admin.post("/imports/:id/commit", controller.commitImport);
-admin.get("/imports/:id/report", controller.downloadImportReport);
-admin.get("/mahasiswa/:id", controller.getStudentDetailAdmin);
-admin.post("/records/:type/:id/corrections", controller.createCorrection);
-admin.get("/corrections", controller.listCorrections);
-admin.post("/corrections/:id/revoke", controller.revokeCorrection);
-admin.get("/conflicts", controller.listConflicts);
-admin.post("/conflicts/:id/:action", controller.decideConflict);
-admin.get("/snapshot-jobs", controller.listSnapshotJobs);
-admin.post("/snapshot-jobs/:id/retry", controller.retrySnapshotJob);
-admin.get("/outbox", controller.listOutbox);
-admin.post("/outbox/:id/retry", controller.retryOutbox);
-admin.post("/snapshots/rebuild", controller.rebuildSnapshots);
-admin.get("/rule-sets", controller.listRuleSets);
-admin.post("/rule-sets", controller.createRuleSet);
-admin.post("/rule-sets/:id/:action", controller.changeRuleStatus);
-admin.get("/operations/failed", controller.getFailedOperations);
 
 const secretary = express.Router();
 secretary.use(authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess);
 secretary.get("/nilai/periode", controller.listPenjaluranPeriods);
 secretary.get("/nilai", controller.listPenjaluranGradesForSecretary);
-secretary.get("/monitoring", controller.getMonitoring);
-secretary.get("/mahasiswa/:id", controller.getStudentDetailAdmin);
 
 const student = express.Router();
 student.use(authenticateToken, authorizeRole("mahasiswa"));
-student.get("/", controller.getMyAcademic);
 student.get("/mata-kuliah-penjaluran", controller.getMyPenjaluranGrades);
 student.get("/persyaratan-sidang", controller.getMyPenjaluranSidangRequirement);
-student.get("/eligibility", controller.getMyEligibility);
 
 module.exports = { admin, secretary, student };

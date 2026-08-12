@@ -318,10 +318,16 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     assert.equal(group.status, "approved");
   });
 
-  await t.test("NIM bebas dapat bootstrap akun dan pendaftaran ketika periode dibuka", async () => {
-    const nim = `BEBAS-${suffix}`;
+  await t.test("NIM berformat YY523NNN dapat bootstrap akun dan format lain ditolak", async () => {
+    const nim = `22523${suffix.slice(-3)}`;
     const dpa = await Dosen.findByPk(dosenIds[0]);
     assert.ok(dpa);
+
+    const invalidCheck = responseRecorder();
+    await pendaftaranController.checkNimAvailability({ query: { nim: "22111001" } }, invalidCheck);
+    assert.equal(invalidCheck.statusCode, 400);
+    assert.equal(invalidCheck.payload?.code, "NIM_FORMAT_INVALID");
+    assert.equal(invalidCheck.payload?.detail?.field, "nim");
 
     const initialCheck = responseRecorder();
     await pendaftaranController.checkNimAvailability({ query: { nim } }, initialCheck);
@@ -364,6 +370,19 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     const duplicateCheck = responseRecorder();
     await pendaftaranController.checkNimAvailability({ query: { nim } }, duplicateCheck);
     assert.equal(duplicateCheck.payload?.data?.status, "already_registered");
+
+    const duplicateSubmit = responseRecorder();
+    await pendaftaranController.submitPendaftaranJalurBaru({
+      body: {
+        nim,
+        program_kuliah: "reguler",
+        pendaftaran: "baru",
+        jenis_jalur_diambil: "penelitian",
+      },
+    }, duplicateSubmit);
+    assert.equal(duplicateSubmit.statusCode, 409);
+    assert.equal(duplicateSubmit.payload?.code, "NIM_ALREADY_EXISTS");
+    assert.equal(duplicateSubmit.payload?.detail?.field, "nim");
   });
 
   await t.test("finalizer menolak jalur pendaftaran dan status approval yang tidak sesuai", async () => {

@@ -1,0 +1,99 @@
+// SIMPS BPMN V1.2 — TAHAP 01: Persiapan Master dan Periode Penjaluran
+// Urutan BPMN: Admin login → kelola master/status dosen → Sekprodi membuat periode → set ketersediaan → sistem memvalidasi dan mengaktifkan periode
+// Biru = CURRENT (sudah ada) | Oranye = PROPOSED (belum dimigrasikan)
+// View ini hanya menampilkan kolom penggerak relasi/proses agar diagram terbaca.
+
+Project SIMPS_BPMN_01 {
+  database_type: 'PostgreSQL'
+  Note: 'Persiapan Master dan Periode Penjaluran'
+}
+
+Table Admins [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nip varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  role varchar(20) [not null]
+  Note: 'CURRENT — administrator sistem'
+}
+
+Table Dosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode_dosen varchar(255) [not null, unique]
+  nama varchar(255) [not null]
+  status_keaktifan varchar(30) [not null]
+  account_is_active boolean [not null]
+  kuota_bimbingan integer [not null]
+  Note: 'CURRENT — dosen, pembimbing, penguji, dan penanggung jawab jalur'
+}
+
+Table SekretarisProdis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nik varchar(9) [not null, unique]
+  nama varchar(100) [not null]
+  Note: 'CURRENT — sekretaris program studi'
+}
+
+Table RiwayatStatusDosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  status_sebelumnya varchar(30)
+  status_baru varchar(30) [not null]
+  effective_at date
+  reason text
+  changed_by integer [ref: > Admins.id]
+  Note: 'CURRENT — audit perubahan status dosen'
+}
+
+Table TindakLanjutStatusDosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  riwayat_status_dosen_id integer [not null, ref: > RiwayatStatusDosens.id]
+  status varchar(20) [not null]
+  resolved_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  resolved_at timestamptz
+  Note: 'CURRENT — penanganan dampak perubahan status dosen'
+}
+
+Table PeriodeAkademiks [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode varchar(40) [not null, unique]
+  tahun_akademik varchar(20) [not null]
+  semester varchar(10) [not null]
+  status varchar(20) [not null]
+  Note: 'CURRENT — periode akademik kanonis'
+}
+
+Table PeriodePenjalurans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_akademik_id integer [ref: > PeriodeAkademiks.id]
+  label_periode varchar(50) [not null, unique]
+  tanggal_mulai timestamptz
+  tanggal_selesai timestamptz
+  ketua_penelitian_dosen_id integer [ref: > Dosens.id]
+  pengawas_magang_dosen_id integer [ref: > Dosens.id]
+  pengawas_pengabdian_dosen_id integer [ref: > Dosens.id]
+  pengawas_perintisan_bisnis_dosen_id integer [ref: > Dosens.id]
+  status varchar(20) [not null]
+  Note: 'CURRENT — periode pendaftaran dan review penjaluran'
+}
+
+Table DosenKetersediaanPeriodes [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  tersedia_membimbing boolean [not null]
+  configuration_status varchar(30)
+  updated_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  Note: 'CURRENT — ketersediaan dosen per periode'
+}
+
+Table RiwayatKetersediaanMembimbings [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  dosen_id integer [not null, ref: > Dosens.id]
+  periode_penjaluran_id integer [not null, ref: > PeriodePenjalurans.id]
+  tersedia_sebelumnya boolean
+  tersedia_baru boolean [not null]
+  changed_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  Note: 'CURRENT — audit perubahan ketersediaan'
+}
+

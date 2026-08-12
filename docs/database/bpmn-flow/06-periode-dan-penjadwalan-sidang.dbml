@@ -1,0 +1,104 @@
+// SIMPS BPMN V1.2 — TAHAP 06: Periode, Ketersediaan, dan Penjadwalan Sidang
+// Urutan BPMN: Sekprodi membuka periode serta tanggal/ruang → dosen mengisi ketersediaan/preferensi → mahasiswa mendaftar → sistem memilih ruang, sesi, dan penguji → jadwal disimpan
+// Biru = CURRENT (sudah ada) | Oranye = PROPOSED (belum dimigrasikan)
+// View ini hanya menampilkan kolom penggerak relasi/proses agar diagram terbaca.
+
+Project SIMPS_BPMN_06 {
+  database_type: 'PostgreSQL'
+  Note: 'Periode, Ketersediaan, dan Penjadwalan Sidang'
+}
+
+Table Dosens [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  kode_dosen varchar(255) [not null, unique]
+  nama varchar(255) [not null]
+  status_keaktifan varchar(30) [not null]
+  account_is_active boolean [not null]
+  kuota_bimbingan integer [not null]
+  Note: 'CURRENT — dosen, pembimbing, penguji, dan penanggung jawab jalur'
+}
+
+Table SekretarisProdis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nik varchar(9) [not null, unique]
+  nama varchar(100) [not null]
+  Note: 'CURRENT — sekretaris program studi'
+}
+
+Table Mahasiswas [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  nim varchar(20) [not null, unique]
+  nama varchar(100) [not null]
+  dosen_pembimbing_akademik_id integer [ref: > Dosens.id]
+  dosen_pembimbing_skripsi_id integer [ref: > Dosens.id]
+  status_jalur_saat_ini varchar(40) [not null]
+  pengajuan_aktif_id integer
+  Note: 'CURRENT — mahasiswa dan pointer status proses aktif'
+}
+
+Table PeriodeSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  label_periode varchar(120) [not null, unique]
+  tanggal_mulai_pendaftaran date [not null]
+  tanggal_selesai_pendaftaran date [not null]
+  status varchar(20) [not null]
+  created_by_sekretaris_id integer [ref: > SekretarisProdis.id]
+  Note: 'CURRENT — periode sidang'
+}
+
+Table PeriodeSidangHaris [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  tanggal_sidang date [not null]
+  Note: 'CURRENT — hari yang dibuka'
+}
+
+Table PeriodeSidangRuangans [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  nama_ruangan varchar(120) [not null]
+  Note: 'CURRENT — ruangan yang tersedia'
+}
+
+Table PreferensiPengujiSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  mobilitas_ruangan varchar(30) [not null]
+  maksimal_sesi_per_hari integer [not null]
+  Note: 'CURRENT — preferensi beban dan mobilitas penguji'
+}
+
+Table KetersediaanPengujiSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  dosen_id integer [not null, ref: > Dosens.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+  Note: 'CURRENT — ketersediaan penguji per slot'
+}
+
+Table PendaftaranSidangs [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  dosen_pembimbing_id integer [ref: > Dosens.id]
+  status varchar(20) [not null]
+  registered_at timestamptz [not null]
+  Note: 'CURRENT — pendaftaran mahasiswa ke periode sidang'
+}
+
+Table JadwalSidangPengujis [headercolor: #2F75B5] {
+  id integer [pk, increment]
+  periode_sidang_id integer [not null, ref: > PeriodeSidangs.id]
+  pendaftaran_sidang_id integer [not null, unique, ref: - PendaftaranSidangs.id]
+  mahasiswa_id integer [not null, ref: > Mahasiswas.id]
+  tanggal_sidang date [not null]
+  sesi_ke integer [not null]
+  ruangan varchar(120) [not null]
+  penguji1_dosen_id integer [not null, ref: > Dosens.id]
+  penguji2_dosen_id integer [not null, ref: > Dosens.id]
+  assignment_status varchar(20) [not null]
+  Note: 'CURRENT — hasil penjadwalan otomatis'
+}
+

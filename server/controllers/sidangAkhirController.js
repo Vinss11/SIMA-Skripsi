@@ -21,7 +21,6 @@ const {
   getMahasiswaSupervisionAccess,
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
-const { evaluateEligibility: evaluateAcademicEligibility } = require("../services/academicDataService");
 const { getSidangRequirement: getPenjaluranGradeRequirement } = require("../services/penjaluranGradeService");
 const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
 
@@ -193,19 +192,17 @@ async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) 
   return summary;
 }
 
-async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null, { persistAcademic = false } = {}) {
-  const [guidanceProgress, dokumen, academicEligibility, penjaluranCourse] = await Promise.all([
+async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null) {
+  const [guidanceProgress, dokumen, penjaluranCourse] = await Promise.all([
     getCountedBimbingan(mahasiswaId, transaction),
     getDokumenSidangApprovalSummary(mahasiswaId, transaction),
-    evaluateAcademicEligibility({ mahasiswaId, context: "defense_verification", persist: persistAcademic, transaction }),
     getPenjaluranGradeRequirement(mahasiswaId, transaction),
   ]);
   const countedSessions = Number(guidanceProgress.enforcement.counted || 0);
   const targetMinimum = Number(guidanceProgress.policy.minimum_validated_sessions);
   const bimbinganReady = guidanceProgress.enforcement.sufficient;
-  const academicAllows = academicEligibility.effective_decision !== "block";
   const penjaluranCourseAllows = !penjaluranCourse.required || penjaluranCourse.fulfilled;
-  const eligible = bimbinganReady && dokumen.all_approved && academicAllows && penjaluranCourseAllows;
+  const eligible = bimbinganReady && dokumen.all_approved && penjaluranCourseAllows;
   return {
     counted_sessions: countedSessions,
     target_minimum: targetMinimum,
@@ -214,12 +211,10 @@ async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null, { 
     dokumen_total_required: DOKUMEN_APPROVAL_FIELDS.length,
     dokumen_ready: dokumen.all_approved,
     dokumen: dokumen.documents,
-    academic: academicEligibility,
     mata_kuliah_penjaluran: penjaluranCourse,
     checklist: [
       { code: "MINIMUM_GUIDANCE", status: bimbinganReady ? "valid" : "invalid", facts: { counted: countedSessions, required: targetMinimum, policy_id: guidanceProgress.policy.id, policy_version: guidanceProgress.policy.version } },
       { code: "TRANSCRIPT_DOCUMENT", status: dokumen.all_approved ? "valid" : "pending", facts: { approved: dokumen.approved_count, required: DOKUMEN_APPROVAL_FIELDS.length } },
-      { code: "STRUCTURED_ACADEMIC_DATA", status: academicEligibility.evaluated_result === "eligible" ? "valid" : academicEligibility.evaluated_result === "blocked" ? "invalid" : "undetermined", reason_codes: academicEligibility.reason_codes },
       { code: "PENJALURAN_COURSE_PASSED", status: penjaluranCourseAllows ? "valid" : "invalid", facts: penjaluranCourse },
     ],
     eligible,
@@ -654,7 +649,7 @@ exports.registerMahasiswaSidang = async (req, res) => {
     }
     const primarySupervisorId = Number(supervisionAccess.current_supervisor?.id || 0) || null;
 
-    const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction, { persistAcademic: true });
+    const eligibility = await getMahasiswaSidangEligibility(mahasiswaId, transaction);
     if (!eligibility.eligible) {
       const validationErrors = buildSidangRegistrationValidationErrors(eligibility);
       await transaction.rollback();

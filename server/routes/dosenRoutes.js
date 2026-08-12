@@ -187,8 +187,6 @@ router.post(
 // ========== BIMBINGAN SKRIPSI ==========
 router.get("/bimbingan", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), bimbinganController.getDosenBimbingan);
 router.get("/bimbingan/tasks", authenticateToken, authorizeRole("dosen"), bimbinganController.getDosenBimbingan);
-router.get("/bimbingan/readiness/tasks", authenticateToken, authorizeRole("dosen"), bimbinganController.getDosenGuidanceReadinessTasks);
-router.post("/bimbingan/readiness/:id/decision", authenticateToken, authorizeRole("dosen"), bimbinganController.decideDosenGuidanceReadiness);
 router.get("/bimbingan/:id", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), bimbinganController.getDosenBimbinganDetail);
 router.post("/bimbingan/:id/approve", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), bimbinganController.approveDosenBimbingan);
 router.post("/bimbingan/:id/reject", authenticateToken, authorizeRole("dosen", "sekretaris_prodi"), bimbinganController.rejectDosenBimbingan);

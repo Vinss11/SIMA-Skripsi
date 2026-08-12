@@ -49,7 +49,6 @@ const { createSystemNotification } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { submitExtensionRequest } = require("../services/extensionTransitionService");
 const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
-const { evaluateEligibility: evaluateAcademicEligibility } = require("../services/academicDataService");
 
 const MAGANG_PROPOSED_POSITION_OPTIONS = [
   "analyst",
@@ -1720,11 +1719,6 @@ exports.getJalurEligibility = async (req, res) => {
     const hasPenelitianSubmission = selectedJalur === "penelitian"
       ? await hasPenelitianSubmissionForPendaftaran(mahasiswa_id, pendaftaranAktif)
       : false;
-    const academicEligibility = await evaluateAcademicEligibility({
-      mahasiswaId: mahasiswa_id,
-      context: "research_registration",
-    });
-
     const jalurList = ["penelitian", "magang", "pengabdian", "perintisan_bisnis"];
     const jalurEligibility = {};
     jalurList.forEach((jalur) => {
@@ -1846,7 +1840,6 @@ exports.getJalurEligibility = async (req, res) => {
           reason: onboardingReason,
         },
         jalur_eligibility: jalurEligibility,
-        academic_eligibility: academicEligibility,
         flags: {
           has_active_pengajuan: hasActivePengajuan,
           has_penelitian_submission: hasPenelitianSubmission,

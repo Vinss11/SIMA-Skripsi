@@ -1,0 +1,701 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+  xmlns:dc="http://www.omg.org/spec/DD/20100524/DC"
+  xmlns:di="http://www.omg.org/spec/DD/20100524/DI"
+  xmlns:camunda="http://camunda.org/schema/1.0/bpmn"
+  id="Definitions_SIMA_Skripsi_MultiPool"
+  targetNamespace="https://sima.uii.ac.id/bpmn/skripsi-multi-pool">
+
+  <!-- ================================================================= -->
+  <!-- COLLABORATION: 6 SEPARATE POOLS WITH VERTICAL MESSAGE FLOWS       -->
+  <!-- ================================================================= -->
+  <bpmn:collaboration id="Collaboration_SIMA">
+    <bpmn:participant id="Participant_Mahasiswa" name="Mahasiswa" processRef="Process_Mahasiswa" />
+    <bpmn:participant id="Participant_System" name="Sistem SIMA-Skripsi" processRef="Process_System" />
+    <bpmn:participant id="Participant_Dosen" name="Dosen (Pembimbing &amp; Penguji)" processRef="Process_Dosen" />
+    <bpmn:participant id="Participant_PenanggungJawabJalur" name="Penanggung Jawab / Pengampu Penjaluran (Ketua Cluster, Pengawas Magang, Pengampu Perintisan &amp; Pengabdian)" processRef="Process_PenanggungJawabJalur" />
+    <bpmn:participant id="Participant_Sekprodi" name="Sekretaris Prodi" processRef="Process_Sekprodi" />
+    <bpmn:participant id="Participant_Admin" name="Admin System" processRef="Process_Admin" />
+
+    <!-- MESSAGE FLOWS (Inter-Pool Communication) -->
+    <bpmn:messageFlow id="MF_Admin_To_Sekprodi" name="Master Data Prepared" sourceRef="Task_KelolaKeaktifanDosen" targetRef="Task_SiapkanPeriode" />
+    <bpmn:messageFlow id="MF_Sekprodi_To_System_Period" name="Activate Period Request" sourceRef="Task_SiapkanPeriode" targetRef="Task_ValidasiPeriode" />
+    <bpmn:messageFlow id="MF_Notif_Periode" name="Send 'Period Opened' Notification" sourceRef="Task_SendNotifPeriode" targetRef="Task_RecvNotifPeriode" />
+    <bpmn:messageFlow id="MF_Mahasiswa_Submit_Pendaftaran" name="Submit Registration &amp; Proposal" sourceRef="Task_PendaftaranPenjaluran" targetRef="Task_ValidasiEligibility" />
+    <bpmn:messageFlow id="MF_System_Forward_To_Track" name="Forward Proposal to Track Supervisor" sourceRef="Task_ForwardToTrack" targetRef="Task_RecvProposal" />
+    <bpmn:messageFlow id="MF_Track_Reject_Proposal" name="Proposal Rejected Decision" sourceRef="Gateway_PenjaluranApprove" targetRef="Task_HandleDitolak" />
+    <bpmn:messageFlow id="MF_System_Reject_Notification" name="Send 'Proposal Rejected' Notification" sourceRef="Task_SendNotifDitolak" targetRef="Task_RecvNotifDitolak" />
+    <bpmn:messageFlow id="MF_Track_Approve_Proposal" name="Proposal Approved Decision" sourceRef="Gateway_PenjaluranApprove" targetRef="Task_RecvApprovedProposal" />
+    <bpmn:messageFlow id="MF_Sekprodi_Assign_Supervisors" name="Assign P1 &amp; P2 Request" sourceRef="Task_TetapkanPembimbing" targetRef="Task_SimpanPembimbing" />
+    <bpmn:messageFlow id="MF_Notif_Penetapan_Mahasiswa" name="Send 'Supervisor Assigned' Notification" sourceRef="Task_SendNotifPenetapan" targetRef="Task_RecvNotifPenetapan" />
+    <bpmn:messageFlow id="MF_Notif_Penetapan_Dosen" name="Send 'New Guidance Assigned' Notification" sourceRef="Task_SendNotifPenetapan" targetRef="Task_RecvPenetapanDosen" />
+    <bpmn:messageFlow id="MF_Mahasiswa_Submit_Log" name="Submit Guidance Log" sourceRef="Task_MengisiLogBimbingan" targetRef="Task_ReviewLogBimbingan" />
+    <bpmn:messageFlow id="MF_Dosen_Verify_Log" name="Log Verification Status" sourceRef="Task_ReviewLogBimbingan" targetRef="Task_HitungBimbingan" />
+    <bpmn:messageFlow id="MF_Dosen_Give_ACC" name="Submit ACC / Defense Permission" sourceRef="Task_BeriIzinLanjut" targetRef="Task_ProcessACC" />
+    <bpmn:messageFlow id="MF_Notif_ACC_Mahasiswa" name="Send 'Defense ACC Granted' Notification" sourceRef="Task_SendNotifBimbingan" targetRef="Task_RecvNotifBimbingan" />
+    <bpmn:messageFlow id="MF_Mahasiswa_Register_Defense" name="Submit Defense Registration &amp; Docs" sourceRef="Task_DaftarSidang" targetRef="Task_ValidasiBerkasSidang" />
+    <bpmn:messageFlow id="MF_Dosen_Input_Availability" name="Submit Examiner Availability" sourceRef="Task_InputKetersediaanSidang" targetRef="Task_PenjadwalanSidang" />
+    <bpmn:messageFlow id="MF_System_Validated_Docs" name="Forward Valid Defense Docs" sourceRef="Gateway_BerkasValid" targetRef="Task_PenjadwalanSidang" />
+    <bpmn:messageFlow id="MF_Sekprodi_Submit_Schedule" name="Submit Final Schedule &amp; Examiners" sourceRef="Task_PenjadwalanSidang" targetRef="Task_SaveJadwalSidang" />
+    <bpmn:messageFlow id="MF_Notif_Jadwal_Mahasiswa" name="Send 'Defense Schedule' Notification" sourceRef="Task_SendNotifJadwalSidang" targetRef="Task_RecvJadwalMahasiswa" />
+    <bpmn:messageFlow id="MF_Notif_Jadwal_Penguji" name="Send 'Examiner Assignment' Notification" sourceRef="Task_SendNotifJadwalSidang" targetRef="Task_RecvJadwalPenguji" />
+    <bpmn:messageFlow id="MF_Dosen_Submit_Grades" name="Submit Defense Scores" sourceRef="Task_PelaksanaanSidang" targetRef="Task_KalkulasiNilai" />
+    <bpmn:messageFlow id="MF_Mahasiswa_Submit_Revision" name="Submit Revision Documents" sourceRef="Task_UploadRevisi" targetRef="Task_ApproveRevisi" />
+    <bpmn:messageFlow id="MF_Dosen_Approve_Revision" name="Submit Revision Approval" sourceRef="Task_ApproveRevisi" targetRef="Task_VerifikasiYudisium" />
+    <bpmn:messageFlow id="MF_Sekprodi_Submit_Yudisium" name="Finalize Yudisium Approval" sourceRef="Task_VerifikasiYudisium" targetRef="Task_FinalisasiLulus" />
+    <bpmn:messageFlow id="MF_Notif_Kelulusan_Mahasiswa" name="Send 'Skripsi Completed' Notification" sourceRef="Task_SendNotifKelulusan" targetRef="Task_RecvNotifKelulusan" />
+  </bpmn:collaboration>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 1: MAHASISWA POOL                                         -->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_Mahasiswa" name="Mahasiswa Process" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_Mahasiswa" name="Mulai Penjaluran Skripsi">
+      <bpmn:outgoing>Flow_M1</bpmn:outgoing>
+    </bpmn:startEvent>
+
+    <bpmn:receiveTask id="Task_RecvNotifPeriode" name="Receive Notification: Periode Penjaluran Dibuka">
+      <bpmn:incoming>Flow_M1</bpmn:incoming>
+      <bpmn:outgoing>Flow_M2</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:userTask id="Task_PendaftaranPenjaluran" name="Pilih Jalur &amp; Submit Pengajuan (Topik/Judul/Mitra/Kelompok)">
+      <bpmn:incoming>Flow_M2</bpmn:incoming>
+      <bpmn:incoming>Flow_M_Retry</bpmn:incoming>
+      <bpmn:outgoing>Flow_M3</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_PerbaikiPengajuan" name="Perbaiki Data / Pilihan Pengajuan">
+      <bpmn:outgoing>Flow_M_Retry</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:receiveTask id="Task_RecvNotifDitolak" name="Receive Notification: Pengajuan Ditolak">
+      <bpmn:outgoing>Flow_M_EndDitolak</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:endEvent id="EndEvent_MahasiswaDitolak" name="Pengajuan Penjaluran Ditolak">
+      <bpmn:incoming>Flow_M_EndDitolak</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:receiveTask id="Task_RecvNotifPenetapan" name="Receive Notification: Pembimbing Ditetapkan">
+      <bpmn:incoming>Flow_M3</bpmn:incoming>
+      <bpmn:outgoing>Flow_M4</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:userTask id="Task_MengisiLogBimbingan" name="Isi Log Bimbingan &amp; Progress Skripsi">
+      <bpmn:incoming>Flow_M4</bpmn:incoming>
+      <bpmn:outgoing>Flow_M5</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:receiveTask id="Task_RecvNotifBimbingan" name="Receive Notification: ACC Sidang Diterima">
+      <bpmn:incoming>Flow_M5</bpmn:incoming>
+      <bpmn:outgoing>Flow_M6</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:userTask id="Task_DaftarSidang" name="Mendaftar Sidang &amp; Upload Dokumen Pendadaran">
+      <bpmn:incoming>Flow_M6</bpmn:incoming>
+      <bpmn:incoming>Flow_M_FixDoc</bpmn:incoming>
+      <bpmn:outgoing>Flow_M7</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:userTask id="Task_PerbaikiDokumenSidang" name="Perbaiki &amp; Unggah Ulang Dokumen Sidang">
+      <bpmn:outgoing>Flow_M_FixDoc</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:receiveTask id="Task_RecvJadwalMahasiswa" name="Receive Notification: Jadwal Sidang">
+      <bpmn:incoming>Flow_M7</bpmn:incoming>
+      <bpmn:outgoing>Flow_M8</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:userTask id="Task_UploadRevisi" name="Unggah Berkas Revisi Skripsi">
+      <bpmn:incoming>Flow_M8</bpmn:incoming>
+      <bpmn:outgoing>Flow_M9</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:receiveTask id="Task_RecvNotifKelulusan" name="Receive Notification: Kelulusan Yudisium">
+      <bpmn:incoming>Flow_M9</bpmn:incoming>
+      <bpmn:outgoing>Flow_M10</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:endEvent id="EndEvent_LulusMahasiswa" name="Skripsi &amp; Yudisium Selesai">
+      <bpmn:incoming>Flow_M10</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:sequenceFlow id="Flow_M1" sourceRef="StartEvent_Mahasiswa" targetRef="Task_RecvNotifPeriode" />
+    <bpmn:sequenceFlow id="Flow_M2" sourceRef="Task_RecvNotifPeriode" targetRef="Task_PendaftaranPenjaluran" />
+    <bpmn:sequenceFlow id="Flow_M3" sourceRef="Task_PendaftaranPenjaluran" targetRef="Task_RecvNotifPenetapan" />
+    <bpmn:sequenceFlow id="Flow_M4" sourceRef="Task_RecvNotifPenetapan" targetRef="Task_MengisiLogBimbingan" />
+    <bpmn:sequenceFlow id="Flow_M5" sourceRef="Task_MengisiLogBimbingan" targetRef="Task_RecvNotifBimbingan" />
+    <bpmn:sequenceFlow id="Flow_M6" sourceRef="Task_RecvNotifBimbingan" targetRef="Task_DaftarSidang" />
+    <bpmn:sequenceFlow id="Flow_M7" sourceRef="Task_DaftarSidang" targetRef="Task_RecvJadwalMahasiswa" />
+    <bpmn:sequenceFlow id="Flow_M8" sourceRef="Task_RecvJadwalMahasiswa" targetRef="Task_UploadRevisi" />
+    <bpmn:sequenceFlow id="Flow_M9" sourceRef="Task_UploadRevisi" targetRef="Task_RecvNotifKelulusan" />
+    <bpmn:sequenceFlow id="Flow_M10" sourceRef="Task_RecvNotifKelulusan" targetRef="EndEvent_LulusMahasiswa" />
+    <bpmn:sequenceFlow id="Flow_M_Retry" sourceRef="Task_PerbaikiPengajuan" targetRef="Task_PendaftaranPenjaluran" />
+    <bpmn:sequenceFlow id="Flow_M_FixDoc" sourceRef="Task_PerbaikiDokumenSidang" targetRef="Task_DaftarSidang" />
+    <bpmn:sequenceFlow id="Flow_M_EndDitolak" sourceRef="Task_RecvNotifDitolak" targetRef="EndEvent_MahasiswaDitolak" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 2: SYSTEM POOL                                            -->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_System" name="System Process" isExecutable="true">
+    <bpmn:serviceTask id="Task_ValidasiPeriode" name="Validasi Kesiapan Periode Penjaluran" camunda:topic="sima-validate-period" />
+    <bpmn:exclusiveGateway id="Gateway_PeriodeSiap" name="Periode Siap?" default="Flow_S_Aktif">
+      <bpmn:incoming>Flow_S1</bpmn:incoming>
+      <bpmn:outgoing>Flow_S_Fail</bpmn:outgoing>
+      <bpmn:outgoing>Flow_S_Aktif</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:endEvent id="EndEvent_PeriodeGagal" name="Periode Belum Siap">
+      <bpmn:incoming>Flow_S_Fail</bpmn:incoming>
+    </bpmn:endEvent>
+
+    <bpmn:serviceTask id="Task_AktifkanPeriode" name="Aktifkan Periode Penjaluran" camunda:topic="sima-activate-period">
+      <bpmn:incoming>Flow_S_Aktif</bpmn:incoming>
+      <bpmn:outgoing>Flow_S2</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifPeriode" name="Send 'Pembukaan Periode' Notification" camunda:topic="sima-notify-period">
+      <bpmn:incoming>Flow_S2</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:serviceTask id="Task_ValidasiEligibility" name="Validasi Eligibility (SKS/IPK) &amp; Reservasi Slot" camunda:topic="sima-check-eligibility" />
+    <bpmn:exclusiveGateway id="Gateway_Eligible" name="Eligible &amp; Data Valid?" default="Flow_S_Forward">
+      <bpmn:incoming>Flow_S3</bpmn:incoming>
+      <bpmn:outgoing>Flow_S_Forward</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_ForwardToTrack" name="Forward Pengajuan ke Penanggung Jawab Jalur" camunda:topic="sima-forward-to-track">
+      <bpmn:incoming>Flow_S_Forward</bpmn:incoming>
+    </bpmn:serviceTask>
+
+    <bpmn:serviceTask id="Task_HandleDitolak" name="Batalkan Pengajuan &amp; Lepas Reservasi" camunda:topic="sima-handle-rejection">
+      <bpmn:outgoing>Flow_S_NotifReject</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifDitolak" name="Send 'Pengajuan Ditolak' Notification" camunda:topic="sima-notify-rejection">
+      <bpmn:incoming>Flow_S_NotifReject</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:serviceTask id="Task_SimpanPembimbing" name="Simpan Penetapan Pembimbing &amp; Update Quota" camunda:topic="sima-finalize-assignment">
+      <bpmn:outgoing>Flow_S4</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifPenetapan" name="Send 'Penetapan Pembimbing' Notification" camunda:topic="sima-notify-assignment">
+      <bpmn:incoming>Flow_S4</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:serviceTask id="Task_HitungBimbingan" name="Rekapitulasi Bimbingan Valid &amp; Cek Kuota" camunda:topic="sima-recap-guidance" />
+    <bpmn:exclusiveGateway id="Gateway_KuotaBimbingan" name="Kuota Minimum Terpenuhi?">
+      <bpmn:incoming>Flow_S5</bpmn:incoming>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_ProcessACC" name="Update Status Eligibility Sidang" camunda:topic="sima-process-acc">
+      <bpmn:outgoing>Flow_S6</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifBimbingan" name="Send 'ACC Sidang' Notification" camunda:topic="sima-notify-guidance-approval">
+      <bpmn:incoming>Flow_S6</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:serviceTask id="Task_ValidasiBerkasSidang" name="Validasi Kelengkapan Dokumen Sidang" camunda:topic="sima-validate-defense-docs" />
+    <bpmn:exclusiveGateway id="Gateway_BerkasValid" name="Dokumen Sidang Valid?">
+      <bpmn:incoming>Flow_S7</bpmn:incoming>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_SaveJadwalSidang" name="Simpan Jadwal Sidang &amp; Penugasan Penguji" camunda:topic="sima-save-defense-schedule">
+      <bpmn:outgoing>Flow_S8</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifJadwalSidang" name="Send 'Jadwal Sidang' Notification" camunda:topic="sima-notify-defense-schedule">
+      <bpmn:incoming>Flow_S8</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:serviceTask id="Task_KalkulasiNilai" name="Kalkulasi Nilai Akhir &amp; Status Hasil Sidang" camunda:topic="sima-calculate-final-grade" />
+    <bpmn:exclusiveGateway id="Gateway_HasilSidang" name="Hasil Evaluasi Sidang?">
+      <bpmn:incoming>Flow_S9</bpmn:incoming>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:serviceTask id="Task_FinalisasiLulus" name="Update Status Mahasiswa Lulus &amp; Tutup Siklus" camunda:topic="sima-finalize-graduation">
+      <bpmn:outgoing>Flow_S10</bpmn:outgoing>
+    </bpmn:serviceTask>
+
+    <bpmn:sendTask id="Task_SendNotifKelulusan" name="Send 'Order/Skripsi Completed' Notification" camunda:topic="sima-notify-graduation">
+      <bpmn:incoming>Flow_S10</bpmn:incoming>
+    </bpmn:sendTask>
+
+    <bpmn:sequenceFlow id="Flow_S1" sourceRef="Task_ValidasiPeriode" targetRef="Gateway_PeriodeSiap" />
+    <bpmn:sequenceFlow id="Flow_S_Fail" name="Tidak" sourceRef="Gateway_PeriodeSiap" targetRef="EndEvent_PeriodeGagal" />
+    <bpmn:sequenceFlow id="Flow_S_Aktif" name="Ya" sourceRef="Gateway_PeriodeSiap" targetRef="Task_AktifkanPeriode" />
+    <bpmn:sequenceFlow id="Flow_S2" sourceRef="Task_AktifkanPeriode" targetRef="Task_SendNotifPeriode" />
+    <bpmn:sequenceFlow id="Flow_S3" sourceRef="Task_ValidasiEligibility" targetRef="Gateway_Eligible" />
+    <bpmn:sequenceFlow id="Flow_S_Forward" name="Ya" sourceRef="Gateway_Eligible" targetRef="Task_ForwardToTrack" />
+    <bpmn:sequenceFlow id="Flow_S_NotifReject" sourceRef="Task_HandleDitolak" targetRef="Task_SendNotifDitolak" />
+    <bpmn:sequenceFlow id="Flow_S4" sourceRef="Task_SimpanPembimbing" targetRef="Task_SendNotifPenetapan" />
+    <bpmn:sequenceFlow id="Flow_S5" sourceRef="Task_HitungBimbingan" targetRef="Gateway_KuotaBimbingan" />
+    <bpmn:sequenceFlow id="Flow_S6" sourceRef="Task_ProcessACC" targetRef="Task_SendNotifBimbingan" />
+    <bpmn:sequenceFlow id="Flow_S7" sourceRef="Task_ValidasiBerkasSidang" targetRef="Gateway_BerkasValid" />
+    <bpmn:sequenceFlow id="Flow_S8" sourceRef="Task_SaveJadwalSidang" targetRef="Task_SendNotifJadwalSidang" />
+    <bpmn:sequenceFlow id="Flow_S9" sourceRef="Task_KalkulasiNilai" targetRef="Gateway_HasilSidang" />
+    <bpmn:sequenceFlow id="Flow_S10" sourceRef="Task_FinalisasiLulus" targetRef="Task_SendNotifKelulusan" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 3: DOSEN POOL                                             -->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_Dosen" name="Dosen Process" isExecutable="true">
+    <bpmn:userTask id="Task_PublikasiTopik" name="Publikasi Topik Dosen Available" />
+    <bpmn:receiveTask id="Task_RecvPenetapanDosen" name="Receive Notification: Penugasan Pembimbing Baru" />
+    <bpmn:userTask id="Task_ReviewLogBimbingan" name="Review &amp; Verifikasi Log Bimbingan" />
+    <bpmn:userTask id="Task_BeriIzinLanjut" name="Berikan ACC / Izin Lanjut Sidang (Pendadaran)" />
+    <bpmn:userTask id="Task_InputKetersediaanSidang" name="Input Ketersediaan Waktu &amp; Preferensi Penguji" />
+    <bpmn:receiveTask id="Task_RecvJadwalPenguji" name="Receive Notification: Penugasan Penguji Sidang" />
+    <bpmn:userTask id="Task_PelaksanaanSidang" name="Pelaksanaan Sidang Skripsi &amp; Input Nilai Penguji" />
+    <bpmn:userTask id="Task_ApproveRevisi" name="Review &amp; Approve Revisi Skripsi" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 4: PENANGGUNG JAWAB / PENGAMPU PENJALURAN POOL            -->
+  <!-- (Ketua Cluster, Pengawas Magang, Pengampu Perintisan & Pengabdian)-->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_PenanggungJawabJalur" name="Penanggung Jawab Jalur Process" isExecutable="true">
+    <bpmn:receiveTask id="Task_RecvProposal" name="Receive Notification: Forwarded Student Proposal">
+      <bpmn:outgoing>Flow_TJ1</bpmn:outgoing>
+    </bpmn:receiveTask>
+
+    <bpmn:userTask id="Task_ReviewPenjaluran" name="Review Pengajuan Sesuai Jalur (Penelitian / Magang / Perintisan / Pengabdian)">
+      <bpmn:incoming>Flow_TJ1</bpmn:incoming>
+      <bpmn:outgoing>Flow_TJ2</bpmn:outgoing>
+    </bpmn:userTask>
+
+    <bpmn:exclusiveGateway id="Gateway_PenjaluranApprove" name="Pengajuan Disetujui Pengampu Jalur?">
+      <bpmn:incoming>Flow_TJ2</bpmn:incoming>
+    </bpmn:exclusiveGateway>
+
+    <bpmn:sequenceFlow id="Flow_TJ1" sourceRef="Task_RecvProposal" targetRef="Task_ReviewPenjaluran" />
+    <bpmn:sequenceFlow id="Flow_TJ2" sourceRef="Task_ReviewPenjaluran" targetRef="Gateway_PenjaluranApprove" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 5: SEKRETARIS PRODI POOL                                  -->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_Sekprodi" name="Sekprodi Process" isExecutable="true">
+    <bpmn:userTask id="Task_SiapkanPeriode" name="Buat Draft Periode &amp; Konfigurasi Ketersediaan Dosen" />
+    <bpmn:receiveTask id="Task_RecvApprovedProposal" name="Receive Approved Proposal from Track Supervisor">
+      <bpmn:outgoing>Flow_Sek1</bpmn:outgoing>
+    </bpmn:receiveTask>
+    <bpmn:userTask id="Task_TetapkanPembimbing" name="Review Final &amp; Tetapkan Dosen Pembimbing P1 &amp; P2">
+      <bpmn:incoming>Flow_Sek1</bpmn:incoming>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_PenjadwalanSidang" name="Penjadwalan Sidang (Waktu/Ruangan) &amp; Plot Penguji" />
+    <bpmn:userTask id="Task_VerifikasiYudisium" name="Verifikasi Kelulusan Akhir &amp; Formalisasi Yudisium" />
+
+    <bpmn:sequenceFlow id="Flow_Sek1" sourceRef="Task_RecvApprovedProposal" targetRef="Task_TetapkanPembimbing" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- PROCESS 6: ADMIN SYSTEM POOL                                      -->
+  <!-- ================================================================= -->
+  <bpmn:process id="Process_Admin" name="Admin Process" isExecutable="true">
+    <bpmn:startEvent id="StartEvent_Admin" name="Inisiasi Master Data">
+      <bpmn:outgoing>Flow_A1</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:userTask id="Task_ImportMasterData" name="Import Master Data Mahasiswa &amp; Dosen (Excel)">
+      <bpmn:incoming>Flow_A1</bpmn:incoming>
+      <bpmn:outgoing>Flow_A2</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:userTask id="Task_KelolaKeaktifanDosen" name="Kelola Status Keaktifan Dosen &amp; Akun User">
+      <bpmn:incoming>Flow_A2</bpmn:incoming>
+    </bpmn:userTask>
+
+    <bpmn:sequenceFlow id="Flow_A1" sourceRef="StartEvent_Admin" targetRef="Task_ImportMasterData" />
+    <bpmn:sequenceFlow id="Flow_A2" sourceRef="Task_ImportMasterData" targetRef="Task_KelolaKeaktifanDosen" />
+  </bpmn:process>
+
+  <!-- ================================================================= -->
+  <!-- BPMN DIAGRAM VISUAL COORDINATES (Matching Professional Layout)   -->
+  <!-- ================================================================= -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_SIMA">
+    <bpmndi:BPMNPlane id="BPMNPlane_SIMA" bpmnElement="Collaboration_SIMA">
+
+      <!-- 1. POOL MAHASISWA -->
+      <bpmndi:BPMNShape id="Participant_Mahasiswa_di" bpmnElement="Participant_Mahasiswa" isHorizontal="true">
+        <dc:Bounds x="120" y="60" width="4300" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- 2. POOL SISTEM -->
+      <bpmndi:BPMNShape id="Participant_System_di" bpmnElement="Participant_System" isHorizontal="true">
+        <dc:Bounds x="120" y="300" width="4300" height="220" />
+      </bpmndi:BPMNShape>
+
+      <!-- 3. POOL DOSEN -->
+      <bpmndi:BPMNShape id="Participant_Dosen_di" bpmnElement="Participant_Dosen" isHorizontal="true">
+        <dc:Bounds x="120" y="560" width="4300" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- 4. POOL PENANGGUNG JAWAB JALUR -->
+      <bpmndi:BPMNShape id="Participant_PenanggungJawabJalur_di" bpmnElement="Participant_PenanggungJawabJalur" isHorizontal="true">
+        <dc:Bounds x="120" y="800" width="4300" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- 5. POOL SEKPRODI -->
+      <bpmndi:BPMNShape id="Participant_Sekprodi_di" bpmnElement="Participant_Sekprodi" isHorizontal="true">
+        <dc:Bounds x="120" y="1040" width="4300" height="200" />
+      </bpmndi:BPMNShape>
+
+      <!-- 6. POOL ADMIN -->
+      <bpmndi:BPMNShape id="Participant_Admin_di" bpmnElement="Participant_Admin" isHorizontal="true">
+        <dc:Bounds x="120" y="1280" width="4300" height="180" />
+      </bpmndi:BPMNShape>
+
+      <!-- ================= ADMIN SHAPES ================= -->
+      <bpmndi:BPMNShape id="StartEvent_Admin_di" bpmnElement="StartEvent_Admin">
+        <dc:Bounds x="180" y="1352" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="160" y="1395" width="77" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ImportMasterData_di" bpmnElement="Task_ImportMasterData">
+        <dc:Bounds x="260" y="1330" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_KelolaKeaktifanDosen_di" bpmnElement="Task_KelolaKeaktifanDosen">
+        <dc:Bounds x="400" y="1330" width="100" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- ================= SEKPRODI SHAPES ================= -->
+      <bpmndi:BPMNShape id="Task_SiapkanPeriode_di" bpmnElement="Task_SiapkanPeriode">
+        <dc:Bounds x="550" y="1090" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvApprovedProposal_di" bpmnElement="Task_RecvApprovedProposal">
+        <dc:Bounds x="1690" y="1090" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_TetapkanPembimbing_di" bpmnElement="Task_TetapkanPembimbing">
+        <dc:Bounds x="1820" y="1090" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_PenjadwalanSidang_di" bpmnElement="Task_PenjadwalanSidang">
+        <dc:Bounds x="2870" y="1090" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_VerifikasiYudisium_di" bpmnElement="Task_VerifikasiYudisium">
+        <dc:Bounds x="3830" y="1090" width="100" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- ================= PENANGGUNG JAWAB JALUR SHAPES ================= -->
+      <bpmndi:BPMNShape id="Task_RecvProposal_di" bpmnElement="Task_RecvProposal">
+        <dc:Bounds x="1300" y="850" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ReviewPenjaluran_di" bpmnElement="Task_ReviewPenjaluran">
+        <dc:Bounds x="1430" y="850" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_PenjaluranApprove_di" bpmnElement="Gateway_PenjaluranApprove" isMarkerVisible="true">
+        <dc:Bounds x="1565" y="865" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1556" y="828" width="69" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- ================= SYSTEM SHAPES ================= -->
+      <bpmndi:BPMNShape id="Task_ValidasiPeriode_di" bpmnElement="Task_ValidasiPeriode">
+        <dc:Bounds x="550" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_PeriodeSiap_di" bpmnElement="Gateway_PeriodeSiap" isMarkerVisible="true">
+        <dc:Bounds x="685" y="365" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="676" y="335" width="69" height="14" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_PeriodeGagal_di" bpmnElement="EndEvent_PeriodeGagal">
+        <dc:Bounds x="692" y="452" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="674" y="495" width="72" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_AktifkanPeriode_di" bpmnElement="Task_AktifkanPeriode">
+        <dc:Bounds x="770" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifPeriode_di" bpmnElement="Task_SendNotifPeriode">
+        <dc:Bounds x="900" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ValidasiEligibility_di" bpmnElement="Task_ValidasiEligibility">
+        <dc:Bounds x="1040" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_Eligible_di" bpmnElement="Gateway_Eligible" isMarkerVisible="true">
+        <dc:Bounds x="1175" y="365" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1166" y="335" width="69" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ForwardToTrack_di" bpmnElement="Task_ForwardToTrack">
+        <dc:Bounds x="1300" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_HandleDitolak_di" bpmnElement="Task_HandleDitolak">
+        <dc:Bounds x="1550" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifDitolak_di" bpmnElement="Task_SendNotifDitolak">
+        <dc:Bounds x="1550" y="430" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SimpanPembimbing_di" bpmnElement="Task_SimpanPembimbing">
+        <dc:Bounds x="1820" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifPenetapan_di" bpmnElement="Task_SendNotifPenetapan">
+        <dc:Bounds x="1820" y="430" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_HitungBimbingan_di" bpmnElement="Task_HitungBimbingan">
+        <dc:Bounds x="2100" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_KuotaBimbingan_di" bpmnElement="Gateway_KuotaBimbingan" isMarkerVisible="true">
+        <dc:Bounds x="2235" y="365" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2220" y="328" width="80" height="40" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ProcessACC_di" bpmnElement="Task_ProcessACC">
+        <dc:Bounds x="2340" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifBimbingan_di" bpmnElement="Task_SendNotifBimbingan">
+        <dc:Bounds x="2470" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ValidasiBerkasSidang_di" bpmnElement="Task_ValidasiBerkasSidang">
+        <dc:Bounds x="2610" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_BerkasValid_di" bpmnElement="Gateway_BerkasValid" isMarkerVisible="true">
+        <dc:Bounds x="2745" y="365" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="2731" y="335" width="79" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SaveJadwalSidang_di" bpmnElement="Task_SaveJadwalSidang">
+        <dc:Bounds x="3010" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifJadwalSidang_di" bpmnElement="Task_SendNotifJadwalSidang">
+        <dc:Bounds x="3140" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_KalkulasiNilai_di" bpmnElement="Task_KalkulasiNilai">
+        <dc:Bounds x="3280" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Gateway_HasilSidang_di" bpmnElement="Gateway_HasilSidang" isMarkerVisible="true">
+        <dc:Bounds x="3415" y="365" width="50" height="50" />
+        <bpmndi:BPMNLabel><dc:Bounds x="3406" y="335" width="68" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_FinalisasiLulus_di" bpmnElement="Task_FinalisasiLulus">
+        <dc:Bounds x="3970" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_SendNotifKelulusan_di" bpmnElement="Task_SendNotifKelulusan">
+        <dc:Bounds x="4100" y="350" width="100" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- ================= DOSEN SHAPES ================= -->
+      <bpmndi:BPMNShape id="Task_PublikasiTopik_di" bpmnElement="Task_PublikasiTopik">
+        <dc:Bounds x="900" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvPenetapanDosen_di" bpmnElement="Task_RecvPenetapanDosen">
+        <dc:Bounds x="1820" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ReviewLogBimbingan_di" bpmnElement="Task_ReviewLogBimbingan">
+        <dc:Bounds x="1960" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_BeriIzinLanjut_di" bpmnElement="Task_BeriIzinLanjut">
+        <dc:Bounds x="2340" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_InputKetersediaanSidang_di" bpmnElement="Task_InputKetersediaanSidang">
+        <dc:Bounds x="2870" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvJadwalPenguji_di" bpmnElement="Task_RecvJadwalPenguji">
+        <dc:Bounds x="3140" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_PelaksanaanSidang_di" bpmnElement="Task_PelaksanaanSidang">
+        <dc:Bounds x="3280" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_ApproveRevisi_di" bpmnElement="Task_ApproveRevisi">
+        <dc:Bounds x="3690" y="610" width="100" height="80" />
+      </bpmndi:BPMNShape>
+
+      <!-- ================= MAHASISWA SHAPES ================= -->
+      <bpmndi:BPMNShape id="StartEvent_Mahasiswa_di" bpmnElement="StartEvent_Mahasiswa">
+        <dc:Bounds x="180" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="160" y="185" width="77" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvNotifPeriode_di" bpmnElement="Task_RecvNotifPeriode">
+        <dc:Bounds x="900" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_PendaftaranPenjaluran_di" bpmnElement="Task_PendaftaranPenjaluran">
+        <dc:Bounds x="1040" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_PerbaikiPengajuan_di" bpmnElement="Task_PerbaikiPengajuan">
+        <dc:Bounds x="1160" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvNotifDitolak_di" bpmnElement="Task_RecvNotifDitolak">
+        <dc:Bounds x="1550" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_MahasiswaDitolak_di" bpmnElement="EndEvent_MahasiswaDitolak">
+        <dc:Bounds x="1692" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="1679" y="185" width="63" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvNotifPenetapan_di" bpmnElement="Task_RecvNotifPenetapan">
+        <dc:Bounds x="1820" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_MengisiLogBimbingan_di" bpmnElement="Task_MengisiLogBimbingan">
+        <dc:Bounds x="1960" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvNotifBimbingan_di" bpmnElement="Task_RecvNotifBimbingan">
+        <dc:Bounds x="2470" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_DaftarSidang_di" bpmnElement="Task_DaftarSidang">
+        <dc:Bounds x="2610" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_PerbaikiDokumenSidang_di" bpmnElement="Task_PerbaikiDokumenSidang">
+        <dc:Bounds x="2720" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvJadwalMahasiswa_di" bpmnElement="Task_RecvJadwalMahasiswa">
+        <dc:Bounds x="3140" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_UploadRevisi_di" bpmnElement="Task_UploadRevisi">
+        <dc:Bounds x="3550" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Task_RecvNotifKelulusan_di" bpmnElement="Task_RecvNotifKelulusan">
+        <dc:Bounds x="4100" y="120" width="100" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="EndEvent_LulusMahasiswa_di" bpmnElement="EndEvent_LulusMahasiswa">
+        <dc:Bounds x="4242" y="142" width="36" height="36" />
+        <bpmndi:BPMNLabel><dc:Bounds x="4221" y="185" width="79" height="27" /></bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+
+      <!-- ================= SEQUENCE FLOW EDGES (Intra-Pool Solid Lines) ================= -->
+      <!-- Admin Flows -->
+      <bpmndi:BPMNEdge id="Flow_A1_di" bpmnElement="Flow_A1"><di:waypoint x="216" y="1370" /><di:waypoint x="260" y="1370" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_A2_di" bpmnElement="Flow_A2"><di:waypoint x="360" y="1370" /><di:waypoint x="400" y="1370" /></bpmndi:BPMNEdge>
+
+      <!-- Sekprodi Flows -->
+      <bpmndi:BPMNEdge id="Flow_Sek1_di" bpmnElement="Flow_Sek1"><di:waypoint x="1790" y="1130" /><di:waypoint x="1820" y="1130" /></bpmndi:BPMNEdge>
+
+      <!-- Track Supervisor Flows -->
+      <bpmndi:BPMNEdge id="Flow_TJ1_di" bpmnElement="Flow_TJ1"><di:waypoint x="1400" y="890" /><di:waypoint x="1430" y="890" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_TJ2_di" bpmnElement="Flow_TJ2"><di:waypoint x="1530" y="890" /><di:waypoint x="1565" y="890" /></bpmndi:BPMNEdge>
+
+      <!-- System Flows -->
+      <bpmndi:BPMNEdge id="Flow_S1_di" bpmnElement="Flow_S1"><di:waypoint x="650" y="390" /><di:waypoint x="685" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S_Fail_di" bpmnElement="Flow_S_Fail"><di:waypoint x="710" y="415" /><di:waypoint x="710" y="452" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S_Aktif_di" bpmnElement="Flow_S_Aktif"><di:waypoint x="735" y="390" /><di:waypoint x="770" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S2_di" bpmnElement="Flow_S2"><di:waypoint x="870" y="390" /><di:waypoint x="900" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S3_di" bpmnElement="Flow_S3"><di:waypoint x="1140" y="390" /><di:waypoint x="1175" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S_Forward_di" bpmnElement="Flow_S_Forward"><di:waypoint x="1225" y="390" /><di:waypoint x="1300" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S_NotifReject_di" bpmnElement="Flow_S_NotifReject"><di:waypoint x="1600" y="430" /><di:waypoint x="1600" y="450" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S4_di" bpmnElement="Flow_S4"><di:waypoint x="1870" y="430" /><di:waypoint x="1870" y="450" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S5_di" bpmnElement="Flow_S5"><di:waypoint x="2200" y="390" /><di:waypoint x="2235" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S6_di" bpmnElement="Flow_S6"><di:waypoint x="2440" y="390" /><di:waypoint x="2470" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S7_di" bpmnElement="Flow_S7"><di:waypoint x="2710" y="390" /><di:waypoint x="2745" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S8_di" bpmnElement="Flow_S8"><di:waypoint x="3110" y="390" /><di:waypoint x="3140" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S9_di" bpmnElement="Flow_S9"><di:waypoint x="3380" y="390" /><di:waypoint x="3415" y="390" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_S10_di" bpmnElement="Flow_S10"><di:waypoint x="4070" y="390" /><di:waypoint x="4100" y="390" /></bpmndi:BPMNEdge>
+
+      <!-- Mahasiswa Flows -->
+      <bpmndi:BPMNEdge id="Flow_M1_di" bpmnElement="Flow_M1"><di:waypoint x="216" y="160" /><di:waypoint x="900" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M2_di" bpmnElement="Flow_M2"><di:waypoint x="1000" y="160" /><di:waypoint x="1040" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M3_di" bpmnElement="Flow_M3"><di:waypoint x="1140" y="160" /><di:waypoint x="1820" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M4_di" bpmnElement="Flow_M4"><di:waypoint x="1920" y="160" /><di:waypoint x="1960" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M5_di" bpmnElement="Flow_M5"><di:waypoint x="2060" y="160" /><di:waypoint x="2470" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M6_di" bpmnElement="Flow_M6"><di:waypoint x="2570" y="160" /><di:waypoint x="2610" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M7_di" bpmnElement="Flow_M7"><di:waypoint x="2710" y="160" /><di:waypoint x="3140" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M8_di" bpmnElement="Flow_M8"><di:waypoint x="3240" y="160" /><di:waypoint x="3550" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M9_di" bpmnElement="Flow_M9"><di:waypoint x="3650" y="160" /><di:waypoint x="4100" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M10_di" bpmnElement="Flow_M10"><di:waypoint x="4200" y="160" /><di:waypoint x="4242" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M_Retry_di" bpmnElement="Flow_M_Retry"><di:waypoint x="1160" y="160" /><di:waypoint x="1140" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M_FixDoc_di" bpmnElement="Flow_M_FixDoc"><di:waypoint x="2720" y="160" /><di:waypoint x="2710" y="160" /></bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="Flow_M_EndDitolak_di" bpmnElement="Flow_M_EndDitolak"><di:waypoint x="1650" y="160" /><di:waypoint x="1692" y="160" /></bpmndi:BPMNEdge>
+
+      <!-- ================= MESSAGE FLOW EDGES (Inter-Pool Dashed Lines) ================= -->
+      <bpmndi:BPMNEdge id="MF_Admin_To_Sekprodi_di" bpmnElement="MF_Admin_To_Sekprodi">
+        <di:waypoint x="450" y="1330" /><di:waypoint x="450" y="1130" /><di:waypoint x="550" y="1130" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Sekprodi_To_System_Period_di" bpmnElement="MF_Sekprodi_To_System_Period">
+        <di:waypoint x="600" y="1090" /><di:waypoint x="600" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Periode_di" bpmnElement="MF_Notif_Periode">
+        <di:waypoint x="950" y="350" /><di:waypoint x="950" y="200" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Mahasiswa_Submit_Pendaftaran_di" bpmnElement="MF_Mahasiswa_Submit_Pendaftaran">
+        <di:waypoint x="1090" y="200" /><di:waypoint x="1090" y="350" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_System_Forward_To_Track_di" bpmnElement="MF_System_Forward_To_Track">
+        <di:waypoint x="1350" y="430" /><di:waypoint x="1350" y="850" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Track_Reject_Proposal_di" bpmnElement="MF_Track_Reject_Proposal">
+        <di:waypoint x="1590" y="865" /><di:waypoint x="1590" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_System_Reject_Notification_di" bpmnElement="MF_System_Reject_Notification">
+        <di:waypoint x="1600" y="430" /><di:waypoint x="1600" y="200" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Track_Approve_Proposal_di" bpmnElement="MF_Track_Approve_Proposal">
+        <di:waypoint x="1615" y="890" /><di:waypoint x="1740" y="890" /><di:waypoint x="1740" y="1090" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Sekprodi_Assign_Supervisors_di" bpmnElement="MF_Sekprodi_Assign_Supervisors">
+        <di:waypoint x="1870" y="1090" /><di:waypoint x="1870" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Penetapan_Mahasiswa_di" bpmnElement="MF_Notif_Penetapan_Mahasiswa">
+        <di:waypoint x="1870" y="350" /><di:waypoint x="1870" y="200" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Penetapan_Dosen_di" bpmnElement="MF_Notif_Penetapan_Dosen">
+        <di:waypoint x="1870" y="430" /><di:waypoint x="1870" y="610" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Mahasiswa_Submit_Log_di" bpmnElement="MF_Mahasiswa_Submit_Log">
+        <di:waypoint x="2010" y="200" /><di:waypoint x="2010" y="610" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Dosen_Verify_Log_di" bpmnElement="MF_Dosen_Verify_Log">
+        <di:waypoint x="2060" y="650" /><di:waypoint x="2150" y="650" /><di:waypoint x="2150" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Dosen_Give_ACC_di" bpmnElement="MF_Dosen_Give_ACC">
+        <di:waypoint x="2390" y="610" /><di:waypoint x="2390" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_ACC_Mahasiswa_di" bpmnElement="MF_Notif_ACC_Mahasiswa">
+        <di:waypoint x="2520" y="350" /><di:waypoint x="2520" y="200" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Mahasiswa_Register_Defense_di" bpmnElement="MF_Mahasiswa_Register_Defense">
+        <di:waypoint x="2660" y="200" /><di:waypoint x="2660" y="350" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Dosen_Input_Availability_di" bpmnElement="MF_Dosen_Input_Availability">
+        <di:waypoint x="2920" y="690" /><di:waypoint x="2920" y="1090" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_System_Validated_Docs_di" bpmnElement="MF_System_Validated_Docs">
+        <di:waypoint x="2770" y="390" /><di:waypoint x="2820" y="390" /><di:waypoint x="2820" y="1130" /><di:waypoint x="2870" y="1130" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Sekprodi_Submit_Schedule_di" bpmnElement="MF_Sekprodi_Submit_Schedule">
+        <di:waypoint x="2970" y="1130" /><di:waypoint x="3060" y="1130" /><di:waypoint x="3060" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Jadwal_Mahasiswa_di" bpmnElement="MF_Notif_Jadwal_Mahasiswa">
+        <di:waypoint x="3190" y="350" /><di:waypoint x="3190" y="200" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Jadwal_Penguji_di" bpmnElement="MF_Notif_Jadwal_Penguji">
+        <di:waypoint x="3190" y="430" /><di:waypoint x="3190" y="610" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Dosen_Submit_Grades_di" bpmnElement="MF_Dosen_Submit_Grades">
+        <di:waypoint x="3330" y="610" /><di:waypoint x="3330" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Mahasiswa_Submit_Revision_di" bpmnElement="MF_Mahasiswa_Submit_Revision">
+        <di:waypoint x="3600" y="200" /><di:waypoint x="3600" y="610" /><di:waypoint x="3690" y="610" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Dosen_Approve_Revision_di" bpmnElement="MF_Dosen_Approve_Revision">
+        <di:waypoint x="3740" y="690" /><di:waypoint x="3740" y="1130" /><di:waypoint x="3830" y="1130" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Sekprodi_Submit_Yudisium_di" bpmnElement="MF_Sekprodi_Submit_Yudisium">
+        <di:waypoint x="3930" y="1130" /><di:waypoint x="4020" y="1130" /><di:waypoint x="4020" y="430" />
+      </bpmndi:BPMNEdge>
+
+      <bpmndi:BPMNEdge id="MF_Notif_Kelulusan_Mahasiswa_di" bpmnElement="MF_Notif_Kelulusan_Mahasiswa">
+        <di:waypoint x="4150" y="350" /><di:waypoint x="4150" y="200" />
+      </bpmndi:BPMNEdge>
+
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

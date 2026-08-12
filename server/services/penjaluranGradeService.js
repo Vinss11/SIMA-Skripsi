@@ -26,14 +26,12 @@ function gradeStatus(attempt) {
 async function resolveMapping(registration, transaction = null, periodOverride = null) {
   const track = registrationTrack(registration);
   if (!track || track === "pengabdian") return null;
-  const assignment = await db.MahasiswaKurikulum.findOne({ where: { mahasiswa_id: registration.mahasiswa_id, is_active: true }, transaction: transaction || undefined });
   const mappings = await db.MappingMataKuliahPenjaluran.findAll({
     where: { jalur: track, program_kuliah: registration.program_kuliah || "reguler", is_active: true,
       [Op.and]: [
-        { [Op.or]: [{ kurikulum_id: assignment?.kurikulum_id || null }, { kurikulum_id: null }] },
         { [Op.or]: [{ periode_berlaku_id: (periodOverride || registration.periode)?.periode_akademik_id || null }, { periode_berlaku_id: null }] },
       ] },
-    order: [["kurikulum_id", "DESC NULLS LAST"], ["periode_berlaku_id", "DESC NULLS LAST"]], transaction: transaction || undefined,
+    order: [["periode_berlaku_id", "DESC NULLS LAST"]], transaction: transaction || undefined,
   });
   const mapping = mappings[0];
   if (!mapping) return null;
@@ -124,7 +122,7 @@ function readRows(bytes) {
     payload: Object.fromEntries(headers.map((header, column) => [header, cells[column] ?? ""])) }));
 }
 
-async function createPreview({ periodePenjaluranId, bytes, filename, actorId }) {
+async function createPreview({ periodePenjaluranId, bytes, actorId }) {
   const period = await db.PeriodePenjaluran.findByPk(periodePenjaluranId);
   if (!period) throw new PenjaluranGradeError("Periode pendaftaran penjaluran tidak ditemukan.", 404, "GRADE_PERIOD_NOT_FOUND");
   const fileSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
@@ -147,19 +145,14 @@ async function createPreview({ periodePenjaluranId, bytes, filename, actorId }) 
         if (comparisons.some(([field, value]) => clean(item.payload[field]) !== clean(value))) errors.push("Identitas baris berubah dari template sistem.");
       }
       return { row_number: item.rowNumber, pendaftaran_penjaluran_id: expected?.pendaftaran_id || null, mata_kuliah_id: expected?.mata_kuliah_id || null,
-        nilai_huruf: grade || null, is_valid: errors.length === 0, errors, raw_payload: item.payload, expected_payload: expected ? templatePayload(expected) : {}, old_grade: expected?.nilai || null };
+        nilai_huruf: grade || null, is_valid: errors.length === 0, errors, raw_payload: item.payload, old_grade: expected?.nilai || null };
     });
     const valid = rowPayloads.filter((row) => row.is_valid).length;
-    const imported = await db.ImportNilaiPenjaluran.create({ periode_penjaluran_id: periodePenjaluranId, original_filename: clean(filename).slice(0, 255), file_sha256: fileSha256,
+    const imported = await db.ImportNilaiPenjaluran.create({ periode_penjaluran_id: periodePenjaluranId, file_sha256: fileSha256,
       status: valid ? "validated" : "invalid", counts: { total: rowPayloads.length, valid, invalid: rowPayloads.length - valid }, uploaded_by: actorId }, { transaction });
     await db.ImportNilaiPenjaluranRow.bulkCreate(rowPayloads.map((row) => ({ ...row, import_id: imported.id })), { transaction });
     return { import: await db.ImportNilaiPenjaluran.findByPk(imported.id, { include: [{ model: db.ImportNilaiPenjaluranRow, as: "rows" }], transaction }), replayed: false };
   });
-}
-
-async function getSystemSource(transaction) {
-  const [source] = await db.SumberDataAkademik.findOrCreate({ where: { kode: "NILAI-PENJALURAN" }, defaults: { nama: "Import Nilai Mata Kuliah Penjaluran", jenis: "penjaluran_grade_import", kode_program_studi: "INFORMATIKA", authority_level: 100, is_active: true, metadata: {} }, transaction });
-  return source;
 }
 
 async function commitImport(importId, actorId) {
@@ -169,7 +162,7 @@ async function commitImport(importId, actorId) {
     if (imported.status === "committed") return { import: imported, replayed: true };
     const importRows = await db.ImportNilaiPenjaluranRow.findAll({ where: { import_id: imported.id }, order: [["row_number", "ASC"]], transaction });
     imported.setDataValue("rows", importRows);
-    const source = await getSystemSource(transaction); let saved = 0; let skipped = 0;
+    let saved = 0; let skipped = 0;
     for (const row of importRows.filter((item) => item.is_valid)) {
       const registration = await db.PendaftaranPenjaluran.findByPk(row.pendaftaran_penjaluran_id, { transaction, lock: transaction.LOCK.UPDATE });
       const registrationPeriod = registration ? await db.PeriodePenjaluran.findByPk(registration.periode_penjaluran_id, { transaction }) : null;
@@ -181,21 +174,16 @@ async function commitImport(importId, actorId) {
       }
       const grade = gradePolicy.normalizeGrade(row.nilai_huruf); const passed = gradePolicy.isPassingGrade(grade);
       let active = await db.PercobaanMataKuliahMahasiswa.findOne({ where: { pendaftaran_penjaluran_id: registration.id, mata_kuliah_id: row.mata_kuliah_id, is_active: true }, transaction, lock: transaction.LOCK.UPDATE });
-      if (active && active.nilai_huruf === grade) { await row.update({ result_attempt_id: active.id }, { transaction }); skipped += 1; continue; }
+      if (active && active.nilai_huruf === grade) { skipped += 1; continue; }
       const maxAttempt = Number(await db.PercobaanMataKuliahMahasiswa.max("attempt_ke", { where: { mahasiswa_id: registration.mahasiswa_id, mata_kuliah_id: row.mata_kuliah_id }, transaction }) || 0);
-      const now = new Date(); const version = active ? Number(active.version) + 1 : 1; const attemptKe = active ? active.attempt_ke : maxAttempt + 1;
-      if (active) await active.update({ is_active: false, superseded_at: now }, { transaction });
-      const attempt = await db.PercobaanMataKuliahMahasiswa.create({ mahasiswa_id: registration.mahasiswa_id, pendaftaran_penjaluran_id: registration.id,
-        mata_kuliah_id: row.mata_kuliah_id, periode_akademik_id: academicPeriod.id, source_id: source.id,
-        nilai_penjaluran_import_row_id: row.id, external_record_id: `PENJALURAN:${registration.id}:${row.mata_kuliah_id}`, kelas_normalized: "PENJALURAN",
-        attempt_ke: attemptKe, attempt_number_source: "system", sks_diambil: resolved.course.sks_default, sks_lulus: passed ? resolved.course.sks_default : 0,
-        nilai_huruf: grade, nilai_angka: gradePolicy.GRADE_POINTS[grade], status_registrasi: "completed", status_kelulusan: passed ? "passed" : "failed",
-        credit_origin: "regular", recognition_status: "not_required", effective_at: now, academic_effective_at: now, recorded_at: now,
-        version, previous_version_id: active?.id || null, is_active: true, metadata: { source: "penjaluran_grade_import", import_id: imported.id } }, { transaction });
-      const [requirement] = await db.KewajibanMataKuliahPenjaluran.findOrCreate({ where: { pendaftaran_penjaluran_id: registration.id, mata_kuliah_id: row.mata_kuliah_id },
-        defaults: { mahasiswa_id: registration.mahasiswa_id, status: passed ? "lulus" : "tidak_lulus", fulfilled_attempt_id: passed ? attempt.id : null }, transaction });
-      await requirement.update({ status: passed ? "lulus" : "tidak_lulus", fulfilled_attempt_id: passed ? attempt.id : null }, { transaction });
-      await row.update({ result_attempt_id: attempt.id }, { transaction }); saved += 1;
+      const version = active ? Number(active.version) + 1 : 1; const attemptKe = active ? active.attempt_ke : maxAttempt + 1;
+      if (active) await active.update({ is_active: false }, { transaction });
+      await db.PercobaanMataKuliahMahasiswa.create({ mahasiswa_id: registration.mahasiswa_id, pendaftaran_penjaluran_id: registration.id,
+        mata_kuliah_id: row.mata_kuliah_id, periode_akademik_id: academicPeriod.id,
+        nilai_penjaluran_import_row_id: row.id, attempt_ke: attemptKe, nilai_huruf: grade,
+        status_registrasi: "completed", status_kelulusan: passed ? "passed" : "failed",
+        version, previous_version_id: active?.id || null, is_active: true }, { transaction });
+      saved += 1;
     }
     const counts = { ...imported.counts, saved, skipped, invalid: importRows.filter((row) => !row.is_valid).length };
     await imported.update({ status: "committed", counts, committed_by: actorId, committed_at: new Date() }, { transaction });

@@ -216,10 +216,6 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
-      surat_pengunduran_diri: {
-        type: DataTypes.TEXT,
-        allowNull: true,
-      },
       // ===== STATUS & TRACKING =====
       status: {
         type: DataTypes.ENUM(
