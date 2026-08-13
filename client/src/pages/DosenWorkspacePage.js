@@ -89,6 +89,7 @@ const SUPERVISOR_ASSIGNMENT_STATUS_LABELS = {
 };
 const DOSEN_MASTER_STATUS_LABELS = {
   active: "Aktif",
+  study_permission: "Izin Belajar",
   inactive: "Nonaktif Sementara",
   study_leave: "Tugas Belajar",
   retired: "Pensiun",

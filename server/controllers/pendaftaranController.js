@@ -1,5 +1,10 @@
 const { Op } = require("sequelize");
-const { ACTIVE_DOSEN_WHERE, assertDosenCanReceiveNewAssignment, validateDosenForNewAssignment } = require("../services/dosenStatusService");
+const {
+  DPA_ELIGIBLE_DOSEN_WHERE,
+  assertDosenCanBeDpa,
+  assertDosenCanReceiveNewAssignment,
+  validateDosenForNewAssignment,
+} = require("../services/dosenStatusService");
 const { countActiveSupervisions } = require("../services/supervisorAccessService");
 const { getActiveSupervisorAssignment } = require("../services/penetapanPembimbingService");
 const {
@@ -155,7 +160,7 @@ async function validateDosenIdsExist(dosenIds, transaction) {
 
   const rows = await Dosen.findAll({
     where: { id: uniqueIds },
-    attributes: ["id", "nik", "nama", "gelar", "email"],
+    attributes: ["id", "nik", "nama", "gelar", "email", "status_keaktifan", "account_is_active"],
     transaction,
   });
   return new Map(rows.map((item) => [Number(item.id), item]));
@@ -326,15 +331,18 @@ exports.getDosenDropdown = async (req, res) => {
       order: [["updatedAt", "DESC"]],
     });
     const dosens = await Dosen.findAll({
-      where: ACTIVE_DOSEN_WHERE,
-      attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan"],
+      where: DPA_ELIGIBLE_DOSEN_WHERE,
+      attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan", "account_is_active"],
       include: [
         {
           model: Klaster,
           as: "klasters",
           attributes: ["id", "kode", "nama"],
           through: { attributes: [] },
-          required: true,
+          // Klaster diperlukan untuk menyaring calon pembimbing skripsi, tetapi
+          // bukan syarat penetapan DPA. Tetap kembalikan dosen tanpa klaster agar
+          // opsi DPA hanya ditentukan oleh status akademik dan status akunnya.
+          required: false,
         },
       ],
       order: [["nama", "ASC"]],
@@ -351,13 +359,7 @@ exports.getDosenDropdown = async (req, res) => {
       : [];
     const availabilityByDosen = new Map(availabilityRows.map((item) => [Number(item.dosen_id), item]));
 
-    const eligibleDosens = dosens.filter((dosen) => {
-        if (!activePeriode) return false;
-        const availability = availabilityByDosen.get(dosen.id);
-        return availability?.configuration_status === "ready"
-          && availability?.tersedia_membimbing === true;
-      });
-    const mappedDosens = (await Promise.all(eligibleDosens.map(async (dosen) => {
+    const mappedDosens = (await Promise.all(dosens.map(async (dosen) => {
         const availability = availabilityByDosen.get(dosen.id);
         const kuotaBimbingan = Number(dosen.kuota_bimbingan ?? 0);
         const jumlahBimbingan = await countActiveSupervisions(dosen.id);
@@ -376,6 +378,15 @@ exports.getDosenDropdown = async (req, res) => {
           sisa_kuota: sisaKuota,
           is_no_bimbingan: jumlahBimbingan === 0,
           is_kuota_penuh: sisaKuota <= 0,
+          status_keaktifan: dosen.status_keaktifan,
+          can_be_dpa: assertDosenCanBeDpa(dosen).allowed,
+          can_receive_new_supervision: Boolean(
+            dosen.status_keaktifan === "active"
+            && activePeriode
+            && availability?.configuration_status === "ready"
+            && availability?.tersedia_membimbing === true
+            && sisaKuota > 0
+          ),
           periode_penjaluran_id: activePeriode?.id || null,
           klasters: Array.isArray(dosen.klasters)
             ? dosen.klasters.map((item) => ({
@@ -385,7 +396,7 @@ exports.getDosenDropdown = async (req, res) => {
               }))
             : [],
         };
-      }))).filter((dosen) => !dosen.is_kuota_penuh).sort((a, b) => {
+      }))).sort((a, b) => {
         // Prioritas: dosen tanpa mahasiswa bimbingan, lalu yang kuotanya masih tersedia
         if (a.is_no_bimbingan !== b.is_no_bimbingan) return a.is_no_bimbingan ? -1 : 1;
         if (a.is_kuota_penuh !== b.is_kuota_penuh) return a.is_kuota_penuh ? 1 : -1;
@@ -667,6 +678,10 @@ async function createKelompokPerintisanRegistration({
   if (dpaMap.size !== new Set(dpaIds).size) {
     return { error: "Salah satu Dosen Pembimbing Akademik tidak ditemukan." };
   }
+  const invalidDpa = [...dpaMap.values()].find((dosen) => !assertDosenCanBeDpa(dosen).allowed);
+  if (invalidDpa) {
+    return { error: assertDosenCanBeDpa(invalidDpa).message };
+  }
 
   const duplicateRegistrations = await PendaftaranPenjaluran.findAll({
     where: {
@@ -873,10 +888,15 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
           detail: { field: "dosen_pembimbing_akademik_id" },
         });
       }
-      const dpaEligibility = assertDosenCanReceiveNewAssignment(bootstrapDpa, "penugasan baru");
+      const dpaEligibility = assertDosenCanBeDpa(bootstrapDpa);
       if (!dpaEligibility.allowed) {
         await t.rollback();
-        return res.status(409).json({ success: false, message: `Dosen Pembimbing Akademik: ${dpaEligibility.message}` });
+        return res.status(409).json({
+          success: false,
+          code: "DPA_NOT_ELIGIBLE",
+          message: `Dosen Pembimbing Akademik: ${dpaEligibility.message}`,
+          detail: { field: "dosen_pembimbing_akademik_id" },
+        });
       }
       authenticatedMahasiswa = await Mahasiswa.create({
         nim,
@@ -1086,8 +1106,18 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       });
     }
 
+    const dpaEligibility = assertDosenCanBeDpa(dosenPembimbingAkademik);
+    if (!dpaEligibility.allowed) {
+      await t.rollback();
+      return res.status(409).json({
+        success: false,
+        code: "DPA_NOT_ELIGIBLE",
+        message: `Dosen Pembimbing Akademik: ${dpaEligibility.message}`,
+        detail: { field: "dosen_pembimbing_akademik_id" },
+      });
+    }
+
     for (const [label, targetDosen] of [
-      ["Dosen Pembimbing Akademik", dosenPembimbingAkademik],
       ["Dosen Pembimbing TA", dosenPembimbingTA],
       ["Dosen Pembimbing TA baru", dosenTABaru],
     ]) {

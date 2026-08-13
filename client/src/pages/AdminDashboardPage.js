@@ -99,6 +99,7 @@ const DOSEN_MANAGEMENT_TABS = [
 ];
 const DOSEN_STATUS_OPTIONS = [
   { value: "active", label: "Aktif" },
+  { value: "study_permission", label: "Izin Belajar" },
   { value: "inactive", label: "Nonaktif Sementara" },
   { value: "study_leave", label: "Tugas Belajar" },
   { value: "retired", label: "Pensiun" },
@@ -2398,7 +2399,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   status_keaktifan: value,
                                   account_is_active: value === "retired" ? false : prev.account_is_active,
                                   continue_existing_supervision:
-                                    value === "active" || value === "study_leave"
+                                    value === "active" || value === "study_permission" || value === "study_leave"
                                       ? true
                                       : false,
                                 }));
@@ -2417,7 +2418,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             Akun dapat login
                           </label>
                           <label className="flex items-center gap-2 rounded-lg border border-[#d8e0f3] bg-white px-3 py-2 text-sm text-[#2d3f6f]">
-                            <input type="checkbox" checked={dosenEditForm.continue_existing_supervision} disabled={dosenEditForm.status_keaktifan === "retired"} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, continue_existing_supervision: event.target.checked }))} />
+                            <input type="checkbox" checked={dosenEditForm.continue_existing_supervision} disabled={["study_permission", "retired"].includes(dosenEditForm.status_keaktifan)} onChange={(event) => setDosenEditForm((prev) => ({ ...prev, continue_existing_supervision: event.target.checked }))} />
                             Boleh melanjutkan bimbingan mahasiswa lama
                           </label>
                           <div className="md:col-span-2">

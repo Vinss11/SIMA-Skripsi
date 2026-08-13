@@ -14,7 +14,7 @@ const {
   DOSEN_STATUSES,
   analyzeDosenStatusImpact,
   evaluateDosenStatusFollowUp,
-  assertDosenCanReceiveNewAssignment,
+  assertDosenCanBeDpa,
   initializeAvailabilityForDosen,
   syncAvailabilityForMasterStatusChange,
 } = require("../services/dosenStatusService");
@@ -595,14 +595,14 @@ exports.assignDosenPembimbingAkademik = async (req, res) => {
       });
     }
 
-    const assignmentValidation = assertDosenCanReceiveNewAssignment(dosen, "penugasan baru sebagai DPA");
-    if (!assignmentValidation.allowed || dosen.account_is_active === false) {
+    const assignmentValidation = assertDosenCanBeDpa(dosen);
+    if (!assignmentValidation.allowed) {
       await t.rollback();
       return res.status(409).json({
         success: false,
-        message: !assignmentValidation.allowed
-          ? assignmentValidation.message
-          : `${dosen.nama} memiliki akun nonaktif dan tidak dapat menerima penugasan baru sebagai DPA.`,
+        code: "DPA_NOT_ELIGIBLE",
+        message: assignmentValidation.message,
+        detail: { field: "dosen_pembimbing_akademik_id" },
       });
     }
 
@@ -974,7 +974,7 @@ exports.createDosen = async (req, res) => {
       await t.rollback();
       return res.status(400).json({
         success: false,
-        message: "Status dosen wajib diisi dengan nilai active, inactive, study_leave, atau retired.",
+        message: "Status dosen wajib diisi dengan nilai active, study_permission, inactive, study_leave, atau retired.",
       });
     }
 
@@ -1126,7 +1126,7 @@ exports.createDosen = async (req, res) => {
         kuota_bimbingan: parsedKuota,
         status_keaktifan: normalizedStatus,
         account_is_active: normalizedStatus !== "retired",
-        continue_existing_supervision: normalizedStatus === "active",
+        continue_existing_supervision: ["active", "study_permission"].includes(normalizedStatus),
         status_effective_at: getJakartaDateOnly(),
         status_reason: "Status awal saat dosen ditambahkan",
         status_updated_by: req.user.id,

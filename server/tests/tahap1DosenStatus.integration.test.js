@@ -170,6 +170,54 @@ test("integrasi perubahan status dosen menjaga akun dan membuat tindak lanjut ha
     assert.equal(dosen.continue_existing_supervision, true);
   });
 
+  await t.test("Izin Belajar dapat ditetapkan sebagai DPA sedangkan Tugas Belajar ditolak", async () => {
+    const dosen = await createDosen(20);
+    const mahasiswaIzin = await Mahasiswa.create({
+      nim: `DPA${suffix}1`,
+      nama: "Mahasiswa DPA Izin Belajar",
+      email: `dpa.izin.${suffix}@test.local`,
+      password: "test-password",
+      status_jalur_saat_ini: "belum_mengajukan",
+    }, { hooks: false });
+    const mahasiswaTugas = await Mahasiswa.create({
+      nim: `DPA${suffix}2`,
+      nama: "Mahasiswa DPA Tugas Belajar",
+      email: `dpa.tugas.${suffix}@test.local`,
+      password: "test-password",
+      status_jalur_saat_ini: "belum_mengajukan",
+    }, { hooks: false });
+    createdMahasiswaIds.push(mahasiswaIzin.id, mahasiswaTugas.id);
+
+    await updateStatus({
+      adminId: admin.id,
+      dosenId: dosen.id,
+      body: { status_keaktifan: "study_permission", continue_existing_supervision: false },
+    });
+    await dosen.reload();
+    assert.equal(dosen.status_keaktifan, "study_permission");
+    assert.equal(dosen.continue_existing_supervision, true);
+
+    const izinResponse = createResponseRecorder();
+    await adminController.assignDosenPembimbingAkademik({
+      params: { id: String(mahasiswaIzin.id) },
+      body: { dosen_pembimbing_akademik_id: dosen.id },
+    }, izinResponse);
+    assert.equal(izinResponse.statusCode, 200, izinResponse.payload?.message);
+
+    await updateStatus({
+      adminId: admin.id,
+      dosenId: dosen.id,
+      body: { status_keaktifan: "study_leave", continue_existing_supervision: true },
+    });
+    const tugasResponse = createResponseRecorder();
+    await adminController.assignDosenPembimbingAkademik({
+      params: { id: String(mahasiswaTugas.id) },
+      body: { dosen_pembimbing_akademik_id: dosen.id },
+    }, tugasResponse);
+    assert.equal(tugasResponse.statusCode, 409);
+    assert.equal(tugasResponse.payload?.code, "DPA_NOT_ELIGIBLE");
+  });
+
   await t.test("study_leave dengan izin lanjut tidak membuat tindak lanjut penggantian", async () => {
     const dosen = await createDosen(2);
     await attachActiveStudent(dosen, 2);

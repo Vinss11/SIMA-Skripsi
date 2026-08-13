@@ -1,6 +1,7 @@
 "use strict";
 
-const DOSEN_STATUSES = ["active", "inactive", "study_leave", "retired"];
+const DOSEN_STATUSES = ["active", "study_permission", "inactive", "study_leave", "retired"];
+const DPA_ELIGIBLE_STATUSES = ["active", "study_permission"];
 
 function normalizeDosenStatus(value, fallback = "active") {
   const normalized = String(value || "").trim().toLowerCase();
@@ -9,7 +10,7 @@ function normalizeDosenStatus(value, fallback = "active") {
 
 function normalizeContinueExistingSupervision(status, requestedValue) {
   const normalizedStatus = normalizeDosenStatus(status);
-  if (normalizedStatus === "active") return true;
+  if (["active", "study_permission"].includes(normalizedStatus)) return true;
   if (normalizedStatus === "retired") return false;
   return requestedValue === true;
 }
@@ -26,6 +27,7 @@ function getDosenStatusDecision({
   return {
     status,
     can_login: status !== "retired" && accountIsActive !== false,
+    can_be_dpa: DPA_ELIGIBLE_STATUSES.includes(status),
     can_receive_new_assignment: masterActive,
     can_continue_existing_supervision: canContinue,
     requires_supervisor_replacement: !canContinue,
@@ -115,6 +117,7 @@ function evaluateDosenStatusFollowUp({
 
 module.exports = {
   DOSEN_STATUSES,
+  DPA_ELIGIBLE_STATUSES,
   normalizeDosenStatus,
   normalizeContinueExistingSupervision,
   getDosenStatusDecision,

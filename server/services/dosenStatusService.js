@@ -18,6 +18,7 @@ const {
 } = require("../models");
 const {
   DOSEN_STATUSES,
+  DPA_ELIGIBLE_STATUSES,
   getDosenStatusDecision,
   canReceiveNewAssignment,
   evaluateNewAssignmentEligibility,
@@ -25,6 +26,25 @@ const {
 } = require("./dosenStatusPolicy");
 
 const ACTIVE_DOSEN_WHERE = { status_keaktifan: "active" };
+const DPA_ELIGIBLE_DOSEN_WHERE = { status_keaktifan: { [Op.in]: DPA_ELIGIBLE_STATUSES } };
+
+function canDosenBeDpa(dosen) {
+  return getDosenStatusDecision({
+    statusKeaktifan: dosen?.status_keaktifan,
+    accountIsActive: dosen?.account_is_active,
+  }).can_be_dpa && dosen?.account_is_active !== false;
+}
+
+function assertDosenCanBeDpa(dosen) {
+  if (!dosen) return { allowed: false, message: "Data dosen tidak ditemukan." };
+  if (!canDosenBeDpa(dosen)) {
+    return {
+      allowed: false,
+      message: `${dosen.nama || "Dosen"} berstatus ${dosen.status_keaktifan} dan tidak dapat ditetapkan sebagai DPA.`,
+    };
+  }
+  return { allowed: true };
+}
 
 function isDosenAcademicallyActive(dosen) {
   return getDosenStatusDecision({ statusKeaktifan: dosen?.status_keaktifan }).can_receive_new_assignment;
@@ -555,11 +575,14 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
 module.exports = {
   DOSEN_STATUSES,
   ACTIVE_DOSEN_WHERE,
+  DPA_ELIGIBLE_DOSEN_WHERE,
   getDosenStatusDecision,
   canReceiveNewAssignment,
   evaluateNewAssignmentEligibility,
   isDosenAcademicallyActive,
   assertDosenCanReceiveNewAssignment,
+  canDosenBeDpa,
+  assertDosenCanBeDpa,
   canContinueExistingSupervision,
   evaluateDosenStatusFollowUp,
   assertDosenCanContinueExistingSupervision,

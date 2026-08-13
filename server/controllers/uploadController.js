@@ -5,6 +5,7 @@ const { Op } = require("sequelize");
 const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
 const {
   assertDosenCanReceiveNewAssignment,
+  assertDosenCanBeDpa,
   initializeAvailabilityForDosen,
   getJakartaDateOnly,
 } = require("../services/dosenStatusService");
@@ -197,6 +198,7 @@ const DEFAULT_KLASTER_MASTER = [
 
 const DOSEN_STATUS_IMPORT_OPTIONS = [
   { label: "Aktif", value: "active" },
+  { label: "Izin Belajar", value: "study_permission" },
   { label: "Nonaktif Sementara", value: "inactive" },
   { label: "Tugas Belajar", value: "study_leave" },
   { label: "Pensiun", value: "retired" },
@@ -796,7 +798,7 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
             kuota_bimbingan: kuota,
             status_keaktifan: statusKeaktifan,
             account_is_active: statusKeaktifan !== "retired",
-            continue_existing_supervision: statusKeaktifan === "active",
+            continue_existing_supervision: ["active", "study_permission"].includes(statusKeaktifan),
             status_effective_at: statusEffectiveAt,
             status_reason: statusReason,
             status_updated_by: adminId,
@@ -826,7 +828,7 @@ async function processDosenUploadRows(uploadRows, { transaction, shouldCreate = 
         kuota_bimbingan: savedDosen?.kuota_bimbingan ?? kuota,
         status_keaktifan: savedDosen?.status_keaktifan ?? statusKeaktifan,
         account_is_active: savedDosen?.account_is_active ?? statusKeaktifan !== "retired",
-        continue_existing_supervision: savedDosen?.continue_existing_supervision ?? statusKeaktifan === "active",
+        continue_existing_supervision: savedDosen?.continue_existing_supervision ?? ["active", "study_permission"].includes(statusKeaktifan),
         status_effective_at: savedDosen?.status_effective_at ?? statusEffectiveAt,
         status_reason: savedDosen?.status_reason ?? statusReason,
       });
@@ -1847,6 +1849,16 @@ exports.uploadMahasiswa = async (req, res) => {
           continue;
         }
 
+        const dpaEligibility = assertDosenCanBeDpa(dpa);
+        if (!dpaEligibility.allowed) {
+          results.failed.push({
+            row: rowNumber,
+            data: row,
+            error: dpaEligibility.message,
+          });
+          continue;
+        }
+
         const existingMahasiswaNama = await Mahasiswa.findOne({
           where: sequelize.where(sequelize.fn("LOWER", sequelize.fn("TRIM", sequelize.col("nama"))), normalizedNamaKey),
           transaction: t,
@@ -2113,6 +2125,7 @@ exports.uploadDosen = async (req, res) => {
           results.failed.push({ row: rowNumber, data: row, error: "NIK wajib diisi karena digunakan sebagai username dosen." });
           continue;
         }
+
         const normalizedNamaKey = normalizeNameKey(nameValidation.normalized);
         const normalizedEmail = email.toString().trim().toLowerCase();
 

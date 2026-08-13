@@ -11,8 +11,8 @@ module.exports = (sequelize, DataTypes) => {
   }
   RiwayatStatusDosen.init({
     dosen_id: DataTypes.INTEGER,
-    status_sebelumnya: DataTypes.ENUM("active", "inactive", "study_leave", "retired"),
-    status_baru: DataTypes.ENUM("active", "inactive", "study_leave", "retired"),
+    status_sebelumnya: DataTypes.ENUM("active", "study_permission", "inactive", "study_leave", "retired"),
+    status_baru: DataTypes.ENUM("active", "study_permission", "inactive", "study_leave", "retired"),
     account_is_active_sebelumnya: DataTypes.BOOLEAN,
     account_is_active_baru: DataTypes.BOOLEAN,
     continue_existing_supervision_sebelumnya: DataTypes.BOOLEAN,

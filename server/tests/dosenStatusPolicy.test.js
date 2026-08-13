@@ -11,13 +11,14 @@ const {
 } = require("../services/dosenStatusPolicy");
 
 const statusMatrix = [
-  { status: "active", requestedContinue: false, account: true, login: true, receive: true, continue: true, replace: false },
-  { status: "active", requestedContinue: true, account: false, login: false, receive: true, continue: true, replace: false },
-  { status: "inactive", requestedContinue: true, account: true, login: true, receive: false, continue: true, replace: false },
-  { status: "inactive", requestedContinue: false, account: false, login: false, receive: false, continue: false, replace: true },
-  { status: "study_leave", requestedContinue: true, account: true, login: true, receive: false, continue: true, replace: false },
-  { status: "study_leave", requestedContinue: false, account: true, login: true, receive: false, continue: false, replace: true },
-  { status: "retired", requestedContinue: true, account: true, login: false, receive: false, continue: false, replace: true },
+  { status: "active", requestedContinue: false, account: true, login: true, dpa: true, receive: true, continue: true, replace: false },
+  { status: "active", requestedContinue: true, account: false, login: false, dpa: true, receive: true, continue: true, replace: false },
+  { status: "study_permission", requestedContinue: false, account: true, login: true, dpa: true, receive: false, continue: true, replace: false },
+  { status: "inactive", requestedContinue: true, account: true, login: true, dpa: false, receive: false, continue: true, replace: false },
+  { status: "inactive", requestedContinue: false, account: false, login: false, dpa: false, receive: false, continue: false, replace: true },
+  { status: "study_leave", requestedContinue: true, account: true, login: true, dpa: false, receive: false, continue: true, replace: false },
+  { status: "study_leave", requestedContinue: false, account: true, login: true, dpa: false, receive: false, continue: false, replace: true },
+  { status: "retired", requestedContinue: true, account: true, login: false, dpa: false, receive: false, continue: false, replace: true },
 ];
 
 for (const scenario of statusMatrix) {
@@ -28,6 +29,7 @@ for (const scenario of statusMatrix) {
       continueExistingSupervision: scenario.requestedContinue,
     });
     assert.equal(decision.can_login, scenario.login);
+    assert.equal(decision.can_be_dpa, scenario.dpa);
     assert.equal(decision.can_receive_new_assignment, scenario.receive);
     assert.equal(decision.can_continue_existing_supervision, scenario.continue);
     assert.equal(decision.requires_supervisor_replacement, scenario.replace);
@@ -36,6 +38,7 @@ for (const scenario of statusMatrix) {
 
 test("server menormalisasi izin bimbingan lama berdasarkan status master", () => {
   assert.equal(normalizeContinueExistingSupervision("active", false), true);
+  assert.equal(normalizeContinueExistingSupervision("study_permission", false), true);
   assert.equal(normalizeContinueExistingSupervision("retired", true), false);
   assert.equal(normalizeContinueExistingSupervision("inactive", true), true);
   assert.equal(normalizeContinueExistingSupervision("study_leave", false), false);

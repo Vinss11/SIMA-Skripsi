@@ -501,25 +501,12 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       value = value.replace(/\D/g, "").slice(0, 8);
       const generatedEmail = buildMahasiswaEmailFromNim(value);
       setNimAccountMode("unknown");
-      setDosenSearchQueryByField((prev) => ({
-        ...prev,
-        dosen_pembimbing_akademik_id: "",
-      }));
-      setDebouncedDosenSearchQueryByField((prev) => ({
-        ...prev,
-        dosen_pembimbing_akademik_id: "",
-      }));
-      setActiveDosenSearchField((prev) =>
-        prev === "dosen_pembimbing_akademik_id" ? "" : prev
-      );
       setFormData((prev) => ({
         ...prev,
         nim: value,
         email: generatedEmail,
         account_password: "",
         nama: "",
-        dosen_pembimbing_akademik_id: "",
-        dosen_pembimbing_akademik_nama: "",
       }));
       setFieldErrors((prev) => ({
         ...prev,
@@ -697,7 +684,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     error = "",
     required = false,
   }) => {
-    const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan });
+    const isDpaField = name === "dosen_pembimbing_akademik_id";
+    const dropdownOptions = getOrderedDosenOptions({ prioritizeNoBimbingan }).filter((dosen) =>
+      isDpaField ? dosen.can_be_dpa === true : dosen.can_receive_new_supervision === true
+    );
     const searchValue = String(dosenSearchQueryByField?.[name] || "");
     const debouncedSearchValue = String(debouncedDosenSearchQueryByField?.[name] || "");
     const normalizedRawSearch = searchValue.trim().toLowerCase();
@@ -1357,33 +1347,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       </p>
                     ) : null}
                   </div>
-                  {nimAccountMode === "new" ? (
-                    renderDosenSelect({
-                      name: "dosen_pembimbing_akademik_id",
-                      label: "Dosen Pembimbing Akademik",
-                      value: formData.dosen_pembimbing_akademik_id,
-                      error: fieldErrors.dosen_pembimbing_akademik_id,
-                      required: true,
-                    })
-                  ) : (
-                    <div>
-                      <RequiredLabel>Dosen Pembimbing Akademik</RequiredLabel>
-                      <input
-                        type="text"
-                        readOnly
-                        value={formData.dosen_pembimbing_akademik_nama}
-                        placeholder={
-                          "Isi NIM yang belum terdaftar terlebih dahulu"
-                        }
-                        className="w-full rounded-lg border border-[#d0dbf4] bg-[#f4f7ff] px-3 py-2 text-sm text-[#5b6c91] outline-none"
-                      />
-                      {fieldErrors.dosen_pembimbing_akademik_id ? (
-                        <p className="mt-1 text-xs font-semibold text-[#c43f3f]">
-                          {fieldErrors.dosen_pembimbing_akademik_id}
-                        </p>
-                      ) : null}
-                    </div>
-                  )}
+                  {renderDosenSelect({
+                    name: "dosen_pembimbing_akademik_id",
+                    label: "Dosen Pembimbing Akademik",
+                    value: formData.dosen_pembimbing_akademik_id,
+                    error: fieldErrors.dosen_pembimbing_akademik_id,
+                    required: true,
+                  })}
                 </div>
 
                 <div className="mt-4">
@@ -1600,6 +1570,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       anggotaDpaSearchQueries[index] || formatAnggotaDpaLabel(selectedDpa);
                     const normalizedDpaSearch = dpaSearchValue.trim().toLowerCase();
                     const filteredDpaOptions = dosenOptions
+                      .filter((dosen) => dosen.can_be_dpa === true)
                       .filter((dosen) => {
                         if (!normalizedDpaSearch || selectedDpa) return true;
                         const haystack =

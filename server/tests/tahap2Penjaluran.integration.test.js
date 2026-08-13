@@ -323,6 +323,15 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     const dpa = await Dosen.findByPk(dosenIds[0]);
     assert.ok(dpa);
 
+    await dpa.update({ status_keaktifan: "study_permission", continue_existing_supervision: true });
+    const dpaOptionsResponse = responseRecorder();
+    await pendaftaranController.getDosenDropdown({}, dpaOptionsResponse);
+    const izinBelajarOption = dpaOptionsResponse.payload?.data?.find((item) => Number(item.id) === Number(dpa.id));
+    assert.ok(izinBelajarOption, "dosen Izin Belajar tampil pada pilihan DPA");
+    assert.equal(izinBelajarOption.can_be_dpa, true);
+    assert.equal(izinBelajarOption.can_receive_new_supervision, false);
+    await dpa.update({ status_keaktifan: "active", continue_existing_supervision: true });
+
     const invalidCheck = responseRecorder();
     await pendaftaranController.checkNimAvailability({ query: { nim: "22111001" } }, invalidCheck);
     assert.equal(invalidCheck.statusCode, 400);
