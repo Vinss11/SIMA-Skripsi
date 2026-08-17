@@ -23,6 +23,7 @@ router.post("/semester-transition/activate-due", authenticateToken, authorizeRol
 router.get("/periode", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeOverview);
 router.post("/periode/master-penanggung-jawab", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterPenanggungJawabPeriode);
 router.get("/periode/setup-template", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getPeriodeSetupTemplate);
+router.post("/periode/validate", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.validatePeriodePendaftaran);
 router.post("/periode/preview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.previewPeriodePendaftaran);
 router.post("/periode/open", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.openPeriodePendaftaran);
 router.get("/master-dosen/kuota-overview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMasterDosenKuotaOverview);

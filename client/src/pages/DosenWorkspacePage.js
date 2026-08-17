@@ -218,14 +218,6 @@ function sanitizeTwoDigitPositiveNumber(value) {
     .slice(0, 2);
 }
 
-function formatAcademicYearInput(value) {
-  const digits = String(value || "")
-    .replace(/\D/g, "")
-    .slice(0, 8);
-  if (digits.length <= 4) return digits;
-  return `${digits.slice(0, 4)}/${digits.slice(4)}`;
-}
-
 function getAcademicYearError(value) {
   const text = String(value || "").trim();
   const match = text.match(/^(\d{4})\/(\d{4})$/);
@@ -239,6 +231,19 @@ function getAcademicYearError(value) {
 
   return "";
 }
+
+function buildAcademicYearOptions(referenceDate = new Date()) {
+  const currentYear = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+  }).format(referenceDate));
+  return [0, 1, 2, 3, 4, 5].map((offset) => {
+    const startYear = currentYear + offset;
+    return `${startYear}/${startYear + 1}`;
+  });
+}
+
+const PERIODE_ACADEMIC_YEAR_OPTIONS = buildAcademicYearOptions();
 
 function buildPeriodeMasterSearchInitial() {
   const next = {};
@@ -264,7 +269,7 @@ function buildMahasiswaMasterPeriodeFilterValue(row) {
 
 const PERIODE_FORM_INITIAL = {
   tahun_akademik: "",
-  semester: "ganjil",
+  semester: "",
   label_periode: "",
   tanggal_mulai: "",
   tanggal_selesai: "",
@@ -2395,6 +2400,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [periodeMasterErrors, setPeriodeMasterErrors] = useState({});
   const [periodeMasterEditMode, setPeriodeMasterEditMode] = useState(false);
   const [savingPeriodeMaster, setSavingPeriodeMaster] = useState(false);
+  const [showPenanggungJawabDetailModal, setShowPenanggungJawabDetailModal] = useState(false);
   const [periodeForm, setPeriodeForm] = useState({
     ...PERIODE_FORM_INITIAL,
     ...(storedPeriodeSetup?.periode || {}),
@@ -2481,6 +2487,28 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const periodeMasterLockMessage =
     penanggungJawabLock?.message ||
     "Penanggung jawab penjaluran belum dapat diubah saat ada periode atau pengajuan aktif.";
+  const outstandingPenanggungJawabRows = Array.isArray(penanggungJawabLock?.outstanding_responsibilities)
+    ? penanggungJawabLock.outstanding_responsibilities
+    : [];
+  const outstandingPenanggungJawabTotal = outstandingPenanggungJawabRows.reduce(
+    (total, row) => total + Number(row?.pending_count || 0),
+    0
+  );
+
+  useEffect(() => {
+    if (outstandingPenanggungJawabRows.length === 0) {
+      setShowPenanggungJawabDetailModal(false);
+    }
+  }, [outstandingPenanggungJawabRows.length]);
+
+  useEffect(() => {
+    if (!showPenanggungJawabDetailModal) return undefined;
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setShowPenanggungJawabDetailModal(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showPenanggungJawabDetailModal]);
   const isPeriodeReadonly = editingPeriode ? !canEditPeriodeRow(editingPeriode) : true;
   const useGridViewportLayout =
     !loading &&
@@ -6424,12 +6452,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
   const handlePeriodeInputChange = (event) => {
     const { name, value } = event.target;
-    const nextValue = name === "tahun_akademik" ? formatAcademicYearInput(value) : value;
-    setPeriodeForm((prev) => ({ ...prev, [name]: nextValue }));
+    setPeriodeForm((prev) => {
+      const next = { ...prev, [name]: value };
+      if (name === "tahun_akademik" || name === "semester") {
+        next.label_periode = next.tahun_akademik && next.semester
+          ? `${formatLabel(next.semester)} ${next.tahun_akademik}`
+          : "";
+      }
+      return next;
+    });
     setPeriodeFormErrors((prev) => {
-      if (!prev[name]) return prev;
+      if (!prev[name] && !((name === "tahun_akademik" || name === "semester") && prev.label_periode)) return prev;
       const next = { ...prev };
       delete next[name];
+      if (name === "tahun_akademik" || name === "semester") delete next.label_periode;
       return next;
     });
   };
@@ -7136,10 +7172,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const masterErrors = {};
     const tahunAkademik = periodeForm.tahun_akademik.trim();
 
-    if (!String(periodeForm.label_periode || "").trim()) {
-      fieldErrors.label_periode = "Label periode wajib diisi.";
-    }
-
     PERIODE_MASTER_REQUIRED_FIELDS.forEach((item) => {
       if (!periodeMasterForm[item.key]) {
         masterErrors[item.key] = `${item.label} belum diatur di master data.`;
@@ -7188,6 +7220,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
     setSavingPeriode(true);
     try {
+      await fetchWithAuth("/api/sekretaris/periode/validate", {
+        method: "POST",
+        body: JSON.stringify(buildPeriodeSetupPayload()),
+      });
       const template = await fetchWithAuth("/api/sekretaris/periode/setup-template");
       setPeriodeSetup({
         step: "availability",
@@ -7198,7 +7234,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setSelectedAvailabilityDosenIds([]);
     } catch (openError) {
       if (openError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(openError.message || "Gagal memuat template ketersediaan.");
+        if (openError?.detail && typeof openError.detail === "object") {
+          const nextFieldErrors = {};
+          const nextMasterErrors = {};
+          Object.entries(openError.detail).forEach(([key, message]) => {
+            if (PERIODE_MASTER_ALL_FIELDS.some((item) => item.key === key)) nextMasterErrors[key] = message;
+            else if (["tahun_akademik", "semester", "tanggal_mulai", "tanggal_selesai"].includes(key)) nextFieldErrors[key] = message;
+          });
+          setPeriodeFormErrors((previous) => ({ ...previous, ...nextFieldErrors }));
+          setPeriodeMasterErrors((previous) => ({ ...previous, ...nextMasterErrors }));
+        }
+        showErrorToast(openError.message || "Validasi periode gagal.");
       }
     } finally {
       setSavingPeriode(false);
@@ -7209,21 +7255,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setSavingPeriode(true);
     try {
       const template = await fetchWithAuth("/api/sekretaris/periode/setup-template");
-      const suggested = template?.suggested_period || {};
-      setPeriodeForm((previous) => ({
-        ...previous,
-        tahun_akademik: previous.tahun_akademik || suggested.tahun_akademik || "",
-        semester: previous.semester || suggested.semester || "ganjil",
-        label_periode: previous.label_periode || suggested.label_periode || "",
-      }));
+      setPeriodeForm({ ...PERIODE_FORM_INITIAL });
       if (template?.penanggung_jawab) {
         setPeriodeMasterForm((previous) => ({ ...previous, ...template.penanggung_jawab }));
       }
-      setPeriodeSetup((previous) => ({
-        ...previous,
+      setPeriodeSetup({
         step: "periode",
+        dosens: [],
+        preview: null,
         previous_period: template?.previous_period || null,
-      }));
+      });
       setPeriodeMode("open");
       setEditingPeriode(null);
       setPeriodeReadonlyRoles({ loading: false, rows: [], error: "" });
@@ -7911,6 +7952,122 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               Terapkan
             </button>
           </div>
+        </div>,
+        document.body
+      )
+    : null;
+
+  const penanggungJawabDetailModal = showPenanggungJawabDetailModal
+    && outstandingPenanggungJawabRows.length > 0
+    && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          className="fixed inset-0 z-[160] flex items-center justify-center bg-[#17213a]/55 p-4"
+          onMouseDown={() => setShowPenanggungJawabDetailModal(false)}
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="penanggung-jawab-detail-title"
+            onMouseDown={(event) => event.stopPropagation()}
+            className="flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#dce4f7] bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[#e5ebf7] px-5 py-4">
+              <div>
+                <h2 id="penanggung-jawab-detail-title" className="text-lg font-black text-[#1d2d56]">
+                  Detail Tugas Penanggung Jawab Penjaluran
+                </h2>
+                <p className="mt-1 text-sm text-[#617097]">
+                  Daftar dosen dan mahasiswa yang proses reviewnya masih belum selesai.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPenanggungJawabDetailModal(false)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#d8e0f2] text-[#52658f] transition hover:bg-[#f3f6fc]"
+                title="Tutup"
+                aria-label="Tutup detail tugas penanggung jawab"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-b border-[#edf1f8] bg-[#fffaf0] px-5 py-3">
+              <p className="text-sm font-semibold text-[#795118]">
+                Selesaikan tugas berikut sebelum melakukan pergantian penanggung jawab.
+              </p>
+              <span className="shrink-0 rounded-full bg-[#f5dfb8] px-3 py-1 text-xs font-black text-[#70450d]">
+                {outstandingPenanggungJawabTotal} tugas belum selesai
+              </span>
+            </div>
+
+            <div className="overflow-y-auto p-5">
+              <div className="grid gap-4 lg:grid-cols-2">
+                {outstandingPenanggungJawabRows.map((row) => (
+                  <article
+                    key={`outstanding-responsibility-modal-${row.dosen?.id}`}
+                    className="rounded-xl border border-[#dfe6f5] bg-white p-4 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-black text-[#263861]">
+                          {formatDosenFullName(row.dosen?.nama, row.dosen?.gelar) || "Dosen tidak ditemukan"}
+                        </p>
+                        <p className="mt-0.5 text-xs text-[#68789d]">NIK: {row.dosen?.nik || "-"}</p>
+                      </div>
+                      <span className="rounded-full bg-[#fff0d4] px-2.5 py-1 text-xs font-black text-[#9a6108]">
+                        {Number(row.pending_count || 0)} tugas
+                      </span>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {(row.responsibility_labels || []).map((label) => (
+                        <span
+                          key={`modal-${row.dosen?.id}-${label}`}
+                          className="rounded-full border border-[#d9e3f8] bg-[#f5f8ff] px-2 py-1 text-[11px] font-bold text-[#3d568e]"
+                        >
+                          {label}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="mt-3 space-y-2">
+                      {(row.tasks || []).map((task) => (
+                        <div
+                          key={`modal-${task.source}-${task.id}`}
+                          className="rounded-lg border border-[#e5eaf5] bg-[#fafbfe] px-3 py-2.5"
+                        >
+                          <p className="text-xs font-bold text-[#344b7f]">{task.label}</p>
+                          <p className="mt-1 text-xs text-[#5d6c91]">
+                            {task.mahasiswa?.nim || "-"} · {task.mahasiswa?.nama || "Mahasiswa tidak ditemukan"}
+                          </p>
+                          {task.periode?.label_periode ? (
+                            <p className="mt-0.5 text-[11px] text-[#7583a5]">{task.periode.label_periode}</p>
+                          ) : null}
+                        </div>
+                      ))}
+                      {Number(row.pending_count || 0) > (row.tasks || []).length ? (
+                        <p className="text-xs font-semibold text-[#7c6744]">
+                          +{Number(row.pending_count || 0) - (row.tasks || []).length} tugas lainnya
+                        </p>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-[#e5ebf7] px-5 py-3">
+              <button
+                type="button"
+                onClick={() => setShowPenanggungJawabDetailModal(false)}
+                className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+              >
+                Tutup
+              </button>
+            </div>
+          </section>
         </div>,
         document.body
       )
@@ -11866,9 +12023,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
 
                     {isPeriodeMasterLocked ? (
-                      <div className="mt-3 rounded-lg border border-[#f0d3a5] bg-[#fff8ec] px-3 py-2 text-sm font-semibold text-[#8a5a14]">
-                        {periodeMasterLockMessage}
-                      </div>
+                      <>
+                        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-[#f0d3a5] bg-[#fff8ec] px-3 py-2 text-sm font-semibold text-[#8a5a14]">
+                          <span>{periodeMasterLockMessage}</span>
+                          {outstandingPenanggungJawabRows.length > 0 ? (
+                            <button
+                              type="button"
+                              onClick={() => setShowPenanggungJawabDetailModal(true)}
+                              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-[#d5962f] bg-white px-3 py-1.5 text-xs font-black text-[#8a5a14] transition hover:bg-[#fff4dc]"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              Detail ({outstandingPenanggungJawabTotal})
+                            </button>
+                          ) : null}
+                        </div>
+                      </>
                     ) : isPeriodeMasterConfigured && !periodeMasterEditMode ? (
                       <div className="mt-3 rounded-lg border border-[#d9e4fb] bg-[#f8fbff] px-3 py-2 text-sm text-[#526184]">
                         Master data sudah tersimpan dan dikunci sebagai read-only. Klik Edit jika memang perlu
@@ -13725,21 +13894,21 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                           <div>
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tahun Akademik <span className="text-[#c23737]">*</span></label>
-                            <input
-                              type="text"
+                            <select
                               name="tahun_akademik"
                               value={periodeForm.tahun_akademik}
                               onChange={handlePeriodeInputChange}
-                              inputMode="numeric"
-                              maxLength={9}
-                              pattern="\d{4}/\d{4}"
                               required
                               aria-required="true"
-                              placeholder="Contoh: 2026/2027"
                               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                                 periodeFormErrors.tahun_akademik ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
                               }`}
-                            />
+                            >
+                              <option value="">Pilih tahun akademik</option>
+                              {PERIODE_ACADEMIC_YEAR_OPTIONS.map((tahunAkademik) => (
+                                <option key={tahunAkademik} value={tahunAkademik}>{tahunAkademik}</option>
+                              ))}
+                            </select>
                             {periodeFormErrors.tahun_akademik ? (
                               <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeFormErrors.tahun_akademik}</p>
                             ) : null}
@@ -13756,6 +13925,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 periodeFormErrors.semester ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"
                               }`}
                             >
+                              <option value="">Pilih semester</option>
                               <option value="ganjil">Ganjil</option>
                               <option value="genap">Genap</option>
                             </select>
@@ -13764,9 +13934,14 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             ) : null}
                           </div>
                           <div className="lg:col-span-2">
-                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Label Periode <span className="text-[#c23737]">*</span></label>
-                            <input type="text" name="label_periode" value={periodeForm.label_periode} onChange={handlePeriodeInputChange} placeholder={`${formatLabel(periodeForm.semester)} ${periodeForm.tahun_akademik || "2026/2027"}`} required aria-required="true" className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${periodeFormErrors.label_periode ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d3dbef]"}`} />
-                            {periodeFormErrors.label_periode ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{periodeFormErrors.label_periode}</p> : null}
+                            <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Label Periode</label>
+                            <input
+                              type="text"
+                              value={periodeForm.label_periode}
+                              readOnly
+                              placeholder="Terisi otomatis setelah tahun akademik dan semester dipilih"
+                              className="w-full cursor-default rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2 text-sm text-[#344b7f] outline-none"
+                            />
                           </div>
                           <div>
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Tanggal Mulai <span className="text-[#c23737]">*</span></label>
@@ -13821,7 +13996,16 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             ))}
                           </div>
                         </section>
-                        <button type="button" disabled={savingPeriode} onClick={handleOpenPeriode} className="rounded-lg bg-[#117246] px-4 py-2 text-sm font-bold text-white disabled:opacity-60">{savingPeriode ? "Memuat..." : "Lanjut Atur Ketersediaan"}</button>
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            disabled={savingPeriode}
+                            onClick={handleOpenPeriode}
+                            className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:bg-[#2454c7] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {savingPeriode ? "Memvalidasi..." : "Lanjut Atur Ketersediaan"}
+                          </button>
+                        </div>
                       </div>
                     ) : null}
 
@@ -14259,6 +14443,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       </div>
       {mahasiswaMasterFilterPopup}
       {pendaftaranFilterPopup}
+      {penanggungJawabDetailModal}
     </div>
   );
 }

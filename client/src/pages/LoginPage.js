@@ -89,7 +89,7 @@ function LoginPage({ apiBaseUrl, onLoginSuccess, onOpenRegistration, onForgotPas
 
             <h1 className="mt-4 text-center text-4xl font-black tracking-wide text-[#10224f]">SIMPS UII</h1>
             <p className="mt-2 text-center text-sm font-semibold text-[#4a5671] sm:text-lg">
-              Sistem Informasi Manajemen Pengurusan Skripsi
+              Sistem Informasi Manajemen Penjaluran Skripsi
             </p>
 
             <form onSubmit={handleSubmit} className="mt-10 w-full space-y-4">

@@ -507,6 +507,43 @@ test("integrasi perubahan status dosen menjaga akun dan membuat tindak lanjut ha
       assert.doesNotMatch(String(value || ""), /lebih dari satu peran/i);
     }
     assert.ok([200, 400].includes(res.statusCode));
+
+    const duplicatePeriod = await PeriodePenjaluran.create({
+      tahun_akademik: "2196/2197",
+      semester: "ganjil",
+      label_periode: `Validasi Tahap 1 ${suffix}`,
+      tanggal_mulai: new Date("2196-08-01T00:00:00.000Z"),
+      tanggal_selesai: new Date("2196-08-31T23:59:59.000Z"),
+      status: "closed",
+      is_active: false,
+    });
+    createdPeriodIds.push(duplicatePeriod.id);
+    const validationRes = createResponseRecorder();
+    await sekretarisController.validatePeriodePendaftaran({
+      body: {
+        periode: {
+          tahun_akademik: duplicatePeriod.tahun_akademik,
+          semester: duplicatePeriod.semester,
+          label_periode: `Label Baru ${suffix}`,
+          tanggal_mulai: "2196-09-01",
+          tanggal_selesai: "2196-09-30",
+        },
+        penanggung_jawab: {
+          ketua_itsc_dosen_id: roleHolder.id,
+          ketua_sirkel_dosen_id: roleHolder.id,
+          ketua_siber_dosen_id: roleHolder.id,
+          ketua_mvk_dosen_id: roleHolder.id,
+          pengawas_magang_dosen_id: roleHolder.id,
+          pengawas_perintisan_bisnis_dosen_id: roleHolder.id,
+        },
+      },
+      user: { sekretaris_prodi_id: null, role: "sekretaris_prodi" },
+    }, validationRes);
+
+    assert.equal(validationRes.statusCode, 400);
+    assert.match(validationRes.payload?.message || "", /sudah ada/i);
+    assert.match(validationRes.payload?.detail?.periode || "", /sudah ada/i);
+    assert.equal(validationRes.payload?.detail?.ketersediaan_dosen, undefined);
   });
 
   await t.test("service kandidat membaca perubahan status terbaru melalui policy tanpa cache", async () => {

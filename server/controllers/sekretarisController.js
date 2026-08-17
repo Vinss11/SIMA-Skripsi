@@ -76,13 +76,6 @@ const ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT = [
   "menunggu_set_ketua_cluster",
   "menunggu_approval_sekprodi",
 ];
-const ACTIVE_PENDAFTARAN_STATUSES_FOR_ASSIGNMENT = ["submitted", "processed"];
-const ACTIVE_FORM_LANJUTAN_STATUSES_FOR_ASSIGNMENT = [
-  "submitted",
-  "review_dosen_magang",
-  "review_sekprodi",
-];
-
 function getSekretarisProgramKuliah(req) {
   const program = String(req.user?.program_kuliah || "").trim().toLowerCase();
   return ["reguler", "internasional"].includes(program) ? program : null;
@@ -218,6 +211,244 @@ function summarizePenanggungJawabAssignmentLock({
     : "Penanggung jawab penjaluran dapat diubah.";
 }
 
+const NON_PENELITIAN_RESPONSIBILITY_CONFIG = {
+  magang: {
+    periodeField: "pengawas_magang_dosen_id",
+    reviewStatuses: ["review_dosen_magang"],
+    roleLabel: "Dosen Pengawas Magang",
+    taskLabel: "Review form Magang",
+  },
+  pengabdian: {
+    periodeField: "pengawas_pengabdian_dosen_id",
+    reviewStatuses: ["submitted"],
+    roleLabel: "Dosen Pengampu Pengabdian Masyarakat",
+    taskLabel: "Review form Pengabdian Masyarakat",
+  },
+  perintisan_bisnis: {
+    periodeField: "pengawas_perintisan_bisnis_dosen_id",
+    reviewStatuses: ["submitted"],
+    roleLabel: "Dosen Pengampu Perintisan Bisnis",
+    taskLabel: "Review form Perintisan Bisnis",
+  },
+};
+
+function buildActiveNonPenelitianWhere() {
+  return {
+    [Op.or]: Object.entries(NON_PENELITIAN_RESPONSIBILITY_CONFIG).map(([jalur, config]) => ({
+      [Op.and]: [
+        {
+          [Op.or]: [
+            { jenis_jalur_diambil: jalur },
+            { penjaluran_baru: jalur },
+          ],
+        },
+        {
+          form_lanjutan_status: {
+            [Op.in]: [...new Set([...config.reviewStatuses, "review_sekprodi"])],
+          },
+        },
+      ],
+    })),
+  };
+}
+
+function resolvePendaftaranJalur(pendaftaran) {
+  return String(
+    pendaftaran?.penjaluran_baru || pendaftaran?.jenis_jalur_diambil || ""
+  ).trim().toLowerCase();
+}
+
+function buildOutstandingResponsibilityRows({ researchRows = [], registrationRows = [], dosens = [] } = {}) {
+  const dosenById = new Map(dosens.map((dosen) => [Number(dosen.id), dosen]));
+  const grouped = new Map();
+
+  const addTask = ({ dosenId, roleLabel, taskLabel, source, row, taskId = null }) => {
+    const parsedDosenId = Number(dosenId);
+    const dosen = dosenById.get(parsedDosenId);
+    if (!parsedDosenId || !dosen) return;
+
+    if (!grouped.has(parsedDosenId)) {
+      grouped.set(parsedDosenId, {
+        dosen: formatDosenMini(dosen),
+        pending_count: 0,
+        responsibility_labels: [],
+        task_types: [],
+        tasks: [],
+      });
+    }
+
+    const target = grouped.get(parsedDosenId);
+    target.pending_count += 1;
+    if (!target.responsibility_labels.includes(roleLabel)) target.responsibility_labels.push(roleLabel);
+    if (!target.task_types.includes(taskLabel)) target.task_types.push(taskLabel);
+    if (target.tasks.length < 5) {
+      target.tasks.push({
+        source,
+        id: taskId || row.id,
+        label: taskLabel,
+        status: source === "pengajuan_penelitian" ? row.status : row.form_lanjutan_status,
+        mahasiswa: row.mahasiswa
+          ? {
+              id: row.mahasiswa.id,
+              nim: row.mahasiswa.nim || null,
+              nama: row.mahasiswa.nama || null,
+            }
+          : null,
+        periode: row.periode
+          ? {
+              id: row.periode.id,
+              label_periode: row.periode.label_periode || null,
+            }
+          : null,
+      });
+    }
+  };
+
+  for (const row of researchRows) {
+    const pendingApprovals = Array.isArray(row.riwayat)
+      ? row.riwayat.filter((approval) => (
+          String(approval.status || "").toLowerCase() === "pending"
+          && Number(approval.dosen_id)
+        ))
+      : [];
+
+    if (pendingApprovals.length > 0) {
+      for (const approval of pendingApprovals) {
+        const approvalType = String(approval.tipe_approval || "").toLowerCase();
+        const roleLabel = approvalType === "koordinator"
+          ? "Ketua Cluster"
+          : approvalType === "dospem_akademik"
+          ? "Dosen Pembimbing Akademik"
+          : "Reviewer Penelitian";
+        const slotLabel = Number(approval.topik_slot) > 0 ? ` topik ${approval.topik_slot}` : "";
+        addTask({
+          dosenId: approval.dosen_id,
+          roleLabel,
+          taskLabel: `Review pengajuan${slotLabel}`,
+          source: "pengajuan_penelitian",
+          row,
+          taskId: `${row.id}-${approval.id}`,
+        });
+      }
+      continue;
+    }
+
+    if (String(row.status || "").toLowerCase() === "pending") {
+      addTask({
+        dosenId: row.dosen_saat_ini,
+        roleLabel: "Reviewer Penelitian",
+        taskLabel: "Review pengajuan topik/judul",
+        source: "pengajuan_penelitian",
+        row,
+      });
+    }
+  }
+
+  for (const row of registrationRows) {
+    const config = NON_PENELITIAN_RESPONSIBILITY_CONFIG[resolvePendaftaranJalur(row)];
+    const formStatus = String(row.form_lanjutan_status || "").toLowerCase();
+    if (!config || !config.reviewStatuses.includes(formStatus)) continue;
+    addTask({
+      dosenId: row.periode?.[config.periodeField],
+      roleLabel: config.roleLabel,
+      taskLabel: config.taskLabel,
+      source: "pendaftaran_penjaluran",
+      row,
+    });
+  }
+
+  return [...grouped.values()].sort((left, right) => {
+    if (right.pending_count !== left.pending_count) return right.pending_count - left.pending_count;
+    return String(left.dosen?.nama || "").localeCompare(String(right.dosen?.nama || ""), "id-ID");
+  });
+}
+
+async function getOutstandingPenanggungJawabResponsibilities(transaction) {
+  const [researchRows, registrationRows] = await Promise.all([
+    Pengajuan.findAll({
+      where: { status: { [Op.in]: ACTIVE_PENGAJUAN_STATUSES_FOR_ASSIGNMENT } },
+      attributes: ["id", "status", "dosen_saat_ini", "pendaftaran_penjaluran_id"],
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama"],
+          required: false,
+        },
+        {
+          model: RiwayatPersetujuan,
+          as: "riwayat",
+          attributes: ["id", "dosen_id", "tipe_approval", "status", "topik_slot"],
+          where: { status: "pending", dosen_id: { [Op.ne]: null } },
+          required: false,
+        },
+      ],
+      transaction,
+    }),
+    PendaftaranPenjaluran.findAll({
+      where: buildActiveNonPenelitianWhere(),
+      attributes: [
+        "id",
+        "jenis_jalur_diambil",
+        "penjaluran_baru",
+        "form_lanjutan_status",
+      ],
+      include: [
+        {
+          model: Mahasiswa,
+          as: "mahasiswa",
+          attributes: ["id", "nim", "nama"],
+          required: false,
+        },
+        {
+          model: PeriodePenjaluran,
+          as: "periode",
+          attributes: [
+            "id",
+            "label_periode",
+            "pengawas_magang_dosen_id",
+            "pengawas_pengabdian_dosen_id",
+            "pengawas_perintisan_bisnis_dosen_id",
+          ],
+          required: false,
+        },
+      ],
+      transaction,
+    }),
+  ]);
+
+  const dosenIds = new Set();
+  for (const row of researchRows) {
+    const pendingApprovalDosenIds = Array.isArray(row.riwayat)
+      ? row.riwayat.map((approval) => Number(approval.dosen_id)).filter(Boolean)
+      : [];
+    for (const dosenId of pendingApprovalDosenIds) dosenIds.add(dosenId);
+    if (pendingApprovalDosenIds.length === 0
+      && String(row.status || "").toLowerCase() === "pending"
+      && Number(row.dosen_saat_ini)) {
+      dosenIds.add(Number(row.dosen_saat_ini));
+    }
+  }
+  for (const row of registrationRows) {
+    const config = NON_PENELITIAN_RESPONSIBILITY_CONFIG[resolvePendaftaranJalur(row)];
+    const formStatus = String(row.form_lanjutan_status || "").toLowerCase();
+    const dosenId = config?.reviewStatuses.includes(formStatus)
+      ? Number(row.periode?.[config.periodeField])
+      : null;
+    if (dosenId) dosenIds.add(dosenId);
+  }
+
+  const dosens = dosenIds.size > 0
+    ? await Dosen.findAll({
+        where: { id: { [Op.in]: [...dosenIds] } },
+        attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email"],
+        transaction,
+      })
+    : [];
+
+  return buildOutstandingResponsibilityRows({ researchRows, registrationRows, dosens });
+}
+
 async function getPenanggungJawabAssignmentLock(options = {}) {
   const transaction = options.transaction;
   const lock = options.lock;
@@ -243,7 +474,7 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
     ...(lock ? { lock } : {}),
   });
 
-  const [pendingPengajuanCount, pendingPendaftaranCount] = await Promise.all([
+  const [pendingPengajuanCount, pendingPendaftaranCount, outstandingResponsibilities] = await Promise.all([
     Pengajuan.count({
       where: {
         status: {
@@ -253,22 +484,10 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
       transaction,
     }),
     PendaftaranPenjaluran.count({
-      where: {
-        [Op.or]: [
-          {
-            status: {
-              [Op.in]: ACTIVE_PENDAFTARAN_STATUSES_FOR_ASSIGNMENT,
-            },
-          },
-          {
-            form_lanjutan_status: {
-              [Op.in]: ACTIVE_FORM_LANJUTAN_STATUSES_FOR_ASSIGNMENT,
-            },
-          },
-        ],
-      },
+      where: buildActiveNonPenelitianWhere(),
       transaction,
     }),
+    getOutstandingPenanggungJawabResponsibilities(transaction),
   ]);
 
   const activePeriodeStatus = activePeriode ? getPeriodeStatusLabel(activePeriode) : null;
@@ -292,6 +511,7 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
     active_periode: activePeriodePayload,
     pending_pengajuan_count: pendingPengajuanCount,
     pending_pendaftaran_count: pendingPendaftaranCount,
+    outstanding_responsibilities: outstandingResponsibilities,
     message: summarizePenanggungJawabAssignmentLock({
       activePeriode: activePeriodePayload,
       pendingPengajuanCount,
@@ -2491,6 +2711,7 @@ function normalizePeriodeSetupPayload(body = {}) {
 async function validatePeriodeSetupPayload(body, options = {}) {
   const transaction = options.transaction || null;
   const lock = options.lock || undefined;
+  const validateAvailability = options.validateAvailability !== false;
   const normalized = normalizePeriodeSetupPayload(body);
   const { periode, rolePayload, availabilityRows } = normalized;
   const fieldErrors = {};
@@ -2505,20 +2726,18 @@ async function validatePeriodeSetupPayload(body, options = {}) {
   if (tanggalMulai && tanggalSelesai && tanggalMulai > tanggalSelesai) {
     fieldErrors.tanggal_selesai = "Tanggal selesai harus setelah tanggal mulai.";
   }
-  if (!periode.label_periode) fieldErrors.label_periode = "Label periode wajib diisi.";
-  const labelPeriode = periode.label_periode;
+  const labelPeriode = formatPeriodeLabel(periode.semester, periode.tahun_akademik);
 
   for (const definition of PERIODE_REQUIRED_ROLE_FIELD_DEFINITIONS) {
     if (!parsePositiveId(rolePayload[definition.field])) fieldErrors[definition.field] = `${definition.label} wajib dipilih.`;
   }
 
-  const [duplicatePeriod, duplicateLabel, activePeriod, klasters, allDosens] = await Promise.all([
+  const [duplicatePeriod, activePeriod, klasters, allDosens] = await Promise.all([
     PeriodePenjaluran.findOne({
       where: { tahun_akademik: periode.tahun_akademik, semester: periode.semester },
       transaction,
       lock,
     }),
-    labelPeriode ? PeriodePenjaluran.findOne({ where: { label_periode: labelPeriode }, transaction, lock }) : null,
     PeriodePenjaluran.findOne({ where: { [Op.or]: [{ status: "active" }, { is_active: true }] }, transaction, lock }),
     Klaster.findAll({ attributes: ["id", "kode", "nama"], transaction }),
     Dosen.findAll({
@@ -2529,9 +2748,6 @@ async function validatePeriodeSetupPayload(body, options = {}) {
   ]);
   if (duplicatePeriod) {
     fieldErrors.periode = `Periode ${formatPeriodeLabel(periode.semester, periode.tahun_akademik)} sudah ada.`;
-  }
-  if (duplicateLabel) {
-    fieldErrors.label_periode = "Label periode sudah digunakan.";
   }
   if (activePeriod) fieldErrors.active_periode = `Masih ada periode aktif (${activePeriod.label_periode}).`;
 
@@ -2574,36 +2790,38 @@ async function validatePeriodeSetupPayload(body, options = {}) {
 
   const seenDosenIds = new Set();
   const normalizedAvailability = [];
-  for (const input of availabilityRows) {
-    const dosenId = parsePositiveId(input?.dosen_id ?? input?.id);
-    if (!dosenId || !dosenById.has(dosenId)) {
-      fieldErrors.ketersediaan_dosen = "Daftar ketersediaan mengandung dosen yang tidak valid.";
-      continue;
+  if (validateAvailability) {
+    for (const input of availabilityRows) {
+      const dosenId = parsePositiveId(input?.dosen_id ?? input?.id);
+      if (!dosenId || !dosenById.has(dosenId)) {
+        fieldErrors.ketersediaan_dosen = "Daftar ketersediaan mengandung dosen yang tidak valid.";
+        continue;
+      }
+      if (seenDosenIds.has(dosenId)) {
+        fieldErrors.ketersediaan_dosen = `Dosen ID ${dosenId} muncul lebih dari satu kali.`;
+        continue;
+      }
+      seenDosenIds.add(dosenId);
+      const dosen = dosenById.get(dosenId);
+      const available = input?.tersedia_membimbing === true;
+      const configurationStatus = String(input?.configuration_status || "").toLowerCase();
+      if (dosen.status_keaktifan === "active" && !["ready", "copied"].includes(configurationStatus)) {
+        fieldErrors[`dosen_${dosenId}`] = `${dosen.nama} masih perlu ditinjau.`;
+      }
+      if (dosen.status_keaktifan !== "active" && available) {
+        fieldErrors[`dosen_${dosenId}`] = `${dosen.nama} tidak aktif dan tidak dapat menerima bimbingan baru.`;
+      }
+      normalizedAvailability.push({
+        dosen,
+        dosen_id: dosenId,
+        tersedia_membimbing: dosen.status_keaktifan === "active" && available,
+        configuration_status: dosen.status_keaktifan === "active" ? "ready" : "locked_by_master_status",
+      });
     }
-    if (seenDosenIds.has(dosenId)) {
-      fieldErrors.ketersediaan_dosen = `Dosen ID ${dosenId} muncul lebih dari satu kali.`;
-      continue;
+    if (availabilityRows.length === 0) fieldErrors.ketersediaan_dosen = "Konfigurasi ketersediaan dosen wajib diisi.";
+    if (seenDosenIds.size !== allDosens.length) {
+      fieldErrors.ketersediaan_dosen = "Seluruh dosen pada template harus dikonfigurasi sebelum periode dibuka.";
     }
-    seenDosenIds.add(dosenId);
-    const dosen = dosenById.get(dosenId);
-    const available = input?.tersedia_membimbing === true;
-    const configurationStatus = String(input?.configuration_status || "").toLowerCase();
-    if (dosen.status_keaktifan === "active" && !["ready", "copied"].includes(configurationStatus)) {
-      fieldErrors[`dosen_${dosenId}`] = `${dosen.nama} masih perlu ditinjau.`;
-    }
-    if (dosen.status_keaktifan !== "active" && available) {
-      fieldErrors[`dosen_${dosenId}`] = `${dosen.nama} tidak aktif dan tidak dapat menerima bimbingan baru.`;
-    }
-    normalizedAvailability.push({
-      dosen,
-      dosen_id: dosenId,
-      tersedia_membimbing: dosen.status_keaktifan === "active" && available,
-      configuration_status: dosen.status_keaktifan === "active" ? "ready" : "locked_by_master_status",
-    });
-  }
-  if (availabilityRows.length === 0) fieldErrors.ketersediaan_dosen = "Konfigurasi ketersediaan dosen wajib diisi.";
-  if (seenDosenIds.size !== allDosens.length) {
-    fieldErrors.ketersediaan_dosen = "Seluruh dosen pada template harus dikonfigurasi sebelum periode dibuka.";
   }
 
   const capacities = await Promise.all(normalizedAvailability.map(async (item) => {
@@ -2687,6 +2905,27 @@ exports.getPeriodeSetupTemplate = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: "Gagal memuat template persiapan periode.", error: error.message });
+  }
+};
+
+exports.validatePeriodePendaftaran = async (req, res) => {
+  try {
+    const result = await validatePeriodeSetupPayload(req.body || {}, { validateAvailability: false });
+    if (!result.valid) {
+      const firstError = Object.values(result.errors || {}).find(Boolean);
+      return res.status(400).json({
+        success: false,
+        message: firstError ? `Periode belum valid: ${firstError}` : "Periode belum valid.",
+        detail: result.errors,
+      });
+    }
+    return res.json({
+      success: true,
+      message: "Periode valid.",
+      data: { valid: true },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Gagal memvalidasi periode.", error: error.message });
   }
 };
 
