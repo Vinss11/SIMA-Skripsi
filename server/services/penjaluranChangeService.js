@@ -43,6 +43,15 @@ function normalizeText(value) {
   return String(value || "").trim().replace(/\s+/g, " ");
 }
 
+function normalizeChangeType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (!normalized) return null;
+  if (!["ulang", "alih"].includes(normalized)) {
+    throw new PenjaluranChangeError("Jenis pendaftaran harus ulang atau alih.", 400, "INVALID_CHANGE_TYPE");
+  }
+  return normalized;
+}
+
 function fingerprint(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
@@ -213,15 +222,34 @@ async function resolveActiveWorkflowBlockers(mahasiswa, sourceRegistration, tran
   return { blockers, semesterGate };
 }
 
-async function getEligibility(mahasiswaId, { targetTrack = null, transaction = null } = {}) {
+async function getEligibility(mahasiswaId, { targetTrack = null, changeType = null, transaction = null } = {}) {
   const period = await activePeriod(transaction);
   await expireStalePamits(mahasiswaId, period.id, transaction);
   const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, { transaction });
   if (!mahasiswa) throw new PenjaluranChangeError("Mahasiswa tidak ditemukan.", 404, "STUDENT_NOT_FOUND");
   const source = await resolveLatestApprovedRegistration(mahasiswaId, transaction);
-  const normalizedTarget = String(targetTrack || source.track).trim().toLowerCase().replace(/\s+/g, "_");
+  const requestedChangeType = normalizeChangeType(changeType);
+  const requestedTarget = String(targetTrack || "").trim().toLowerCase().replace(/\s+/g, "_");
+  const normalizedTarget = requestedChangeType === "ulang" ? source.track : (requestedTarget || source.track);
   if (!ACTIVE_TRACKS.includes(normalizedTarget)) {
     throw new PenjaluranChangeError("Jalur tujuan tidak aktif.", 400, "INVALID_TARGET_TRACK");
+  }
+  if (requestedChangeType === "ulang" && requestedTarget && requestedTarget !== source.track) {
+    throw new PenjaluranChangeError(
+      "Pendaftaran ulang wajib menggunakan jalur yang sama dengan periode sebelumnya.",
+      409,
+      "REPEAT_TRACK_MUST_MATCH_SOURCE"
+    );
+  }
+  if (requestedChangeType === "alih" && !requestedTarget) {
+    throw new PenjaluranChangeError("Jalur tujuan wajib dipilih untuk pendaftaran alih.", 400, "TRANSFER_TARGET_REQUIRED");
+  }
+  if (requestedChangeType === "alih" && normalizedTarget === source.track) {
+    throw new PenjaluranChangeError(
+      "Pendaftaran alih wajib memilih jalur yang berbeda dari periode sebelumnya.",
+      409,
+      "TRANSFER_TRACK_MUST_DIFFER"
+    );
   }
   const existing = await PendaftaranPenjaluran.findOne({
     where: { mahasiswa_id: mahasiswaId, periode_penjaluran_id: period.id }, transaction,
@@ -231,7 +259,7 @@ async function getEligibility(mahasiswaId, { targetTrack = null, transaction = n
     where: { mahasiswa_id: mahasiswaId, periode_tujuan_id: period.id, status: { [Op.in]: ["pending", "approved"] } },
     order: [["createdAt", "DESC"]], transaction,
   });
-  const changeType = normalizedTarget === source.track ? "ulang" : "alih";
+  const resolvedChangeType = normalizedTarget === source.track ? "ulang" : "alih";
   // Pamit approved tetap menjadi tiket wajib walaupun approval sudah mengakhiri
   // penetapan aktif. Tanpa ini tiket tidak akan pernah dikonsumsi saat commit.
   const requiresPamit = Boolean(assignment.penetapan || openPamit);
@@ -244,13 +272,13 @@ async function getEligibility(mahasiswaId, { targetTrack = null, transaction = n
     blockerDetails.push({ code: "ACTIVE_SUBMISSION_CACHE", message: "Masih ada pengajuan aktif yang harus diselesaikan." });
   }
   if (requiresPamit && !openPamit) blockerDetails.push({ code: "PAMIT_REQUIRED", message: "Pamit kepada Pembimbing 1 belum diajukan." });
-  if (requiresPamit && openPamit?.status === "pending") blockerDetails.push({ code: "PAMIT_PENDING", message: "Pamit masih menunggu keputusan Pembimbing 1." });
   const blockers = blockerDetails.map((item) => item.message);
   return {
     eligible: blockers.length === 0,
     blockers,
+    mahasiswa: { id: mahasiswa.id, nim: mahasiswa.nim, nama: mahasiswa.nama },
     periode: plain(period), source_registration: plain(source.registration), source_track: source.track,
-    target_track: normalizedTarget, change_type: changeType, requires_pamit: requiresPamit,
+    target_track: normalizedTarget, change_type: resolvedChangeType, requires_pamit: requiresPamit,
     active_assignment: plain(assignment.penetapan),
     reviewer_p1: plain(assignment.pembimbing_1) || (openPamit?.reviewer_p1_id ? { id: openPamit.reviewer_p1_id } : null),
     reviewer_p2: plain(assignment.pembimbing_2), pamit: plain(openPamit),
@@ -259,7 +287,7 @@ async function getEligibility(mahasiswaId, { targetTrack = null, transaction = n
   };
 }
 
-async function submitPamit({ mahasiswaId, targetTrack, message, reason, note, idempotencyKey = null }) {
+async function submitPamit({ mahasiswaId, targetTrack, changeType = null, message, reason, note, idempotencyKey = null }) {
   const normalizedKey = normalizeText(idempotencyKey);
   if (!normalizedKey) {
     throw new PenjaluranChangeError("Header Idempotency-Key wajib dikirim untuk pengajuan pamit.", 400, "IDEMPOTENCY_KEY_REQUIRED");
@@ -273,9 +301,9 @@ async function submitPamit({ mahasiswaId, targetTrack, message, reason, note, id
     if (String(message || "").trim().length < 10 || String(reason || "").trim().length < 10) {
       throw new PenjaluranChangeError("Pesan pamit dan alasan minimal 10 karakter wajib diisi.", 400, "INVALID_PAMIT_PAYLOAD");
     }
-    const eligibility = await getEligibility(mahasiswaId, { targetTrack, transaction });
+    const eligibility = await getEligibility(mahasiswaId, { targetTrack, changeType, transaction });
     const hardBlockers = (eligibility.blocker_details || []).filter(
-      (item) => !["PAMIT_REQUIRED", "PAMIT_PENDING"].includes(item.code)
+      (item) => item.code !== "PAMIT_REQUIRED"
     );
     if (hardBlockers.length) {
       throw new PenjaluranChangeError(
@@ -303,6 +331,7 @@ async function submitPamit({ mahasiswaId, targetTrack, message, reason, note, id
         { active_pamit_id: eligibility.pamit.id }
       );
     }
+    const now = new Date();
     const pamit = await PamitUlang.create({
       mahasiswa_id: mahasiswaId,
       pengajuan_sebelumnya_id: null,
@@ -315,22 +344,56 @@ async function submitPamit({ mahasiswaId, targetTrack, message, reason, note, id
       jalur_tujuan: eligibility.target_track,
       pesan_ke_dosen_pembimbing: String(message).trim(), alasan_ulang: String(reason).trim(),
       catatan_tambahan: String(note || "").trim() || null,
-      status: "pending", status_dospem: "pending", status_dpa: "pending",
-      submitted_at: new Date(), idempotency_key: normalizedKey,
-      metadata: { reviewer_p2_id: eligibility.reviewer_p2?.id || null, request_fingerprint: requestedFingerprint },
+      status: "approved", status_dospem: "approved", status_dpa: "approved",
+      submitted_at: now, decided_at: now,
+      tanggal_approval_dospem: now, tanggal_approval_dpa: now,
+      keterangan_dospem: "Pamit diterima sebagai pemberitahuan; tidak memerlukan keputusan dosen.",
+      keterangan_dpa: "Tidak memerlukan keputusan DPA.",
+      idempotency_key: normalizedKey,
+      metadata: {
+        reviewer_p2_id: eligibility.reviewer_p2?.id || null,
+        request_fingerprint: requestedFingerprint,
+        notification_only: true,
+      },
     }, { transaction });
-    await appendHistory(pamit, null, "pending", "submitted", "mahasiswa", mahasiswaId, reason, transaction);
+    await appendHistory(pamit, null, "approved", "notification_sent", "mahasiswa", mahasiswaId, reason, transaction);
+    await BimbinganSkripsi.update({
+      status_permohonan: "cancelled_supervisor_change",
+      catatan_dosen: "Dibatalkan otomatis karena mahasiswa mengirim pamit ulang/alih jalur.",
+      tanggal_keputusan: now,
+    }, {
+      where: {
+        mahasiswa_id: mahasiswaId,
+        pendaftaran_penjaluran_id: source.id,
+        status_permohonan: "pending",
+        permintaan_tanggal: { [Op.gte]: jakartaDateOnly() },
+      },
+      transaction,
+    });
+    if (eligibility.active_assignment?.id) {
+      await endActiveSupervisorAssignment({
+        mahasiswaId,
+        tanggalSelesai: now,
+        expectedAssignmentId: eligibility.active_assignment.id,
+        alasanBerakhir: `Mahasiswa mengirim pamit ${eligibility.change_type} jalur.`,
+        endReasonCode: "pamit_notified",
+        semesterOutcomeCode: eligibility.change_type === "alih" ? "transferred" : "repeated",
+        endedByActorType: "mahasiswa",
+        endedByActorId: mahasiswaId,
+        transaction,
+      });
+    }
     await createSystemNotification({
       recipientType: "dosen", recipientId: eligibility.reviewer_p1.id,
       type: NOTIFICATION_TYPES.CHANGE_PAMIT_REQUESTED_LECTURER,
-      message: `Mahasiswa mengajukan pamit untuk ${eligibility.change_type} dari ${eligibility.source_track} ke ${eligibility.target_track}.`,
-      referenceType: "pamit_penjaluran", referenceId: pamit.id, actionKey: "review_change_pamit",
-      metadata: { mahasiswa_id: mahasiswaId }, deduplicationKey: `change-pamit:${pamit.id}:reviewer`, transaction,
+      message: `${eligibility.mahasiswa.nama} (${eligibility.mahasiswa.nim}) menyampaikan pamit untuk ${eligibility.change_type} dari ${eligibility.source_track} ke ${eligibility.target_track}. Alasan: ${normalizeText(reason)} Pesan: ${normalizeText(message)}`,
+      referenceType: "pamit_penjaluran", referenceId: pamit.id, actionKey: "view_change_pamit",
+      metadata: { mahasiswa_id: mahasiswaId, notification_only: true }, deduplicationKey: `change-pamit:${pamit.id}:reviewer`, transaction,
     });
     await notifyP2({
       pamit,
       type: NOTIFICATION_TYPES.CHANGE_PAMIT_INFO_LECTURER,
-      message: `Mahasiswa mengajukan pamit ${eligibility.change_type} jalur. Anda tercatat sebagai Pembimbing 2 dan memiliki akses lihat saja.`,
+      message: `${eligibility.mahasiswa.nama} (${eligibility.mahasiswa.nim}) menyampaikan pamit ${eligibility.change_type} jalur. Alasan: ${normalizeText(reason)} Pesan: ${normalizeText(message)}`,
       suffix: "submitted",
       transaction,
     });
@@ -488,7 +551,7 @@ async function decidePamit({ pamitId, dosenId, decision, note }) {
   });
 }
 
-async function createChangeRegistration({ mahasiswaId, targetTrack, reason, pamitId = null, idempotencyKey = null }) {
+async function createChangeRegistration({ mahasiswaId, targetTrack, changeType = null, reason, pamitId = null, idempotencyKey = null }) {
   const normalizedKey = normalizeText(idempotencyKey);
   if (!normalizedKey) {
     throw new PenjaluranChangeError("Header Idempotency-Key wajib dikirim untuk pendaftaran ulang/alih.", 400, "IDEMPOTENCY_KEY_REQUIRED");
@@ -523,15 +586,26 @@ async function createChangeRegistration({ mahasiswaId, targetTrack, reason, pami
       }
       return { registration: plain(replay), pamit: plain(replayPamit), eligibility: null, replayed: true };
     }
-    const eligibility = await getEligibility(mahasiswaId, { targetTrack, transaction });
+    const eligibility = await getEligibility(mahasiswaId, { targetTrack, changeType, transaction });
     if (!eligibility.eligible) throw new PenjaluranChangeError(eligibility.blockers.join(" "), 409, "CHANGE_NOT_ELIGIBLE", eligibility);
     let pamit = null;
     if (eligibility.requires_pamit) {
       pamit = await PamitUlang.findByPk(pamitId || eligibility.pamit?.id, { transaction, lock: transaction.LOCK.UPDATE });
-      if (!pamit || pamit.status !== "approved" || Number(pamit.periode_tujuan_id) !== Number(eligibility.periode.id)
+      if (!pamit || !["pending", "approved"].includes(pamit.status) || Number(pamit.periode_tujuan_id) !== Number(eligibility.periode.id)
         || Number(pamit.pendaftaran_lama_id) !== Number(eligibility.source_registration.id)
         || pamit.jalur_tujuan !== eligibility.target_track) {
-        throw new PenjaluranChangeError("Pamit approved tidak cocok dengan sumber, tujuan, dan periode pendaftaran.", 409, "PAMIT_MISMATCH");
+        throw new PenjaluranChangeError("Pamit tidak cocok dengan sumber, tujuan, dan periode pendaftaran.", 409, "PAMIT_MISMATCH");
+      }
+      if (pamit.status === "pending") {
+        await pamit.update({
+          status: "approved",
+          status_dospem: "approved",
+          status_dpa: "approved",
+          decided_at: new Date(),
+          keterangan_dospem: "Pamit lama dikonversi menjadi pemberitahuan tanpa keputusan dosen.",
+          keterangan_dpa: "Tidak memerlukan keputusan DPA.",
+          metadata: { ...(pamit.metadata || {}), notification_only: true },
+        }, { transaction });
       }
     }
     const source = eligibility.source_registration;
@@ -601,7 +675,7 @@ async function getLatestPamitStatus(mahasiswaId) {
     pamit_id: pamit.id,
     lifecycle_status: pamit.status,
     status_dospem: pamit.status_dospem,
-    can_continue: pamit.status === "approved" && !pamit.pendaftaran_baru_id,
+    can_continue: ["pending", "approved"].includes(pamit.status) && !pamit.pendaftaran_baru_id,
     consumed: pamit.status === "consumed",
     cancelled: pamit.status === "cancelled",
     pendaftaran_baru_id: pamit.pendaftaran_baru_id || null,

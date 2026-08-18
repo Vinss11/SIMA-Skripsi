@@ -2928,16 +2928,6 @@ exports.getPamitMahasiswa = async (req, res) => {
 
     // Cari mahasiswa yang dosen pembimbing skripsinya adalah dosen ini
     const mahasiswaIds = await getSupervisedMahasiswaIdsWithLegacyFallback(dosen_id);
-    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
-
-    if (mahasiswaIds.length === 0) {
-      return res.json({
-        success: true,
-        data: [],
-        total: 0,
-        message: "Anda belum memiliki mahasiswa bimbingan skripsi",
-      });
-    }
 
     const where = {
       [Op.or]: [
@@ -2979,16 +2969,14 @@ exports.getPamitMahasiswa = async (req, res) => {
       success: true,
       data: pamits.map((pamit) => {
         const item = pamit.toJSON ? pamit.toJSON() : pamit;
-        const canReview = Number(item.reviewer_p1_id) === Number(dosen_id)
-          || Number(supervisorRoleMap.get(Number(item.mahasiswa_id))?.urutan) === 1;
         return {
           ...item,
-          can_review: canReview,
-          access_mode: canReview ? "primary" : "active_co_supervisor",
+          can_review: false,
+          access_mode: "notification_only",
         };
       }),
       total: pamits.length,
-      message: "Ini adalah daftar pamit mahasiswa bimbingan Anda untuk review dosen pembimbing skripsi.",
+      message: "Ini adalah daftar pemberitahuan pamit mahasiswa bimbingan Anda.",
     });
   } catch (error) {
     console.error("Error di getPamitMahasiswa:", error);
@@ -3052,18 +3040,14 @@ exports.getPamitMahasiswaDetail = async (req, res) => {
         message: "Anda tidak memiliki akses untuk melihat pamit ini",
       });
     }
-    const supervisorRoleMap = await getActiveSupervisorRoleMap(dosen_id);
-    const canReview = Number(pamit.reviewer_p1_id) === Number(dosen_id)
-      || Number(supervisorRoleMap.get(Number(pamit.mahasiswa.id))?.urutan) === 1;
-
     res.json({
       success: true,
       data: {
         ...(pamit.toJSON ? pamit.toJSON() : pamit),
-        can_review: canReview,
-        access_mode: canReview ? "primary" : "active_co_supervisor",
+        can_review: false,
+        access_mode: "notification_only",
       },
-      message: "Detail pamit mahasiswa untuk review dosen pembimbing skripsi.",
+      message: "Detail pemberitahuan pamit mahasiswa.",
     });
   } catch (error) {
     console.error("Error di getPamitMahasiswaDetail:", error);

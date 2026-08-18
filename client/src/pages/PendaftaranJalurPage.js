@@ -8,6 +8,16 @@ const PENDAFTARAN_OPTIONS = [
     label: "Baru",
     description: "Pendaftaran pertama kali untuk menentukan jalur skripsi.",
   },
+  {
+    value: "ulang",
+    label: "Ulang",
+    description: "Mendaftar kembali pada jalur yang sama dengan periode sebelumnya.",
+  },
+  {
+    value: "alih",
+    label: "Alih",
+    description: "Berpindah ke jalur lain dari periode sebelumnya.",
+  },
 ];
 
 const JALUR_OPTIONS = [
@@ -101,7 +111,7 @@ function RequiredLabel({ children, className = "mb-1 block text-sm font-semibold
   );
 }
 
-function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
+function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginForChange }) {
   const [periodeAktif, setPeriodeAktif] = useState(null);
   const [loadingPeriode, setLoadingPeriode] = useState(true);
   const [loadingDosen, setLoadingDosen] = useState(true);
@@ -506,7 +516,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
         nim: value,
         email: generatedEmail,
         account_password: "",
-        nama: "",
       }));
       setFieldErrors((prev) => ({
         ...prev,
@@ -1016,18 +1025,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       nimAvailability === "unavailable"
         ? fieldErrors.nim || "NIM belum memenuhi syarat pendaftaran."
         : getNimValidationError(nim);
-    if (nimError) {
-      setTouchedFields((prev) => ({ ...prev, nim: true }));
-      setFieldErrors((prev) => ({
-        ...prev,
-        nim: nimError,
-        account_password: "",
-        nama: "",
-        dosen_pembimbing_akademik_id: "",
-        program_kuliah: "",
-      }));
-      return "Periksa kembali informasi umum.";
-    }
     const namaError = getNamaValidationError(nama);
     const passwordError = "";
     const dpaError = formData.dosen_pembimbing_akademik_id
@@ -1064,6 +1061,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setIsStepTwoSubmitReady(false);
     if (pendaftaranDitutup) {
       setError("Periode pendaftaran masih belum dibuka oleh sekretaris prodi.");
+      return;
+    }
+    if (["ulang", "alih"].includes(formData.pendaftaran)) {
+      onLoginForChange?.(formData.pendaftaran);
       return;
     }
     const commonError = validateStepOne();
@@ -1274,8 +1275,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           <form onSubmit={(event) => event.preventDefault()} className="mt-6 space-y-6">
             {step === 1 ? (
               <section className="rounded-xl border border-[#e1e7f4] bg-white p-4">
-                <h2 className="text-lg font-black text-[#1a315f]">Informasi Umum</h2>
-                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <h2 className="text-lg font-black text-[#1a315f]">Jenis Pendaftaran dan Informasi Umum</h2>
+                <div className={`mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 ${formData.pendaftaran !== "baru" ? "hidden" : ""}`}>
                   <div>
                     <RequiredLabel>Email UII (Otomatis)</RequiredLabel>
                     <input
@@ -1356,8 +1357,8 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                   })}
                 </div>
 
-                <div className="mt-4">
-                  <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Program Kuliah</RequiredLabel>
+                <div className={`mt-4 ${formData.pendaftaran !== "baru" ? "hidden" : ""}`}>
+                  <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Program Studi</RequiredLabel>
                   {renderRadioGroup({
                     name: "program_kuliah",
                     value: formData.program_kuliah,
@@ -1395,7 +1396,13 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       );
                     })}
                   </div>
+                  {formData.pendaftaran !== "baru" ? (
+                    <div className="mt-3 rounded-lg border border-[#bfd0f7] bg-[#f3f7ff] px-4 py-3 text-sm text-[#34528f]">
+                      Pendaftaran {formData.pendaftaran === "ulang" ? "Ulang" : "Alih"} dilanjutkan setelah login. Form publik ini tidak membuat akun atau data penjaluran baru.
+                    </div>
+                  ) : null}
                 </div>
+
               </section>
             ) : null}
 
@@ -1903,7 +1910,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     disabled={pendaftaranDitutup}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Lanjutkan
+                    {formData.pendaftaran === "baru" ? "Lanjutkan" : `Login untuk ${formData.pendaftaran === "ulang" ? "Ulang" : "Alih"}`}
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </>

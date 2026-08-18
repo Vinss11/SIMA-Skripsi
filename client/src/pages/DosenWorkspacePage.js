@@ -1943,7 +1943,7 @@ function buildTabHeaders(isSekretaris) {
     pamit: {
       icon: Users,
       title: "Pamit Mahasiswa",
-      subtitle: "Kelola permintaan pamit mahasiswa yang masih aktif di bimbingan Anda.",
+      subtitle: "Lihat pemberitahuan pamit dan alasan dari mahasiswa bimbingan sebelumnya.",
     },
     topik: {
       icon: BookOpenCheck,
@@ -3578,7 +3578,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const summary = useMemo(() => {
     const regularSubmissions = submissions.filter((item) => !isKetuaClusterSubmissionReview(item));
     const pendingSubmissions = regularSubmissions.filter((item) => item.status === "pending").length;
-    const pendingPamit = pamitRows.filter((item) => item.status_dospem === "pending").length;
+    const pendingPamit = pamitRows.length;
     return {
       totalSubmissions: regularSubmissions.length,
       pendingSubmissions,
@@ -5865,61 +5865,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
     } finally {
       setSekprodiNonPenelitianActionId(null);
-    }
-  };
-
-  const handlePamitApprove = async (id) => {
-    try {
-      const result = await Swal.fire({
-        title: "Setujui pamit?",
-        text: "Catatan approval bisa diisi opsional.",
-        input: "text",
-        inputPlaceholder: "Catatan approval (opsional)",
-        showCancelButton: true,
-        confirmButtonText: "Setujui",
-        cancelButtonText: "Batal",
-      });
-      if (!result.isConfirmed) return;
-
-      await fetchWithAuth(`/api/dosen/pamit-mahasiswa/${id}/approve`, {
-        method: "POST",
-        body: JSON.stringify({ keterangan_dospem: result.value || "" }),
-      });
-
-      showSuccessToast("Pamit berhasil disetujui.");
-      await loadAllData();
-    } catch (approveError) {
-      if (approveError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(approveError.message || "Gagal menyetujui pamit.");
-      }
-    }
-  };
-
-  const handlePamitReject = async (id) => {
-    try {
-      const result = await Swal.fire({
-        title: "Tolak pamit",
-        text: "Isi alasan penolakan wajib.",
-        input: "textarea",
-        inputPlaceholder: "Alasan penolakan pamit",
-        showCancelButton: true,
-        confirmButtonText: "Tolak",
-        cancelButtonText: "Batal",
-        inputValidator: (value) => (!value?.trim() ? "Alasan penolakan wajib diisi." : undefined),
-      });
-      if (!result.isConfirmed) return;
-
-      await fetchWithAuth(`/api/dosen/pamit-mahasiswa/${id}/reject`, {
-        method: "POST",
-        body: JSON.stringify({ keterangan_dospem: result.value.trim() }),
-      });
-
-      showSuccessToast("Pamit berhasil ditolak.");
-      await loadAllData();
-    } catch (rejectError) {
-      if (rejectError?.message !== "__SESSION_EXPIRED__") {
-        showErrorToast(rejectError.message || "Gagal menolak pamit.");
-      }
     }
   };
 
@@ -8256,7 +8201,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <p className="mt-2 text-2xl font-black text-[#1b274b]">{summary.pendingSubmissions}</p>
                 </div>
                 <div className="rounded-xl border border-[#dff3ec] bg-white p-4 shadow-sm">
-                  <p className="text-sm font-semibold text-[#4e5e86]">Pamit Pending</p>
+                  <p className="text-sm font-semibold text-[#4e5e86]">Pemberitahuan Pamit</p>
                   <p className="mt-2 text-2xl font-black text-[#1b274b]">{summary.pendingPamit}</p>
                 </div>
                 <div className="rounded-xl border border-[#e3e8f7] bg-white p-4 shadow-sm">
@@ -8319,6 +8264,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     setActiveTab("monitoring-mahasiswa");
                   } else if (notification?.action_key === "defense_document_review") {
                     setActiveTab("dokumen-sidang-review");
+                  } else if (notification?.action_key === "view_change_pamit") {
+                    setActiveTab("pamit");
                   }
                 }}
               />
@@ -11304,17 +11251,19 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
             {!loading && activeTab === "pamit" ? (
               <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                <h3 className="mb-3 text-lg font-black text-[#1b274b]">Grid Pamit Mahasiswa</h3>
+                <h3 className="mb-1 text-lg font-black text-[#1b274b]">Grid Pemberitahuan Pamit Mahasiswa</h3>
+                <p className="mb-3 text-sm text-[#5d6c91]">Pamit bersifat pemberitahuan. Dosen tidak perlu memberikan approve atau reject.</p>
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
                   <table className="min-w-[1200px] text-left text-sm">
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">ID</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Alasan Ulang</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jenis</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Perubahan Jalur</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Alasan</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pesan Mahasiswa</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -11325,35 +11274,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <td className="px-3 py-2">
                                 {row.mahasiswa?.nim || "-"} - {row.mahasiswa?.nama || "-"}
                               </td>
-                              <td className="px-3 py-2">{formatLabel(row.status_dospem)}</td>
+                              <td className="px-3 py-2">{formatLabel(row.jenis_perubahan)}</td>
+                              <td className="px-3 py-2">{formatLabel(row.jalur_asal)} → {formatLabel(row.jalur_tujuan)}</td>
                               <td className="px-3 py-2">{row.alasan_ulang || "-"}</td>
+                              <td className="px-3 py-2">{row.pesan_ke_dosen_pembimbing || "-"}</td>
                               <td className="px-3 py-2">{formatDateTime(row.createdAt)}</td>
-                              <td className="px-3 py-2">
-                                {row.status_dospem === "pending" && row.can_review !== false ? (
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePamitApprove(row.id)}
-                                      className="rounded-md bg-[#137748] px-3 py-1 text-xs font-bold text-white hover:brightness-110"
-                                    >
-                                      Approve
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handlePamitReject(row.id)}
-                                      className="rounded-md bg-[#b73a3a] px-3 py-1 text-xs font-bold text-white hover:brightness-110"
-                                    >
-                                      Tolak
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-[#68779f]">
-                                    {row.status_dospem === "pending" && row.can_review === false
-                                      ? "Hanya lihat"
-                                      : "Sudah diproses"}
-                                  </span>
-                                )}
-                              </td>
                             </tr>
                           ))
                         : null}

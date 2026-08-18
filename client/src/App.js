@@ -32,6 +32,7 @@ function App() {
   const [authReady, setAuthReady] = useState(false);
   const [authScreen, setAuthScreen] = useState("login");
   const [registrationData, setRegistrationData] = useState(null);
+  const [pendingChangeType, setPendingChangeType] = useState(null);
   const [showProfile, setShowProfile] = useState(false);
   const [resetToken, setResetToken] = useState(initialResetToken);
 
@@ -80,6 +81,10 @@ function App() {
     return () => { cancelled = true; window.removeEventListener("focus", refreshProfile); };
   }, [auth?.token, restricted, handleSessionExpired]);
 
+  useEffect(() => {
+    if (auth?.user && !restricted && pendingChangeType) setPendingChangeType(null);
+  }, [auth?.user, pendingChangeType, restricted]);
+
   if (resetToken) {
     return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="reset" resetToken={resetToken} onComplete={() => { setResetToken(""); window.history.replaceState({}, document.title, "/"); setAuthScreen("login"); }} />;
   }
@@ -91,6 +96,7 @@ function App() {
   if (!session.user) {
     if (authScreen === "forgot") return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="forgot" onBack={() => setAuthScreen("login")} />;
     if (authScreen === "register") return <PendaftaranJalurPage apiBaseUrl={API_BASE_URL} onBack={() => setAuthScreen("login")}
+      onLoginForChange={(changeType) => { setPendingChangeType(changeType); setAuthScreen("login"); }}
       onRegisterSuccess={(result) => { setRegistrationData(result || null); setAuthScreen("register-success"); }} />;
     if (authScreen === "register-success") return <PendaftaranSuccessPage registrationData={registrationData} onOpenMahasiswaBaruLogin={() => setAuthScreen("login")} />;
     return <LoginPage apiBaseUrl={API_BASE_URL} onLoginSuccess={handleLoginSuccess} onOpenRegistration={() => setAuthScreen("register")} onForgotPassword={() => setAuthScreen("forgot")} />;
@@ -100,7 +106,8 @@ function App() {
 
   let rolePage = <RoleDummyPage session={session} onLogout={handleLogout} />;
   const common = { session, apiBaseUrl: API_BASE_URL, onLogout: handleLogout, onSessionExpired: handleSessionExpired, onOpenProfile: () => setShowProfile(true) };
-  if (session.user.role === "mahasiswa") rolePage = <DashboardPage {...common} onPasswordChanged={handlePasswordChanged} />;
+  if (session.user.role === "mahasiswa") rolePage = <DashboardPage {...common} onPasswordChanged={handlePasswordChanged}
+    initialTab={pendingChangeType ? "ulang-alih" : "dashboard"} initialChangeType={pendingChangeType || "ulang"} />;
   if (session.user.role === "admin") rolePage = <AdminDashboardPage {...common} />;
   if (session.user.role === "dosen") rolePage = <DosenDashboardPage {...common} isSekretaris={(session.user.capabilities || []).includes("sekretaris_prodi")} />;
   if (session.user.role === "sekretaris_prodi") rolePage = <SekretarisDashboardPage {...common} />;

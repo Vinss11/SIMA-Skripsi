@@ -13,7 +13,7 @@ const {
   Pengajuan, KelompokPerintisanBisnis, AnggotaKelompokPerintisan,
 } = require("../models");
 const {
-  getEligibility, submitPamit, decidePamit, createChangeRegistration,
+  getEligibility, submitPamit, createChangeRegistration,
 } = require("../services/penjaluranChangeService");
 const changeController = require("../controllers/penjaluranChangeController");
 
@@ -118,15 +118,26 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
   });
 
   await t.test("server menentukan alih dan hanya mengunci Pembimbing 1", async () => {
-    const eligibility = await getEligibility(student.id, { targetTrack: "magang" });
+    const eligibility = await getEligibility(student.id, { targetTrack: "magang", changeType: "alih" });
     assert.equal(eligibility.source_track, "penelitian");
     assert.equal(eligibility.change_type, "alih");
     assert.equal(eligibility.requires_pamit, true);
     assert.equal(Number(eligibility.reviewer_p1.id), p1.id);
     assert.equal(Number(eligibility.reviewer_p2.id), p2.id);
+    const repeatEligibility = await getEligibility(student.id, { changeType: "ulang" });
+    assert.equal(repeatEligibility.target_track, "penelitian");
+    assert.equal(repeatEligibility.change_type, "ulang");
+    await assert.rejects(
+      getEligibility(student.id, { targetTrack: "magang", changeType: "ulang" }),
+      (error) => error.code === "REPEAT_TRACK_MUST_MATCH_SOURCE"
+    );
+    await assert.rejects(
+      getEligibility(student.id, { targetTrack: "penelitian", changeType: "alih" }),
+      (error) => error.code === "TRANSFER_TRACK_MUST_DIFFER"
+    );
   });
 
-  await t.test("pamit lama dibatalkan jika Sekprodi sudah mengganti assignment", async () => {
+  await t.test("pamit langsung menjadi pemberitahuan dan assignment lama berakhir", async () => {
     const swappedStudent = await Mahasiswa.create({
       nim: `T3${suffix}3`, nama: "Mahasiswa Ganti Pembimbing", email: `t3.swap.${suffix}@test.local`,
       password: "password", angkatan: "2022", dosen_pembimbing_skripsi_id: p1.id,
@@ -147,20 +158,14 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
       penetapan_pembimbing_id: oldAssignment.id, dosen_id: p1.id, urutan: 1, peran: "utama", status: "active",
     });
     const stalePamit = await submitPamit({
-      mahasiswaId: swappedStudent.id, targetTrack: "magang",
+      mahasiswaId: swappedStudent.id, targetTrack: "magang", changeType: "alih",
       message: "Mohon izin beralih ke jalur magang.", reason: "Saya memilih pengalaman jalur magang.",
       idempotencyKey: `swap-pamit-${suffix}`,
     });
-    await oldAssignment.update({
-      status: "ended",
-      tanggal_selesai: new Date(),
-      end_reason_code: "supervisor_replaced",
-      assignment_transition_code: "supervisor_replaced",
-    });
-    await PenetapanPembimbingDosen.update(
-      { status: "ended", tanggal_selesai: new Date() },
-      { where: { penetapan_pembimbing_id: oldAssignment.id } }
-    );
+    await oldAssignment.reload();
+    assert.equal(stalePamit.status, "approved");
+    assert.equal(stalePamit.metadata.notification_only, true);
+    assert.equal(oldAssignment.status, "ended");
     const replacement = await PenetapanPembimbing.create({
       mahasiswa_id: swappedStudent.id, pendaftaran_penjaluran_id: swappedSource.id, periode_mulai_id: oldPeriod.id,
       semester_penjaluran_ke: 1, tanggal_mulai: new Date(), status: "active", sumber_data: "pergantian",
@@ -170,20 +175,14 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
       penetapan_pembimbing_id: replacement.id, dosen_id: p2.id, urutan: 1, peran: "utama", status: "active",
     });
     await swappedStudent.update({ dosen_pembimbing_skripsi_id: p2.id });
-
-    const decisionResult = await decidePamit({
-      pamitId: stalePamit.id, dosenId: p1.id, decision: "approved", note: "Disetujui.",
-    });
     await replacement.reload();
-    assert.equal(decisionResult.status, "cancelled");
-    assert.equal(decisionResult.cancellation_reason, "assignment_changed");
     assert.equal(replacement.status, "active");
   });
 
   let pamit;
-  await t.test("pamit idempoten, P2 view-only, approval mengakhiri state lama", async () => {
+  await t.test("pamit idempoten, P2 view-only, dan langsung mengakhiri state lama", async () => {
     const request = () => submitPamit({
-        mahasiswaId: student.id, targetTrack: "magang",
+        mahasiswaId: student.id, targetTrack: "magang", changeType: "alih",
         message: "Mohon izin mengakhiri bimbingan lama.", reason: "Saya akan beralih ke jalur magang.",
         idempotencyKey: `t3-${suffix}`,
       });
@@ -199,24 +198,6 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
       }),
       (error) => error.code === "PAMIT_IDEMPOTENCY_CONFLICT"
     );
-    await assert.rejects(
-      decidePamit({ pamitId: pamit.id, dosenId: p2.id, decision: "approved" }),
-      (error) => error.code === "NOT_LOCKED_REVIEWER"
-    );
-    const firstDecision = await decidePamit({
-      pamitId: pamit.id, dosenId: p1.id, decision: "approved", note: "Disetujui.",
-    });
-    assert.equal(firstDecision.status, "approved");
-    assert.equal(firstDecision.replayed, false);
-    const repeatedDecision = await decidePamit({
-      pamitId: pamit.id, dosenId: p1.id, decision: "approved", note: "Disetujui.",
-    });
-    assert.equal(repeatedDecision.status, "approved");
-    assert.equal(repeatedDecision.replayed, true);
-    await assert.rejects(
-      decidePamit({ pamitId: pamit.id, dosenId: p1.id, decision: "rejected", note: "Ditolak." }),
-      (error) => error.code === "PAMIT_DECISION_CONFLICT"
-    );
     const persistedPamit = await PamitUlang.findByPk(pamit.id);
     assert.equal(persistedPamit.status, "approved");
     await student.reload();
@@ -231,7 +212,7 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
     assert.equal(unscopedPendingGuidance.status_permohonan, "pending");
     assert.equal(await Notifikasi.count({ where: {
       recipient_type: "dosen", recipient_id: p2.id, reference_type: "pamit_penjaluran", reference_id: pamit.id,
-    } }), 2);
+    } }), 1);
   });
 
   await t.test("pamit approved hanya melewati PAMIT_PENDING dan tetap memblokir workflow aktif", async () => {
