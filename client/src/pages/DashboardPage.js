@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Swal from "sweetalert2";
 import {
   Activity,
   AlertCircle,
@@ -13,6 +14,7 @@ import {
   LogOut,
   MessageSquare,
   RefreshCcw,
+  Search,
   ShieldAlert,
   Send,
   UserCircle2,
@@ -37,6 +39,18 @@ const JALUR_OPTIONS = [
   { value: "perintisan_bisnis", label: "Perintisan Bisnis" },
   { value: "magang", label: "Magang" },
 ];
+
+function showDashboardSuccessToast(message) {
+  return Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "success",
+    title: message,
+    showConfirmButton: false,
+    timer: 2800,
+    timerProgressBar: true,
+  });
+}
 
 const TAB_HEADERS = {
   dashboard: {
@@ -430,6 +444,74 @@ function SummaryCard({ title, main, subtitle, icon, lineTone, cardTone, badge, b
   );
 }
 
+function HistoricalDosenCombobox({ options = [], value, onChange }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selected = options.find((item) => Number(item.id) === Number(value)) || null;
+  const selectedLabel = selected
+    ? `${formatDosenFullName(selected.nama, selected.gelar)}${selected.nik ? ` - ${selected.nik}` : ""}`
+    : "";
+  const [query, setQuery] = useState(selectedLabel);
+
+  useEffect(() => {
+    if (!isOpen) setQuery(selectedLabel);
+  }, [isOpen, selectedLabel]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = options.filter((item) => {
+    if (!normalizedQuery || normalizedQuery === selectedLabel.toLowerCase()) return true;
+    return [item.nama, item.gelar, item.nik, item.kode_dosen, item.email, item.status_keaktifan]
+      .some((part) => String(part || "").toLowerCase().includes(normalizedQuery));
+  });
+
+  return (
+    <div className="relative mt-1">
+      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+      <input
+        type="text"
+        role="combobox"
+        autoComplete="off"
+        aria-autocomplete="list"
+        aria-controls="historical-dosen-options"
+        aria-expanded={isOpen}
+        value={query}
+        onFocus={(event) => { setIsOpen(true); if (selected) event.currentTarget.select(); }}
+        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (value) onChange("");
+          setIsOpen(true);
+        }}
+        placeholder="Cari nama, NIK, kode, atau email dosen"
+        className="w-full rounded-lg border border-[#d0dbf4] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+      />
+      {isOpen ? (
+        <div id="historical-dosen-options" role="listbox" className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-64 overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-xl">
+          {filtered.length ? filtered.map((dosen) => (
+            <button
+              key={`historical-dosen-${dosen.id}`}
+              type="button"
+              role="option"
+              aria-selected={Number(dosen.id) === Number(value)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                onChange(String(dosen.id));
+                setQuery(`${formatDosenFullName(dosen.nama, dosen.gelar)}${dosen.nik ? ` - ${dosen.nik}` : ""}`);
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm text-[#213460] last:border-b-0 hover:bg-[#f4f7ff]"
+            >
+              <span className="font-semibold">{formatDosenFullName(dosen.nama, dosen.gelar)}</span>
+              <span className="shrink-0 text-xs text-[#68799f]">{dosen.nik || dosen.kode_dosen || "-"}</span>
+            </button>
+          )) : (
+            <p className="px-3 py-3 text-xs font-semibold text-[#7282a8]">Dosen tidak ditemukan.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function UlangAlihJalurCard({
   profile,
   jalurStatus,
@@ -453,16 +535,23 @@ function UlangAlihJalurCard({
   const [form, setForm] = useState({
     pendaftaran: "ulang",
     jenis_jalur_ulang: "penelitian",
-    penjaluran_sebelumnya: "penelitian",
-    penjaluran_baru: "magang",
+    penjaluran_sebelumnya: "",
+    penjaluran_baru: "",
     dosen_pembimbing_ta_sebelumnya_id: "",
     dosen_pembimbing_ta_baru_id: "",
     alasan_pengajuan: "",
   });
   const periodeAktif = jalurEligibility?.periode_aktif || null;
   const access = getUlangAlihAccess({ jalurEligibility, jalurStatus });
-  const changeHardBlockers = (changeEligibility?.blockers || []).filter(
-    (item) => !String(item).toLowerCase().includes("pamit")
+  const bootstrapChange = Boolean(changeEligibility?.bootstrap_change);
+  const ignoredInputBlockers = new Set([
+    "PAMIT_REQUIRED",
+    "SOURCE_TRACK_REQUIRED",
+    "PREVIOUS_SUPERVISOR_REQUIRED",
+    "TRANSFER_TARGET_REQUIRED",
+  ]);
+  const changeHardBlockers = (changeEligibility?.blocker_details || []).filter(
+    (item) => !ignoredInputBlockers.has(item.code)
   );
   const canOpenForm = changeEligibility ? changeHardBlockers.length === 0 : access.isAllowed;
   const isFormDisabled = !canOpenForm || isSubmitting;
@@ -489,6 +578,12 @@ function UlangAlihJalurCard({
     }));
   }, [profile?.dosenPembimbingSkripsi?.id]);
 
+  useEffect(() => {
+    if (["ulang", "alih"].includes(changeEligibility?.pending_registration_type)) {
+      setActiveFlow(changeEligibility.pending_registration_type);
+    }
+  }, [changeEligibility?.pending_registration_type]);
+
   const setField = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -503,8 +598,8 @@ function UlangAlihJalurCard({
     <div className="mt-5 inline-flex rounded-lg border border-[#d5def2] bg-[#f7f9fe] p-1">
       <button
         type="button"
-        onClick={() => { if (!activePamit) setActiveFlow("ulang"); }}
-        disabled={Boolean(activePamit) && activeFlow !== "ulang"}
+        onClick={() => { if (!activePamit && !changeEligibility?.pending_registration_type) setActiveFlow("ulang"); }}
+        disabled={(Boolean(activePamit) || Boolean(changeEligibility?.pending_registration_type)) && activeFlow !== "ulang"}
         className={`rounded-md px-4 py-2 text-sm font-bold transition ${
           activeFlow === "ulang" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
         } disabled:cursor-not-allowed disabled:opacity-45`}
@@ -513,8 +608,8 @@ function UlangAlihJalurCard({
       </button>
       <button
         type="button"
-        onClick={() => { if (!activePamit) setActiveFlow("alih"); }}
-        disabled={Boolean(activePamit) && activeFlow !== "alih"}
+        onClick={() => { if (!activePamit && !changeEligibility?.pending_registration_type) setActiveFlow("alih"); }}
+        disabled={(Boolean(activePamit) || Boolean(changeEligibility?.pending_registration_type)) && activeFlow !== "alih"}
         className={`rounded-md px-4 py-2 text-sm font-bold transition ${
           activeFlow === "alih" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
         } disabled:cursor-not-allowed disabled:opacity-45`}
@@ -524,18 +619,14 @@ function UlangAlihJalurCard({
     </div>
   );
 
-  const sourceTrack = changeEligibility?.source_track || "";
+  const sourceTrack = changeEligibility?.source_track || form.penjaluran_sebelumnya || "";
   const targetTrack = activeFlow === "ulang" ? sourceTrack : form.penjaluran_baru;
   const requiresPamit = changeEligibility?.requires_pamit !== false;
-  const canCommitChange = canOpenForm && !activeRegistration && (
-    !requiresPamit || ["pending", "approved"].includes(activePamitStatus)
-  );
   const availableTargets = JALUR_OPTIONS.filter((item) => item.value !== sourceTrack);
 
   useEffect(() => {
     if (!sourceTrack || form.penjaluran_baru !== sourceTrack) return;
-    const fallbackTarget = JALUR_OPTIONS.find((item) => item.value !== sourceTrack)?.value || "";
-    setForm((prev) => ({ ...prev, penjaluran_baru: fallbackTarget }));
+    setForm((prev) => ({ ...prev, penjaluran_baru: "" }));
   }, [sourceTrack, form.penjaluran_baru]);
 
   useEffect(() => {
@@ -574,41 +665,88 @@ function UlangAlihJalurCard({
         ) : null}
       </div>
       {flowTabs}
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
-          <p className="text-xs font-bold uppercase text-[#7180a5]">Jalur asal (server)</p>
-          <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "Belum tersedia"}</p>
-        </div>
-        <label className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
-          <span className="text-xs font-bold uppercase text-[#7180a5]">Jalur tujuan</span>
-          {activeFlow === "alih" ? (
+      {bootstrapChange && !activePamit ? (
+        <div className="mt-5 grid gap-4 rounded-lg border border-[#cfe0ff] bg-[#f7faff] p-5 md:grid-cols-2">
+          <label className="text-sm font-semibold text-[#324c86]">
+            Jalur penjaluran sebelumnya <span className="text-[#c43f3f]">*</span>
             <select
-              value={form.penjaluran_baru}
-              onChange={(event) => setField("penjaluran_baru", event.target.value)}
-              className="mt-2 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
+              value={form.penjaluran_sebelumnya}
+              onChange={(event) => setField("penjaluran_sebelumnya", event.target.value)}
+              className="mt-1 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
             >
-              {availableTargets.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              <option value="">Pilih jalur sebelumnya</option>
+              {JALUR_OPTIONS.map((item) => <option key={`source-${item.value}`} value={item.value}>{item.label}</option>)}
             </select>
-          ) : (
-            <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "-"}</p>
-          )}
-        </label>
-      </div>
+          </label>
+          {activeFlow === "alih" ? (
+            <label className="text-sm font-semibold text-[#324c86]">
+              Jalur tujuan baru <span className="text-[#c43f3f]">*</span>
+              <select
+                value={form.penjaluran_baru}
+                onChange={(event) => setField("penjaluran_baru", event.target.value)}
+                disabled={!sourceTrack}
+                className="mt-1 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-[#eef2f9]"
+              >
+                <option value="">Pilih jalur tujuan baru</option>
+                {availableTargets.map((item) => <option key={`bootstrap-target-${item.value}`} value={item.value}>{item.label}</option>)}
+              </select>
+              <span className="mt-1 block text-xs font-normal text-[#64749a]">Jalur tujuan harus berbeda dari jalur sebelumnya.</span>
+            </label>
+          ) : null}
+          <label className="text-sm font-semibold text-[#324c86]">
+            Dosen pembimbing sebelumnya <span className="text-[#c43f3f]">*</span>
+            <HistoricalDosenCombobox
+              options={dosenOptions}
+              value={form.dosen_pembimbing_ta_sebelumnya_id}
+              onChange={(nextValue) => setField("dosen_pembimbing_ta_sebelumnya_id", nextValue)}
+            />
+          </label>
+        </div>
+      ) : null}
+      {!bootstrapChange ? (
+        <div className="mt-5 grid gap-4 md:grid-cols-2">
+          <div className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Jalur sebelumnya</p>
+            <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "Belum tersedia"}</p>
+          </div>
+          <label className="rounded-lg border border-[#e3eaf8] bg-[#fbfdff] p-4">
+            <span className="text-xs font-bold uppercase text-[#7180a5]">Jalur tujuan</span>
+            {activeFlow === "alih" ? (
+              <select
+                value={form.penjaluran_baru}
+                onChange={(event) => setField("penjaluran_baru", event.target.value)}
+                className="mt-2 w-full rounded-lg border border-[#d0dbf4] bg-white px-3 py-2 text-sm"
+              >
+                <option value="">Pilih jalur tujuan baru</option>
+                {availableTargets.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              </select>
+            ) : (
+              <p className="mt-1 font-black capitalize text-[#1a2648]">{sourceTrack.replace(/_/g, " ") || "-"}</p>
+            )}
+          </label>
+        </div>
+      ) : null}
 
-      {changeEligibility?.blockers?.filter((item) => !String(item).toLowerCase().includes("pamit")).map((item) => (
-        <div key={item} className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm font-semibold text-[#7a5a00]">{item}</div>
+      {changeHardBlockers.map((item) => (
+        <div key={item.code} className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm font-semibold text-[#7a5a00]">{item.message}</div>
       ))}
 
       {requiresPamit && !activePamit ? (
         <form onSubmit={(event) => {
           event.preventDefault();
-          onSubmitPamit?.({ ...pamitForm, pendaftaran: activeFlow, target_track: targetTrack });
+          onSubmitPamit?.({
+            ...pamitForm,
+            pendaftaran: activeFlow,
+            target_track: targetTrack,
+            source_track: sourceTrack,
+            previous_supervisor_id: form.dosen_pembimbing_ta_sebelumnya_id || null,
+          });
         }} className="mt-5 grid gap-4 rounded-lg border border-[#e3eaf8] p-5">
           <h4 className="text-lg font-black text-[#1a2648]">Pemberitahuan Pamit kepada Pembimbing Sebelumnya</h4>
           <textarea rows={3} value={pamitForm.alasan_ulang} onChange={(event) => setPamitForm((prev) => ({ ...prev, alasan_ulang: event.target.value }))} placeholder="Alasan ulang/alih jalur" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
           <textarea rows={3} value={pamitForm.pesan_ke_dosen_pembimbing} onChange={(event) => setPamitForm((prev) => ({ ...prev, pesan_ke_dosen_pembimbing: event.target.value }))} placeholder="Pesan kepada Pembimbing 1" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
           <p className="text-xs text-[#5f6b89]">Pamit hanya dikirim sebagai pemberitahuan dan tidak memerlukan approve atau reject dari dosen.</p>
-          <button disabled={isSubmitting || pamitForm.alasan_ulang.trim().length < 10 || pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10} className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Kirim Pemberitahuan Pamit</button>
+          <button disabled={isSubmitting || !sourceTrack || (activeFlow === "alih" && !targetTrack) || (bootstrapChange && !form.dosen_pembimbing_ta_sebelumnya_id) || pamitForm.alasan_ulang.trim().length < 10 || pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10} className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Kirim Pemberitahuan Pamit</button>
         </form>
       ) : null}
 
@@ -619,27 +757,7 @@ function UlangAlihJalurCard({
         </div>
       ) : null}
 
-      {canCommitChange ? (
-        <div className="mt-5 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-5">
-          <label className="block text-sm font-semibold text-[#324c86]">Alasan pendaftaran</label>
-          <textarea rows={3} value={form.alasan_pengajuan} onChange={(event) => setField("alasan_pengajuan", event.target.value)} className="mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
-          <button
-            type="button"
-            disabled={isSubmitting || form.alasan_pengajuan.trim().length < 10 || !targetTrack}
-            onClick={() => onRegisterUlang?.({
-              pendaftaran: activeFlow,
-              target_track: targetTrack,
-              pamit_id: activePamit?.id || null,
-              alasan_pengajuan: form.alasan_pengajuan,
-            })}
-            className="mt-3 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-          >
-            {isSubmitting ? "Memproses..." : `Daftar ${activeFlow === "ulang" ? "Ulang" : "Alih"} Jalur`}
-          </button>
-        </div>
-      ) : null}
       {submitError ? <div className="mt-4 rounded-lg bg-[#fff2f2] p-3 text-sm font-semibold text-[#a03f3f]">{submitError}</div> : null}
-      {submitSuccess ? <div className="mt-4 rounded-lg bg-[#effcf5] p-3 text-sm font-semibold text-[#1b7a49]">{submitSuccess}</div> : null}
     </section>
   );
 
@@ -1419,9 +1537,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
   const [ulangAlihSubmitting, setUlangAlihSubmitting] = useState(false);
   const [ulangAlihError, setUlangAlihError] = useState("");
   const [ulangAlihSuccess, setUlangAlihSuccess] = useState("");
+  const [pendingPathFormTarget, setPendingPathFormTarget] = useState("");
   const sessionExpiredRef = useRef(false);
   const pamitIdempotencyRef = useRef(null);
   const changeRegistrationIdempotencyRef = useRef(null);
+  const autoRegistrationPamitRef = useRef(null);
   const extensionIdempotencyRef = useRef(null);
   const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const mustChangePassword = Boolean(session?.user?.role === "mahasiswa" && session?.prompt_change_password);
@@ -1434,6 +1554,17 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
   );
   const onboardingState = jalurEligibility?.onboarding || null;
   const isLockedByOnboarding = Boolean(!mustChangePassword && onboardingState?.is_locked);
+  const isChangeOnboarding = Boolean(
+    isLockedByOnboarding &&
+    onboardingState?.target_form === "ulang_alih" &&
+    ["ulang", "alih"].includes(onboardingState?.registration_type)
+  );
+  const isPathFormOnboarding = Boolean(
+    pendingPathFormTarget ||
+    (isLockedByOnboarding &&
+      !isChangeOnboarding &&
+      ["ulang", "alih"].includes(jalurEligibility?.pendaftaran_aktif?.jalur))
+  );
   const onboardingLockReason =
     onboardingState?.reason || "Selesaikan form lanjutan jalur terlebih dahulu sebelum membuka menu lain.";
   const onboardingTargetJalur =
@@ -1443,6 +1574,23 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
     jalurStatus?.pendaftaran_aktif?.jalur_form_lanjutan ||
     jalurEligibility?.pendaftaran_aktif?.selected_jalur ||
     null;
+
+  useEffect(() => {
+    if (isChangeOnboarding && !pendingPathFormTarget && activeTab !== "ulang-alih") setActiveTab("ulang-alih");
+  }, [activeTab, isChangeOnboarding, pendingPathFormTarget]);
+
+  useEffect(() => {
+    if (isPathFormOnboarding && activeTab !== "pengajuan") setActiveTab("pengajuan");
+  }, [activeTab, isPathFormOnboarding]);
+
+  useEffect(() => {
+    if (
+      pendingPathFormTarget &&
+      ["ulang", "alih"].includes(jalurEligibility?.pendaftaran_aktif?.jalur)
+    ) {
+      setPendingPathFormTarget("");
+    }
+  }, [jalurEligibility?.pendaftaran_aktif?.jalur, pendingPathFormTarget]);
   const latestSubmissionForBimbingan = jalurStatus?.last_submission || submissions?.[0] || null;
   const latestSubmissionStatusForBimbingan = String(latestSubmissionForBimbingan?.status || "").toLowerCase();
   const isPenelitianApprovedForBimbingan =
@@ -1501,7 +1649,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
         fetchWithAuth("/api/jalur/change/eligibility"),
         fetchWithAuth("/api/submissions"),
         fetchWithAuth("/api/mahasiswa/bimbingan?summary_only=1"),
-        fetchWithAuth("/api/pendaftaran/dosen"),
+        fetchWithAuth("/api/pendaftaran/dosen?scope=history"),
         fetchWithAuth("/api/mahasiswa/penetapan-pembimbing"),
       ]);
 
@@ -1771,6 +1919,8 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
         pesan_ke_dosen_pembimbing: pesan,
         pendaftaran: form?.pendaftaran || null,
         target_track: form?.target_track || null,
+        source_track: form?.source_track || null,
+        previous_supervisor_id: form?.previous_supervisor_id || null,
       };
       const idempotencyKey = resolveIdempotencyKey(pamitIdempotencyRef, "pamit", requestPayload);
       const response = await fetch(`${apiBaseUrl}/api/jalur/ulang/pamit`, {
@@ -1807,8 +1957,60 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
       }
 
       pamitIdempotencyRef.current = null;
-      setUlangAlihSuccess(data?.message || "Pemberitahuan pamit berhasil dikirim.");
+      const registrationPayload = {
+        pendaftaran: form?.pendaftaran || null,
+        target_track: form?.target_track || null,
+        source_track: form?.source_track || null,
+        previous_supervisor_id: form?.previous_supervisor_id || null,
+        pamit_id: data?.data?.id || null,
+        alasan_pengajuan: alasan,
+      };
+      const registrationIdempotencyKey = resolveIdempotencyKey(
+        changeRegistrationIdempotencyRef,
+        "change",
+        registrationPayload
+      );
+      const registrationResponse = await fetch(`${apiBaseUrl}/api/pendaftaran/ulang-alih`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": registrationIdempotencyKey,
+        },
+        body: JSON.stringify(registrationPayload),
+      });
+      const registrationData = await registrationResponse.json().catch(() => null);
+      const registrationMessage = String(registrationData?.message || "").toLowerCase();
+      const registrationTokenError =
+        registrationMessage.includes("token tidak valid") ||
+        registrationMessage.includes("token tidak ditemukan") ||
+        registrationMessage.includes("kadaluarsa");
+
+      if (registrationResponse.status === 401 || (registrationResponse.status === 403 && registrationTokenError)) {
+        changeRegistrationIdempotencyRef.current = null;
+        onSessionExpired?.();
+        return;
+      }
+      if (!registrationResponse.ok || registrationData?.success === false) {
+        changeRegistrationIdempotencyRef.current = null;
+        setUlangAlihError(
+          `Pamit sudah berhasil dikirim, tetapi pendaftaran belum dapat dibuat. ${registrationData?.message || "Silakan coba kembali."}`
+        );
+        setRefreshTick((prev) => prev + 1);
+        return;
+      }
+      if (!registrationData?.success) {
+        setUlangAlihError("Pamit sudah berhasil dikirim, tetapi respons pendaftaran tidak dapat diverifikasi.");
+        setRefreshTick((prev) => prev + 1);
+        return;
+      }
+
+      changeRegistrationIdempotencyRef.current = null;
+      setUlangAlihSuccess("");
+      setPendingPathFormTarget(form?.target_track || "penelitian");
       setRefreshTick((prev) => prev + 1);
+      setActiveTab("pengajuan");
+      showDashboardSuccessToast("Pamit berhasil dikirim. Silakan lengkapi form pendaftaran penjaluran.");
     } catch (requestError) {
       setUlangAlihError("Tidak dapat terhubung ke server.");
     } finally {
@@ -1816,7 +2018,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
     }
   };
 
-  const handleRegisterUlangPenelitian = async (form) => {
+  const handleRegisterUlangPenelitian = useCallback(async (form) => {
     setUlangAlihError("");
     setUlangAlihSuccess("");
 
@@ -1855,15 +2057,54 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
       }
 
       changeRegistrationIdempotencyRef.current = null;
-      setUlangAlihSuccess(data?.message || "Pendaftaran ulang/alih berhasil.");
+      setUlangAlihSuccess("");
+      setPendingPathFormTarget(form?.target_track || "penelitian");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");
+      showDashboardSuccessToast(data?.message || "Pendaftaran ulang/alih berhasil.");
     } catch (requestError) {
       setUlangAlihError("Tidak dapat terhubung ke server.");
     } finally {
       setUlangAlihSubmitting(false);
     }
-  };
+  }, [apiBaseUrl, onSessionExpired, session.token]);
+
+  useEffect(() => {
+    const pamit = changeEligibility?.pamit || null;
+    const pamitId = Number(pamit?.id || 0) || null;
+    if (
+      !isChangeOnboarding ||
+      !pamitId ||
+      jalurEligibility?.pendaftaran_aktif?.id ||
+      autoRegistrationPamitRef.current === pamitId
+    ) {
+      return;
+    }
+
+    const sourceTrack = pamit?.jalur_asal || changeEligibility?.source_track || null;
+    const targetTrack = pamit?.jalur_tujuan || changeEligibility?.target_track || sourceTrack;
+    const registrationType = pamit?.jenis_perubahan || changeEligibility?.pending_registration_type || null;
+    const reason = String(pamit?.alasan_ulang || "").trim();
+    if (!sourceTrack || !targetTrack || !registrationType || reason.length < 10) return;
+
+    autoRegistrationPamitRef.current = pamitId;
+    handleRegisterUlangPenelitian({
+      pendaftaran: registrationType,
+      source_track: sourceTrack,
+      target_track: targetTrack,
+      previous_supervisor_id: pamit?.reviewer_p1_id || null,
+      pamit_id: pamitId,
+      alasan_pengajuan: reason,
+    });
+  }, [
+    changeEligibility?.pamit,
+    changeEligibility?.pending_registration_type,
+    changeEligibility?.source_track,
+    changeEligibility?.target_track,
+    handleRegisterUlangPenelitian,
+    isChangeOnboarding,
+    jalurEligibility?.pendaftaran_aktif?.id,
+  ]);
 
   return (
     <div className="h-screen overflow-hidden bg-[#f2f3f7]">
@@ -1921,10 +2162,14 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
                   isHardLockedBySemester && item.id !== "izin-lanjut" && item.id !== "notifications" && item.id !== "akademik" && !isUlangAlihItem;
                 const isLockedByOnboardingItem =
                   isLockedByOnboarding &&
-                  item.id !== "notifications" &&
-                  item.id !== "akademik" &&
-                  item.id !== "pengajuan" &&
-                  !(item.id === "bimbingan" && !bimbinganLockInfo.isLocked);
+                  (isPathFormOnboarding
+                    ? item.id !== "pengajuan"
+                    : isChangeOnboarding
+                    ? !isUlangAlihItem
+                    : item.id !== "notifications" &&
+                      item.id !== "akademik" &&
+                      item.id !== "pengajuan" &&
+                      !(item.id === "bimbingan" && !bimbinganLockInfo.isLocked));
                 const isLockedByBimbinganRule = item.id === "bimbingan" && bimbinganLockInfo.isLocked;
                 const isDisabled =
                   mustChangePassword ||
@@ -2048,6 +2293,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
                 studentProfile={profile}
                 jalurEligibility={jalurEligibility}
                 jalurStatus={jalurStatus}
+                forcedJalur={pendingPathFormTarget}
                 onEligibilityRefresh={() => setRefreshTick((prev) => prev + 1)}
               />
             ) : null}

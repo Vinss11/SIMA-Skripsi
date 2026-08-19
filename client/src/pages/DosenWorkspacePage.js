@@ -2061,6 +2061,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [izinLanjutPage, setIzinLanjutPage] = useState(1);
   const [pamitRows, setPamitRows] = useState([]);
   const [pamitPage, setPamitPage] = useState(1);
+  const [selectedPamitDetail, setSelectedPamitDetail] = useState(null);
   const [magangReviewRows, setMagangReviewRows] = useState([]);
   const [magangReviewQuery, setMagangReviewQuery] = useState("");
   const [magangReviewPage, setMagangReviewPage] = useState(1);
@@ -8018,6 +8019,93 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       )
     : null;
 
+  const pamitDetailModal = selectedPamitDetail && typeof document !== "undefined"
+    ? createPortal(
+        <div
+          className="fixed inset-0 z-[170] flex items-center justify-center bg-[#17213a]/55 p-4"
+          onMouseDown={() => setSelectedPamitDetail(null)}
+          role="presentation"
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pamit-detail-title"
+            onMouseDown={(event) => event.stopPropagation()}
+            className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#dce4f7] bg-white shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-4 border-b border-[#e5ebf7] px-6 py-4">
+              <div>
+                <h2 id="pamit-detail-title" className="text-xl font-black text-[#1d2d56]">
+                  Detail Pemberitahuan Pamit
+                </h2>
+                <p className="mt-1 text-sm text-[#617097]">
+                  Informasi lengkap yang dikirim mahasiswa tanpa proses approve atau reject.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPamitDetail(null)}
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#d8e0f2] text-[#52658f] transition hover:bg-[#f3f6fc]"
+                title="Tutup"
+                aria-label="Tutup detail pemberitahuan pamit"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 overflow-y-auto p-6">
+              <div className="grid gap-3 rounded-xl border border-[#e2e8f5] bg-[#f8fbff] p-4 sm:grid-cols-2">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#7482a3]">Mahasiswa</p>
+                  <p className="mt-1 font-black text-[#24375f]">{selectedPamitDetail.mahasiswa?.nama || "-"}</p>
+                  <p className="mt-0.5 text-sm text-[#617097]">NIM: {selectedPamitDetail.mahasiswa?.nim || "-"}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#7482a3]">Waktu dikirim</p>
+                  <p className="mt-1 font-semibold text-[#24375f]">{formatDateTime(selectedPamitDetail.createdAt)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#7482a3]">Jenis pendaftaran</p>
+                  <p className="mt-1 font-semibold text-[#24375f]">{formatLabel(selectedPamitDetail.jenis_perubahan)}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-[#7482a3]">Perubahan jalur</p>
+                  <p className="mt-1 font-semibold text-[#24375f]">
+                    {formatLabel(selectedPamitDetail.jalur_asal)} → {formatLabel(selectedPamitDetail.jalur_tujuan)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-[#e2e8f5] p-4">
+                <p className="text-sm font-black text-[#2a3e6b]">Alasan Mahasiswa</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#4c5e84]">
+                  {selectedPamitDetail.alasan_ulang || "-"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-[#e2e8f5] p-4">
+                <p className="text-sm font-black text-[#2a3e6b]">Pesan kepada Dosen Pembimbing</p>
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-[#4c5e84]">
+                  {selectedPamitDetail.pesan_ke_dosen_pembimbing || "-"}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end border-t border-[#e5ebf7] px-6 py-3">
+              <button
+                type="button"
+                onClick={() => setSelectedPamitDetail(null)}
+                className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110"
+              >
+                Tutup
+              </button>
+            </div>
+          </section>
+        </div>,
+        document.body
+      )
+    : null;
+
   return (
     <div className="h-screen overflow-hidden bg-[#f2f3f7]">
       <header className="fixed inset-x-0 top-0 bg-[#2f63e3] text-white shadow-sm">
@@ -11254,31 +11342,64 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 <h3 className="mb-1 text-lg font-black text-[#1b274b]">Grid Pemberitahuan Pamit Mahasiswa</h3>
                 <p className="mb-3 text-sm text-[#5d6c91]">Pamit bersifat pemberitahuan. Dosen tidak perlu memberikan approve atau reject.</p>
                 <div className="relative mt-1 flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
-                  <table className="min-w-[1200px] text-left text-sm">
+                  <table className="w-full min-w-[1180px] table-fixed text-left text-sm">
+                    <colgroup>
+                      <col className="w-[5%]" />
+                      <col className="w-[18%]" />
+                      <col className="w-[9%]" />
+                      <col className="w-[15%]" />
+                      <col className="w-[17%]" />
+                      <col className="w-[17%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[7%]" />
+                    </colgroup>
                     <thead>
                       <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">ID</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 text-center font-semibold">No</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jenis</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Perubahan Jalur</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Alasan</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pesan Mahasiswa</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tanggal</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 text-center font-semibold">Aksi</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pamitRows.length > 0
-                        ? pagedPamitRows.map((row) => (
+                        ? pagedPamitRows.map((row, rowIndex) => (
                             <tr key={`pamit-${row.id}`} className="border-b border-[#eff3fb]">
-                              <td className="px-3 py-2">{row.id}</td>
-                              <td className="px-3 py-2">
-                                {row.mahasiswa?.nim || "-"} - {row.mahasiswa?.nama || "-"}
+                              <td className="px-3 py-3 text-center font-semibold text-[#52638b]">
+                                {(pamitPage - 1) * DOSEN_GRID_PAGE_SIZE + rowIndex + 1}
                               </td>
-                              <td className="px-3 py-2">{formatLabel(row.jenis_perubahan)}</td>
-                              <td className="px-3 py-2">{formatLabel(row.jalur_asal)} → {formatLabel(row.jalur_tujuan)}</td>
-                              <td className="px-3 py-2">{row.alasan_ulang || "-"}</td>
-                              <td className="px-3 py-2">{row.pesan_ke_dosen_pembimbing || "-"}</td>
-                              <td className="px-3 py-2">{formatDateTime(row.createdAt)}</td>
+                              <td className="px-3 py-3 align-top">
+                                <p className="break-words font-semibold text-[#24375f]">{row.mahasiswa?.nama || "-"}</p>
+                                <p className="mt-0.5 text-xs text-[#7180a2]">{row.mahasiswa?.nim || "-"}</p>
+                              </td>
+                              <td className="px-3 py-3 align-top">{formatLabel(row.jenis_perubahan)}</td>
+                              <td className="px-3 py-3 align-top">
+                                <span className="break-words">{formatLabel(row.jalur_asal)} → {formatLabel(row.jalur_tujuan)}</span>
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <p className="line-clamp-2 break-words" title={row.alasan_ulang || "-"}>{row.alasan_ulang || "-"}</p>
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <p className="line-clamp-2 break-words" title={row.pesan_ke_dosen_pembimbing || "-"}>{row.pesan_ke_dosen_pembimbing || "-"}</p>
+                              </td>
+                              <td className="px-3 py-3 align-top">{formatDateTime(row.createdAt)}</td>
+                              <td className="px-3 py-3 text-center align-top">
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPamitDetail({
+                                    ...row,
+                                    nomor: (pamitPage - 1) * DOSEN_GRID_PAGE_SIZE + rowIndex + 1,
+                                  })}
+                                  className="inline-flex items-center gap-1.5 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110"
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  Detail
+                                </button>
+                              </td>
                             </tr>
                           ))
                         : null}
@@ -14369,6 +14490,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       {mahasiswaMasterFilterPopup}
       {pendaftaranFilterPopup}
       {penanggungJawabDetailModal}
+      {pamitDetailModal}
     </div>
   );
 }

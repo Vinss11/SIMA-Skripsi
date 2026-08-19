@@ -22,11 +22,23 @@ function normalizeChangeType(body = {}, query = {}) {
     || query.pendaftaran || query.change_type || query.jenis_perubahan || null;
 }
 
+function normalizeSource(body = {}, query = {}) {
+  return body.source_track || body.jalur_asal || body.penjaluran_sebelumnya
+    || query.source_track || query.jalur_asal || query.penjaluran_sebelumnya || null;
+}
+
+function normalizePreviousSupervisor(body = {}, query = {}) {
+  return body.previous_supervisor_id || body.dosen_pembimbing_ta_sebelumnya_id
+    || query.previous_supervisor_id || query.dosen_pembimbing_ta_sebelumnya_id || null;
+}
+
 exports.getEligibility = async (req, res) => {
   try {
     const data = await changeService.getEligibility(req.user.id, {
       targetTrack: normalizeTarget({}, req.query),
       changeType: normalizeChangeType({}, req.query),
+      sourceTrack: normalizeSource({}, req.query),
+      previousSupervisorId: normalizePreviousSupervisor({}, req.query),
     });
     return res.json({ success: true, data });
   } catch (error) { return respondError(res, error); }
@@ -38,6 +50,8 @@ exports.submitPamit = async (req, res) => {
       mahasiswaId: req.user.id,
       targetTrack: normalizeTarget(req.body),
       changeType: normalizeChangeType(req.body),
+      sourceTrack: normalizeSource(req.body),
+      previousSupervisorId: normalizePreviousSupervisor(req.body),
       message: req.body?.message || req.body?.pesan_ke_dosen_pembimbing,
       reason: req.body?.reason || req.body?.alasan_pengajuan || req.body?.alasan_ulang,
       note: req.body?.note || req.body?.catatan_tambahan,
@@ -64,6 +78,8 @@ exports.createRegistration = async (req, res) => {
       mahasiswaId: req.user.id,
       targetTrack: normalizeTarget(req.body),
       changeType: normalizeChangeType(req.body),
+      sourceTrack: normalizeSource(req.body),
+      previousSupervisorId: normalizePreviousSupervisor(req.body),
       reason: req.body?.reason || req.body?.alasan_pengajuan || req.body?.alasan_ulang,
       pamitId: req.body?.pamit_id || null,
       idempotencyKey: req.get("Idempotency-Key") || req.body?.idempotency_key || null,

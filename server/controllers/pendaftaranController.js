@@ -325,13 +325,14 @@ exports.getPeriodeAktif = async (req, res) => {
 // GET /api/pendaftaran/dosen
 exports.getDosenDropdown = async (req, res) => {
   try {
+    const includeAllStatuses = String(req.query?.scope || "").toLowerCase() === "history";
     const activePeriode = await PeriodePenjaluran.findOne({
       where: { status: "active", is_active: true },
       attributes: ["id"],
       order: [["updatedAt", "DESC"]],
     });
     const dosens = await Dosen.findAll({
-      where: DPA_ELIGIBLE_DOSEN_WHERE,
+      ...(includeAllStatuses ? {} : { where: DPA_ELIGIBLE_DOSEN_WHERE }),
       attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan", "account_is_active"],
       include: [
         {
@@ -407,6 +408,7 @@ exports.getDosenDropdown = async (req, res) => {
       success: true,
       data: mappedDosens,
       total: mappedDosens.length,
+      scope: includeAllStatuses ? "history" : "eligible",
     });
   } catch (error) {
     console.error("Error di getDosenDropdown:", error);
@@ -803,12 +805,12 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
       penjaluranBaru,
     });
 
-    if (pendaftaran !== "baru") {
+    if (!["baru", "ulang", "alih"].includes(pendaftaran)) {
       await t.rollback();
-      return res.status(409).json({
+      return res.status(400).json({
         success: false,
-        code: "REGISTRATION_TYPE_NOT_AVAILABLE",
-        message: "Tahap 2 hanya membuka pendaftaran Baru. Ulang dan Alih ditangani pada tahap berikutnya.",
+        code: "INVALID_REGISTRATION_TYPE",
+        message: "Jenis pendaftaran harus Baru, Ulang, atau Alih.",
       });
     }
     if (dosenPembimbingTAId || dosenTASebelumnyaId || dosenTABaruId) {
@@ -856,6 +858,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
     }
     const accountCreated = true;
 
+    let bootstrapPeriod = null;
     if (!authenticatedMahasiswa) {
       if (!nama) {
         await t.rollback();
@@ -869,7 +872,7 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
           detail: { field: "dosen_pembimbing_akademik_id" },
         });
       }
-      const bootstrapPeriod = await getActivePeriode(t);
+      bootstrapPeriod = await getActivePeriode(t);
       if (!bootstrapPeriod) {
         await t.rollback();
         return res.status(403).json({ success: false, message: "Periode pendaftaran masih belum dibuka oleh sekretaris prodi." });
@@ -906,6 +909,8 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         angkatan: deriveAngkatanFromNim(nim),
         dosen_pembimbing_akademik_id: bootstrapDpa.id,
         status_jalur_saat_ini: "belum_mengajukan",
+        pending_registration_type: pendaftaran === "baru" ? null : pendaftaran,
+        pending_program_kuliah: pendaftaran === "baru" ? null : programKuliah,
       }, { transaction: t });
       await recordSecurityEvent({
         event_type: "account.bootstrap.created",
@@ -914,9 +919,40 @@ exports.submitPendaftaranJalurBaru = async (req, res) => {
         target_type: "mahasiswa",
         target_id: authenticatedMahasiswa.id,
         outcome: "success",
-        reason_code: "FIRST_TRACK_REGISTRATION",
-        metadata: { periode_penjaluran_id: bootstrapPeriod.id },
+        reason_code: pendaftaran === "baru" ? "FIRST_TRACK_REGISTRATION" : "CHANGE_TRACK_ONBOARDING",
+        metadata: { periode_penjaluran_id: bootstrapPeriod.id, registration_type: pendaftaran },
       }, t);
+    }
+
+    if (["ulang", "alih"].includes(pendaftaran)) {
+      await t.commit();
+      return res.status(201).json({
+        success: true,
+        message: `Akun untuk pendaftaran ${pendaftaran} berhasil dibuat. Login dan ganti password untuk melanjutkan.`,
+        data: {
+          pendaftaran_id: null,
+          periode: {
+            id: bootstrapPeriod.id,
+            label_periode: bootstrapPeriod.label_periode,
+            tahun_akademik: bootstrapPeriod.tahun_akademik,
+            semester: bootstrapPeriod.semester,
+          },
+          ringkasan_form: { pendaftaran, program_kuliah: programKuliah },
+          akun_login: {
+            username: authenticatedMahasiswa.nim,
+            prompt_change_password: true,
+            can_login: true,
+            keterangan: "Gunakan NIM sebagai username dan password awal, lalu ganti password setelah login.",
+          },
+          account_created: true,
+          credential_state: authenticatedMahasiswa.credential_state,
+          next_action: {
+            registration_type: pendaftaran,
+            target_form: "ulang_alih",
+            locked_other_menu_until_submitted: true,
+          },
+        },
+      });
     }
 
     if (pendaftaran === "baru" && !JENIS_JALUR_OPTIONS.includes(jenisJalurDiambil)) {

@@ -606,6 +606,24 @@ function isHttpUrl(value) {
   }
 }
 
+const MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS = new Set([
+  "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
+]);
+const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
+
+function containsForbiddenCharacters(value, forbiddenCharacters) {
+  const text = String(value || "");
+  return text.includes("--") || Array.from(text).some((character) => forbiddenCharacters.has(character));
+}
+
+function hasForbiddenMagangAdditionalNoteCharacters(value) {
+  return containsForbiddenCharacters(value, MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS);
+}
+
+function hasForbiddenMagangUrlCharacters(value) {
+  return containsForbiddenCharacters(value, MAGANG_URL_FORBIDDEN_CHARACTERS);
+}
+
 async function getActiveMitraMagangNameSet(transaction) {
   const rows = await MitraMagang.findAll({
     where: { is_active: true },
@@ -726,6 +744,12 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
     if (!payload.bukti_apply_file_name) {
       return { statusCode: 400, message: "File bukti apply wajib diunggah." };
     }
+    if (hasForbiddenMagangAdditionalNoteCharacters(payload.bukti_apply)) {
+      return {
+        statusCode: 400,
+        message: "Catatan tambahan mengandung karakter yang tidak diperbolehkan.",
+      };
+    }
   }
 
   if (!payload.phone_number) return { statusCode: 400, message: "Phone number wajib diisi." };
@@ -774,8 +798,22 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
     return { statusCode: 400, message: "Upload other supporting Documents wajib diisi." };
   }
 
+  if (hasForbiddenMagangUrlCharacters(payload.internship_company_website_url)) {
+    return {
+      statusCode: 400,
+      message: "Internship Company website URL mengandung karakter yang tidak diperbolehkan.",
+    };
+  }
+
   if (!payload.internship_company_website_url || !isHttpUrl(payload.internship_company_website_url)) {
     return { statusCode: 400, message: "Internship Company website URL wajib diisi dengan URL valid." };
+  }
+
+  if (hasForbiddenMagangUrlCharacters(payload.internship_vacancy_url)) {
+    return {
+      statusCode: 400,
+      message: "Internship vacancy URL mengandung karakter yang tidak diperbolehkan.",
+    };
   }
 
   if (payload.internship_vacancy_url && !isHttpUrl(payload.internship_vacancy_url)) {
@@ -1693,6 +1731,8 @@ exports.getJalurEligibility = async (req, res) => {
         "nama",
         "status_jalur_saat_ini",
         "pengajuan_aktif_id",
+        "pending_registration_type",
+        "pending_program_kuliah",
       ],
     });
 
@@ -1740,6 +1780,16 @@ exports.getJalurEligibility = async (req, res) => {
         };
       });
       onboardingLocked = false;
+    } else if (!selectedJalur && ["ulang", "alih"].includes(mahasiswa.pending_registration_type)) {
+      jalurList.forEach((jalur) => {
+        jalurEligibility[jalur] = {
+          enabled: false,
+          reason: `Selesaikan pendaftaran ${mahasiswa.pending_registration_type} terlebih dahulu.`,
+        };
+      });
+      onboardingLocked = true;
+      onboardingTargetForm = "ulang_alih";
+      onboardingReason = `Selesaikan pendaftaran ${mahasiswa.pending_registration_type} sebelum membuka menu lain.`;
     } else if (!selectedJalur) {
       // Backward compatibility untuk akun lama yang belum punya data pendaftaran periode aktif.
       jalurEligibility.penelitian = {
@@ -1837,6 +1887,7 @@ exports.getJalurEligibility = async (req, res) => {
           is_locked: onboardingLocked,
           target_jalur: selectedJalur,
           target_form: onboardingTargetForm,
+          registration_type: mahasiswa.pending_registration_type || null,
           reason: onboardingReason,
         },
         jalur_eligibility: jalurEligibility,

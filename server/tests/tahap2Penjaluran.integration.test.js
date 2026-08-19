@@ -90,13 +90,13 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     await sequelize.close();
   });
 
-  await t.test("endpoint umum menolak Ulang/Alih sebelum menulis data", async () => {
+  await t.test("endpoint umum menolak jenis pendaftaran di luar Baru/Ulang/Alih", async () => {
     const res = responseRecorder();
     await pendaftaranController.submitPendaftaranJalurBaru({
-      body: { pendaftaran: "ulang" },
+      body: { pendaftaran: "tidak-valid" },
     }, res);
-    assert.equal(res.statusCode, 409);
-    assert.equal(res.payload?.code, "REGISTRATION_TYPE_NOT_AVAILABLE");
+    assert.equal(res.statusCode, 400);
+    assert.equal(res.payload?.code, "INVALID_REGISTRATION_TYPE");
   });
 
   await t.test("endpoint umum menolak pilihan pembimbing dari mahasiswa", async () => {
@@ -330,7 +330,54 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     assert.ok(izinBelajarOption, "dosen Izin Belajar tampil pada pilihan DPA");
     assert.equal(izinBelajarOption.can_be_dpa, true);
     assert.equal(izinBelajarOption.can_receive_new_supervision, false);
-    await dpa.update({ status_keaktifan: "active", continue_existing_supervision: true });
+
+    await dpa.update({
+      status_keaktifan: "retired",
+      account_is_active: false,
+      continue_existing_supervision: false,
+    });
+    const regularDpaOptionsResponse = responseRecorder();
+    await pendaftaranController.getDosenDropdown({ query: {} }, regularDpaOptionsResponse);
+    assert.equal(
+      regularDpaOptionsResponse.payload?.data?.some((item) => Number(item.id) === Number(dpa.id)),
+      false,
+      "dosen pensiun tidak tampil pada pilihan DPA",
+    );
+
+    const historicalDosenOptionsResponse = responseRecorder();
+    await pendaftaranController.getDosenDropdown({ query: { scope: "history" } }, historicalDosenOptionsResponse);
+    const retiredHistoricalOption = historicalDosenOptionsResponse.payload?.data?.find(
+      (item) => Number(item.id) === Number(dpa.id),
+    );
+    assert.ok(retiredHistoricalOption, "dosen pensiun tetap tampil pada pilihan pembimbing sebelumnya");
+    assert.equal(retiredHistoricalOption.status_keaktifan, "retired");
+
+    await dpa.update({
+      status_keaktifan: "active",
+      account_is_active: true,
+      continue_existing_supervision: true,
+    });
+
+    const changeNim = `23523${suffix.slice(-3)}`;
+    const changeSubmitted = responseRecorder();
+    await pendaftaranController.submitPendaftaranJalurBaru({
+      body: {
+        nim: changeNim,
+        nama: "Mahasiswa Bootstrap Ulang",
+        email: `${changeNim}@students.uii.ac.id`,
+        program_kuliah: "reguler",
+        pendaftaran: "ulang",
+        dosen_pembimbing_akademik_id: dpa.id,
+      },
+    }, changeSubmitted);
+    assert.equal(changeSubmitted.statusCode, 201, changeSubmitted.payload?.message);
+    assert.equal(changeSubmitted.payload?.data?.pendaftaran_id, null);
+    assert.equal(changeSubmitted.payload?.data?.next_action?.target_form, "ulang_alih");
+    const changeStudent = await Mahasiswa.findOne({ where: { nim: changeNim } });
+    assert.ok(changeStudent);
+    mahasiswaIds.push(changeStudent.id);
+    assert.equal(changeStudent.pending_registration_type, "ulang");
+    assert.equal(await PendaftaranPenjaluran.count({ where: { mahasiswa_id: changeStudent.id } }), 0);
 
     const invalidCheck = responseRecorder();
     await pendaftaranController.checkNimAvailability({ query: { nim: "22111001" } }, invalidCheck);

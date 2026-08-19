@@ -96,8 +96,11 @@ function App() {
   if (!session.user) {
     if (authScreen === "forgot") return <PasswordRecoveryPage apiBaseUrl={API_BASE_URL} mode="forgot" onBack={() => setAuthScreen("login")} />;
     if (authScreen === "register") return <PendaftaranJalurPage apiBaseUrl={API_BASE_URL} onBack={() => setAuthScreen("login")}
-      onLoginForChange={(changeType) => { setPendingChangeType(changeType); setAuthScreen("login"); }}
-      onRegisterSuccess={(result) => { setRegistrationData(result || null); setAuthScreen("register-success"); }} />;
+      onRegisterSuccess={(result) => {
+        setRegistrationData(result || null);
+        setPendingChangeType(result?.next_action?.registration_type || null);
+        setAuthScreen("register-success");
+      }} />;
     if (authScreen === "register-success") return <PendaftaranSuccessPage registrationData={registrationData} onOpenMahasiswaBaruLogin={() => setAuthScreen("login")} />;
     return <LoginPage apiBaseUrl={API_BASE_URL} onLoginSuccess={handleLoginSuccess} onOpenRegistration={() => setAuthScreen("register")} onForgotPassword={() => setAuthScreen("forgot")} />;
   }

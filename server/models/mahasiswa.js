@@ -164,6 +164,14 @@ module.exports = (sequelize, DataTypes) => {
           key: "id",
         },
       },
+      pending_registration_type: {
+        type: DataTypes.STRING(10),
+        allowNull: true,
+      },
+      pending_program_kuliah: {
+        type: DataTypes.STRING(20),
+        allowNull: true,
+      },
     },
     {
       sequelize,

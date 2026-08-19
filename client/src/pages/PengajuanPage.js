@@ -182,7 +182,32 @@ function validateMagangFile(field, file) {
 function getMagangUrlError(value, { required = false, label = "URL" } = {}) {
   const text = String(value || "").trim();
   if (!text) return required ? `${label} wajib diisi.` : "";
+  if (hasForbiddenMagangUrlCharacters(text)) {
+    return `${label} tidak boleh mengandung karakter { } [ ] ; ' " < > \\ atau pola --.`;
+  }
   return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
+}
+
+const MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS = new Set([
+  "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
+]);
+const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
+
+function containsForbiddenCharacters(value, forbiddenCharacters) {
+  const text = String(value || "");
+  return text.includes("--") || Array.from(text).some((character) => forbiddenCharacters.has(character));
+}
+
+function hasForbiddenMagangUrlCharacters(value) {
+  return containsForbiddenCharacters(value, MAGANG_URL_FORBIDDEN_CHARACTERS);
+}
+
+function getMagangAdditionalNoteError(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  return containsForbiddenCharacters(text, MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS)
+    ? "Catatan tambahan tidak boleh mengandung karakter { } [ ] : ; ' \" < > / \\ atau pola --."
+    : "";
 }
 
 function FieldError({ message }) {
@@ -2591,6 +2616,26 @@ function FormSuratRekomendasiMagang({
     setSubmitSuccess("");
   };
 
+  const updateMagangUrlField = (field, value) => {
+    updateField(field, value);
+    const label =
+      field === "internship_company_website_url"
+        ? "Internship Company website URL"
+        : "Internship vacancy URL";
+    const unsafeCharacterError = hasForbiddenMagangUrlCharacters(value)
+      ? `${label} tidak boleh mengandung karakter { } [ ] ; ' " < > \\ atau pola --.`
+      : "";
+    if (!unsafeCharacterError) return;
+    setMagangFieldErrors((prev) => ({ ...prev, [field]: unsafeCharacterError }));
+  };
+
+  const updateAdditionalNoteField = (value) => {
+    updateField("bukti_apply", value);
+    const error = getMagangAdditionalNoteError(value);
+    if (!error) return;
+    setMagangFieldErrors((prev) => ({ ...prev, bukti_apply: error }));
+  };
+
   const updateFileField = (field, event) => {
     const selectedFile = event?.target?.files?.[0] || null;
     const fileError = selectedFile ? validateMagangFile(field, selectedFile) : "";
@@ -2750,6 +2795,9 @@ function FormSuratRekomendasiMagang({
           if (proofFileError) errors.bukti_apply_file_name = proofFileError;
         }
       }
+
+      const additionalNoteError = getMagangAdditionalNoteError(formData.bukti_apply);
+      if (additionalNoteError) errors.bukti_apply = additionalNoteError;
 
     }
 
@@ -3519,14 +3567,19 @@ function FormSuratRekomendasiMagang({
               type="text"
               placeholder="Tambahkan catatan pelengkap"
               value={formData.bukti_apply}
-              onChange={(event) => updateField("bukti_apply", event.target.value)}
+              onChange={(event) => updateAdditionalNoteField(event.target.value)}
               disabled={disabled || formData.sudah_apply_ke_mitra !== true}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.bukti_apply
+                  ? "border-[#dc4b4b] bg-[#fff7f7]"
+                  : "border-[#d0dbf4]"
+              } ${
                 disabled || formData.sudah_apply_ke_mitra !== true
                   ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
                   : "bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
+            <FieldError message={magangFieldErrors.bukti_apply} />
           </div>
         </div>
         {applyGateReason ? (
@@ -3632,7 +3685,7 @@ function FormSuratRekomendasiMagang({
             <input
               type="text"
               value={formData.internship_company_website_url}
-              onChange={(event) => updateField("internship_company_website_url", event.target.value)}
+              onChange={(event) => updateMagangUrlField("internship_company_website_url", event.target.value)}
               onBlur={() => handleUrlFieldBlur("internship_company_website_url")}
               disabled={disabled}
               placeholder="https://..."
@@ -3653,7 +3706,7 @@ function FormSuratRekomendasiMagang({
             <input
               type="text"
               value={formData.internship_vacancy_url}
-              onChange={(event) => updateField("internship_vacancy_url", event.target.value)}
+              onChange={(event) => updateMagangUrlField("internship_vacancy_url", event.target.value)}
               onBlur={() => handleUrlFieldBlur("internship_vacancy_url")}
               disabled={disabled}
               placeholder="https://..."
@@ -3740,11 +3793,13 @@ function PengajuanPage({
   jalurEligibility,
   jalurStatus,
   studentProfile,
+  forcedJalur = "",
   onEligibilityRefresh,
 }) {
   const [selectedType, setSelectedType] = useState("dosen");
 
   const selectedJalur =
+    forcedJalur ||
     jalurEligibility?.onboarding?.target_jalur ||
     jalurEligibility?.pendaftaran_aktif?.selected_jalur ||
     null;
@@ -3753,10 +3808,13 @@ function PengajuanPage({
   const onboardingReason = jalurEligibility?.onboarding?.reason || "";
   const renderJalur = selectedJalur || "penelitian";
   const renderJalurEligibility = jalurEligibility?.jalur_eligibility?.[renderJalur] || null;
-  const currentFormDisabled = Boolean(renderJalurEligibility && renderJalurEligibility.enabled === false);
+  const currentFormDisabled = forcedJalur
+    ? false
+    : Boolean(renderJalurEligibility && renderJalurEligibility.enabled === false);
   const currentFormDisabledReason = renderJalurEligibility?.reason || "";
   const activePendaftaranMode =
     jalurEligibility?.pendaftaran_aktif?.jalur ||
+    jalurEligibility?.onboarding?.registration_type ||
     jalurStatus?.pendaftaran_aktif?.jalur_daftar ||
     null;
   const penelitianSubmissionMode = activePendaftaranMode === "ulang" ? "ulang" : "baru";

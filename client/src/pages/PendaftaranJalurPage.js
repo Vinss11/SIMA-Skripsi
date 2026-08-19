@@ -111,7 +111,7 @@ function RequiredLabel({ children, className = "mb-1 block text-sm font-semibold
   );
 }
 
-function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginForChange }) {
+function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const [periodeAktif, setPeriodeAktif] = useState(null);
   const [loadingPeriode, setLoadingPeriode] = useState(true);
   const [loadingDosen, setLoadingDosen] = useState(true);
@@ -1056,15 +1056,11 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
     return "";
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     setError("");
     setIsStepTwoSubmitReady(false);
     if (pendaftaranDitutup) {
       setError("Periode pendaftaran masih belum dibuka oleh sekretaris prodi.");
-      return;
-    }
-    if (["ulang", "alih"].includes(formData.pendaftaran)) {
-      onLoginForChange?.(formData.pendaftaran);
       return;
     }
     const commonError = validateStepOne();
@@ -1072,7 +1068,49 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
       setError(commonError === "Periksa kembali informasi umum." ? "" : commonError);
       return;
     }
-    setStep(2);
+    if (formData.pendaftaran === "baru") {
+      setStep(2);
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      const normalizedNim = formData.nim.trim();
+      const response = await fetch(`${apiBaseUrl}/api/pendaftaran/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: buildMahasiswaEmailFromNim(normalizedNim),
+          nim: normalizedNim,
+          nama: formData.nama.trim(),
+          program_kuliah: formData.program_kuliah,
+          pendaftaran: formData.pendaftaran,
+          dosen_pembimbing_akademik_id: Number(formData.dosen_pembimbing_akademik_id),
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.success) {
+        const requestError = new Error(data?.message || "Akun pendaftaran gagal dibuat.");
+        requestError.field = data?.detail?.field || "";
+        throw requestError;
+      }
+      const registerPayload = {
+        ...data.data,
+        registered_email: buildMahasiswaEmailFromNim(normalizedNim),
+        registered_nim: normalizedNim,
+      };
+      resetForm();
+      onRegisterSuccess?.(registerPayload);
+    } catch (submitError) {
+      if (["nim", "nama", "dosen_pembimbing_akademik_id", "program_kuliah"].includes(submitError.field)) {
+        setTouchedFields((prev) => ({ ...prev, [submitError.field]: true }));
+        setFieldErrors((prev) => ({ ...prev, [submitError.field]: submitError.message || "Data tidak valid." }));
+      } else {
+        setError(submitError.message || "Akun pendaftaran gagal dibuat.");
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleBackStep = () => {
@@ -1276,7 +1314,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
             {step === 1 ? (
               <section className="rounded-xl border border-[#e1e7f4] bg-white p-4">
                 <h2 className="text-lg font-black text-[#1a315f]">Jenis Pendaftaran dan Informasi Umum</h2>
-                <div className={`mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 ${formData.pendaftaran !== "baru" ? "hidden" : ""}`}>
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div>
                     <RequiredLabel>Email UII (Otomatis)</RequiredLabel>
                     <input
@@ -1357,7 +1395,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
                   })}
                 </div>
 
-                <div className={`mt-4 ${formData.pendaftaran !== "baru" ? "hidden" : ""}`}>
+                <div className="mt-4">
                   <RequiredLabel className="block text-sm font-semibold text-[#324c86]">Program Studi</RequiredLabel>
                   {renderRadioGroup({
                     name: "program_kuliah",
@@ -1398,7 +1436,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
                   </div>
                   {formData.pendaftaran !== "baru" ? (
                     <div className="mt-3 rounded-lg border border-[#bfd0f7] bg-[#f3f7ff] px-4 py-3 text-sm text-[#34528f]">
-                      Pendaftaran {formData.pendaftaran === "ulang" ? "Ulang" : "Alih"} dilanjutkan setelah login. Form publik ini tidak membuat akun atau data penjaluran baru.
+                      Sistem akan membuat akun saja tanpa menyimpan pendaftaran penjaluran. Setelah login dan mengganti password, selesaikan proses {formData.pendaftaran === "ulang" ? "Ulang" : "Alih"} dari menu yang tersedia.
                     </div>
                   ) : null}
                 </div>
@@ -1889,7 +1927,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
               </section>
             ) : null}
 
-            {error && step !== 1 ? (
+            {error ? (
               <div className="rounded-lg border border-[#f5d0d0] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a33f3f]">{error}</div>
             ) : null}
 
@@ -1907,10 +1945,14 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess, onLoginFo
                   <button
                     type="button"
                     onClick={handleNext}
-                    disabled={pendaftaranDitutup}
+                    disabled={pendaftaranDitutup || isSubmitting}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#1e45b0] px-5 py-2.5 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {formData.pendaftaran === "baru" ? "Lanjutkan" : `Login untuk ${formData.pendaftaran === "ulang" ? "Ulang" : "Alih"}`}
+                    {isSubmitting
+                      ? "Memproses..."
+                      : formData.pendaftaran === "baru"
+                        ? "Lanjutkan"
+                        : `Buat Akun ${formData.pendaftaran === "ulang" ? "Ulang" : "Alih"}`}
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </>

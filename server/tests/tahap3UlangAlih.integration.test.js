@@ -310,6 +310,106 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
     assert.ok(eligibility.blocker_details.some((item) => item.code === "ACTIVE_RESEARCH_WORKFLOW"));
   });
 
+  await t.test("akun bootstrap Ulang menyelesaikan pamit dan baru membuat root pendaftaran", async () => {
+    const bootstrap = await Mahasiswa.create({
+      nim: `B3${suffix}1`,
+      nama: "Mahasiswa Bootstrap Ulang T3",
+      email: `t3.bootstrap.${suffix}@test.local`,
+      password: "password",
+      angkatan: "2022",
+      pending_registration_type: "ulang",
+      pending_program_kuliah: "internasional",
+    }, { hooks: false });
+    studentIds.push(bootstrap.id);
+
+    const initial = await getEligibility(bootstrap.id);
+    assert.equal(initial.bootstrap_change, true);
+    assert.equal(initial.pending_registration_type, "ulang");
+    assert.ok(initial.blocker_details.some((item) => item.code === "SOURCE_TRACK_REQUIRED"));
+    assert.ok(initial.blocker_details.some((item) => item.code === "PREVIOUS_SUPERVISOR_REQUIRED"));
+
+    const bootstrapPamit = await submitPamit({
+      mahasiswaId: bootstrap.id,
+      changeType: "ulang",
+      sourceTrack: "pengabdian",
+      targetTrack: "pengabdian",
+      previousSupervisorId: p1.id,
+      message: "Saya menyampaikan pamit kepada pembimbing sebelumnya.",
+      reason: "Saya akan mengulang jalur pengabdian pada periode ini.",
+      idempotencyKey: `bootstrap-pamit-${suffix}`,
+    });
+    assert.equal(bootstrapPamit.pendaftaran_lama_id, null);
+    assert.equal(bootstrapPamit.reviewer_p1_id, p1.id);
+
+    const result = await createChangeRegistration({
+      mahasiswaId: bootstrap.id,
+      changeType: "ulang",
+      sourceTrack: "pengabdian",
+      targetTrack: "pengabdian",
+      previousSupervisorId: p1.id,
+      pamitId: bootstrapPamit.id,
+      reason: "Saya mendaftar ulang jalur pengabdian pada periode aktif.",
+      idempotencyKey: `bootstrap-change-${suffix}`,
+    });
+    registrationIds.push(result.registration.id);
+    assert.equal(result.registration.pendaftaran_asal_id, null);
+    assert.equal(result.registration.jenis_jalur_diambil, "pengabdian");
+    assert.equal(result.registration.program_kuliah, "internasional");
+    await bootstrap.reload();
+    assert.equal(bootstrap.pending_registration_type, null);
+    assert.equal(bootstrap.pending_program_kuliah, null);
+  });
+
+  await t.test("akun bootstrap Alih wajib mengisi jalur asal dan tujuan yang berbeda", async () => {
+    const bootstrap = await Mahasiswa.create({
+      nim: `B3${suffix}2`,
+      nama: "Mahasiswa Bootstrap Alih T3",
+      email: `t3.bootstrap.alih.${suffix}@test.local`,
+      password: "password",
+      angkatan: "2022",
+      pending_registration_type: "alih",
+      pending_program_kuliah: "reguler",
+    }, { hooks: false });
+    studentIds.push(bootstrap.id);
+
+    await assert.rejects(
+      () => getEligibility(bootstrap.id, {
+        changeType: "alih",
+        sourceTrack: "penelitian",
+        targetTrack: "penelitian",
+        previousSupervisorId: p1.id,
+      }),
+      (error) => error.code === "TRANSFER_TRACK_MUST_DIFFER",
+    );
+
+    const bootstrapPamit = await submitPamit({
+      mahasiswaId: bootstrap.id,
+      changeType: "alih",
+      sourceTrack: "penelitian",
+      targetTrack: "magang",
+      previousSupervisorId: p1.id,
+      message: "Saya menyampaikan pamit kepada pembimbing sebelumnya.",
+      reason: "Saya akan beralih dari penelitian menuju jalur magang.",
+      idempotencyKey: `bootstrap-alih-pamit-${suffix}`,
+    });
+
+    const result = await createChangeRegistration({
+      mahasiswaId: bootstrap.id,
+      changeType: "alih",
+      sourceTrack: "penelitian",
+      targetTrack: "magang",
+      previousSupervisorId: p1.id,
+      pamitId: bootstrapPamit.id,
+      reason: "Saya mendaftar alih dari penelitian menuju jalur magang.",
+      idempotencyKey: `bootstrap-alih-change-${suffix}`,
+    });
+    registrationIds.push(result.registration.id);
+    assert.equal(result.registration.pendaftaran_asal_id, null);
+    assert.equal(result.registration.penjaluran_sebelumnya, "penelitian");
+    assert.equal(result.registration.penjaluran_baru, "magang");
+    assert.equal(result.registration.jenis_jalur_diambil, "magang");
+  });
+
   await t.test("tanpa penetapan aktif mahasiswa dapat ulang tanpa pamit", async () => {
     const noAssignmentStudent = await Mahasiswa.create({
       nim: `T3${suffix}2`, nama: "Mahasiswa Ulang T3", email: `t3.repeat.${suffix}@test.local`,

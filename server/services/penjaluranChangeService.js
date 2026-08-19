@@ -5,6 +5,7 @@ const { Op } = require("sequelize");
 const {
   sequelize,
   Mahasiswa,
+  Dosen,
   PendaftaranPenjaluran,
   PeriodePenjaluran,
   PamitUlang,
@@ -22,7 +23,9 @@ const { createSystemNotification } = require("./notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
 const { buildSemesterLanjutanGate } = require("./semesterLanjutanService");
 
-const ACTIVE_TRACKS = Object.freeze(["penelitian", "magang", "perintisan_bisnis"]);
+// Pengabdian tetap sah sebagai jalur historis/ulang. Akun bootstrap memang belum
+// memiliki row pendaftaran lama, sehingga jalur asalnya berasal dari isian mahasiswa.
+const ACTIVE_TRACKS = Object.freeze(["penelitian", "magang", "pengabdian", "perintisan_bisnis"]);
 
 class PenjaluranChangeError extends Error {
   constructor(message, statusCode = 409, code = "CHANGE_NOT_ALLOWED", detail = null) {
@@ -50,6 +53,10 @@ function normalizeChangeType(value) {
     throw new PenjaluranChangeError("Jenis pendaftaran harus ulang atau alih.", 400, "INVALID_CHANGE_TYPE");
   }
   return normalized;
+}
+
+function normalizeTrack(value) {
+  return normalizeText(value).toLowerCase().replace(/\s+/g, "_") || null;
 }
 
 function fingerprint(value) {
@@ -92,7 +99,7 @@ async function activePeriod(transaction) {
   return period;
 }
 
-async function resolveLatestApprovedRegistration(mahasiswaId, transaction) {
+async function resolveLatestApprovedRegistration(mahasiswaId, transaction, { required = true } = {}) {
   const rows = await PendaftaranPenjaluran.findAll({
     where: { mahasiswa_id: mahasiswaId, status: "approved" },
     include: [{ model: PeriodePenjaluran, as: "periode", required: false }],
@@ -108,6 +115,7 @@ async function resolveLatestApprovedRegistration(mahasiswaId, transaction) {
   const registration = rows[0] || null;
   const track = trackOf(registration);
   if (!registration || !ACTIVE_TRACKS.includes(track)) {
+    if (!required) return null;
     throw new PenjaluranChangeError(
       "Riwayat pendaftaran yang disetujui pada jalur aktif tidak ditemukan.", 409, "APPROVED_SOURCE_NOT_FOUND"
     );
@@ -222,29 +230,57 @@ async function resolveActiveWorkflowBlockers(mahasiswa, sourceRegistration, tran
   return { blockers, semesterGate };
 }
 
-async function getEligibility(mahasiswaId, { targetTrack = null, changeType = null, transaction = null } = {}) {
+async function getEligibility(mahasiswaId, {
+  targetTrack = null,
+  changeType = null,
+  sourceTrack = null,
+  previousSupervisorId = null,
+  transaction = null,
+} = {}) {
   const period = await activePeriod(transaction);
   await expireStalePamits(mahasiswaId, period.id, transaction);
   const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, { transaction });
   if (!mahasiswa) throw new PenjaluranChangeError("Mahasiswa tidak ditemukan.", 404, "STUDENT_NOT_FOUND");
-  const source = await resolveLatestApprovedRegistration(mahasiswaId, transaction);
-  const requestedChangeType = normalizeChangeType(changeType);
-  const requestedTarget = String(targetTrack || "").trim().toLowerCase().replace(/\s+/g, "_");
-  const normalizedTarget = requestedChangeType === "ulang" ? source.track : (requestedTarget || source.track);
-  if (!ACTIVE_TRACKS.includes(normalizedTarget)) {
+  const source = await resolveLatestApprovedRegistration(mahasiswaId, transaction, { required: false });
+  const pendingChangeType = normalizeChangeType(mahasiswa.pending_registration_type);
+  const requestedChangeType = normalizeChangeType(changeType) || pendingChangeType;
+  const bootstrapChange = !source && Boolean(pendingChangeType);
+  if (!source && !bootstrapChange) {
+    throw new PenjaluranChangeError(
+      "Riwayat pendaftaran yang disetujui pada jalur aktif tidak ditemukan.", 409, "APPROVED_SOURCE_NOT_FOUND"
+    );
+  }
+  if (bootstrapChange && requestedChangeType !== pendingChangeType) {
+    throw new PenjaluranChangeError(
+      `Akun ini dibuat untuk pendaftaran ${pendingChangeType}.`, 409, "CHANGE_TYPE_MISMATCH"
+    );
+  }
+  const openPamit = await PamitUlang.findOne({
+    where: { mahasiswa_id: mahasiswaId, periode_tujuan_id: period.id, status: { [Op.in]: ["pending", "approved"] } },
+    order: [["createdAt", "DESC"]], transaction,
+  });
+  const resolvedSourceTrack = source?.track || normalizeTrack(sourceTrack) || normalizeTrack(openPamit?.jalur_asal);
+  const requestedTarget = normalizeTrack(targetTrack);
+  const effectiveChangeType = requestedChangeType || (
+    requestedTarget && resolvedSourceTrack && requestedTarget !== resolvedSourceTrack ? "alih" : "ulang"
+  );
+  const normalizedTarget = effectiveChangeType === "ulang"
+    ? resolvedSourceTrack
+    : (requestedTarget || normalizeTrack(openPamit?.jalur_tujuan));
+  if (resolvedSourceTrack && !ACTIVE_TRACKS.includes(resolvedSourceTrack)) {
+    throw new PenjaluranChangeError("Jalur sebelumnya tidak aktif.", 400, "INVALID_SOURCE_TRACK");
+  }
+  if (normalizedTarget && !ACTIVE_TRACKS.includes(normalizedTarget)) {
     throw new PenjaluranChangeError("Jalur tujuan tidak aktif.", 400, "INVALID_TARGET_TRACK");
   }
-  if (requestedChangeType === "ulang" && requestedTarget && requestedTarget !== source.track) {
+  if (effectiveChangeType === "ulang" && requestedTarget && requestedTarget !== resolvedSourceTrack) {
     throw new PenjaluranChangeError(
       "Pendaftaran ulang wajib menggunakan jalur yang sama dengan periode sebelumnya.",
       409,
       "REPEAT_TRACK_MUST_MATCH_SOURCE"
     );
   }
-  if (requestedChangeType === "alih" && !requestedTarget) {
-    throw new PenjaluranChangeError("Jalur tujuan wajib dipilih untuk pendaftaran alih.", 400, "TRANSFER_TARGET_REQUIRED");
-  }
-  if (requestedChangeType === "alih" && normalizedTarget === source.track) {
+  if (effectiveChangeType === "alih" && normalizedTarget && normalizedTarget === resolvedSourceTrack) {
     throw new PenjaluranChangeError(
       "Pendaftaran alih wajib memilih jalur yang berbeda dari periode sebelumnya.",
       409,
@@ -255,15 +291,21 @@ async function getEligibility(mahasiswaId, { targetTrack = null, changeType = nu
     where: { mahasiswa_id: mahasiswaId, periode_penjaluran_id: period.id }, transaction,
   });
   const assignment = await getActiveSupervisorAssignment(mahasiswaId, transaction);
-  const openPamit = await PamitUlang.findOne({
-    where: { mahasiswa_id: mahasiswaId, periode_tujuan_id: period.id, status: { [Op.in]: ["pending", "approved"] } },
-    order: [["createdAt", "DESC"]], transaction,
-  });
-  const resolvedChangeType = normalizedTarget === source.track ? "ulang" : "alih";
+  let bootstrapSupervisor = null;
+  const resolvedPreviousSupervisorId = Number(previousSupervisorId || openPamit?.reviewer_p1_id || 0) || null;
+  if (bootstrapChange && resolvedPreviousSupervisorId) {
+    bootstrapSupervisor = await Dosen.findByPk(resolvedPreviousSupervisorId, { transaction });
+    if (!bootstrapSupervisor) {
+      throw new PenjaluranChangeError("Dosen pembimbing sebelumnya tidak ditemukan.", 400, "PREVIOUS_SUPERVISOR_NOT_FOUND");
+    }
+  }
+  const resolvedChangeType = effectiveChangeType;
   // Pamit approved tetap menjadi tiket wajib walaupun approval sudah mengakhiri
   // penetapan aktif. Tanpa ini tiket tidak akan pernah dikonsumsi saat commit.
-  const requiresPamit = Boolean(assignment.penetapan || openPamit);
-  const workflow = await resolveActiveWorkflowBlockers(mahasiswa, source.registration, transaction);
+  const requiresPamit = bootstrapChange || Boolean(assignment.penetapan || openPamit);
+  const workflow = source
+    ? await resolveActiveWorkflowBlockers(mahasiswa, source.registration, transaction)
+    : { blockers: [], semesterGate: null };
   const blockerDetails = workflow.blockers.filter(
     (item) => !(openPamit?.status === "approved" && item.code === "SEMESTER_CONTINUATION_GATE")
   );
@@ -271,23 +313,42 @@ async function getEligibility(mahasiswaId, { targetTrack = null, changeType = nu
   if (mahasiswa.pengajuan_aktif_id && !workflow.blockers.some((item) => item.code === "ACTIVE_RESEARCH_WORKFLOW")) {
     blockerDetails.push({ code: "ACTIVE_SUBMISSION_CACHE", message: "Masih ada pengajuan aktif yang harus diselesaikan." });
   }
+  if (!resolvedSourceTrack) blockerDetails.push({ code: "SOURCE_TRACK_REQUIRED", message: "Jalur penjaluran sebelumnya wajib dipilih." });
+  if (resolvedChangeType === "alih" && !normalizedTarget) {
+    blockerDetails.push({ code: "TRANSFER_TARGET_REQUIRED", message: "Jalur tujuan wajib dipilih untuk pendaftaran alih." });
+  }
+  if (bootstrapChange && !resolvedPreviousSupervisorId) {
+    blockerDetails.push({ code: "PREVIOUS_SUPERVISOR_REQUIRED", message: "Dosen pembimbing sebelumnya wajib dipilih." });
+  }
   if (requiresPamit && !openPamit) blockerDetails.push({ code: "PAMIT_REQUIRED", message: "Pamit kepada Pembimbing 1 belum diajukan." });
   const blockers = blockerDetails.map((item) => item.message);
   return {
     eligible: blockers.length === 0,
     blockers,
     mahasiswa: { id: mahasiswa.id, nim: mahasiswa.nim, nama: mahasiswa.nama },
-    periode: plain(period), source_registration: plain(source.registration), source_track: source.track,
+    periode: plain(period), source_registration: plain(source?.registration), source_track: resolvedSourceTrack,
     target_track: normalizedTarget, change_type: resolvedChangeType, requires_pamit: requiresPamit,
+    bootstrap_change: bootstrapChange,
+    pending_registration_type: pendingChangeType,
     active_assignment: plain(assignment.penetapan),
-    reviewer_p1: plain(assignment.pembimbing_1) || (openPamit?.reviewer_p1_id ? { id: openPamit.reviewer_p1_id } : null),
+    reviewer_p1: plain(assignment.pembimbing_1) || plain(bootstrapSupervisor) || (openPamit?.reviewer_p1_id ? { id: openPamit.reviewer_p1_id } : null),
     reviewer_p2: plain(assignment.pembimbing_2), pamit: plain(openPamit),
     blocker_details: blockerDetails,
     semester_gate: workflow.semesterGate,
   };
 }
 
-async function submitPamit({ mahasiswaId, targetTrack, changeType = null, message, reason, note, idempotencyKey = null }) {
+async function submitPamit({
+  mahasiswaId,
+  targetTrack,
+  changeType = null,
+  sourceTrack = null,
+  previousSupervisorId = null,
+  message,
+  reason,
+  note,
+  idempotencyKey = null,
+}) {
   const normalizedKey = normalizeText(idempotencyKey);
   if (!normalizedKey) {
     throw new PenjaluranChangeError("Header Idempotency-Key wajib dikirim untuk pengajuan pamit.", 400, "IDEMPOTENCY_KEY_REQUIRED");
@@ -301,7 +362,28 @@ async function submitPamit({ mahasiswaId, targetTrack, changeType = null, messag
     if (String(message || "").trim().length < 10 || String(reason || "").trim().length < 10) {
       throw new PenjaluranChangeError("Pesan pamit dan alasan minimal 10 karakter wajib diisi.", 400, "INVALID_PAMIT_PAYLOAD");
     }
-    const eligibility = await getEligibility(mahasiswaId, { targetTrack, changeType, transaction });
+    const existingByKey = await PamitUlang.findOne({
+      where: { mahasiswa_id: mahasiswaId, idempotency_key: normalizedKey },
+      transaction,
+    });
+    if (existingByKey) {
+      const samePayload =
+        (!changeType || existingByKey.jenis_perubahan === normalizeChangeType(changeType)) &&
+        (!targetTrack || existingByKey.jalur_tujuan === normalizeTrack(targetTrack)) &&
+        normalizeText(existingByKey.pesan_ke_dosen_pembimbing) === normalizeText(message) &&
+        normalizeText(existingByKey.alasan_ulang) === normalizeText(reason) &&
+        normalizeText(existingByKey.catatan_tambahan) === normalizeText(note);
+      if (samePayload) return withReplay(existingByKey, true);
+      throw new PenjaluranChangeError(
+        "Idempotency-Key pamit sudah digunakan untuk payload berbeda.",
+        409,
+        "PAMIT_IDEMPOTENCY_CONFLICT",
+        { active_pamit_id: existingByKey.id }
+      );
+    }
+    const eligibility = await getEligibility(mahasiswaId, {
+      targetTrack, changeType, sourceTrack, previousSupervisorId, transaction,
+    });
     const hardBlockers = (eligibility.blocker_details || []).filter(
       (item) => item.code !== "PAMIT_REQUIRED"
     );
@@ -311,11 +393,27 @@ async function submitPamit({ mahasiswaId, targetTrack, changeType = null, messag
       );
     }
     if (!eligibility.requires_pamit) {
+      const committedReplay = await PamitUlang.findOne({
+        where: { mahasiswa_id: mahasiswaId, idempotency_key: normalizedKey },
+        transaction,
+      });
+      if (committedReplay) {
+        const samePayload =
+          (!changeType || committedReplay.jenis_perubahan === normalizeChangeType(changeType)) &&
+          (!targetTrack || committedReplay.jalur_tujuan === normalizeTrack(targetTrack)) &&
+          normalizeText(committedReplay.pesan_ke_dosen_pembimbing) === normalizeText(message) &&
+          normalizeText(committedReplay.alasan_ulang) === normalizeText(reason) &&
+          normalizeText(committedReplay.catatan_tambahan) === normalizeText(note);
+        if (samePayload) return withReplay(committedReplay, true);
+        throw new PenjaluranChangeError(
+          "Idempotency-Key pamit sudah digunakan untuk payload berbeda.", 409, "PAMIT_IDEMPOTENCY_CONFLICT"
+        );
+      }
       throw new PenjaluranChangeError("Pamit tidak diperlukan karena tidak ada penetapan pembimbing aktif.", 409, "PAMIT_NOT_REQUIRED");
     }
     const source = eligibility.source_registration;
     requestedFingerprint = pamitFingerprint({
-      mahasiswaId, sourceId: source.id, periodId: eligibility.periode.id,
+      mahasiswaId, sourceId: source?.id || null, periodId: eligibility.periode.id,
       assignmentId: eligibility.active_assignment?.id || eligibility.pamit?.penetapan_lama_id,
       changeType: eligibility.change_type, sourceTrack: eligibility.source_track, targetTrack: eligibility.target_track,
       message, reason, note,
@@ -336,8 +434,8 @@ async function submitPamit({ mahasiswaId, targetTrack, changeType = null, messag
       mahasiswa_id: mahasiswaId,
       pengajuan_sebelumnya_id: null,
       periode_tujuan_id: eligibility.periode.id,
-      pendaftaran_lama_id: source.id,
-      penetapan_lama_id: eligibility.active_assignment.id,
+      pendaftaran_lama_id: source?.id || null,
+      penetapan_lama_id: eligibility.active_assignment?.id || null,
       reviewer_p1_id: eligibility.reviewer_p1.id,
       jenis_perubahan: eligibility.change_type,
       jalur_asal: eligibility.source_track,
@@ -357,19 +455,21 @@ async function submitPamit({ mahasiswaId, targetTrack, changeType = null, messag
       },
     }, { transaction });
     await appendHistory(pamit, null, "approved", "notification_sent", "mahasiswa", mahasiswaId, reason, transaction);
-    await BimbinganSkripsi.update({
-      status_permohonan: "cancelled_supervisor_change",
-      catatan_dosen: "Dibatalkan otomatis karena mahasiswa mengirim pamit ulang/alih jalur.",
-      tanggal_keputusan: now,
-    }, {
-      where: {
-        mahasiswa_id: mahasiswaId,
-        pendaftaran_penjaluran_id: source.id,
-        status_permohonan: "pending",
-        permintaan_tanggal: { [Op.gte]: jakartaDateOnly() },
-      },
-      transaction,
-    });
+    if (source?.id) {
+      await BimbinganSkripsi.update({
+        status_permohonan: "cancelled_supervisor_change",
+        catatan_dosen: "Dibatalkan otomatis karena mahasiswa mengirim pamit ulang/alih jalur.",
+        tanggal_keputusan: now,
+      }, {
+        where: {
+          mahasiswa_id: mahasiswaId,
+          pendaftaran_penjaluran_id: source.id,
+          status_permohonan: "pending",
+          permintaan_tanggal: { [Op.gte]: jakartaDateOnly() },
+        },
+        transaction,
+      });
+    }
     if (eligibility.active_assignment?.id) {
       await endActiveSupervisorAssignment({
         mahasiswaId,
@@ -551,7 +651,16 @@ async function decidePamit({ pamitId, dosenId, decision, note }) {
   });
 }
 
-async function createChangeRegistration({ mahasiswaId, targetTrack, changeType = null, reason, pamitId = null, idempotencyKey = null }) {
+async function createChangeRegistration({
+  mahasiswaId,
+  targetTrack,
+  changeType = null,
+  sourceTrack = null,
+  previousSupervisorId = null,
+  reason,
+  pamitId = null,
+  idempotencyKey = null,
+}) {
   const normalizedKey = normalizeText(idempotencyKey);
   if (!normalizedKey) {
     throw new PenjaluranChangeError("Header Idempotency-Key wajib dikirim untuk pendaftaran ulang/alih.", 400, "IDEMPOTENCY_KEY_REQUIRED");
@@ -586,13 +695,15 @@ async function createChangeRegistration({ mahasiswaId, targetTrack, changeType =
       }
       return { registration: plain(replay), pamit: plain(replayPamit), eligibility: null, replayed: true };
     }
-    const eligibility = await getEligibility(mahasiswaId, { targetTrack, changeType, transaction });
+    const eligibility = await getEligibility(mahasiswaId, {
+      targetTrack, changeType, sourceTrack, previousSupervisorId, transaction,
+    });
     if (!eligibility.eligible) throw new PenjaluranChangeError(eligibility.blockers.join(" "), 409, "CHANGE_NOT_ELIGIBLE", eligibility);
     let pamit = null;
     if (eligibility.requires_pamit) {
       pamit = await PamitUlang.findByPk(pamitId || eligibility.pamit?.id, { transaction, lock: transaction.LOCK.UPDATE });
       if (!pamit || !["pending", "approved"].includes(pamit.status) || Number(pamit.periode_tujuan_id) !== Number(eligibility.periode.id)
-        || Number(pamit.pendaftaran_lama_id) !== Number(eligibility.source_registration.id)
+        || Number(pamit.pendaftaran_lama_id || 0) !== Number(eligibility.source_registration?.id || 0)
         || pamit.jalur_tujuan !== eligibility.target_track) {
         throw new PenjaluranChangeError("Pamit tidak cocok dengan sumber, tujuan, dan periode pendaftaran.", 409, "PAMIT_MISMATCH");
       }
@@ -610,18 +721,18 @@ async function createChangeRegistration({ mahasiswaId, targetTrack, changeType =
     }
     const source = eligibility.source_registration;
     const requestFingerprint = registrationFingerprint({
-      mahasiswaId, sourceId: source.id, periodId: eligibility.periode.id,
+      mahasiswaId, sourceId: source?.id || null, periodId: eligibility.periode.id,
       targetTrack: eligibility.target_track, changeType: eligibility.change_type, pamitId: pamit?.id || null, reason,
     });
     const registration = await PendaftaranPenjaluran.create({
       mahasiswa_id: mahasiswaId, periode_penjaluran_id: eligibility.periode.id,
-      pendaftaran_asal_id: source.id, jalur: eligibility.change_type,
+      pendaftaran_asal_id: source?.id || null, jalur: eligibility.change_type,
       change_idempotency_key: normalizedKey,
       change_fingerprint: requestFingerprint,
-      program_kuliah: source.program_kuliah || "reguler",
+      program_kuliah: source?.program_kuliah || mahasiswa.pending_program_kuliah || "reguler",
       semester_mahasiswa: deriveSemester(mahasiswa.angkatan, eligibility.periode),
       status: "approved", form_lanjutan_status: "draft",
-      dosen_pembimbing_akademik_id: mahasiswa.dosen_pembimbing_akademik_id || source.dosen_pembimbing_akademik_id,
+      dosen_pembimbing_akademik_id: mahasiswa.dosen_pembimbing_akademik_id || source?.dosen_pembimbing_akademik_id,
       jenis_jalur_diambil: eligibility.target_track,
       penjaluran_sebelumnya: eligibility.source_track,
       penjaluran_baru: eligibility.change_type === "alih" ? eligibility.target_track : null,
@@ -632,13 +743,18 @@ async function createChangeRegistration({ mahasiswaId, targetTrack, changeType =
       await pamit.update({ status: "consumed", pendaftaran_baru_id: registration.id, consumed_at: new Date() }, { transaction });
       await appendHistory(pamit, "approved", "consumed", "registration_created", "mahasiswa", mahasiswaId, reason, transaction);
     }
-    await mahasiswa.update({ status_jalur_saat_ini: "belum_mengajukan", pengajuan_aktif_id: null }, { transaction });
+    await mahasiswa.update({
+      status_jalur_saat_ini: "belum_mengajukan",
+      pengajuan_aktif_id: null,
+      pending_registration_type: null,
+      pending_program_kuliah: null,
+    }, { transaction });
     await createSystemNotification({
       recipientType: "mahasiswa", recipientId: mahasiswaId,
       type: NOTIFICATION_TYPES.CHANGE_REGISTRATION_CREATED_STUDENT,
       message: `Pendaftaran ${eligibility.change_type} menuju jalur ${eligibility.target_track} berhasil dibuat.`,
       referenceType: "pendaftaran_penjaluran", referenceId: registration.id, actionKey: "student_path_form",
-      metadata: { source_registration_id: source.id },
+      metadata: { source_registration_id: source?.id || null },
       deduplicationKey: `change-registration:${registration.id}:student`, transaction,
     });
     return { registration: plain(registration), pamit: plain(pamit), eligibility, replayed: false };
