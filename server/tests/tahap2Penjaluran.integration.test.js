@@ -23,6 +23,7 @@ const {
   Notifikasi,
   RiwayatWorkflowPenjaluran,
   AuthSecurityEvent,
+  DokumenSidang,
 } = require("../models");
 const pendaftaranController = require("../controllers/pendaftaranController");
 const jalurController = require("../controllers/jalurController");
@@ -33,6 +34,7 @@ const {
   finalizePenjaluranDecision,
 } = require("../services/penjaluranFinalizationService");
 const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
+const { isUlangOrAlih } = require("../services/dokumenSidangCycleService");
 
 sequelize.options.logging = false;
 
@@ -80,6 +82,7 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     if (groupId) await AnggotaKelompokPerintisan.destroy({ where: { kelompok_id: groupId }, force: true });
     if (groupId) await KelompokPerintisanBisnis.destroy({ where: { id: groupId }, force: true });
     if (registrationIds.length) await PendaftaranPenjaluran.destroy({ where: { id: registrationIds }, force: true });
+    if (mahasiswaIds.length) await DokumenSidang.destroy({ where: { mahasiswa_id: mahasiswaIds }, force: true });
     if (mahasiswaIds.length) await AuthSecurityEvent.destroy({ where: { target_type: "mahasiswa", target_id: mahasiswaIds }, force: true });
     if (dosenIds.length) await DosenKetersediaanPeriode.destroy({ where: { dosen_id: dosenIds }, force: true });
     if (additionalPeriodIds.length) await PeriodePenjaluran.destroy({ where: { id: additionalPeriodIds }, force: true });
@@ -485,6 +488,22 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     });
     registrationIds.push(registration.id);
 
+    const defenseDocuments = await DokumenSidang.create({
+      mahasiswa_id: student.id,
+      transkrip_file_path: "uploads/sidang-dokumen/test-transkrip-lama.pdf",
+      transkrip_file_name: "transkrip-lama.pdf",
+      transkrip_status: "approved",
+      transkrip_uploaded_at: new Date("2197-01-01T00:00:00.000Z"),
+      transkrip_review_note: "Dokumen siklus pertama",
+      transkrip_reviewed_at: new Date("2197-01-02T00:00:00.000Z"),
+      cept_file_path: "uploads/sidang-dokumen/test-cept-lama.pdf",
+      cept_file_name: "cept-lama.pdf",
+      cept_status: "revisi",
+      cept_uploaded_at: new Date("2197-01-01T00:00:00.000Z"),
+      cept_review_note: "Perlu revisi pada siklus pertama",
+      cept_reviewed_at: new Date("2197-01-02T00:00:00.000Z"),
+    });
+
     const supervisors = [];
     for (let index = 1; index <= 2; index += 1) {
       const dosen = await Dosen.create({
@@ -524,6 +543,8 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     });
     assert.equal(firstAssignment.sumber_data, "penjaluran");
     assert.equal(firstAssignment.semester_penjaluran_ke, 1);
+    await defenseDocuments.reload();
+    assert.equal(defenseDocuments.transkrip_status, "approved", "pendaftaran baru tidak mereset dokumen");
 
     await registration.update({ form_lanjutan_status: "approved" });
 
@@ -589,6 +610,15 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
     assert.equal(repeatAssignment.pendaftaran_penjaluran_id, repeatRegistration.id);
     assert.equal(repeatAssignment.sumber_data, "penjaluran");
     assert.equal(repeatAssignment.semester_penjaluran_ke, 1);
+    await defenseDocuments.reload();
+    for (const prefix of ["transkrip", "cept", "draft_skripsi"]) {
+      assert.equal(defenseDocuments[`${prefix}_file_path`], null);
+      assert.equal(defenseDocuments[`${prefix}_file_name`], null);
+      assert.equal(defenseDocuments[`${prefix}_status`], "belum_upload");
+      assert.equal(defenseDocuments[`${prefix}_uploaded_at`], null);
+      assert.equal(defenseDocuments[`${prefix}_review_note`], null);
+      assert.equal(defenseDocuments[`${prefix}_reviewed_at`], null);
+    }
   });
 
   await t.test("metadata penetapan memperlakukan baru, ulang, dan alih sebagai awal siklus", () => {
@@ -598,6 +628,9 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
         semesterPenjaluranKe: 1,
       });
     }
+    assert.equal(isUlangOrAlih({ jalur: "baru" }), false);
+    assert.equal(isUlangOrAlih({ jalur: "ulang" }), true);
+    assert.equal(isUlangOrAlih({ jalur: "alih" }), true);
   });
 
   await t.test("endpoint final Penelitian menolak cluster salah lalu mengaktifkan penetapan yang valid", async () => {

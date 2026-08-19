@@ -70,6 +70,7 @@ const PENDAFTARAN_FILTER_INITIAL = {
 const MASTER_DOSEN_TAB_OPTIONS = [
   { key: "penanggung-jawab", label: "Penanggung Jawab Penjaluran" },
   { key: "kuota-bimbingan", label: "Kuota Bimbingan Mahasiswa" },
+  { key: "profil-penguji", label: "Profil Penguji" },
   { key: "ketersediaan-periode", label: "Ketersediaan per Periode" },
   { key: "riwayat-penetapan", label: "Riwayat Pembimbing" },
   { key: "tindak-lanjut", label: "Tindak Lanjut" },
@@ -2131,6 +2132,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [masterDosenKuotaValue, setMasterDosenKuotaValue] = useState("5");
   const [masterDosenSelectedDosenIds, setMasterDosenSelectedDosenIds] = useState([]);
   const [savingMasterDosenKuota, setSavingMasterDosenKuota] = useState(false);
+  const [examinerProfileRows, setExaminerProfileRows] = useState([]);
+  const [examinerProfileDraft, setExaminerProfileDraft] = useState({});
+  const [examinerProfileQuery, setExaminerProfileQuery] = useState("");
+  const [examinerProfilePage, setExaminerProfilePage] = useState(1);
+  const [loadingExaminerProfiles, setLoadingExaminerProfiles] = useState(false);
+  const [savingExaminerProfiles, setSavingExaminerProfiles] = useState(false);
   const [dosenPeriodAvailability, setDosenPeriodAvailability] = useState({
     periodes: [], periode: null, dosens: [], readiness: null, is_readonly: false,
   });
@@ -2842,6 +2849,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     return payload;
   }, [applyPeriodeOverview, fetchWithAuth]);
 
+  const loadExaminerProfiles = useCallback(async () => {
+    setLoadingExaminerProfiles(true);
+    try {
+      const payload = await fetchWithAuth("/api/sekretaris/master-dosen/profil-penguji");
+      const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+      setExaminerProfileRows(rows);
+      setExaminerProfileDraft(
+        Object.fromEntries(rows.map((row) => [Number(row.id), row.profil_penilaian_penguji || ""]))
+      );
+    } catch (loadError) {
+      setExaminerProfileRows([]);
+      setExaminerProfileDraft({});
+      if (loadError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(loadError.message || "Gagal memuat profil penilaian penguji.");
+      }
+    } finally {
+      setLoadingExaminerProfiles(false);
+    }
+  }, [fetchWithAuth]);
+
   const loadSupervisorAssignmentMonitoring = useCallback(async ({ page = 1, filters = {} } = {}) => {
     setLoadingSupervisorAssignments(true);
     try {
@@ -3361,6 +3388,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [activeTab, isSekretaris, loadPeriodeOverview]);
+
+  useEffect(() => {
+    if (!isSekretaris || activeTab !== "master-dosen" || masterDosenTab !== "profil-penguji") return;
+    loadExaminerProfiles();
+  }, [activeTab, isSekretaris, loadExaminerProfiles, masterDosenTab]);
 
   useEffect(() => {
     if (!isSekretaris || activeTab !== "master-dosen" || masterDosenTab !== "riwayat-penetapan") return undefined;
@@ -4627,6 +4659,39 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     masterDosenKuotaPage * DOSEN_GRID_PAGE_SIZE,
     filteredMasterDosenKuotaRows.length
   );
+  const filteredExaminerProfileRows = useMemo(() => {
+    const keyword = examinerProfileQuery.trim().toLowerCase();
+    if (!keyword) return examinerProfileRows;
+    return examinerProfileRows.filter((row) =>
+      [row?.kode_dosen, row?.nik, row?.nama, row?.gelar, row?.email, DOSEN_MASTER_STATUS_LABELS[row?.status_keaktifan]]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }, [examinerProfileQuery, examinerProfileRows]);
+  const totalExaminerProfilePages = useMemo(
+    () => Math.max(1, Math.ceil(filteredExaminerProfileRows.length / DOSEN_GRID_PAGE_SIZE)),
+    [filteredExaminerProfileRows.length]
+  );
+  const pagedExaminerProfileRows = useMemo(() => {
+    const start = (examinerProfilePage - 1) * DOSEN_GRID_PAGE_SIZE;
+    return filteredExaminerProfileRows.slice(start, start + DOSEN_GRID_PAGE_SIZE);
+  }, [examinerProfilePage, filteredExaminerProfileRows]);
+  const examinerProfileRangeStart = filteredExaminerProfileRows.length === 0
+    ? 0
+    : (examinerProfilePage - 1) * DOSEN_GRID_PAGE_SIZE + 1;
+  const examinerProfileRangeEnd = Math.min(
+    examinerProfilePage * DOSEN_GRID_PAGE_SIZE,
+    filteredExaminerProfileRows.length
+  );
+  useEffect(() => {
+    setExaminerProfilePage(1);
+  }, [examinerProfileQuery]);
+
+  useEffect(() => {
+    setExaminerProfilePage((current) => Math.min(current, totalExaminerProfilePages));
+  }, [totalExaminerProfilePages]);
   const pagedMasterDosenKuotaIds = useMemo(
     () =>
       pagedMasterDosenKuotaRows
@@ -7110,6 +7175,38 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       }
     } finally {
       setSavingMasterDosenKuota(false);
+    }
+  };
+
+  const handleSaveExaminerProfiles = async () => {
+    const updates = examinerProfileRows
+      .map((row) => ({
+        dosen_id: Number(row.id),
+        profil_penilaian_penguji: String(examinerProfileDraft[Number(row.id)] || ""),
+        previous: String(row.profil_penilaian_penguji || ""),
+      }))
+      .filter((item) => item.profil_penilaian_penguji && item.profil_penilaian_penguji !== item.previous)
+      .map(({ previous, ...item }) => item);
+
+    if (updates.length === 0) {
+      showInfoToast("Belum ada perubahan profil penguji untuk disimpan.");
+      return;
+    }
+
+    setSavingExaminerProfiles(true);
+    try {
+      await fetchWithAuth("/api/sekretaris/master-dosen/profil-penguji", {
+        method: "PUT",
+        body: JSON.stringify({ updates }),
+      });
+      showSuccessToast("Profil penilaian penguji berhasil disimpan.");
+      await loadExaminerProfiles();
+    } catch (saveError) {
+      if (saveError?.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(saveError.message || "Gagal menyimpan profil penilaian penguji.");
+      }
+    } finally {
+      setSavingExaminerProfiles(false);
     }
   };
 
@@ -12043,6 +12140,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             page: supervisorAssignmentPage,
                             filters: supervisorAssignmentFilters,
                           });
+                        } else if (masterDosenTab === "profil-penguji") {
+                          loadExaminerProfiles();
                         } else {
                           loadAllData();
                         }
@@ -12466,6 +12565,146 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
                     </div>
                   </>
+                ) : null}
+
+                {masterDosenTab === "profil-penguji" ? (
+                  <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-lg font-black text-[#1b274b]">Profil Penilaian Penguji</h3>
+                        <p className="mt-1 text-sm text-[#5d6c91]">
+                          Profil ini digunakan Auto Assign untuk membentuk pasangan penguji yang seimbang.
+                          Dosen aktif wajib dikonfigurasi sebelum periode sidang dapat dibuka.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSaveExaminerProfiles}
+                        disabled={savingExaminerProfiles || loadingExaminerProfiles}
+                        className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {savingExaminerProfiles ? "Menyimpan..." : "Simpan Perubahan"}
+                      </button>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <div className="rounded-lg border border-[#f0d3a5] bg-[#fff8ec] px-3 py-2 text-sm text-[#795316]">
+                        <b>Intensitas Tinggi</b>: penguji dengan pendekatan evaluasi yang lebih mendalam dan menantang.
+                      </div>
+                      <div className="rounded-lg border border-[#cfe8da] bg-[#f2fbf6] px-3 py-2 text-sm text-[#286443]">
+                        <b>Suportif</b>: penguji dengan pendekatan evaluasi yang membimbing dan konstruktif.
+                      </div>
+                    </div>
+
+                    <div className="mt-4 flex justify-end">
+                      <div className="relative">
+                        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                        <input
+                          type="text"
+                          value={examinerProfileQuery}
+                          onChange={(event) => setExaminerProfileQuery(event.target.value)}
+                          placeholder="Cari nama, kode, NIK, email..."
+                          className="w-[320px] max-w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="relative mt-3 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                      <table className="w-full min-w-[1050px] text-left text-sm">
+                        <thead>
+                          <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode/NIK</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Nama Dosen</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status Dosen</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kelayakan Penguji</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Profil Penilaian</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedExaminerProfileRows.map((row, index) => (
+                            <tr key={`examiner-profile-${row.id}`} className="border-b border-[#eff3fb]">
+                              <td className="px-3 py-2">
+                                {(examinerProfilePage - 1) * DOSEN_GRID_PAGE_SIZE + index + 1}
+                              </td>
+                              <td className="px-3 py-2">
+                                {row.kode_dosen || "-"}
+                                <div className="text-xs text-[#7080a6]">{row.nik || "-"}</div>
+                              </td>
+                              <td className="px-3 py-2">
+                                <p className="font-semibold text-[#1f3160]">{formatDosenFullName(row.nama, row.gelar) || "-"}</p>
+                                <p className="text-xs text-[#6a779a]">{row.email || "-"}</p>
+                              </td>
+                              <td className="px-3 py-2">{DOSEN_MASTER_STATUS_LABELS[row.status_keaktifan] || row.status_keaktifan || "-"}</td>
+                              <td className="px-3 py-2">
+                                {row.eligible_sebagai_penguji ? (
+                                  <span className="rounded-full bg-[#e8f8ef] px-2 py-1 text-xs font-bold text-[#127947]">Calon Penguji</span>
+                                ) : (
+                                  <span className="rounded-full bg-[#eef1f7] px-2 py-1 text-xs font-bold text-[#65718f]">Tidak Aktif</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2">
+                                <select
+                                  value={examinerProfileDraft[Number(row.id)] || ""}
+                                  onChange={(event) => setExaminerProfileDraft((current) => ({
+                                    ...current,
+                                    [Number(row.id)]: event.target.value,
+                                  }))}
+                                  className={`w-full min-w-[190px] rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
+                                    row.eligible_sebagai_penguji && !examinerProfileDraft[Number(row.id)]
+                                      ? "border-[#dc4b4b] bg-[#fff7f7]"
+                                      : "border-[#d3dbef] bg-white"
+                                  }`}
+                                >
+                                  <option value="">Pilih profil penilaian</option>
+                                  <option value="intensitas_tinggi">Intensitas Tinggi</option>
+                                  <option value="suportif">Suportif</option>
+                                </select>
+                                {row.eligible_sebagai_penguji && !examinerProfileDraft[Number(row.id)] ? (
+                                  <p className="mt-1 text-xs font-semibold text-[#c23737]">Profil dosen aktif wajib diatur.</p>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!loadingExaminerProfiles && filteredExaminerProfileRows.length === 0 ? (
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                          Data dosen tidak ditemukan.
+                        </div>
+                      ) : null}
+                      {loadingExaminerProfiles ? (
+                        <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                          Memuat profil penguji...
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                      <p className="text-sm text-[#4f5e86]">
+                        Menampilkan {examinerProfileRangeStart} - {examinerProfileRangeEnd} dari {filteredExaminerProfileRows.length} data dosen.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setExaminerProfilePage((current) => Math.max(1, current - 1))}
+                          disabled={examinerProfilePage === 1}
+                          className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Sebelumnya
+                        </button>
+                        <span className="text-sm font-semibold text-[#314778]">Halaman {examinerProfilePage} / {totalExaminerProfilePages}</span>
+                        <button
+                          type="button"
+                          onClick={() => setExaminerProfilePage((current) => Math.min(totalExaminerProfilePages, current + 1))}
+                          disabled={examinerProfilePage >= totalExaminerProfilePages}
+                          className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Berikutnya
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 ) : null}
 
                 {masterDosenTab === "ketersediaan-periode" ? (

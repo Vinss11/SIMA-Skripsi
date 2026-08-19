@@ -29,6 +29,12 @@ const DOKUMEN_APPROVAL_FIELDS = [
   "cept_status",
   "draft_skripsi_status",
 ];
+const EXAMINER_PROFILE_HIGH_INTENSITY = "intensitas_tinggi";
+const EXAMINER_PROFILE_SUPPORTIVE = "suportif";
+const VALID_EXAMINER_PROFILES = new Set([
+  EXAMINER_PROFILE_HIGH_INTENSITY,
+  EXAMINER_PROFILE_SUPPORTIVE,
+]);
 
 function normalizePeriodeType(value) {
   const raw = String(value || "")
@@ -319,11 +325,15 @@ function buildSessionSlots(hariRows, roomRows) {
 }
 
 function pairPreferenceScore(pairA, pairB) {
-  const strictCountA = (pairA.tipeA === "ketat" ? 1 : 0) + (pairA.tipeB === "ketat" ? 1 : 0);
-  const strictCountB = (pairB.tipeA === "ketat" ? 1 : 0) + (pairB.tipeB === "ketat" ? 1 : 0);
-  // Prefer 1 ketat + 1 santai, then santai+santai.
-  const rankA = strictCountA === 1 ? 0 : strictCountA === 0 ? 1 : 99;
-  const rankB = strictCountB === 1 ? 0 : strictCountB === 0 ? 1 : 99;
+  const highIntensityCountA =
+    (pairA.profileA === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0)
+    + (pairA.profileB === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0);
+  const highIntensityCountB =
+    (pairB.profileA === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0)
+    + (pairB.profileB === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0);
+  // Utamakan satu penguji Intensitas Tinggi dan satu Suportif, lalu dua penguji Suportif.
+  const rankA = highIntensityCountA === 1 ? 0 : highIntensityCountA === 0 ? 1 : 99;
+  const rankB = highIntensityCountB === 1 ? 0 : highIntensityCountB === 0 ? 1 : 99;
   if (rankA !== rankB) return rankA - rankB;
   if (pairA.loadScore !== pairB.loadScore) return pairA.loadScore - pairB.loadScore;
   return pairA.idScore - pairB.idScore;
@@ -334,18 +344,40 @@ function isOpenRegistrationWindow(periode, nowDateOnly) {
   return periode.tanggal_mulai_pendaftaran <= nowDateOnly && nowDateOnly <= periode.tanggal_selesai_pendaftaran;
 }
 
-function mapAvailabilityRows(rows) {
+function mapAvailabilityRows(rows, profileByDosenId) {
   const map = new Map();
   rows.forEach((row) => {
     const key = buildSidangSlotKey(row.tanggal_sidang, row.sesi_ke);
     if (!map.has(key)) map.set(key, []);
     map.get(key).push({
       dosen_id: Number(row.dosen_id),
-      tipe_penilaian: String(row.tipe_penilaian || "santai").toLowerCase(),
+      profil_penilaian_penguji: profileByDosenId.get(Number(row.dosen_id)) || null,
       kondisi_fisik: String(row.kondisi_fisik || "fit").toLowerCase(),
     });
   });
   return map;
+}
+
+async function getExaminerProfileReadiness(transaction) {
+  const eligibleDosens = await Dosen.findAll({
+    where: { status_keaktifan: "active" },
+    attributes: ["id", "kode_dosen", "nik", "nama", "gelar", "profil_penilaian_penguji"],
+    order: [["nama", "ASC"], ["id", "ASC"]],
+    transaction,
+  });
+  const unconfigured = eligibleDosens.filter(
+    (dosen) => !VALID_EXAMINER_PROFILES.has(String(dosen.profil_penilaian_penguji || ""))
+  );
+  const supportiveCount = eligibleDosens.filter(
+    (dosen) => dosen.profil_penilaian_penguji === EXAMINER_PROFILE_SUPPORTIVE
+  ).length;
+
+  return {
+    eligibleDosens,
+    unconfigured,
+    supportiveCount,
+    isReady: eligibleDosens.length >= 2 && unconfigured.length === 0 && supportiveCount >= 1,
+  };
 }
 
 function serializeJadwalRow(row) {
@@ -910,7 +942,7 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: "Label periode sidang sudah digunakan.",
+        message: `Periode belum valid: Periode ${semesterAkademik === "ganjil" ? "Ganjil" : "Genap"} ${tahunAkademik} sudah ada.`,
       });
     }
 
@@ -1007,6 +1039,7 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
         message: "Periode sidang tidak ditemukan.",
       });
     }
+
     if (String(periode.status || "").toLowerCase() === "closed") {
       await transaction.rollback();
       return res.status(409).json({
@@ -1082,7 +1115,7 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({
         success: false,
-        message: "Label periode sidang sudah digunakan periode lain.",
+        message: `Periode belum valid: Periode ${semesterAkademik === "ganjil" ? "Ganjil" : "Genap"} ${tahunAkademik} sudah ada.`,
       });
     }
 
@@ -1183,6 +1216,15 @@ exports.openSekretarisPeriodeSidang = async (req, res) => {
       });
     }
 
+    if (String(periode.status || "").toLowerCase() === "closed") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode sidang yang sudah ditutup tidak dapat dibuka kembali.",
+        detail: { code: "DEFENSE_PERIOD_ALREADY_CLOSED" },
+      });
+    }
+
     const openOther = await PeriodeSidang.findOne({
       where: {
         status: "open",
@@ -1208,6 +1250,43 @@ exports.openSekretarisPeriodeSidang = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: "Periode sidang harus punya minimal 1 hari dan 1 ruangan sebelum dibuka.",
+      });
+    }
+
+    const examinerReadiness = await getExaminerProfileReadiness(transaction);
+    if (examinerReadiness.eligibleDosens.length < 2) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode belum dapat dibuka karena minimal diperlukan 2 dosen aktif sebagai calon penguji.",
+        detail: { code: "INSUFFICIENT_ELIGIBLE_EXAMINERS" },
+      });
+    }
+    if (examinerReadiness.unconfigured.length > 0) {
+      const names = examinerReadiness.unconfigured.slice(0, 5).map((dosen) => dosen.nama).join(", ");
+      const remainder = Math.max(examinerReadiness.unconfigured.length - 5, 0);
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Profil penilaian calon penguji belum lengkap: ${names}${remainder ? `, dan ${remainder} dosen lainnya` : ""}. Atur melalui Master Dosen > Profil Penguji.`,
+        detail: {
+          code: "EXAMINER_PROFILE_INCOMPLETE",
+          unconfigured_dosens: examinerReadiness.unconfigured.map((dosen) => ({
+            id: dosen.id,
+            kode_dosen: dosen.kode_dosen,
+            nik: dosen.nik,
+            nama: dosen.nama,
+            gelar: dosen.gelar,
+          })),
+        },
+      });
+    }
+    if (examinerReadiness.supportiveCount < 1) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode belum dapat dibuka karena minimal satu dosen aktif harus memiliki profil Suportif.",
+        detail: { code: "SUPPORTIVE_EXAMINER_REQUIRED" },
       });
     }
 
@@ -1726,10 +1805,27 @@ exports.autoAssignSidangPenguji = async (req, res) => {
     });
     const eligibleDosens = await Dosen.findAll({
       where: { status_keaktifan: "active" },
-      attributes: ["id"],
+      attributes: ["id", "nama", "profil_penilaian_penguji"],
       transaction,
     });
+    const unconfiguredExaminers = eligibleDosens.filter(
+      (item) => !VALID_EXAMINER_PROFILES.has(String(item.profil_penilaian_penguji || ""))
+    );
+    if (unconfiguredExaminers.length > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Auto Assign tidak dapat dijalankan karena masih ada profil penilaian calon penguji yang belum diatur.",
+        detail: {
+          code: "EXAMINER_PROFILE_INCOMPLETE",
+          unconfigured_dosens: unconfiguredExaminers.map((item) => ({ id: item.id, nama: item.nama })),
+        },
+      });
+    }
     const eligibleIds = new Set(eligibleDosens.map((item) => Number(item.id)));
+    const profileByDosenId = new Map(
+      eligibleDosens.map((item) => [Number(item.id), item.profil_penilaian_penguji])
+    );
     const supervisorIds = [...new Set(pendingRegistrations.map((item) => Number(
       item.dosen_pembimbing_id || item.mahasiswa?.dosen_pembimbing_skripsi_id || 0
     )).filter(Boolean))];
@@ -1752,7 +1848,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       });
     }
 
-    const availabilityBySlot = mapAvailabilityRows(filteredAvailabilityRows);
+    const availabilityBySlot = mapAvailabilityRows(filteredAvailabilityRows, profileByDosenId);
     const assignedRows = await JadwalSidangPenguji.findAll({
       where: {
         periode_sidang_id: periode.id,
@@ -1813,9 +1909,10 @@ exports.autoAssignSidangPenguji = async (req, res) => {
             if (first.dosen_id === pembimbingId || second.dosen_id === pembimbingId) continue;
             if (busyInSlot.has(first.dosen_id) || busyInSlot.has(second.dosen_id)) continue;
 
-            const strictCount =
-              (first.tipe_penilaian === "ketat" ? 1 : 0) + (second.tipe_penilaian === "ketat" ? 1 : 0);
-            if (strictCount >= 2) continue;
+            const highIntensityCount =
+              (first.profil_penilaian_penguji === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0)
+              + (second.profil_penilaian_penguji === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0);
+            if (highIntensityCount >= 2) continue;
 
             const firstDayKey = `${slot.tanggal_sidang}#${first.dosen_id}`;
             const secondDayKey = `${slot.tanggal_sidang}#${second.dosen_id}`;
@@ -1828,8 +1925,8 @@ exports.autoAssignSidangPenguji = async (req, res) => {
             validPairs.push({
               dosenA: first.dosen_id,
               dosenB: second.dosen_id,
-              tipeA: first.tipe_penilaian,
-              tipeB: second.tipe_penilaian,
+              profileA: first.profil_penilaian_penguji,
+              profileB: second.profil_penilaian_penguji,
               kondisiA: first.kondisi_fisik,
               kondisiB: second.kondisi_fisik,
               loadScore:
@@ -2197,7 +2294,6 @@ exports.saveDosenKetersediaanSidang = async (req, res) => {
         dosen_id: dosenId,
         tanggal_sidang: tanggal,
         sesi_ke: session.sesi_ke,
-        tipe_penilaian: "santai",
         kondisi_fisik: "fit",
       }))
     );

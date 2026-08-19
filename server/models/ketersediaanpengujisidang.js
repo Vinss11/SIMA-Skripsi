@@ -34,11 +34,6 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
-      tipe_penilaian: {
-        type: DataTypes.ENUM("ketat", "santai"),
-        allowNull: false,
-        defaultValue: "santai",
-      },
       kondisi_fisik: {
         type: DataTypes.ENUM("fit", "tidak_fit"),
         allowNull: false,

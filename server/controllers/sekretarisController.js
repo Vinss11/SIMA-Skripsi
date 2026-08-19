@@ -4,6 +4,7 @@ const {
   PendaftaranPenjaluran,
   Mahasiswa,
   PeriodePenjaluran,
+  PeriodeAkademik,
   Dosen,
   DosenKlaster,
   Klaster,
@@ -2469,6 +2470,133 @@ exports.setMasterDosenKuota = async (req, res) => {
   }
 };
 
+const EXAMINER_ASSESSMENT_PROFILES = new Set(["intensitas_tinggi", "suportif"]);
+
+// GET /api/sekretaris/master-dosen/profil-penguji
+exports.getMasterDosenProfilPenguji = async (req, res) => {
+  try {
+    const dosens = await Dosen.findAll({
+      attributes: [
+        "id",
+        "kode_dosen",
+        "nik",
+        "nama",
+        "gelar",
+        "email",
+        "status_keaktifan",
+        "profil_penilaian_penguji",
+      ],
+      order: [["nama", "ASC"], ["id", "ASC"]],
+    });
+
+    const rows = dosens.map((dosen) => ({
+      id: dosen.id,
+      kode_dosen: dosen.kode_dosen || null,
+      nik: dosen.nik || null,
+      nama: dosen.nama || null,
+      gelar: dosen.gelar || null,
+      email: dosen.email || null,
+      status_keaktifan: dosen.status_keaktifan,
+      profil_penilaian_penguji: dosen.profil_penilaian_penguji || null,
+      eligible_sebagai_penguji: dosen.status_keaktifan === "active",
+    }));
+
+    return res.json({
+      success: true,
+      data: {
+        rows,
+        summary: {
+          total_dosen: rows.length,
+          total_eligible: rows.filter((row) => row.eligible_sebagai_penguji).length,
+          total_belum_diatur: rows.filter(
+            (row) => row.eligible_sebagai_penguji && !row.profil_penilaian_penguji
+          ).length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Error di getMasterDosenProfilPenguji:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat memuat profil penilaian penguji.",
+      error: error.message,
+    });
+  }
+};
+
+// PUT /api/sekretaris/master-dosen/profil-penguji
+exports.saveMasterDosenProfilPenguji = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const rawUpdates = Array.isArray(req.body?.updates) ? req.body.updates : [];
+    const updates = rawUpdates.map((item) => ({
+      dosen_id: Number(item?.dosen_id),
+      profil_penilaian_penguji: String(item?.profil_penilaian_penguji || "").trim().toLowerCase(),
+    }));
+
+    if (updates.length === 0) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Tidak ada perubahan profil penguji untuk disimpan." });
+    }
+
+    const invalid = updates.find(
+      (item) => !Number.isInteger(item.dosen_id)
+        || item.dosen_id <= 0
+        || !EXAMINER_ASSESSMENT_PROFILES.has(item.profil_penilaian_penguji)
+    );
+    if (invalid) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "Profil penilaian penguji tidak valid. Pilih Intensitas Tinggi atau Suportif.",
+      });
+    }
+
+    const uniqueIds = [...new Set(updates.map((item) => item.dosen_id))];
+    if (uniqueIds.length !== updates.length) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Dosen yang sama tidak boleh dikirim lebih dari satu kali." });
+    }
+
+    const dosens = await Dosen.findAll({
+      where: { id: { [Op.in]: uniqueIds } },
+      attributes: ["id", "profil_penilaian_penguji"],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (dosens.length !== uniqueIds.length) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Sebagian dosen tidak ditemukan." });
+    }
+
+    const updateById = new Map(updates.map((item) => [item.dosen_id, item.profil_penilaian_penguji]));
+    let changedCount = 0;
+    for (const dosen of dosens) {
+      const nextProfile = updateById.get(Number(dosen.id));
+      if (dosen.profil_penilaian_penguji !== nextProfile) {
+        dosen.profil_penilaian_penguji = nextProfile;
+        await dosen.save({ transaction });
+        changedCount += 1;
+      }
+    }
+
+    await transaction.commit();
+    return res.json({
+      success: true,
+      message: `Profil penilaian ${updates.length} dosen berhasil disimpan.`,
+      data: { total_target: updates.length, total_berubah: changedCount },
+    });
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    console.error("Error di saveMasterDosenProfilPenguji:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat menyimpan profil penilaian penguji.",
+      error: error.message,
+    });
+  }
+};
+
 function resolveKetuaKlasterTargetPeriode(periodes, periodeId) {
   if (Number.isInteger(periodeId) && periodeId > 0) {
     return periodes.find((item) => Number(item.id) === Number(periodeId)) || null;
@@ -3726,10 +3854,22 @@ exports.openPeriodePendaftaran = async (req, res) => {
 
     const actorId = getSekretarisActorId(req);
     const ketuaPenelitianDosenId = validation.rolePayload.ketua_itsc_dosen_id;
+    const [periodeAkademik] = await PeriodeAkademik.findOrCreate({
+      where: {
+        tahun_akademik: validation.periode.tahun_akademik,
+        semester: validation.periode.semester,
+      },
+      defaults: {
+        kode: `${validation.periode.tahun_akademik.replace("/", "-")}-${validation.periode.semester.toUpperCase()}`,
+        status: "draft",
+      },
+      transaction,
+    });
     const periodValues = {
       tahun_akademik: validation.periode.tahun_akademik,
       semester: validation.periode.semester,
       label_periode: validation.periode.label_periode,
+      periode_akademik_id: periodeAkademik.id,
       tanggal_mulai: validation.periode.tanggalMulai,
       tanggal_selesai: validation.periode.tanggalSelesai,
       ketua_penelitian_dosen_id: ketuaPenelitianDosenId,

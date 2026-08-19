@@ -242,6 +242,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: "active",
       },
+      profil_penilaian_penguji: {
+        type: DataTypes.ENUM("intensitas_tinggi", "suportif"),
+        allowNull: true,
+      },
       account_is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
       continue_existing_supervision: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
       status_effective_at: { type: DataTypes.DATEONLY, allowNull: true },

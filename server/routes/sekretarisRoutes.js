@@ -28,6 +28,8 @@ router.post("/periode/preview", authenticateToken, authorizeRole("sekretaris_pro
 router.post("/periode/open", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.openPeriodePendaftaran);
 router.get("/master-dosen/kuota-overview", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMasterDosenKuotaOverview);
 router.put("/master-dosen/kuota", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.setMasterDosenKuota);
+router.get("/master-dosen/profil-penguji", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getMasterDosenProfilPenguji);
+router.put("/master-dosen/profil-penguji", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveMasterDosenProfilPenguji);
 router.get("/master-dosen/ketersediaan", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getDosenKetersediaanPeriode);
 router.put("/master-dosen/ketersediaan", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.saveDosenKetersediaanPeriode);
 router.get("/master-dosen/tindak-lanjut-status", authenticateToken, authorizeRole("sekretaris_prodi"), authorizeSekretarisAccess, sekretarisController.getTindakLanjutStatusDosen);

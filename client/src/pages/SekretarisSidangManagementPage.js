@@ -1,12 +1,25 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarCheck2, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, Plus, RefreshCcw, Save, X } from "lucide-react";
+import { ArrowLeft, CalendarCheck2, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, RefreshCcw, Save, X } from "lucide-react";
+import Swal from "sweetalert2";
 import { formatDosenFullName } from "../utils/dosen";
 
 const GRID_PAGE_SIZE = 20;
 const SIDANG_TABS = [
   { id: "periode-pendaftaran", label: "Periode Pendaftaran Sidang" },
-  { id: "pengaturan-sidang", label: "Pengaturan Hari & Ruangan" },
+  { id: "pendaftar-sidang", label: "Pendaftar Sidang" },
 ];
+
+function showErrorToast(message) {
+  Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "error",
+    title: message,
+    showConfirmButton: false,
+    timer: 3200,
+    timerProgressBar: true,
+  });
+}
 
 function getJakartaTodayDateOnly() {
   const formatter = new Intl.DateTimeFormat("en-CA", {
@@ -70,6 +83,19 @@ function isValidAcademicYear(value) {
   const match = String(value || "").trim().match(/^(\d{4})\/(\d{4})$/);
   return Boolean(match) && Number(match[2]) === Number(match[1]) + 1;
 }
+
+function buildAcademicYearOptions(referenceDate = new Date()) {
+  const currentYear = Number(new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Jakarta",
+    year: "numeric",
+  }).format(referenceDate));
+  return [-1, 0, 1, 2, 3, 4, 5].map((offset) => {
+    const startYear = currentYear + offset;
+    return `${startYear}/${startYear + 1}`;
+  });
+}
+
+const ACADEMIC_YEAR_OPTIONS = buildAcademicYearOptions();
 
 function fieldClass(hasError) {
   return `mt-1 block w-full rounded-lg border px-3 py-2 text-sm font-normal outline-none ${
@@ -225,7 +251,6 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
     semester: "ganjil",
     tanggal_mulai_pendaftaran: "",
     tanggal_selesai_pendaftaran: "",
-    catatan: "",
   });
   const [openPeriodeErrors, setOpenPeriodeErrors] = useState({});
 
@@ -351,6 +376,12 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
   }, [loadOverview]);
 
   useEffect(() => {
+    if (!error) return;
+    showErrorToast(error);
+    setError("");
+  }, [error]);
+
+  useEffect(() => {
     if (selectedPeriodeId) {
       loadQueueByPeriode(Number(selectedPeriodeId)).catch(() => {});
     }
@@ -365,12 +396,15 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
   }, [overview, selectedPeriodeId]);
 
   useEffect(() => {
-    if (activeTab !== "pengaturan-sidang") return;
+    if (!["configure", "registrants"].includes(periodePageMode)) return;
     const periodes = Array.isArray(overview?.periodes) ? overview.periodes : [];
     if (periodes.length === 0) return;
     if (selectedPeriode) return;
-    setSelectedPeriodeId(String(periodes[0].id));
-  }, [activeTab, overview, selectedPeriode]);
+    const fallbackPeriode = periodePageMode === "registrants"
+      ? overview?.active_periode || periodes[0]
+      : periodes[0];
+    setSelectedPeriodeId(String(fallbackPeriode.id));
+  }, [overview, periodePageMode, selectedPeriode]);
 
   useEffect(() => {
     if (!selectedPeriode) return;
@@ -444,7 +478,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
     []
   );
 
-  const handleOpenPeriodeFromForm = async () => {
+  const handleContinuePeriodeConfiguration = async () => {
     const validationErrors = validatePeriodForm(openPeriodeForm);
     setOpenPeriodeErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
@@ -477,45 +511,20 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
         throw new Error("Periode sidang berhasil dibuat tetapi ID tidak ditemukan.");
       }
 
-      const openResponse = await fetchWithAuth(`/api/sekretaris/sidang/periode/${periodeId}/open`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      const openBody = await openResponse.json().catch(() => null);
-      if (!openResponse.ok || !openBody?.success) {
-        setSuccess(
-          createBody?.message ||
-            "Periode sidang berhasil dibuat sebagai draft. Lanjutkan pengaturan hari dan ruangan."
-        );
-        setError(
-          openBody?.message ||
-            "Periode berhasil dibuat, namun belum bisa dibuka. Atur hari dan ruangan sidang di tab Pengaturan Hari & Ruangan."
-        );
-        setSelectedPeriodeId(String(periodeId));
-        setOpenPeriodeForm({
-          periode: "uts",
-          tahun_akademik: "",
-          semester: "ganjil",
-          tanggal_mulai_pendaftaran: "",
-          tanggal_selesai_pendaftaran: "",
-          catatan: "",
-        });
-        await loadOverview();
-        return;
-      }
-
-      setSuccess(openBody?.message || "Periode pendaftaran sidang berhasil dibuka.");
+      setSuccess("Data periode tersimpan sebagai draft. Lengkapi hari dan ruangan untuk membuka periode.");
       setOpenPeriodeErrors({});
       setPeriodePageMode("list");
+      setSelectedPeriodeId(String(periodeId));
       setOpenPeriodeForm({
         periode: "uts",
         tahun_akademik: "",
         semester: "ganjil",
         tanggal_mulai_pendaftaran: "",
         tanggal_selesai_pendaftaran: "",
-        catatan: "",
       });
       await loadOverview();
+      setActiveTab("periode-pendaftaran");
+      setPeriodePageMode("configure");
     } catch (actionError) {
       if (actionError.message !== "__SESSION_EXPIRED__") {
         setError(actionError.message || "Gagal membuka periode pendaftaran sidang.");
@@ -770,14 +779,12 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
     (currentPage - 1) * GRID_PAGE_SIZE,
     currentPage * GRID_PAGE_SIZE
   );
+  const activeSidangMenuTab = periodePageMode === "registrants"
+    ? "pendaftar-sidang"
+    : "periode-pendaftaran";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
-      {error ? (
-        <div className="rounded-xl border border-[#f6d7d7] bg-[#fff2f2] p-4 text-sm font-semibold text-[#a03f3f]">
-          {error}
-        </div>
-      ) : null}
       {success ? (
         <div className="rounded-xl border border-[#d6f1e2] bg-[#ecfaf2] p-4 text-sm font-semibold text-[#196a45]">
           {success}
@@ -791,9 +798,22 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
             <button
               key={`sidang-tab-${tab.id}`}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => {
+                setActiveTab("periode-pendaftaran");
+                setSelectedRegistrantId(null);
+                setSelectedRegistrantDetail(null);
+                setError("");
+                setSuccess("");
+                if (tab.id === "pendaftar-sidang") {
+                  const defaultPeriodeId = overview?.active_periode?.id || overview?.periodes?.[0]?.id || "";
+                  setSelectedPeriodeId(defaultPeriodeId ? String(defaultPeriodeId) : "");
+                  setPeriodePageMode("registrants");
+                  return;
+                }
+                setPeriodePageMode("list");
+              }}
               className={`rounded-full border px-3 py-1.5 text-sm font-bold ${
-                activeTab === tab.id
+                activeSidangMenuTab === tab.id
                   ? "border-[#2f63e3] bg-[#2f63e3] text-white"
                   : "border-[#cfd8ef] bg-white text-[#2f4477]"
               }`}
@@ -833,24 +853,26 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               <RefreshCcw className="h-4 w-4" />
               Refresh
             </button>
-            <button
-              type="button"
-              disabled={savingForm}
-              onClick={() => {
-                setPeriodePageMode("open");
-                setOpenPeriodeErrors({});
-                setError("");
-                setSuccess("");
-              }}
-              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
-                periodePageMode === "open"
-                  ? "bg-[#2f63e3] text-white"
-                  : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
-              } disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              <CalendarRange className="h-4 w-4" />
-              Buka Periode Baru
-            </button>
+            {periodePageMode !== "registrants" ? (
+              <button
+                type="button"
+                disabled={savingForm}
+                onClick={() => {
+                  setPeriodePageMode("open");
+                  setOpenPeriodeErrors({});
+                  setError("");
+                  setSuccess("");
+                }}
+                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                  periodePageMode === "open"
+                    ? "bg-[#2f63e3] text-white"
+                    : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <CalendarRange className="h-4 w-4" />
+                Buka Periode Baru
+              </button>
+            ) : null}
           </div>
         </section>
       ) : null}
@@ -862,26 +884,27 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               <div>
                 <h3 className="text-lg font-black text-[#1b274b]">Detail Periode Pendaftaran Sidang</h3>
                 <p className="mt-1 text-sm text-[#66769a]">
-                  Isi identitas periode dan rentang waktu pendaftaran sidang. Semua field bertanda * wajib diisi.
+                  Isi identitas periode dan rentang waktu pendaftaran. Setelah itu, lanjutkan dengan memilih hari dan ruangan sidang.
                 </p>
               </div>
 
               <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                 <label className="block text-sm font-semibold text-[#29385f]">
                   Tahun Akademik <span className="text-[#b73a3a]">*</span>
-                  <input
-                    type="text"
+                  <select
                     value={openPeriodeForm.tahun_akademik}
-                    inputMode="numeric"
-                    maxLength={9}
                     onChange={(event) => {
                       setOpenPeriodeForm((prev) => ({ ...prev, tahun_akademik: event.target.value }));
                       setOpenPeriodeErrors((prev) => ({ ...prev, tahun_akademik: "" }));
                     }}
-                    placeholder="Contoh: 2025/2026"
                     aria-invalid={Boolean(openPeriodeErrors.tahun_akademik)}
-                    className={fieldClass(openPeriodeErrors.tahun_akademik)}
-                  />
+                    className={`${fieldClass(openPeriodeErrors.tahun_akademik)} bg-white`}
+                  >
+                    <option value="">Pilih tahun akademik</option>
+                    {ACADEMIC_YEAR_OPTIONS.map((academicYear) => (
+                      <option key={academicYear} value={academicYear}>{academicYear}</option>
+                    ))}
+                  </select>
                   <FieldError message={openPeriodeErrors.tahun_akademik} />
                 </label>
                 <label className="block text-sm font-semibold text-[#29385f]">
@@ -945,16 +968,6 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                   />
                   <FieldError message={openPeriodeErrors.tanggal_selesai_pendaftaran} />
                 </label>
-                <label className="block text-sm font-semibold text-[#29385f] md:col-span-2">
-                  Catatan <span className="font-normal text-[#7582a2]">(opsional)</span>
-                  <textarea
-                    rows={3}
-                    value={openPeriodeForm.catatan}
-                    onChange={(event) => setOpenPeriodeForm((prev) => ({ ...prev, catatan: event.target.value }))}
-                    placeholder="Tambahkan catatan untuk periode ini bila diperlukan."
-                    className="mt-1 block w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm font-normal outline-none focus:border-[#2f63e3]"
-                  />
-                </label>
               </div>
 
               {overview?.active_periode ? (
@@ -970,18 +983,19 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                 <button
                   type="button"
                   disabled={savingForm}
-                  onClick={() => handleOpenPeriodeFromForm().catch(() => {})}
+                  onClick={() => handleContinuePeriodeConfiguration().catch(() => {})}
                   className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  <Plus className="h-4 w-4" />
-                  {savingForm ? "Memproses..." : "Buka Periode Pendaftaran Sidang"}
+                  <CalendarDays className="h-4 w-4" />
+                  {savingForm ? "Memproses..." : "Lanjut Atur Hari & Ruangan"}
                 </button>
               </div>
             </section>
           ) : null}
 
-          {periodePageMode !== "open" ? (
+          {periodePageMode === "list" || periodePageMode === "registrants" ? (
             <>
+          {periodePageMode === "list" ? (
           <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
               <div>
@@ -990,7 +1004,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               </div>
               {loadingOverview ? <span className="text-sm text-[#6f7ea6]">Memuat...</span> : null}
             </div>
-            <div className="overflow-auto rounded-lg border border-[#e6ecf8] bg-white">
+            <div className="relative shrink-0 overflow-auto rounded-lg border border-[#e6ecf8] bg-white grid-unified-height">
               <table className="w-full min-w-[980px] text-left text-sm">
                 <thead>
                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -1004,17 +1018,16 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                 </thead>
                 <tbody>
                   {(overview?.periodes || []).map((item) => {
-                    const isSelected = periodePageMode === "edit" && String(selectedPeriodeId) === String(item.id);
                     const isOpen = String(item.status || "").toLowerCase() === "open";
                     return (
-                      <tr key={`periode-row-${item.id}`} className={`border-b border-[#eff3fb] ${isSelected ? "bg-[#f4f7ff]" : ""}`}>
+                      <tr key={`periode-row-${item.id}`} className="border-b border-[#eff3fb]">
                         <td className="px-3 py-2 font-semibold text-[#1f2d53]">{item.label_periode || formatPeriodeSidangLabel(item)}</td>
                         <td className="px-3 py-2">{item.tahun_akademik || "-"}</td>
                         <td className="px-3 py-2 capitalize">{item.semester || "-"}</td>
                         <td className="px-3 py-2">{formatDateLabel(item.tanggal_mulai_pendaftaran)} s/d {formatDateLabel(item.tanggal_selesai_pendaftaran)}</td>
                         <td className="px-3 py-2">
                           <span className={`rounded-full px-2 py-1 text-xs font-bold ${isOpen ? "bg-[#e8f8ef] text-[#127947]" : "bg-[#eef2fb] text-[#58658d]"}`}>
-                            {isOpen ? "Aktif" : String(item.status || "-").replaceAll("_", " ")}
+                            {isOpen ? "Aktif" : "Nonaktif"}
                           </span>
                         </td>
                         <td className="px-3 py-2">
@@ -1022,15 +1035,24 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
                             type="button"
                             onClick={() => {
                               setSelectedPeriodeId(String(item.id));
-                              setPeriodePageMode("edit");
+                              setPeriodePageMode(isOpen ? "edit" : "detail");
                               setEditPeriodeErrors({});
                               setError("");
                               setSuccess("");
                             }}
                             className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110"
                           >
-                            <CalendarRange className="h-3.5 w-3.5" />
-                            Edit
+                            {isOpen ? (
+                              <>
+                                <CalendarRange className="h-3.5 w-3.5" />
+                                Edit
+                              </>
+                            ) : (
+                              <>
+                                <Eye className="h-3.5 w-3.5" />
+                                Detail
+                              </>
+                            )}
                           </button>
                         </td>
                       </tr>
@@ -1045,69 +1067,49 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               ) : null}
             </div>
 
-            {selectedPeriode && periodePageMode === "edit" ? (
-              <div className="mt-3 rounded-lg border border-[#e5ebf8] bg-[#f8fbff] p-3">
-                <p className="text-sm font-bold text-[#233a74]">Edit Periode Terpilih</p>
-                <p className="mt-1 text-sm text-[#66769a]">
-                  Identitas dan tanggal mulai periode dikunci. Hanya tanggal akhir pendaftaran yang dapat diperbarui.
-                </p>
-                <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-[#dce4f7] bg-white p-3 text-sm text-[#29385f]">
-                    <p className="font-semibold">Periode</p>
-                    <p className="mt-1">{selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)}</p>
-                    <p className="mt-1 text-[#66769a]">Mulai: {formatDateLabel(selectedPeriode.tanggal_mulai_pendaftaran)}</p>
-                  </div>
-                  <label className="text-sm font-semibold text-[#29385f]">Tanggal Selesai Pendaftaran *
-                    <input type="date" value={editPeriodeForm.tanggal_selesai_pendaftaran} min={String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10)} onChange={(event) => { setEditPeriodeForm((prev) => ({ ...prev, tanggal_selesai_pendaftaran: event.target.value })); setEditPeriodeErrors((prev) => ({ ...prev, tanggal_selesai_pendaftaran: "" })); }} aria-invalid={Boolean(editPeriodeErrors.tanggal_selesai_pendaftaran)} className={fieldClass(editPeriodeErrors.tanggal_selesai_pendaftaran)} />
-                    <FieldError message={editPeriodeErrors.tanggal_selesai_pendaftaran} />
-                  </label>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    disabled={savingForm}
-                    onClick={() => {
-                      handleSaveSelectedPeriode().catch(() => {});
-                    }}
-                    className="inline-flex items-center gap-2 rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm font-semibold text-[#2b3f73] hover:bg-[#f1f5ff] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Save className="h-4 w-4" />
-                    Simpan Perubahan
-                  </button>
-                  <button
-                    type="button"
-                    disabled={savingForm || String(selectedPeriode.status || "").toLowerCase() !== "open"}
-                    onClick={() => {
-                      handleCloseSelectedPeriode().catch(() => {});
-                    }}
-                    className="rounded-lg bg-[#b73a3a] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Tutup Periode Aktif
-                  </button>
-                </div>
-              </div>
-            ) : null}
           </section>
+          ) : null}
 
-          <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+          {periodePageMode === "registrants" ? (
+          <section className="flex flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-lg font-black text-[#1b274b]">
-                Grid Pendaftar Sidang
-                {selectedPeriode ? ` - ${formatPeriodeSidangLabel(selectedPeriode)}` : ""}
-              </h3>
-              <input
-                type="text"
-                value={queueQuery}
-                onChange={(event) => {
-                  setQueueQuery(event.target.value);
-                  setQueuePage(1);
-                }}
-                placeholder="Cari NIM, nama, judul, status..."
-                className="w-[300px] rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-              />
+              <div>
+                <h3 className="text-lg font-black text-[#1b274b]">Grid Pendaftar Sidang</h3>
+                <p className="mt-1 text-sm text-[#66769a]">Menampilkan mahasiswa yang mendaftar pada periode sidang terpilih.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedPeriodeId}
+                  onChange={(event) => {
+                    setSelectedPeriodeId(event.target.value);
+                    setSelectedRegistrantId(null);
+                    setSelectedRegistrantDetail(null);
+                    setQueuePage(1);
+                  }}
+                  className="min-w-[260px] rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                  aria-label="Filter periode sidang"
+                >
+                  {(overview?.periodes || []).length === 0 ? <option value="">Belum ada periode sidang</option> : null}
+                  {(overview?.periodes || []).map((item) => (
+                    <option key={`queue-period-${item.id}`} value={String(item.id)}>
+                      {item.label_periode || formatPeriodeSidangLabel(item)}{String(item.status || "").toLowerCase() === "open" ? " (Aktif)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={queueQuery}
+                  onChange={(event) => {
+                    setQueueQuery(event.target.value);
+                    setQueuePage(1);
+                  }}
+                  placeholder="Cari NIM, nama, judul, status..."
+                  className="w-[300px] rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                />
+              </div>
             </div>
 
-            <div className="relative flex-1 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+            <div className="relative shrink-0 overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
               <table className="w-full min-w-[1400px] text-left text-sm">
                 <thead>
                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
@@ -1200,8 +1202,9 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               </div>
             </div>
           </section>
+          ) : null}
 
-          {selectedRegistrantId ? (
+          {periodePageMode === "registrants" && selectedRegistrantId ? (
             <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
               <h3 className="text-lg font-black text-[#1b274b]">Detail Pendaftar Sidang</h3>
               {loadingDetail ? (
@@ -1268,10 +1271,113 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
           ) : null}
             </>
           ) : null}
+
+          {selectedPeriode && (periodePageMode === "edit" || periodePageMode === "detail") ? (
+            <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+              <h3 className="text-lg font-black text-[#1b274b]">
+                {periodePageMode === "edit" ? "Edit Periode Pendaftaran Sidang" : "Detail Periode Pendaftaran Sidang"}
+              </h3>
+              <p className="mt-1 text-sm text-[#66769a]">
+                {periodePageMode === "edit"
+                  ? "Periode sedang aktif. Hanya tanggal selesai pendaftaran yang dapat diperbarui."
+                  : "Periode sudah tidak aktif. Data hanya dapat dilihat dan tidak dapat diubah."}
+              </p>
+
+              <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Label Periode
+                  <input
+                    type="text"
+                    value={selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)}
+                    disabled
+                    className="mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Status
+                  <input
+                    type="text"
+                    value={periodePageMode === "edit" ? "Aktif" : "Nonaktif"}
+                    disabled
+                    className="mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Tahun Akademik
+                  <input
+                    type="text"
+                    value={selectedPeriode.tahun_akademik || "-"}
+                    disabled
+                    className="mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Semester
+                  <input
+                    type="text"
+                    value={String(selectedPeriode.semester || "-").replace(/^./, (char) => char.toUpperCase())}
+                    disabled
+                    className="mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Tanggal Mulai Pendaftaran
+                  <input
+                    type="date"
+                    value={String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10)}
+                    disabled
+                    className="mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                  />
+                </label>
+                <label className="text-sm font-semibold text-[#29385f]">
+                  Tanggal Selesai Pendaftaran {periodePageMode === "edit" ? <span className="text-[#b73a3a]">*</span> : null}
+                  <input
+                    type="date"
+                    value={editPeriodeForm.tanggal_selesai_pendaftaran}
+                    min={String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10)}
+                    disabled={periodePageMode !== "edit"}
+                    onChange={(event) => {
+                      setEditPeriodeForm((prev) => ({ ...prev, tanggal_selesai_pendaftaran: event.target.value }));
+                      setEditPeriodeErrors((prev) => ({ ...prev, tanggal_selesai_pendaftaran: "" }));
+                    }}
+                    aria-invalid={Boolean(editPeriodeErrors.tanggal_selesai_pendaftaran)}
+                    className={
+                      periodePageMode === "edit"
+                        ? fieldClass(editPeriodeErrors.tanggal_selesai_pendaftaran)
+                        : "mt-1 w-full rounded-lg border border-[#d3dbef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#4f5d85]"
+                    }
+                  />
+                  {periodePageMode === "edit" ? <FieldError message={editPeriodeErrors.tanggal_selesai_pendaftaran} /> : null}
+                </label>
+              </div>
+
+              {periodePageMode === "edit" ? (
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-[#e8edf8] pt-4">
+                  <button
+                    type="button"
+                    disabled={savingForm}
+                    onClick={() => handleSaveSelectedPeriode().catch(() => {})}
+                    className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Save className="h-4 w-4" />
+                    Simpan Perubahan
+                  </button>
+                  <button
+                    type="button"
+                    disabled={savingForm}
+                    onClick={() => handleCloseSelectedPeriode().catch(() => {})}
+                    className="rounded-lg bg-[#b73a3a] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Tutup Periode Aktif
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </>
       ) : null}
 
-      {activeTab === "pengaturan-sidang" ? (
+      {activeTab === "periode-pendaftaran" && periodePageMode === "configure" ? (
         <>
           <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

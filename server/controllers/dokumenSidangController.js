@@ -279,9 +279,13 @@ exports.getMahasiswaDokumenSidang = async (req, res) => {
     });
   } catch (error) {
     console.error("Error di getMahasiswaDokumenSidang:", error);
-    return res.status(500).json({
+    const status = Number(error?.status);
+    const isExpectedContextError = Number.isInteger(status) && status >= 400 && status < 500;
+    return res.status(isExpectedContextError ? status : 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: isExpectedContextError ? error.message : "Terjadi kesalahan pada server",
+      code: error?.code || undefined,
+      detail: error?.detail || undefined,
       error: error.message,
     });
   }

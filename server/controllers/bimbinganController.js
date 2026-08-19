@@ -315,6 +315,10 @@ exports.getMahasiswaBimbingan = async (req, res) => {
     let progress = null;
     try {
       const context = await resolveActiveGuidanceContext(mahasiswa_id);
+      const currentCycleRows = serializedRows.filter(
+        (item) => Number(item.pendaftaran_penjaluran_id) === Number(context.registration.id)
+      );
+      stats = buildStatFromRows(currentCycleRows);
       progress = await getProgress({ mahasiswaId: mahasiswa_id, cycleRegistrationId: context.registration.id, assignmentId: context.assignment.id,
         context: { kodeProgramStudi: context.program.kode_program_studi, programKuliah: context.program.program_kuliah,
           jalur: context.snapshot.jalur_snapshot, periodeAkademikId: context.snapshot.periode_akademik_id } });
@@ -349,9 +353,13 @@ exports.getMahasiswaBimbingan = async (req, res) => {
     });
   } catch (error) {
     console.error("Error di getMahasiswaBimbingan:", error);
-    return res.status(500).json({
+    const status = Number(error?.status);
+    const isExpectedContextError = Number.isInteger(status) && status >= 400 && status < 500;
+    return res.status(isExpectedContextError ? status : 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: isExpectedContextError ? error.message : "Terjadi kesalahan pada server",
+      code: error?.code || undefined,
+      detail: error?.detail || undefined,
       error: error.message,
     });
   }

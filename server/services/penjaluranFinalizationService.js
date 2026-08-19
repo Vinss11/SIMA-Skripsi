@@ -14,6 +14,10 @@ const {
   getActiveSupervisorAssignment,
   replaceSupervisorAssignment,
 } = require("./penetapanPembimbingService");
+const {
+  isUlangOrAlih,
+  resetDokumenSidangForNewCycle,
+} = require("./dokumenSidangCycleService");
 
 class PenjaluranFinalizationError extends Error {
   constructor(message, statusCode = 409, code = "PENJALURAN_FINALIZATION_FAILED", detail = null) {
@@ -426,6 +430,14 @@ async function finalizePenjaluranDecision({
     status_jalur_saat_ini: normalizedTrack,
     pengajuan_aktif_id: null,
   }, { where: { id: { [Op.in]: mahasiswaIds } }, transaction });
+
+  const changedCycleStudentIds = targets
+    .filter(isUlangOrAlih)
+    .map((item) => Number(item.mahasiswa_id));
+  await resetDokumenSidangForNewCycle({
+    mahasiswaIds: changedCycleStudentIds,
+    transaction,
+  });
 
   return { replayed: false, targets, supervisorIds: normalizedSupervisorIds };
 }
