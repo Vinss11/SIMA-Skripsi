@@ -1,4 +1,4 @@
-# Rancangan Pengerjaan Tahap 9 — Master Bidang, Kelas Penguji, dan Ruangan
+# Rancangan Pengerjaan Tahap 9 — Bidang Penelitian, Kelas Penguji, dan Ruangan
 
 ## 1. Tujuan
 
@@ -10,11 +10,12 @@ BR-JADWAL-002–003. Istilah/aturan resmi kelas 1/2/3 masih membutuhkan konfirma
 
 ## 3. Model data
 
-### Bidang
+### Bidang penelitian
 
-- `MasterBidangIlmu`: kode, nama, status aktif.
-- `DosenBidangIlmu`: dosen, bidang, utama, bobot/tingkat kompetensi opsional.
-- Relasi bidang pada pengajuan/topik/judul sebagai input pencocokan.
+- `BidangPenelitian`: kode, nama, deskripsi, dan contoh kata kunci untuk konteks klasifikasi AI.
+- `DosenBidangPenelitian`: relasi banyak-ke-banyak dosen dan bidang penelitian tanpa pembagian peran.
+- `PengajuanBidangPenelitian` serta `TopikBidangPenelitian`: relasi banyak-ke-banyak tanpa pembagian peran sebagai input pencocokan penguji.
+- Seluruh bidang penelitian selalu aktif; bidang yang sudah direferensikan tidak boleh dihapus.
 
 ### Profil penguji
 
@@ -30,7 +31,7 @@ BR-JADWAL-002–003. Istilah/aturan resmi kelas 1/2/3 masih membutuhkan konfirma
 
 ## 4. Paket pengerjaan
 
-1. Konfirmasi kamus bidang dan sumber klasifikasi dosen.
+1. Konfirmasi kamus bidang penelitian dan sumber klasifikasi dosen.
 2. Buat CRUD berotorisasi, unique key, histori perubahan, dan proteksi penghapusan referensi.
 3. Migrasikan cluster/bidang lama dengan mapping eksplisit dan laporan yang tidak cocok.
 4. Pindahkan karakteristik penguji dari ketersediaan slot ke profil master.
@@ -39,9 +40,8 @@ BR-JADWAL-002–003. Istilah/aturan resmi kelas 1/2/3 masih membutuhkan konfirma
 
 ## 5. Pengujian
 
-Uji kode duplikat, dosen multi-bidang, bidang utama tunggal, referensi nonaktif, larangan hard-delete, mapping legacy, dan perubahan nama ruangan tanpa merusak jadwal lama.
+Uji nama bidang duplikat, dosen/pengajuan/topik multi-bidang tanpa pembagian peran, larangan hard-delete untuk bidang yang digunakan, mapping legacy, dan perubahan nama ruangan tanpa merusak jadwal lama.
 
 ## 6. Definition of Done
 
 Algoritma tahap berikutnya memperoleh bidang, kelas/aturan pasangan, dan ruangan dari master terstruktur; data lama tetap dapat ditelusuri.
-

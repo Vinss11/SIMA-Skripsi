@@ -122,6 +122,13 @@ router.patch(
   authorizeSekretarisAccess,
   sidangAkhirController.updateSekretarisPeriodeSidang
 );
+router.delete(
+  "/sidang/periode/:id/draft",
+  authenticateToken,
+  authorizeRole("sekretaris_prodi"),
+  authorizeSekretarisAccess,
+  sidangAkhirController.discardSekretarisPeriodeSidangDraft
+);
 router.post(
   "/sidang/periode/:id/open",
   authenticateToken,

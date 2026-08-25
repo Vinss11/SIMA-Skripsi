@@ -2,7 +2,18 @@ const XLSX = require("xlsx");
 const CFB = require("cfb");
 const fs = require("fs");
 const { Op } = require("sequelize");
-const { Topik, Dosen, DosenKlaster, Mahasiswa, Klaster, SekretarisProdi, sequelize } = require("../models");
+const {
+  Topik,
+  Dosen,
+  DosenKlaster,
+  Mahasiswa,
+  Klaster,
+  SekretarisProdi,
+  BidangPenelitian,
+  DosenBidangPenelitian,
+  TopikBidangPenelitian,
+  sequelize,
+} = require("../models");
 const {
   assertDosenCanReceiveNewAssignment,
   assertDosenCanBeDpa,
@@ -16,13 +27,15 @@ const {
 } = require("../constants/jabatanStruktural");
 const { validateDosenName, validateDosenTitle } = require("../utils/dosenIdentity");
 const { buildInitialCredentialAttributes } = require("../services/initialCredentialService");
+const { buildNextTopicCode, createTopicWithGeneratedCode } = require("../services/topikCodeService");
+const { getTopikTitleValidationError } = require("../services/topikTitleValidationService");
+const { buildTopikImportTemplateBuffer } = require("../services/topikImportTemplateService");
 
 const TEMPLATE_HEADERS = {
   topik: [
-    { key: "kode topik", label: "Kode Topik" },
     { key: "judul", label: "Judul" },
     { key: "deskripsi", label: "Deskripsi" },
-    { key: "keyword", label: "Keyword" },
+    { key: "bidang penelitian", label: "Bidang Penelitian" },
     { key: "cluster", label: "Cluster" },
   ],
   dosen: [
@@ -274,22 +287,6 @@ function normalizeTopikClusterLabel(value) {
   return TOPIK_CLUSTER_LABEL_BY_CODE[code] || null;
 }
 
-function resolveTopikClusterFromKode(kode) {
-  const normalizedKode = String(kode || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "")
-    .replace(/[^A-Z0-9]/g, "");
-  if (!normalizedKode) return null;
-  const prefix = normalizedKode.replace(/[0-9].*$/, "");
-  const code = normalizeTopikClusterCode(prefix);
-  if (!code) return null;
-  return {
-    code,
-    label: TOPIK_CLUSTER_LABEL_BY_CODE[code] || null,
-  };
-}
-
 async function getAllowedTopikClustersForDosen(dosenId, transaction, cache) {
   const numericDosenId = Number(dosenId);
   if (!Number.isInteger(numericDosenId) || numericDosenId <= 0) {
@@ -390,10 +387,15 @@ async function resolveActorDosenForTopikUpload(req, transaction = null) {
 
 function extractTopikUploadValues(rawRow = {}) {
   return {
-    kode: rawRow["Kode Topik"] || rawRow.kode || rawRow.KODE || "",
     judul: rawRow.Judul || rawRow.judul || rawRow.JUDUL || "",
     deskripsi: rawRow.Deskripsi || rawRow.deskripsi || rawRow.DESKRIPSI || "",
-    keyword: rawRow.Keyword || rawRow.keyword || rawRow.KEYWORD || rawRow["Kata Kunci"] || rawRow.kata_kunci || "",
+    bidangPenelitian:
+      rawRow["Bidang Penelitian"] ||
+      rawRow.bidang_penelitian ||
+      rawRow.bidangPenelitian ||
+      rawRow.BIDANG_PENELITIAN ||
+      "",
+    bidangPenelitianIds: Array.isArray(rawRow.bidang_penelitian_ids) ? rawRow.bidang_penelitian_ids : [],
     cluster: rawRow.Cluster || rawRow.cluster || rawRow.CLUSTER || "",
     dosenIdentifier:
       rawRow["NIK Dosen"] ||
@@ -406,6 +408,103 @@ function extractTopikUploadValues(rawRow = {}) {
       rawRow.dosen_identifier ||
       "",
   };
+}
+
+async function generateTopikCodeForPreview(clusterLabel, existingCodesByCluster) {
+  const clusterCode = normalizeTopikClusterCode(clusterLabel);
+  if (!clusterCode) throw new Error("Cluster tidak valid untuk membuat kode topik.");
+
+  if (!existingCodesByCluster.has(clusterCode)) {
+    const rows = await Topik.findAll({
+      attributes: ["kode"],
+      where: { kode: { [Op.like]: `${clusterCode}%` } },
+      raw: true,
+    });
+    existingCodesByCluster.set(clusterCode, rows.map((row) => row.kode));
+  }
+
+  const existingCodes = existingCodesByCluster.get(clusterCode);
+  const generatedCode = buildNextTopicCode(clusterCode, existingCodes);
+  existingCodes.push(generatedCode);
+  return generatedCode;
+}
+
+async function resolveTopikResearchFieldsForDosen({
+  dosenId,
+  rawValue,
+  requestedIds = [],
+  transaction = null,
+  cache = new Map(),
+}) {
+  const cacheKey = Number(dosenId);
+  let assignedFields = cache.get(cacheKey);
+  if (!assignedFields) {
+    assignedFields = await BidangPenelitian.findAll({
+      include: [{
+        model: Dosen,
+        as: "dosens",
+        attributes: [],
+        through: { attributes: [] },
+        where: { id: cacheKey },
+        required: true,
+      }],
+      attributes: ["id", "nama"],
+      order: [["nama", "ASC"]],
+      transaction: transaction || undefined,
+    });
+    cache.set(cacheKey, assignedFields);
+  }
+
+  if (assignedFields.length === 0) {
+    return { ok: false, message: "Bidang penelitian dosen belum dikonfigurasi oleh admin." };
+  }
+
+  const assignedById = new Map(assignedFields.map((field) => [Number(field.id), field]));
+  const normalizedRequestedIds = [...new Set(
+    (Array.isArray(requestedIds) ? requestedIds : [])
+      .map(Number)
+      .filter((id) => Number.isInteger(id) && id > 0)
+  )];
+  if (normalizedRequestedIds.length > 0) {
+    if (normalizedRequestedIds.length > 10) {
+      return { ok: false, message: "Maksimal 10 bidang penelitian dapat dipilih." };
+    }
+    const invalidIds = normalizedRequestedIds.filter((id) => !assignedById.has(id));
+    if (invalidIds.length > 0) {
+      return { ok: false, message: "Bidang penelitian tidak termasuk bidang dosen yang ditetapkan admin." };
+    }
+    const fields = normalizedRequestedIds.map((id) => assignedById.get(id));
+    return { ok: true, ids: normalizedRequestedIds, names: fields.map((field) => field.nama) };
+  }
+
+  const tokens = String(rawValue || "")
+    .split(/[;,|]/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return { ok: false, message: "Pilih minimal satu bidang penelitian." };
+  }
+  if (tokens.length > 10) {
+    return { ok: false, message: "Maksimal 10 bidang penelitian dapat dipilih." };
+  }
+
+  const assignedByName = new Map(
+    assignedFields.map((field) => [String(field.nama || "").trim().toLowerCase(), field])
+  );
+  const invalidNames = tokens.filter((name) => !assignedByName.has(name.toLowerCase()));
+  if (invalidNames.length > 0) {
+    return {
+      ok: false,
+      message: `Bidang penelitian berikut tidak ditetapkan untuk dosen: ${invalidNames.join(", ")}.`,
+    };
+  }
+  const fields = [...new Map(
+    tokens.map((name) => {
+      const field = assignedByName.get(name.toLowerCase());
+      return [Number(field.id), field];
+    })
+  ).values()];
+  return { ok: true, ids: fields.map((field) => Number(field.id)), names: fields.map((field) => field.nama) };
 }
 
 function parseKlasterListInput(rawKlasterValue, klasterMap) {
@@ -922,6 +1021,7 @@ exports.uploadTopics = async (req, res) => {
 
     // Cek apakah file di-upload
     if (!req.file) {
+      await t.rollback();
       return res.status(400).json({
         success: false,
         message: "File Excel harus di-upload",
@@ -955,6 +1055,7 @@ exports.uploadTopics = async (req, res) => {
     // Validasi data kosong
     if (data.length === 0) {
       fs.unlinkSync(filePath);
+      await t.rollback();
       return res.status(400).json({
         success: false,
         message: "File Excel kosong atau format tidak sesuai",
@@ -967,6 +1068,7 @@ exports.uploadTopics = async (req, res) => {
       total: data.length,
     };
     const allowedClusterCache = new Map();
+    const researchFieldCache = new Map();
 
     // Proses setiap baris
     for (let i = 0; i < data.length; i++) {
@@ -975,10 +1077,10 @@ exports.uploadTopics = async (req, res) => {
 
       try {
         // Ekstrak data
-        const kode = row["Kode Topik"] || row["kode"] || row["KODE"];
         const judul = row["Judul"] || row["judul"] || row["JUDUL"];
         const deskripsi = row["Deskripsi"] || row["deskripsi"] || row["DESKRIPSI"];
-        const keyword = row["Keyword"] || row["keyword"] || row["KEYWORD"] || row["Kata Kunci"] || row["kata_kunci"];
+        const bidangPenelitian =
+          row["Bidang Penelitian"] || row.bidang_penelitian || row.bidangPenelitian;
         const cluster = row["Cluster"] || row["cluster"] || row["CLUSTER"];
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
@@ -991,45 +1093,29 @@ exports.uploadTopics = async (req, res) => {
             row["email_dosen"];
 
         // Validasi field wajib
-        if (!kode || !judul || !keyword || !cluster || !dosenIdentifier) {
+        if (!judul || !bidangPenelitian || !cluster || !dosenIdentifier) {
           results.failed.push({
             row: rowNumber,
             data: row,
-            error: "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
+            error: "Field wajib tidak lengkap (Judul, Bidang Penelitian, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
-        const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
-        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
+
+        const judulValidationError = getTopikTitleValidationError(normalizedJudul);
+        if (judulValidationError) {
+          results.failed.push({ row: rowNumber, data: row, error: judulValidationError });
+          continue;
+        }
 
         if (!normalizedCluster) {
           results.failed.push({
             row: rowNumber,
             data: row,
             error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
-          });
-          continue;
-        }
-
-        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
-        if (!kodeCluster || !kodeCluster.label) {
-          results.failed.push({
-            row: rowNumber,
-            data: row,
-            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
-          });
-          continue;
-        }
-        if (kodeCluster.label !== normalizedCluster) {
-          const expectedPrefix =
-            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
-          results.failed.push({
-            row: rowNumber,
-            data: row,
-            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
           });
           continue;
         }
@@ -1074,32 +1160,37 @@ exports.uploadTopics = async (req, res) => {
           continue;
         }
 
-        // Cek apakah kode topik sudah ada
-        const existingTopik = await Topik.findOne({
-          where: { kode: normalizedKode },
+        const researchFields = await resolveTopikResearchFieldsForDosen({
+          dosenId: dosen.id,
+          rawValue: bidangPenelitian,
           transaction: t,
+          cache: researchFieldCache,
         });
-
-        if (existingTopik) {
-          results.failed.push({
-            row: rowNumber,
-            data: row,
-            error: `Kode topik ${normalizedKode} sudah ada di database`,
-          });
+        if (!researchFields.ok) {
+          results.failed.push({ row: rowNumber, data: row, error: researchFields.message });
           continue;
         }
 
         // Insert topik ke database
-        const newTopik = await Topik.create(
-          {
-            kode: normalizedKode,
+        const newTopik = await createTopicWithGeneratedCode({
+          Topik,
+          clusterCode: normalizeTopikClusterCode(normalizedCluster),
+          values: {
             judul: normalizedJudul,
             deskripsi: deskripsi ? deskripsi.trim() : null,
-            keyword: normalizedKeyword,
+            keyword: null,
             cluster: normalizedCluster,
             dosen_id: dosen.id,
             status: "available",
           },
+          transaction: t,
+        });
+
+        await TopikBidangPenelitian.bulkCreate(
+          researchFields.ids.map((bidangPenelitianId) => ({
+            topik_id: newTopik.id,
+            bidang_penelitian_id: bidangPenelitianId,
+          })),
           { transaction: t }
         );
 
@@ -1107,7 +1198,8 @@ exports.uploadTopics = async (req, res) => {
           row: rowNumber,
           kode: newTopik.kode,
           judul: newTopik.judul,
-          keyword: newTopik.keyword,
+          bidang_penelitian: researchFields.names.join(", "),
+          bidang_penelitian_ids: researchFields.ids,
           cluster: newTopik.cluster,
           dosen: dosen.nama,
         });
@@ -1211,72 +1303,47 @@ exports.previewUploadTopics = async (req, res) => {
     const validRows = [];
     const failedRows = [];
     const allowedClusterCache = new Map();
-    const kodeInFileSet = new Set();
+    const researchFieldCache = new Map();
+    const existingCodesByCluster = new Map();
 
     for (let index = 0; index < data.length; index++) {
       const row = data[index];
       const rowNumber = index + 2;
       try {
         const rowValues = extractTopikUploadValues(row);
-        const kode = rowValues.kode;
         const judul = rowValues.judul;
-        const keyword = rowValues.keyword;
+        const bidangPenelitian = rowValues.bidangPenelitian;
         const cluster = rowValues.cluster;
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
           : rowValues.dosenIdentifier;
 
-        if (!kode || !judul || !keyword || !cluster || (!actorDosen && !dosenIdentifier)) {
+        if (!judul || !bidangPenelitian || !cluster || (!actorDosen && !dosenIdentifier)) {
           failedRows.push({
             row: rowNumber,
             data: row,
             error: actorDosen
-              ? "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, dan Cluster harus diisi)"
-              : "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
+              ? "Field wajib tidak lengkap (Judul, Bidang Penelitian, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Judul, Bidang Penelitian, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
-        const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
-        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
         const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
+
+        const judulValidationError = getTopikTitleValidationError(normalizedJudul);
+        if (judulValidationError) {
+          failedRows.push({ row: rowNumber, data: row, error: judulValidationError });
+          continue;
+        }
 
         if (!normalizedCluster) {
           failedRows.push({
             row: rowNumber,
             data: row,
             error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
-          });
-          continue;
-        }
-
-        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
-        if (!kodeCluster || !kodeCluster.label) {
-          failedRows.push({
-            row: rowNumber,
-            data: row,
-            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
-          });
-          continue;
-        }
-        if (kodeCluster.label !== normalizedCluster) {
-          const expectedPrefix =
-            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
-          failedRows.push({
-            row: rowNumber,
-            data: row,
-            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
-          });
-          continue;
-        }
-
-        if (kodeInFileSet.has(normalizedKode)) {
-          failedRows.push({
-            row: rowNumber,
-            data: row,
-            error: `Kode topik ${normalizedKode} duplikat di file upload.`,
           });
           continue;
         }
@@ -1305,7 +1372,7 @@ exports.previewUploadTopics = async (req, res) => {
 
         const eligibility = await getTopikUploadDosenEligibility(dosen, null);
         if (!eligibility.allowed) {
-          results.failed.push({ row: rowNumber, data: row, error: eligibility.message });
+          failedRows.push({ row: rowNumber, data: row, error: eligibility.message });
           continue;
         }
         const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, null, allowedClusterCache);
@@ -1318,23 +1385,25 @@ exports.previewUploadTopics = async (req, res) => {
           continue;
         }
 
-        const existingTopik = await Topik.findOne({ where: { kode: normalizedKode }, attributes: ["id"] });
-        if (existingTopik) {
-          failedRows.push({
-            row: rowNumber,
-            data: row,
-            error: `Kode topik ${normalizedKode} sudah ada di database`,
-          });
+        const researchFields = await resolveTopikResearchFieldsForDosen({
+          dosenId: dosen.id,
+          rawValue: bidangPenelitian,
+          requestedIds: rowValues.bidangPenelitianIds,
+          cache: researchFieldCache,
+        });
+        if (!researchFields.ok) {
+          failedRows.push({ row: rowNumber, data: row, error: researchFields.message });
           continue;
         }
 
-        kodeInFileSet.add(normalizedKode);
+        const generatedKode = await generateTopikCodeForPreview(normalizedCluster, existingCodesByCluster);
         validRows.push({
           row: rowNumber,
-          kode: normalizedKode,
+          kode: generatedKode,
           judul: normalizedJudul,
           deskripsi: normalizedDeskripsi,
-          keyword: normalizedKeyword,
+          bidang_penelitian: researchFields.names.join(", "),
+          bidang_penelitian_ids: researchFields.ids,
           cluster: normalizedCluster,
         });
       } catch (error) {
@@ -1400,72 +1469,51 @@ exports.commitUploadTopics = async (req, res) => {
       total: rows.length,
     };
     const allowedClusterCache = new Map();
-    const kodeInFileSet = new Set();
+    const researchFieldCache = new Map();
 
     for (let index = 0; index < rows.length; index++) {
       const payloadRow = rows[index];
       const rowNumber = Number(payloadRow?.row) || index + 1;
       try {
         const rowValues = extractTopikUploadValues(payloadRow);
-        const kode = rowValues.kode;
         const judul = rowValues.judul;
-        const keyword = rowValues.keyword;
+        const bidangPenelitian = rowValues.bidangPenelitian;
         const cluster = rowValues.cluster;
         const dosenIdentifier = actorDosen
           ? actorDosen.nik || actorDosen.kode_dosen || actorDosen.email
           : rowValues.dosenIdentifier;
 
-        if (!kode || !judul || !keyword || !cluster || (!actorDosen && !dosenIdentifier)) {
+        if (
+          !judul ||
+          (!bidangPenelitian && rowValues.bidangPenelitianIds.length === 0) ||
+          !cluster ||
+          (!actorDosen && !dosenIdentifier)
+        ) {
           results.failed.push({
             row: rowNumber,
             data: payloadRow,
             error: actorDosen
-              ? "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, dan Cluster harus diisi)"
-              : "Field wajib tidak lengkap (Kode Topik, Judul, Keyword, Cluster, dan identifier dosen harus diisi)",
+              ? "Field wajib tidak lengkap (Judul, Bidang Penelitian, dan Cluster harus diisi)"
+              : "Field wajib tidak lengkap (Judul, Bidang Penelitian, Cluster, dan identifier dosen harus diisi)",
           });
           continue;
         }
 
-        const normalizedKode = String(kode || "").trim().toUpperCase();
         const normalizedJudul = String(judul || "").trim();
-        const normalizedKeyword = String(keyword || "").trim();
         const normalizedCluster = normalizeTopikClusterLabel(cluster);
         const normalizedDeskripsi = rowValues.deskripsi ? String(rowValues.deskripsi).trim() : null;
+
+        const judulValidationError = getTopikTitleValidationError(normalizedJudul);
+        if (judulValidationError) {
+          results.failed.push({ row: rowNumber, data: payloadRow, error: judulValidationError });
+          continue;
+        }
 
         if (!normalizedCluster) {
           results.failed.push({
             row: rowNumber,
             data: payloadRow,
             error: "Cluster tidak valid. Harus salah satu dari: Sirkel, Siber, ITSC, MVK.",
-          });
-          continue;
-        }
-
-        const kodeCluster = resolveTopikClusterFromKode(normalizedKode);
-        if (!kodeCluster || !kodeCluster.label) {
-          results.failed.push({
-            row: rowNumber,
-            data: payloadRow,
-            error: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
-          });
-          continue;
-        }
-        if (kodeCluster.label !== normalizedCluster) {
-          const expectedPrefix =
-            TOPIK_CLUSTER_CODE_BY_LABEL[normalizeTopikClusterCode(normalizedCluster)] || normalizedCluster;
-          results.failed.push({
-            row: rowNumber,
-            data: payloadRow,
-            error: `Kode topik ${normalizedKode} tidak sesuai dengan cluster ${normalizedCluster}. Prefix kode harus ${expectedPrefix}.`,
-          });
-          continue;
-        }
-
-        if (kodeInFileSet.has(normalizedKode)) {
-          results.failed.push({
-            row: rowNumber,
-            data: payloadRow,
-            error: `Kode topik ${normalizedKode} duplikat di request simpan.`,
           });
           continue;
         }
@@ -1498,6 +1546,18 @@ exports.commitUploadTopics = async (req, res) => {
           results.failed.push({ row: rowNumber, data: payloadRow, error: eligibility.message });
           continue;
         }
+
+        const researchFields = await resolveTopikResearchFieldsForDosen({
+          dosenId: dosen.id,
+          rawValue: bidangPenelitian,
+          requestedIds: rowValues.bidangPenelitianIds,
+          transaction: t,
+          cache: researchFieldCache,
+        });
+        if (!researchFields.ok) {
+          results.failed.push({ row: rowNumber, data: payloadRow, error: researchFields.message });
+          continue;
+        }
         const allowedClusters = await getAllowedTopikClustersForDosen(dosen.id, t, allowedClusterCache);
         if (allowedClusters.length > 0 && !allowedClusters.includes(normalizedCluster)) {
           results.failed.push({
@@ -1508,39 +1568,34 @@ exports.commitUploadTopics = async (req, res) => {
           continue;
         }
 
-        const existingTopik = await Topik.findOne({
-          where: { kode: normalizedKode },
-          attributes: ["id"],
-          transaction: t,
-        });
-        if (existingTopik) {
-          results.failed.push({
-            row: rowNumber,
-            data: payloadRow,
-            error: `Kode topik ${normalizedKode} sudah ada di database`,
-          });
-          continue;
-        }
-
-        const topik = await Topik.create(
-          {
-            kode: normalizedKode,
+        const topik = await createTopicWithGeneratedCode({
+          Topik,
+          clusterCode: normalizeTopikClusterCode(normalizedCluster),
+          values: {
             judul: normalizedJudul,
             deskripsi: normalizedDeskripsi,
-            keyword: normalizedKeyword,
+            keyword: null,
             cluster: normalizedCluster,
             dosen_id: dosen.id,
             status: "available",
           },
+          transaction: t,
+        });
+
+        await TopikBidangPenelitian.bulkCreate(
+          researchFields.ids.map((bidangPenelitianId) => ({
+            topik_id: topik.id,
+            bidang_penelitian_id: bidangPenelitianId,
+          })),
           { transaction: t }
         );
 
-        kodeInFileSet.add(normalizedKode);
         results.success.push({
           row: rowNumber,
           kode: topik.kode,
           judul: topik.judul,
-          keyword: topik.keyword,
+          bidang_penelitian: researchFields.names.join(", "),
+          bidang_penelitian_ids: researchFields.ids,
           cluster: topik.cluster,
           dosen: dosen.nama,
         });
@@ -1586,52 +1641,7 @@ exports.commitUploadTopics = async (req, res) => {
 // GET /api/upload/template - Download template Excel Topik
 exports.downloadTemplate = (req, res) => {
   try {
-    const templateData = [
-      {
-        "Kode Topik": "SIRKEL03",
-        Judul: "Contoh Judul Topik Penelitian",
-        Deskripsi: "Deskripsi singkat tentang topik penelitian ini",
-        Keyword: "sistem informasi, rekomendasi, skripsi",
-        Cluster: "Sirkel",
-      },
-      {
-        "Kode Topik": "SIBER03",
-        Judul: "Implementasi Blockchain untuk Keamanan Data",
-        Deskripsi: "Penelitian implementasi blockchain dalam sistem keamanan data",
-        Keyword: "blockchain, keamanan data, kriptografi",
-        Cluster: "Siber",
-      },
-      {
-        "Kode Topik": "ITSC05",
-        Judul: "Sistem Informasi Manajemen Perpustakaan",
-        Deskripsi: "Pengembangan sistem informasi untuk manajemen perpustakaan digital",
-        Keyword: "sistem informasi, perpustakaan digital, manajemen",
-        Cluster: "ITSC",
-      },
-      {
-        "Kode Topik": "MVK02",
-        Judul: "Analisis Sentimen Media Sosial Menggunakan Deep Learning",
-        Deskripsi: "Penelitian analisis sentimen pada data Twitter menggunakan LSTM",
-        Keyword: "analisis sentimen, deep learning, media sosial",
-        Cluster: "MVK",
-      },
-    ];
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(templateData);
-
-    // Set lebar kolom (TANPA kolom Kuota)
-    ws["!cols"] = [
-      { wch: 15 }, // Kode Topik
-      { wch: 50 }, // Judul
-      { wch: 60 }, // Deskripsi
-      { wch: 45 }, // Keyword
-      { wch: 10 }, // Cluster
-    ];
-
-    XLSX.utils.book_append_sheet(wb, ws, "Template Topik");
-
-    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+    const buffer = buildTopikImportTemplateBuffer();
 
     res.setHeader("Content-Disposition", "attachment; filename=template_topik.xlsx");
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");

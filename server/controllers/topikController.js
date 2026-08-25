@@ -1,10 +1,67 @@
-const { Topik, Dosen, Mahasiswa, SekretarisProdi, DosenKlaster, Klaster, PeriodePenjaluran, DosenKetersediaanPeriode } = require("../models");
+const {
+  Topik,
+  Dosen,
+  Mahasiswa,
+  SekretarisProdi,
+  DosenKlaster,
+  Klaster,
+  PeriodePenjaluran,
+  DosenKetersediaanPeriode,
+  BidangPenelitian,
+  DosenBidangPenelitian,
+  TopikBidangPenelitian,
+  sequelize,
+} = require("../models");
 const { Op } = require("sequelize");
 const {
   assertDosenCanReceiveNewAssignment,
   isDosenAcademicallyActive,
   validateDosenForNewAssignment,
 } = require("../services/dosenStatusService");
+const { createTopicWithGeneratedCode } = require("../services/topikCodeService");
+const { getTopikTitleValidationError } = require("../services/topikTitleValidationService");
+
+const TOPIC_RESEARCH_FIELD_INCLUDE = {
+  model: BidangPenelitian,
+  as: "bidangPenelitians",
+  attributes: ["id", "nama", "deskripsi"],
+  through: { attributes: [] },
+  required: false,
+};
+
+function normalizeResearchFieldIds(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+}
+
+async function validateTopicResearchFieldsForDosen(dosenId, rawIds, transaction = null) {
+  const ids = normalizeResearchFieldIds(rawIds);
+  if (ids.length === 0) {
+    return { ok: false, ids, message: "Pilih minimal satu bidang penelitian." };
+  }
+  if (ids.length > 10) {
+    return { ok: false, ids, message: "Maksimal 10 bidang penelitian dapat dipilih." };
+  }
+
+  const assignments = await DosenBidangPenelitian.findAll({
+    where: {
+      dosen_id: Number(dosenId),
+      bidang_penelitian_id: { [Op.in]: ids },
+    },
+    attributes: ["bidang_penelitian_id"],
+    transaction: transaction || undefined,
+  });
+  const assignedIds = new Set(assignments.map((item) => Number(item.bidang_penelitian_id)));
+  const invalidIds = ids.filter((id) => !assignedIds.has(id));
+  if (invalidIds.length > 0) {
+    return {
+      ok: false,
+      ids,
+      message: "Bidang penelitian topik harus berasal dari bidang penelitian dosen yang ditetapkan admin.",
+    };
+  }
+  return { ok: true, ids };
+}
 
 const CLUSTER_NORMALIZATION_MAP = {
   sirkel: "Sirkel",
@@ -136,6 +193,45 @@ async function resolveActorDosenId(req) {
   return null;
 }
 
+// GET /api/topics/my-research-fields - Bidang penelitian dosen yang ditetapkan admin
+exports.getMyResearchFields = async (req, res) => {
+  try {
+    const dosenId = await resolveActorDosenId(req);
+    if (!dosenId) {
+      return res.status(403).json({
+        success: false,
+        message: "Akun ini tidak terhubung ke data dosen.",
+      });
+    }
+
+    const fields = await BidangPenelitian.findAll({
+      include: [{
+        model: Dosen,
+        as: "dosens",
+        attributes: [],
+        through: { attributes: [] },
+        where: { id: dosenId },
+        required: true,
+      }],
+      attributes: ["id", "nama", "deskripsi"],
+      order: [["nama", "ASC"]],
+    });
+
+    return res.json({
+      success: true,
+      data: fields,
+      total: fields.length,
+    });
+  } catch (error) {
+    console.error("Error di getMyResearchFields:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
 // GET /api/topics - Daftar topik dengan filter dan info kuota dosen
 exports.getTopics = async (req, res) => {
   try {
@@ -158,7 +254,7 @@ exports.getTopics = async (req, res) => {
       where[Op.or] = [
         { kode: { [Op.iLike]: `%${keyword}%` } },
         { judul: { [Op.iLike]: `%${keyword}%` } },
-        { keyword: { [Op.iLike]: `%${keyword}%` } },
+        { "$bidangPenelitians.nama$": { [Op.iLike]: `%${keyword}%` } },
         { "$dosen.nama$": { [Op.iLike]: `%${keyword}%` } },
       ];
     }
@@ -177,6 +273,7 @@ exports.getTopics = async (req, res) => {
           as: "dosen",
           attributes: ["id", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
+        TOPIC_RESEARCH_FIELD_INCLUDE,
       ],
       order: [["createdAt", "DESC"]],
       subQuery: false,
@@ -236,6 +333,7 @@ exports.getTopicById = async (req, res) => {
           as: "dosen",
           attributes: ["id", "nik", "nama", "gelar", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
+        TOPIC_RESEARCH_FIELD_INCLUDE,
       ],
     });
 
@@ -286,32 +384,22 @@ exports.getTopicById = async (req, res) => {
 // POST /api/topics - Buat topik baru (Admin/Dosen/Sekretaris Prodi)
 exports.createTopic = async (req, res) => {
   try {
-    const { kode, judul, deskripsi, keyword, cluster, dosen_id: dosenIdInput } = req.body;
-    const normalizedKode = String(kode || "").trim().toUpperCase();
+    const { judul, deskripsi, cluster, dosen_id: dosenIdInput, bidang_penelitian_ids } = req.body;
+    const normalizedJudul = String(judul || "").trim();
     const normalizedCluster = normalizeClusterInput(cluster);
-    const normalizedKeyword = String(keyword || "").trim();
     let dosen_id = null;
 
     // Validasi
-    if (!normalizedKode || !judul || !normalizedKeyword || !normalizedCluster) {
+    if (!normalizedJudul || !normalizedCluster) {
       return res.status(400).json({
         success: false,
-        message: "Kode topik, judul, keyword, dan cluster harus diisi",
+        message: "Judul dan cluster harus diisi",
       });
     }
 
-    const kodeCluster = resolveClusterFromTopikKode(normalizedKode);
-    if (!kodeCluster || !kodeCluster.label) {
-      return res.status(400).json({
-        success: false,
-        message: "Format kode topik tidak valid. Gunakan prefix cluster: SIRKEL, SIBER, ITSC, atau MVK.",
-      });
-    }
-    if (kodeCluster.label !== normalizedCluster) {
-      return res.status(400).json({
-        success: false,
-        message: buildClusterKodeMismatchMessage(normalizedKode, normalizedCluster),
-      });
+    const judulValidationError = getTopikTitleValidationError(normalizedJudul);
+    if (judulValidationError) {
+      return res.status(400).json({ success: false, message: judulValidationError });
     }
 
     if (req.user.role === "admin") {
@@ -332,12 +420,12 @@ exports.createTopic = async (req, res) => {
       }
     }
 
-    const existingKode = await Topik.findOne({ where: { kode: normalizedKode } });
-    if (existingKode) {
-      return res.status(409).json({
-        success: false,
-        message: `Kode topik ${normalizedKode} sudah digunakan.`,
-      });
+    const fieldValidation = await validateTopicResearchFieldsForDosen(
+      dosen_id,
+      bidang_penelitian_ids
+    );
+    if (!fieldValidation.ok) {
+      return res.status(400).json({ success: false, message: fieldValidation.message });
     }
 
     const allowedClusterLabels = await getAllowedClusterLabelsForDosen(dosen_id);
@@ -373,15 +461,35 @@ exports.createTopic = async (req, res) => {
       }
     }
 
-    const topic = await Topik.create({
-      kode: normalizedKode,
-      judul,
-      deskripsi,
-      keyword: normalizedKeyword,
-      cluster: normalizedCluster,
-      dosen_id,
-      status: "available",
-    });
+    const clusterCode = normalizeClusterCode(normalizedCluster);
+    const transaction = await sequelize.transaction();
+    let topic;
+    try {
+      topic = await createTopicWithGeneratedCode({
+        Topik,
+        clusterCode,
+        values: {
+          judul: normalizedJudul,
+          deskripsi: String(deskripsi || "").trim() || null,
+          keyword: null,
+          cluster: normalizedCluster,
+          dosen_id,
+          status: "available",
+        },
+        transaction,
+      });
+      await TopikBidangPenelitian.bulkCreate(
+        fieldValidation.ids.map((bidangId) => ({
+          topik_id: topic.id,
+          bidang_penelitian_id: bidangId,
+        })),
+        { transaction }
+      );
+      await transaction.commit();
+    } catch (creationError) {
+      if (!transaction.finished) await transaction.rollback();
+      throw creationError;
+    }
 
     // Load relasi dosen
     const topicWithDosen = await Topik.findByPk(topic.id, {
@@ -391,6 +499,7 @@ exports.createTopic = async (req, res) => {
           as: "dosen",
           attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
+        TOPIC_RESEARCH_FIELD_INCLUDE,
       ],
     });
 
@@ -407,9 +516,9 @@ exports.createTopic = async (req, res) => {
     });
   } catch (error) {
     console.error("Error di createTopic:", error);
-    res.status(500).json({
+    res.status(error?.statusCode || 500).json({
       success: false,
-      message: "Terjadi kesalahan pada server",
+      message: error?.statusCode ? error.message : "Terjadi kesalahan pada server",
       error: error.message,
     });
   }
@@ -417,9 +526,10 @@ exports.createTopic = async (req, res) => {
 
 // PUT /api/topics/:id - Update topik (Admin/Dosen/Sekretaris Prodi)
 exports.updateTopic = async (req, res) => {
+  let transaction = null;
   try {
     const { id } = req.params;
-    const { kode, judul, deskripsi, keyword, cluster, status } = req.body;
+    const { kode, judul, deskripsi, cluster, status, bidang_penelitian_ids } = req.body;
     const isAdmin = req.user.role === "admin";
     const dosen_id = isAdmin ? null : await resolveActorDosenId(req);
 
@@ -447,6 +557,13 @@ exports.updateTopic = async (req, res) => {
       });
     }
 
+    const fieldValidation = bidang_penelitian_ids !== undefined
+      ? await validateTopicResearchFieldsForDosen(topic.dosen_id, bidang_penelitian_ids)
+      : null;
+    if (fieldValidation && !fieldValidation.ok) {
+      return res.status(400).json({ success: false, message: fieldValidation.message });
+    }
+
     // Update
     if (kode) {
       const normalizedKode = String(kode).trim().toUpperCase();
@@ -470,9 +587,19 @@ exports.updateTopic = async (req, res) => {
       }
       topic.kode = normalizedKode;
     }
-    if (judul) topic.judul = judul;
-    if (deskripsi) topic.deskripsi = deskripsi;
-    if (keyword !== undefined) topic.keyword = String(keyword || "").trim() || null;
+    if (judul !== undefined) {
+      const normalizedJudul = String(judul || "").trim();
+      if (!normalizedJudul) {
+        return res.status(400).json({ success: false, message: "Judul topik wajib diisi." });
+      }
+      const judulValidationError = getTopikTitleValidationError(normalizedJudul);
+      if (judulValidationError) {
+        return res.status(400).json({ success: false, message: judulValidationError });
+      }
+      topic.judul = normalizedJudul;
+    }
+    if (deskripsi !== undefined) topic.deskripsi = String(deskripsi || "").trim() || null;
+    topic.keyword = null;
     if (cluster) {
       const normalizedCluster = normalizeClusterInput(cluster);
       if (!normalizedCluster) {
@@ -528,7 +655,22 @@ exports.updateTopic = async (req, res) => {
     }
     if (status) topic.status = status;
 
-    await topic.save();
+    transaction = await sequelize.transaction();
+    await topic.save({ transaction });
+    if (fieldValidation) {
+      await TopikBidangPenelitian.destroy({
+        where: { topik_id: topic.id },
+        transaction,
+      });
+      await TopikBidangPenelitian.bulkCreate(
+        fieldValidation.ids.map((bidangId) => ({
+          topik_id: topic.id,
+          bidang_penelitian_id: bidangId,
+        })),
+        { transaction }
+      );
+    }
+    await transaction.commit();
 
     // Load relasi
     const updatedTopic = await Topik.findByPk(id, {
@@ -538,6 +680,7 @@ exports.updateTopic = async (req, res) => {
           as: "dosen",
           attributes: ["id", "nik", "nama", "email", "jabatan_struktural", "kuota_bimbingan", "status_keaktifan"],
         },
+        TOPIC_RESEARCH_FIELD_INCLUDE,
       ],
     });
 
@@ -563,6 +706,7 @@ exports.updateTopic = async (req, res) => {
       },
     });
   } catch (error) {
+    if (transaction && !transaction.finished) await transaction.rollback();
     console.error("Error di updateTopic:", error);
     res.status(500).json({
       success: false,

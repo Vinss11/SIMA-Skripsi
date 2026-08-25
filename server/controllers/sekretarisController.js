@@ -34,6 +34,7 @@ const {
 } = require("../services/penetapanPembimbingService");
 const { createSupervisorReplacementNotifications, createSystemNotification } = require("../services/notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+const { recoverRejectedResearchSubmission } = require("../services/researchRejectionRecoveryService");
 const { finalizePenjaluranDecision } = require("../services/penjaluranFinalizationService");
 const { normalizeWorkflow } = require("../services/penjaluranWorkflowService");
 const { cancelPamitsForClosedPeriod } = require("../services/penjaluranChangeService");
@@ -4157,7 +4158,28 @@ async function linkOrphanResearchSubmissionsToRegistration(transaction = null) {
 
 function getFinalResearchWinner(submission) {
   if (submission.tipe_pengajuan === "topik_dosen") {
-    return evaluateTopikSekprodiReviewState(submission).sekprodi_pending_slots[0] || null;
+    const reviewState = evaluateTopikSekprodiReviewState(submission);
+    const pendingWinner = reviewState.sekprodi_pending_slots[0] || null;
+    if (pendingWinner) return pendingWinner;
+
+    const approvedSekprodiDecision = (submission.riwayat || [])
+      .filter(
+        (item) =>
+          String(item.tipe_approval || "").toLowerCase() === "sekprodi" &&
+          String(item.status || "").toLowerCase() === "approved" &&
+          Number(item.topik_slot || 0) > 0
+      )
+      .sort(
+        (left, right) =>
+          new Date(right.tanggal_keputusan || right.createdAt || 0).getTime() -
+          new Date(left.tanggal_keputusan || left.createdAt || 0).getTime()
+      )[0];
+
+    return approvedSekprodiDecision
+      ? reviewState.slot_decisions.find(
+          (item) => Number(item.slot) === Number(approvedSekprodiDecision.topik_slot)
+        ) || null
+      : null;
   }
 
   if (submission.tipe_pengajuan === "judul_mandiri" && submission.prospective_supervisor_id) {
@@ -4443,28 +4465,36 @@ exports.approvePenelitianFinal = async (req, res) => {
       return res.status(400).json({ success: false, message: "Catatan keputusan wajib diisi." });
     }
 
-    const primarySupervisorId = Number(req.body?.dosen_pembimbing_1_id || 0);
-    const secondarySupervisorRaw = req.body?.dosen_pembimbing_2_id;
-    const secondarySupervisorId = secondarySupervisorRaw ? Number(secondarySupervisorRaw) : null;
-    if (!Number.isInteger(primarySupervisorId) || primarySupervisorId <= 0) {
+    const requestedTopikSlot = Number(req.body?.topik_slot || 0);
+    let winner = null;
+    if (submission.tipe_pengajuan === "topik_dosen") {
+      if (["approved", "rejected"].includes(submission.status)) {
+        winner = getFinalResearchWinner(submission);
+      } else {
+        if (!Number.isInteger(requestedTopikSlot) || requestedTopikSlot <= 0) {
+          await t.rollback();
+          return res.status(400).json({ success: false, message: "Topik yang akan disetujui wajib dipilih." });
+        }
+        const state = evaluateTopikSekprodiReviewState(submission);
+        winner = state.sekprodi_pending_slots.find(
+          (item) => Number(item.slot) === requestedTopikSlot
+        ) || null;
+      }
+    } else {
+      winner = getFinalResearchWinner(submission);
+    }
+    if (!winner || !Number.isInteger(Number(winner.dosen_id)) || Number(winner.dosen_id) <= 0) {
       await t.rollback();
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
-        message: "Pembimbing 1 wajib dipilih oleh sekretaris prodi.",
+        message:
+          submission.tipe_pengajuan === "topik_dosen"
+            ? "Pemilik topik final belum dapat ditentukan sebagai dosen pembimbing."
+            : "Dosen yang dipilih mahasiswa pada Judul Mandiri belum dapat ditentukan.",
       });
     }
-    if (secondarySupervisorRaw && (!Number.isInteger(secondarySupervisorId) || secondarySupervisorId <= 0)) {
-      await t.rollback();
-      return res.status(400).json({ success: false, message: "Pembimbing 2 tidak valid." });
-    }
-    const supervisorIds = [primarySupervisorId, secondarySupervisorId].filter(Boolean);
-    if (new Set(supervisorIds).size !== supervisorIds.length) {
-      await t.rollback();
-      return res.status(400).json({
-        success: false,
-        message: "Pembimbing 1 dan Pembimbing 2 harus merupakan dosen yang berbeda.",
-      });
-    }
+    const primarySupervisorId = Number(winner.dosen_id);
+    const supervisorIds = [primarySupervisorId];
     const assignmentRegistration = await resolveResearchSubmissionRegistration(submission, t);
     if (!assignmentRegistration) {
       await t.rollback();
@@ -4489,8 +4519,7 @@ exports.approvePenelitianFinal = async (req, res) => {
       }
       if (submission.tipe_pengajuan === "topik_dosen") {
         const storedWinner = getFinalResearchWinner(submission);
-        const requestedSlot = Number(req.body?.topik_slot || 0);
-        if (!storedWinner?.slot || requestedSlot !== Number(storedWinner.slot)) {
+        if (!storedWinner?.slot || requestedTopikSlot !== Number(storedWinner.slot)) {
           await t.rollback();
           return res.status(409).json({
             success: false,
@@ -4524,17 +4553,10 @@ exports.approvePenelitianFinal = async (req, res) => {
       t
     );
 
-    let winner = getFinalResearchWinner(submission);
     let decisionTopikSlot = null;
     let sekprodiRow = null;
     if (submission.tipe_pengajuan === "topik_dosen") {
-      const targetSlot = Number(req.body?.topik_slot);
-      if (!Number.isInteger(targetSlot) || targetSlot <= 0) {
-        await t.rollback();
-        return res.status(400).json({ success: false, message: "Topik yang akan disetujui wajib dipilih." });
-      }
-      const state = evaluateTopikSekprodiReviewState(submission);
-      winner = state.sekprodi_pending_slots.find((item) => Number(item.slot) === targetSlot) || null;
+      const targetSlot = requestedTopikSlot;
       sekprodiRow = (submission.riwayat || []).find(
         (item) =>
           String(item.tipe_approval || "").toLowerCase() === "sekprodi" &&
@@ -4760,31 +4782,15 @@ exports.rejectPenelitianFinal = async (req, res) => {
           },
           { transaction: t }
         );
-        const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, { transaction: t, lock: t.LOCK.UPDATE });
-        if (mahasiswa) {
-          const fallbackStatus =
-            submission.jenis_jalur === "ulang"
-              ? "ulang"
-              : submission.jenis_jalur === "ekstensi"
-              ? "ekstensi"
-              : "belum_mengajukan";
-          await mahasiswa.update(
-            { status_jalur_saat_ini: fallbackStatus, pengajuan_aktif_id: null },
-            { transaction: t }
-          );
-          await createSystemNotification({
-            recipientType: "mahasiswa",
-            recipientId: mahasiswa.id,
-            type: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
-            message: `Keputusan final Penelitian ditolak: ${reason}`,
-            referenceType: "pengajuan_penelitian",
-            referenceId: submission.id,
-            actionKey: "student_path_status",
-            metadata: { jalur: "penelitian", decision: "rejected" },
-            deduplicationKey: `penjaluran:penelitian:${submission.id}:notification:final-rejected`,
-            transaction: t,
-          });
-        }
+        await recoverRejectedResearchSubmission({
+          submission,
+          transaction: t,
+          reason,
+          actorLabel: "Sekretaris Prodi",
+          notificationType: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
+          notificationActionKey: "student_path_status",
+          notificationReferenceType: "pengajuan_penelitian",
+        });
       } else {
         await submission.update(
           {
@@ -4829,37 +4835,15 @@ exports.rejectPenelitianFinal = async (req, res) => {
       );
     }
 
-    const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
+    await recoverRejectedResearchSubmission({
+      submission,
       transaction: t,
-      lock: t.LOCK.UPDATE,
+      reason,
+      actorLabel: "Sekretaris Prodi",
+      notificationType: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
+      notificationActionKey: "student_path_status",
+      notificationReferenceType: "pengajuan_penelitian",
     });
-    if (mahasiswa) {
-      const fallbackStatus =
-        submission.jenis_jalur === "ulang"
-          ? "ulang"
-          : submission.jenis_jalur === "ekstensi"
-          ? "ekstensi"
-          : "belum_mengajukan";
-      await mahasiswa.update(
-        {
-          status_jalur_saat_ini: fallbackStatus,
-          pengajuan_aktif_id: null,
-        },
-        { transaction: t }
-      );
-      await createSystemNotification({
-        recipientType: "mahasiswa",
-        recipientId: mahasiswa.id,
-        type: NOTIFICATION_TYPES.PENJALURAN_FINAL_REJECTED_STUDENT,
-        message: `Keputusan final Penelitian ditolak: ${reason}`,
-        referenceType: "pengajuan_penelitian",
-        referenceId: submission.id,
-        actionKey: "student_path_status",
-        metadata: { jalur: "penelitian", decision: "rejected" },
-        deduplicationKey: `penjaluran:penelitian:${submission.id}:notification:final-rejected`,
-        transaction: t,
-      });
-    }
 
     await t.commit();
     return res.json({

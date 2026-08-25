@@ -405,6 +405,38 @@ function ResearchReadonlyInput({ label, value }) {
   );
 }
 
+function ResearchReadonlyText({ label, value }) {
+  return (
+    <div>
+      <p className="mb-1 text-sm font-semibold text-[#324c86]">{label}</p>
+      <div className="min-h-[42px] whitespace-pre-wrap break-words rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm leading-6 text-[#5c6888]">
+        {value || "-"}
+      </div>
+    </div>
+  );
+}
+
+function ResearchReadonlyTags({ label, items = [] }) {
+  const visibleItems = (Array.isArray(items) ? items : [])
+    .map((item) => String(item?.nama || "").trim())
+    .filter(Boolean);
+
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <div className="flex min-h-[42px] flex-wrap items-center gap-2 rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2">
+        {visibleItems.length > 0 ? visibleItems.map((item) => (
+          <span key={item} className="rounded-full bg-[#e1e9fb] px-3 py-1 text-sm font-semibold text-[#526b9f]">
+            {item}
+          </span>
+        )) : (
+          <span className="text-sm text-[#8b97b6]">-</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ResearchReadonlyTextarea({ label, value, rows = 4 }) {
   return (
     <div>
@@ -427,8 +459,11 @@ function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
     return (
       <section className="bg-white">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <ResearchReadonlyInput label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri || "-"} />
-          <ResearchReadonlyInput label="Keyword" value={detail.detail_pengajuan?.keyword_mandiri || "-"} />
+          <ResearchReadonlyText label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri} />
+          <ResearchReadonlyTags
+            label="Bidang Penelitian"
+            items={detail.detail_pengajuan?.bidang_penelitian}
+          />
         </div>
         <div className="mt-4">
           <ResearchReadonlyTextarea label="Deskripsi Singkat" value={detail.detail_pengajuan?.deskripsi_mandiri || "-"} />
@@ -462,8 +497,8 @@ function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
                 Topik Pilihan {item.slot || index + 1}
               </h3>
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ResearchReadonlyInput label="Judul Penelitian" value={item.judul || "-"} />
-                <ResearchReadonlyInput label="Keyword" value={item.keyword || "-"} />
+                <ResearchReadonlyText label="Judul Penelitian" value={item.judul} />
+                <ResearchReadonlyTags label="Bidang Penelitian" items={item.bidang_penelitian} />
               </div>
               <div className="mt-4">
                 <ResearchReadonlyTextarea
@@ -493,6 +528,84 @@ function ResearchSubmissionDetailForm({ detail, topikRows = [] }) {
         )}
       </div>
     </section>
+  );
+}
+
+function ResearchTopicDecisionForm({ item, dosenDecision, ketuaClusterDecision, showTopicMarker = false }) {
+  const dosenStatus = String(dosenDecision?.status || item?.reviewer_status || "pending").toLowerCase();
+  const dosenChip = getStatusChip(dosenStatus);
+  const dosenName =
+    formatDosenFullName(dosenDecision?.dosen?.nama, dosenDecision?.dosen?.gelar) || item?.dosen || "-";
+  const dosenNote = dosenDecision?.keterangan || item?.reviewer_note || "Belum ada catatan dosen.";
+  const dosenDecisionAt = dosenDecision?.tanggal_keputusan || item?.reviewer_decided_at || null;
+  const ketuaChip = ketuaClusterDecision ? getStatusChip(ketuaClusterDecision.status) : null;
+  const ketuaName = formatDosenFullName(
+    ketuaClusterDecision?.dosen?.nama,
+    ketuaClusterDecision?.dosen?.gelar
+  );
+  const ketuaWaitingText = dosenStatus === "approved"
+    ? "Menunggu review Ketua Cluster."
+    : dosenStatus === "rejected"
+      ? "Topik tidak diteruskan ke Ketua Cluster."
+      : "Menunggu keputusan dosen pemilik topik.";
+
+  return (
+    <div className="rounded-xl border border-[#dfe7f6] bg-white p-4">
+      {showTopicMarker ? (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[#dbe5fb] bg-[#f5f8ff] px-4 py-3">
+          <div>
+            <p className="text-sm font-black text-[#23407c]">Keputusan Topik Pilihan {item?.slot || "-"}</p>
+            <p className="mt-0.5 text-xs text-[#60709a]">Setiap topik memiliki keputusan dosen yang terpisah.</p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-xs font-bold ${dosenChip.className}`}>
+            {dosenChip.label}
+          </span>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <ResearchReadonlyInput label="Topik Pilihan" value={`Pilihan ${item?.slot || "-"}`} />
+        <ResearchReadonlyInput label="Kode Topik" value={item?.kode || "-"} />
+        <ResearchReadonlyInput label="Keputusan Dosen" value={dosenChip.label} />
+      </div>
+      <div className="mt-4">
+        <ResearchReadonlyText label="Judul Topik" value={item?.judul || "-"} />
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <ResearchReadonlyInput label="Dosen Pemilik Topik" value={dosenName} />
+        <ResearchReadonlyInput
+          label="Tanggal Keputusan Dosen"
+          value={dosenDecisionAt ? formatDateTime(dosenDecisionAt) : "Belum ada keputusan"}
+        />
+      </div>
+      <div className="mt-4">
+        <ResearchReadonlyTextarea label="Catatan Dosen" rows={2} value={dosenNote} />
+      </div>
+
+      <div className="my-5 border-t border-[#e5eaf5]" />
+      <p className="mb-3 text-sm font-black text-[#273b6c]">Keputusan Ketua Cluster</p>
+      {ketuaClusterDecision ? (
+        <>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+            <ResearchReadonlyInput label="Ketua Cluster" value={ketuaName || "-"} />
+            <ResearchReadonlyInput label="Status Ketua Cluster" value={ketuaChip?.label || "-"} />
+            <ResearchReadonlyInput
+              label="Tanggal Keputusan Ketua Cluster"
+              value={formatDateTime(ketuaClusterDecision.tanggal_keputusan)}
+            />
+          </div>
+          <div className="mt-4">
+            <ResearchReadonlyTextarea
+              label="Catatan Ketua Cluster"
+              rows={2}
+              value={ketuaClusterDecision.keterangan || "Tidak ada catatan."}
+            />
+          </div>
+        </>
+      ) : (
+        <ResearchReadonlyInput label="Status Ketua Cluster" value={ketuaWaitingText} />
+      )}
+    </div>
   );
 }
 
@@ -1236,7 +1349,12 @@ function StatusPage({
         row.judul_mandiri?.keyword,
         row.judul_mandiri?.cluster,
         ...(Array.isArray(row.topik_dipilih_detail)
-          ? row.topik_dipilih_detail.flatMap((item) => [item?.keyword, item?.cluster])
+          ? row.topik_dipilih_detail.flatMap((item) => [
+              ...(Array.isArray(item?.bidang_penelitian)
+                ? item.bidang_penelitian.map((field) => field?.nama)
+                : []),
+              item?.cluster,
+            ])
           : []),
         row.dosen_pembimbing,
       ]
@@ -1311,6 +1429,53 @@ function StatusPage({
       formatDosenFullName(selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.nama, selectedDetail?.hasil_pengajuan?.dosen_pembimbing?.gelar) ||
       ""
     : "";
+  const isSelectedTopikDosen = selectedDetail?.tipe_pengajuan === "topik_dosen";
+  const topikDecisionRows = isSelectedTopikDosen
+    ? selectedTopikRows.map((item) => {
+        const matchesTopik = (history) => {
+          const historySlot = Number(history?.topik_slot || 0);
+          const itemSlot = Number(item?.slot || 0);
+          if (historySlot > 0 && itemSlot > 0) return historySlot === itemSlot;
+          return Boolean(history?.topik_kode && item?.kode)
+            && String(history.topik_kode).trim().toUpperCase() === String(item.kode).trim().toUpperCase();
+        };
+        const latestHistory = [...selectedHistory].reverse();
+        return {
+          item,
+          dosenDecision: latestHistory.find((history) =>
+            String(history?.tipe_approval || "").toLowerCase() === "calon_pembimbing"
+            && String(history?.status || "").toLowerCase() !== "cancelled"
+            && matchesTopik(history)
+          ) || null,
+          ketuaClusterDecision: latestHistory.find((history) =>
+            String(history?.tipe_approval || "").toLowerCase() === "koordinator"
+            && String(history?.status || "").toLowerCase() !== "cancelled"
+            && matchesTopik(history)
+          ) || null,
+        };
+      })
+    : [];
+  const approvedTopikDecisionRows = topikDecisionRows.filter(({ item, dosenDecision }) =>
+    String(dosenDecision?.status || item?.reviewer_status || "").toLowerCase() === "approved"
+  );
+  const shouldShowMultipleTopicDecisions =
+    selectedDetail?.record_type !== "non_penelitian" &&
+    isSelectedTopikDosen &&
+    approvedTopikDecisionRows.length > 1;
+  const approvedTopikResult = selectedDetail?.hasil_pengajuan?.topik_disetujui || null;
+  const defaultTopikDecisionRow =
+    topikDecisionRows.find(({ item }) => {
+      if (approvedTopikResult?.slot && item?.slot) {
+        return Number(approvedTopikResult.slot) === Number(item.slot);
+      }
+      return Boolean(approvedTopikResult?.kode && item?.kode) &&
+        String(approvedTopikResult.kode).trim().toUpperCase() === String(item.kode).trim().toUpperCase();
+    }) || approvedTopikDecisionRows[0] || topikDecisionRows[0] || null;
+  const visibleTopikDecisionRows = shouldShowMultipleTopicDecisions
+    ? topikDecisionRows
+    : defaultTopikDecisionRow
+      ? [defaultTopikDecisionRow]
+      : [];
   const sidangChip = getSidangStatusChip(sidangStatus);
   const sidangSchedule =
     sidangStatus?.pendaftaran_aktif?.jadwal_sidang ||
@@ -1755,57 +1920,77 @@ function StatusPage({
                 <div className="mb-3">
                   <h3 className="text-lg font-black text-[#1b274b]">Hasil Keputusan Dosen</h3>
                   <p className="mt-1 text-sm text-[#5f6b89]">
-                    Keputusan awal dari dosen pembimbing sebelum masuk ke ketua cluster.
+                    {shouldShowMultipleTopicDecisions
+                      ? `${approvedTopikDecisionRows.length} dari ${topikDecisionRows.length} topik memperoleh persetujuan dosen. Keputusan setiap topik ditampilkan secara terpisah.`
+                      : isSelectedTopikDosen
+                      ? "Keputusan untuk topik yang diproses sebagai hasil pengajuan mahasiswa."
+                      : "Keputusan awal dari calon dosen pembimbing sebelum masuk ke Ketua Cluster."}
                   </p>
                 </div>
-                <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-                  <ResearchReadonlyInput label="Dosen Pembimbing" value={pembimbingName} />
-                  <ResearchReadonlyInput
-                    label="Keputusan"
-                    value={pembimbingDecisionChip?.label || "Belum ada keputusan"}
-                  />
-                  <ResearchReadonlyInput
-                    label="Tanggal Keputusan"
-                    value={hasPembimbingDecision ? formatDateTime(pembimbingDecision?.tanggal_keputusan) : ""}
-                  />
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <ResearchReadonlyTextarea
-                    label="Catatan Persetujuan"
-                    rows={2}
-                    value={
-                      pembimbingDecisionStatus === "approved"
-                      ? pembimbingDecision?.keterangan || selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
-                      : ""
-                    }
-                  />
-                  <ResearchReadonlyTextarea
-                    label="Catatan Penolakan"
-                    rows={2}
-                    value={
-                      pembimbingDecisionStatus === "rejected" && alasanPenolakanList.length > 0
-                        ? alasanPenolakanList.join("; ")
-                        : ""
-                    }
-                  />
-                </div>
-                <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                  <ResearchReadonlyInput
-                    label="Keputusan Ketua Cluster"
-                    value={formatDosenFullName(ketuaClusterDecision?.dosen?.nama, ketuaClusterDecision?.dosen?.gelar) || "Belum ada keputusan ketua cluster."}
-                  />
-                  <ResearchReadonlyInput
-                    label="Status Ketua Cluster"
-                    value={ketuaClusterDecisionChip?.label || selectedTahapLabel}
-                  />
-                </div>
-                <div className="mt-4">
-                  <ResearchReadonlyTextarea
-                    label="Catatan Ketua Cluster"
-                    rows={2}
-                    value={ketuaClusterDecision?.keterangan || "-"}
-                  />
-                </div>
+                {isSelectedTopikDosen ? (
+                  <div className="space-y-4">
+                    {visibleTopikDecisionRows.map(({ item, dosenDecision, ketuaClusterDecision: topicKetuaDecision }) => (
+                      <ResearchTopicDecisionForm
+                        key={`topic-decision-${item?.slot || item?.kode}`}
+                        item={item}
+                        dosenDecision={dosenDecision}
+                        ketuaClusterDecision={topicKetuaDecision}
+                        showTopicMarker={shouldShowMultipleTopicDecisions}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                      <ResearchReadonlyInput label="Calon Dosen Pembimbing" value={pembimbingName} />
+                      <ResearchReadonlyInput
+                        label="Keputusan"
+                        value={pembimbingDecisionChip?.label || "Belum ada keputusan"}
+                      />
+                      <ResearchReadonlyInput
+                        label="Tanggal Keputusan"
+                        value={hasPembimbingDecision ? formatDateTime(pembimbingDecision?.tanggal_keputusan) : ""}
+                      />
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                      <ResearchReadonlyTextarea
+                        label="Catatan Persetujuan"
+                        rows={2}
+                        value={
+                          pembimbingDecisionStatus === "approved"
+                            ? pembimbingDecision?.keterangan || selectedDetail.hasil_pengajuan?.alasan_persetujuan || "-"
+                            : ""
+                        }
+                      />
+                      <ResearchReadonlyTextarea
+                        label="Catatan Penolakan"
+                        rows={2}
+                        value={
+                          pembimbingDecisionStatus === "rejected" && alasanPenolakanList.length > 0
+                            ? alasanPenolakanList.join("; ")
+                            : ""
+                        }
+                      />
+                    </div>
+                    <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
+                      <ResearchReadonlyInput
+                        label="Keputusan Ketua Cluster"
+                        value={formatDosenFullName(ketuaClusterDecision?.dosen?.nama, ketuaClusterDecision?.dosen?.gelar) || "Belum ada keputusan ketua cluster."}
+                      />
+                      <ResearchReadonlyInput
+                        label="Status Ketua Cluster"
+                        value={ketuaClusterDecisionChip?.label || selectedTahapLabel}
+                      />
+                    </div>
+                    <div className="mt-4">
+                      <ResearchReadonlyTextarea
+                        label="Catatan Ketua Cluster"
+                        rows={2}
+                        value={ketuaClusterDecision?.keterangan || "-"}
+                      />
+                    </div>
+                  </>
+                )}
               </section>
 
               <section className="rounded-xl border border-[#e8ecf6] bg-white p-5 shadow-sm">
@@ -1816,17 +2001,23 @@ function StatusPage({
                   </p>
                 </div>
                 <Timeline
-                  items={(selectedDetail.riwayat_persetujuan || []).map((item) => ({
-                    status: item.status,
-                    actor: item.tipe_approval,
-                    role_label:
-                      String(item.status || "").toLowerCase() === "cancelled"
-                        ? "Sistem"
-                        : getApprovalRoleLabel(item.tipe_approval),
-                    actor_name: formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || item.sekretaris_prodi?.nama || "",
-                    note: item.keterangan,
-                    at: item.tanggal_keputusan,
-                  }))}
+                  items={(selectedDetail.riwayat_persetujuan || []).map((item) => {
+                    const topicContext = item.topik_slot || item.topik_kode
+                      ? ` - Topik Pilihan ${item.topik_slot || "-"}${item.topik_kode ? ` (${item.topik_kode})` : ""}`
+                      : "";
+
+                    return {
+                      status: item.status,
+                      actor: item.tipe_approval,
+                      role_label:
+                        String(item.status || "").toLowerCase() === "cancelled"
+                          ? "Sistem"
+                          : `${getApprovalRoleLabel(item.tipe_approval)}${topicContext}`,
+                      actor_name: formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || item.sekretaris_prodi?.nama || "",
+                      note: item.keterangan,
+                      at: item.tanggal_keputusan,
+                    };
+                  })}
                 />
               </section>
             </>

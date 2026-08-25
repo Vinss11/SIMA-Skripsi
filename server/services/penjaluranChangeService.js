@@ -242,15 +242,17 @@ async function getEligibility(mahasiswaId, {
   const mahasiswa = await Mahasiswa.findByPk(mahasiswaId, { transaction });
   if (!mahasiswa) throw new PenjaluranChangeError("Mahasiswa tidak ditemukan.", 404, "STUDENT_NOT_FOUND");
   const source = await resolveLatestApprovedRegistration(mahasiswaId, transaction, { required: false });
-  const pendingChangeType = normalizeChangeType(mahasiswa.pending_registration_type);
+  const pendingRegistrationScope = normalizeText(mahasiswa.pending_registration_type).toLowerCase() || null;
+  const hasOpenChangeChoice = pendingRegistrationScope === "ulang_alih";
+  const pendingChangeType = hasOpenChangeChoice ? null : normalizeChangeType(pendingRegistrationScope);
   const requestedChangeType = normalizeChangeType(changeType) || pendingChangeType;
-  const bootstrapChange = !source && Boolean(pendingChangeType);
+  const bootstrapChange = !source && Boolean(pendingRegistrationScope);
   if (!source && !bootstrapChange) {
     throw new PenjaluranChangeError(
       "Riwayat pendaftaran yang disetujui pada jalur aktif tidak ditemukan.", 409, "APPROVED_SOURCE_NOT_FOUND"
     );
   }
-  if (bootstrapChange && requestedChangeType !== pendingChangeType) {
+  if (bootstrapChange && pendingChangeType && requestedChangeType !== pendingChangeType) {
     throw new PenjaluranChangeError(
       `Akun ini dibuat untuk pendaftaran ${pendingChangeType}.`, 409, "CHANGE_TYPE_MISMATCH"
     );
@@ -262,7 +264,9 @@ async function getEligibility(mahasiswaId, {
   const resolvedSourceTrack = source?.track || normalizeTrack(sourceTrack) || normalizeTrack(openPamit?.jalur_asal);
   const requestedTarget = normalizeTrack(targetTrack);
   const effectiveChangeType = requestedChangeType || (
-    requestedTarget && resolvedSourceTrack && requestedTarget !== resolvedSourceTrack ? "alih" : "ulang"
+    resolvedSourceTrack
+      ? (requestedTarget && requestedTarget !== resolvedSourceTrack ? "alih" : "ulang")
+      : null
   );
   const normalizedTarget = effectiveChangeType === "ulang"
     ? resolvedSourceTrack
@@ -329,7 +333,7 @@ async function getEligibility(mahasiswaId, {
     periode: plain(period), source_registration: plain(source?.registration), source_track: resolvedSourceTrack,
     target_track: normalizedTarget, change_type: resolvedChangeType, requires_pamit: requiresPamit,
     bootstrap_change: bootstrapChange,
-    pending_registration_type: pendingChangeType,
+    pending_registration_type: pendingRegistrationScope,
     active_assignment: plain(assignment.penetapan),
     reviewer_p1: plain(assignment.pembimbing_1) || plain(bootstrapSupervisor) || (openPamit?.reviewer_p1_id ? { id: openPamit.reviewer_p1_id } : null),
     reviewer_p2: plain(assignment.pembimbing_2), pamit: plain(openPamit),

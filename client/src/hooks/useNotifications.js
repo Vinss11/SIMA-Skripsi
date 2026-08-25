@@ -36,21 +36,23 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
     }
   }, [request, token]);
 
-  const loadNotifications = useCallback(async () => {
+  const loadNotifications = useCallback(async (options = {}) => {
     if (!token) return;
-    setLoading(true);
-    setError("");
+    const silent = Boolean(options?.silent);
+    if (!silent) setLoading(true);
     try {
       const statusQuery = filter === "unread" ? "&status=unread" : "";
       const data = await request(`/api/notifications?page=${page}&limit=20${statusQuery}`);
       setNotifications(Array.isArray(data?.notifications) ? data.notifications : []);
       setUnreadCount(Number(data?.unread_count || 0));
+      setReadCount(Number(data?.read_count || 0));
       setTotal(Number(data?.total || 0));
       setTotalPages(Math.max(1, Number(data?.total_pages || 1)));
+      setError("");
     } catch (loadError) {
-      setError(loadError.message || "Gagal memuat pemberitahuan.");
+      if (!silent) setError(loadError.message || "Gagal memuat pemberitahuan.");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [filter, page, request, token]);
 
@@ -98,15 +100,20 @@ export default function useNotifications({ apiBaseUrl, token, onSessionExpired }
 
   useEffect(() => { loadNotifications(); }, [loadNotifications]);
   useEffect(() => {
-    loadUnreadCount();
-    const intervalId = window.setInterval(loadUnreadCount, 60000);
-    const handleFocus = () => loadUnreadCount();
+    const syncNotifications = () => {
+      if (document.visibilityState === "visible") loadNotifications({ silent: true });
+    };
+    const intervalId = window.setInterval(syncNotifications, 10000);
+    const handleFocus = () => syncNotifications();
+    const handleVisibilityChange = () => syncNotifications();
     window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [loadUnreadCount]);
+  }, [loadNotifications]);
 
   return {
     notifications, unreadCount, readCount, loading, error, page, totalPages, total, filter,

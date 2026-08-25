@@ -3,7 +3,6 @@
 const { Op } = require("sequelize");
 const {
   Pengajuan,
-  Mahasiswa,
   Topik,
   Dosen,
   Klaster,
@@ -13,6 +12,7 @@ const {
   RiwayatPersetujuan,
   sequelize,
 } = require("../models");
+const { recoverRejectedResearchSubmission } = require("./researchRejectionRecoveryService");
 
 const TOPIK_PARALLEL_REVIEW_HOURS = null;
 const TOPIK_PARALLEL_REVIEW_MS = null;
@@ -685,13 +685,6 @@ function buildFinalRejectReason(parallelState) {
   return "Pengajuan ditolak oleh seluruh dosen pilihan.";
 }
 
-function getMahasiswaFallbackStatusForRejectedSubmission(submission) {
-  const jenisJalur = String(submission?.jenis_jalur || "").trim().toLowerCase();
-  if (jenisJalur === "ulang") return "ulang";
-  if (jenisJalur === "ekstensi") return "ekstensi";
-  return "belum_mengajukan";
-}
-
 async function routeTopikWinnerToSekprodi(submission, winner, transaction, options = {}) {
   await submission.update(
     {
@@ -861,20 +854,12 @@ async function finalizeRejectedTopikSubmission(submission, parallelState, transa
     );
   }
 
-  const mahasiswa = await Mahasiswa.findByPk(submission.mahasiswa_id, {
+  await recoverRejectedResearchSubmission({
+    submission,
     transaction,
-    lock: transaction.LOCK.UPDATE,
+    reason: buildFinalRejectReason(parallelState),
+    actorLabel: "Seluruh dosen pilihan",
   });
-
-  if (mahasiswa && Number(mahasiswa.pengajuan_aktif_id) === Number(submission.id)) {
-    await mahasiswa.update(
-      {
-        pengajuan_aktif_id: null,
-        status_jalur_saat_ini: getMahasiswaFallbackStatusForRejectedSubmission(submission),
-      },
-      { transaction }
-    );
-  }
 
   return {
     success: true,

@@ -27,6 +27,10 @@ export default function NotificationPage({ notificationState, onNavigate }) {
   );
 
   useEffect(() => {
+    loadNotifications({ silent: true });
+  }, [loadNotifications]);
+
+  useEffect(() => {
     const allowed = new Set(readableIds);
     setSelectedIds((current) => new Set([...current].filter((id) => allowed.has(Number(id)))));
   }, [readableIds]);

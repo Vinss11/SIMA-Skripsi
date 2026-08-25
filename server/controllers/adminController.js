@@ -1,6 +1,7 @@
 const {
   Mahasiswa, Dosen, Klaster, Pengajuan, Topik, RiwayatStatusDosen,
-  TindakLanjutStatusDosen, Admin, sequelize,
+  TindakLanjutStatusDosen, Admin, BidangPenelitian, DosenBidangPenelitian,
+  PengajuanBidangPenelitian, TopikBidangPenelitian, sequelize,
 } = require("../models");
 const { Op } = require("sequelize");
 const XLSX = require("xlsx");
@@ -25,6 +26,11 @@ const {
   getActiveSupervisionLoad,
 } = require("../services/supervisorAccessService");
 const { buildInitialCredentialAttributes } = require("../services/initialCredentialService");
+const { isAllowedSekretarisJabatan } = require("../constants/sekretarisAkses");
+const {
+  getSekprodiStructuralAssignmentLock,
+  getSekprodiStructuralAssignmentLocks,
+} = require("../services/sekprodiStructuralAssignmentService");
 
 const DEFAULT_KLASTER_MASTER = [
   { kode: "MEDIS", nama: "Informatika Medis" },
@@ -226,6 +232,13 @@ async function getMappedDosens(keyword = "") {
         through: { attributes: [] },
         required: false,
       },
+      {
+        model: BidangPenelitian,
+        as: "bidangPenelitians",
+        attributes: ["id", "nama"],
+        through: { attributes: [] },
+        required: false,
+      },
     ],
     order: [["nama", "ASC"]],
   });
@@ -264,10 +277,44 @@ async function getMappedDosens(keyword = "") {
             nama: item.nama,
           }))
         : [],
+      bidang_penelitians: mapBidangPenelitianForDosen(dosen.bidangPenelitians),
       createdAt: dosen.createdAt,
       updatedAt: dosen.updatedAt,
     };
   }));
+}
+
+function normalizeBidangPenelitianInput(payload = {}, kode = "", existingKeywords = null) {
+  return {
+    kode: String(kode || "").trim().toUpperCase(),
+    nama: String(payload.nama || "").trim().replace(/\s+/g, " "),
+    deskripsi: String(payload.deskripsi || "").trim().replace(/\s+/g, " "),
+    contoh_kata_kunci: Object.prototype.hasOwnProperty.call(payload, "contoh_kata_kunci")
+      ? String(payload.contoh_kata_kunci || "").trim().replace(/\s+/g, " ") || null
+      : existingKeywords,
+  };
+}
+
+function validateBidangPenelitianInput(values) {
+  if (values.nama.length < 3 || values.nama.length > 150) {
+    return "Nama bidang penelitian wajib 3-150 karakter.";
+  }
+  if (values.deskripsi.length < 10 || values.deskripsi.length > 2000) {
+    return "Deskripsi bidang penelitian wajib 10-2000 karakter agar dapat digunakan sebagai konteks klasifikasi AI.";
+  }
+  if (values.contoh_kata_kunci && values.contoh_kata_kunci.length > 1000) {
+    return "Contoh kata kunci maksimal 1000 karakter.";
+  }
+  return "";
+}
+
+function mapBidangPenelitianForDosen(items) {
+  return (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      id: item.id,
+      nama: item.nama,
+    }))
+    .sort((a, b) => String(a.nama || "").localeCompare(String(b.nama || ""), "id"));
 }
 
 // GET /api/admin/mahasiswa - Lihat semua mahasiswa
@@ -869,6 +916,7 @@ exports.exportDosensExcel = async (req, res) => {
       Email: row.email || "",
       "Jabatan Struktural": row.jabatan_struktural || "",
       Klaster: Array.isArray(row.klasters) && row.klasters.length > 0 ? row.klasters.map((item) => item.kode).join(", ") : "",
+      "Bidang Penelitian": row.bidang_penelitians?.map((item) => item.nama).join(", ") || "",
       "Kuota Bimbingan": row.kuota_bimbingan ?? 0,
       "Jumlah Bimbingan": row.jumlah_bimbingan ?? 0,
       "Sisa Kuota": row.sisa_kuota ?? 0,
@@ -892,6 +940,8 @@ exports.exportDosensExcel = async (req, res) => {
       { wch: 36 },
       { wch: 30 },
       { wch: 24 },
+      { wch: 32 },
+      { wch: 48 },
       { wch: 16 },
       { wch: 18 },
       { wch: 12 },
@@ -939,6 +989,153 @@ exports.getAllKlasters = async (req, res) => {
       message: "Terjadi kesalahan pada server",
       error: error.message,
     });
+  }
+};
+
+// GET /api/admin/bidang-penelitian - Kelola kamus bidang penelitian
+exports.getAllBidangPenelitian = async (req, res) => {
+  try {
+    const rows = await BidangPenelitian.findAll({ order: [["nama", "ASC"]] });
+    const data = await Promise.all(rows.map(async (row) => {
+      const [jumlahDosen, jumlahPengajuan, jumlahTopik] = await Promise.all([
+        DosenBidangPenelitian.count({ where: { bidang_penelitian_id: row.id } }),
+        PengajuanBidangPenelitian.count({ where: { bidang_penelitian_id: row.id } }),
+        TopikBidangPenelitian.count({ where: { bidang_penelitian_id: row.id } }),
+      ]);
+      return {
+        ...row.toJSON(),
+        jumlah_dosen: jumlahDosen,
+        jumlah_pengajuan: jumlahPengajuan,
+        jumlah_topik: jumlahTopik,
+      };
+    }));
+
+    return res.json({ success: true, data, total: data.length });
+  } catch (error) {
+    console.error("Error di getAllBidangPenelitian:", error);
+    return res.status(500).json({ success: false, message: "Gagal memuat bidang penelitian.", error: error.message });
+  }
+};
+
+async function findBidangPenelitianDuplicate({ nama, excludeId = null, transaction = null }) {
+  const where = {
+    [Op.and]: [sequelize.where(sequelize.fn("LOWER", sequelize.col("nama")), nama.toLowerCase())],
+  };
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+  return BidangPenelitian.findOne({ where, transaction });
+}
+
+async function generateBidangPenelitianKode(transaction) {
+  const rows = await BidangPenelitian.findAll({ attributes: ["kode"], transaction, lock: transaction.LOCK.UPDATE });
+  const usedCodes = new Set(rows.map((row) => String(row.kode || "").trim().toUpperCase()));
+  const highestSequence = rows.reduce((highest, row) => {
+    const match = String(row.kode || "").trim().toUpperCase().match(/^BP(\d+)$/);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  let sequence = highestSequence + 1;
+  let kode = `BP${String(sequence).padStart(3, "0")}`;
+  while (usedCodes.has(kode)) {
+    sequence += 1;
+    kode = `BP${String(sequence).padStart(3, "0")}`;
+  }
+  return kode;
+}
+
+// POST /api/admin/bidang-penelitian
+exports.createBidangPenelitian = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const kode = await generateBidangPenelitianKode(transaction);
+    const values = normalizeBidangPenelitianInput(req.body, kode);
+    const validationError = validateBidangPenelitianInput(values);
+    if (validationError) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: validationError });
+    }
+    const duplicate = await findBidangPenelitianDuplicate({ ...values, transaction });
+    if (duplicate) {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Nama bidang penelitian sudah digunakan." });
+    }
+
+    const created = await BidangPenelitian.create(values, { transaction });
+    await transaction.commit();
+    return res.status(201).json({
+      success: true,
+      message: "Bidang penelitian berhasil ditambahkan.",
+      data: { ...created.toJSON(), jumlah_dosen: 0, jumlah_pengajuan: 0, jumlah_topik: 0 },
+    });
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    console.error("Error di createBidangPenelitian:", error);
+    const status = error?.name === "SequelizeUniqueConstraintError" ? 409 : 500;
+    return res.status(status).json({ success: false, message: status === 409 ? "Nama bidang penelitian sudah digunakan." : "Gagal menambahkan bidang penelitian.", error: error.message });
+  }
+};
+
+// PUT /api/admin/bidang-penelitian/:id
+exports.updateBidangPenelitian = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const id = Number(req.params.id);
+    const row = await BidangPenelitian.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!row) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Bidang penelitian tidak ditemukan." });
+    }
+    const values = normalizeBidangPenelitianInput(req.body, row.kode, row.contoh_kata_kunci);
+    const validationError = validateBidangPenelitianInput(values);
+    if (validationError) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: validationError });
+    }
+    const duplicate = await findBidangPenelitianDuplicate({ ...values, excludeId: row.id, transaction });
+    if (duplicate) {
+      await transaction.rollback();
+      return res.status(409).json({ success: false, message: "Nama bidang penelitian sudah digunakan." });
+    }
+
+    await row.update(values, { transaction });
+    await transaction.commit();
+    return res.json({ success: true, message: "Bidang penelitian berhasil diperbarui.", data: row });
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    console.error("Error di updateBidangPenelitian:", error);
+    const status = error?.name === "SequelizeUniqueConstraintError" ? 409 : 500;
+    return res.status(status).json({ success: false, message: status === 409 ? "Nama bidang penelitian sudah digunakan." : "Gagal memperbarui bidang penelitian.", error: error.message });
+  }
+};
+
+// DELETE /api/admin/bidang-penelitian/:id - Hanya untuk master yang belum digunakan
+exports.deleteBidangPenelitian = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const id = Number(req.params.id);
+    const row = await BidangPenelitian.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE });
+    if (!row) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: "Bidang penelitian tidak ditemukan." });
+    }
+    const [jumlahDosen, jumlahPengajuan, jumlahTopik] = await Promise.all([
+      DosenBidangPenelitian.count({ where: { bidang_penelitian_id: id }, transaction }),
+      PengajuanBidangPenelitian.count({ where: { bidang_penelitian_id: id }, transaction }),
+      TopikBidangPenelitian.count({ where: { bidang_penelitian_id: id }, transaction }),
+    ]);
+    if (jumlahDosen + jumlahPengajuan + jumlahTopik > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Bidang penelitian masih digunakan oleh ${jumlahDosen} dosen, ${jumlahTopik} topik, dan ${jumlahPengajuan} pengajuan sehingga tidak dapat dihapus.`,
+      });
+    }
+
+    await row.destroy({ transaction });
+    await transaction.commit();
+    return res.json({ success: true, message: "Bidang penelitian berhasil dihapus." });
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    console.error("Error di deleteBidangPenelitian:", error);
+    return res.status(500).json({ success: false, message: "Gagal menghapus bidang penelitian.", error: error.message });
   }
 };
 
@@ -1171,6 +1368,13 @@ exports.createDosen = async (req, res) => {
           through: { attributes: [] },
           required: false,
         },
+        {
+          model: BidangPenelitian,
+          as: "bidangPenelitians",
+          attributes: ["id", "nama"],
+          through: { attributes: [] },
+          required: false,
+        },
       ],
     });
 
@@ -1199,7 +1403,7 @@ exports.createDosen = async (req, res) => {
   }
 };
 
-// PUT /api/admin/dosen/:id/profil - Update gelar, jabatan struktural, dan klaster dosen
+// PUT /api/admin/dosen/:id/profil - Update profil dan bidang penelitian dosen
 exports.updateDosenProfil = async (req, res) => {
   const t = await sequelize.transaction();
 
@@ -1220,12 +1424,14 @@ exports.updateDosenProfil = async (req, res) => {
     const rawGelar = req.body?.gelar;
     const rawJabatanStruktural = req.body?.jabatan_struktural;
     const rawKlasterIds = req.body?.klaster_ids;
+    const hasBidangPenelitianPayload = Object.prototype.hasOwnProperty.call(req.body || {}, "bidang_penelitian_ids");
 
     const gelarValidation = validateDosenTitle(rawGelar === undefined ? dosen.gelar : rawGelar);
     const gelar = gelarValidation.normalized || null;
     const jabatanStruktural = rawJabatanStruktural === undefined
       ? normalizeJabatanStrukturalInput(dosen.jabatan_struktural)
       : normalizeJabatanStrukturalInput(rawJabatanStruktural);
+    const currentJabatanStruktural = normalizeJabatanStrukturalInput(dosen.jabatan_struktural);
 
     if (!gelarValidation.isValid) {
       await t.rollback();
@@ -1246,6 +1452,24 @@ exports.updateDosenProfil = async (req, res) => {
         return res.status(jabatanValidation.statusCode || 400).json({
           success: false,
           message: jabatanValidation.message,
+        });
+      }
+    }
+
+    if (
+      isAllowedSekretarisJabatan(currentJabatanStruktural) &&
+      jabatanStruktural !== currentJabatanStruktural
+    ) {
+      const assignmentLock = await getSekprodiStructuralAssignmentLock(currentJabatanStruktural, {
+        transaction: t,
+      });
+      if (assignmentLock?.locked) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "SEKPRODI_PENDING_PROCESSES",
+          message: assignmentLock.message,
+          data: { lock: assignmentLock },
         });
       }
     }
@@ -1277,6 +1501,32 @@ exports.updateDosenProfil = async (req, res) => {
       }
     }
 
+    let bidangPenelitianAssignments = null;
+    if (hasBidangPenelitianPayload) {
+      const bidangPenelitianIds = Array.isArray(req.body?.bidang_penelitian_ids)
+        ? [...new Set(req.body.bidang_penelitian_ids.map(Number).filter((item) => Number.isInteger(item) && item > 0))]
+        : [];
+
+      if (bidangPenelitianIds.length === 0) {
+        await t.rollback();
+        return res.status(400).json({ success: false, message: "Pilih minimal satu bidang penelitian." });
+      }
+
+      const validBidangRows = await BidangPenelitian.findAll({
+        where: { id: { [Op.in]: bidangPenelitianIds } },
+        attributes: ["id"],
+        transaction: t,
+      });
+      if (validBidangRows.length !== bidangPenelitianIds.length) {
+        await t.rollback();
+        return res.status(400).json({ success: false, message: "Ada bidang penelitian yang tidak valid." });
+      }
+      bidangPenelitianAssignments = bidangPenelitianIds.map((bidangId) => ({
+        dosen_id: dosen.id,
+        bidang_penelitian_id: bidangId,
+      }));
+    }
+
     await dosen.update(
       {
         gelar,
@@ -1287,6 +1537,11 @@ exports.updateDosenProfil = async (req, res) => {
 
     if (klasters !== null) {
       await dosen.setKlasters(klasters, { transaction: t });
+    }
+
+    if (bidangPenelitianAssignments !== null) {
+      await DosenBidangPenelitian.destroy({ where: { dosen_id: dosen.id }, transaction: t });
+      await DosenBidangPenelitian.bulkCreate(bidangPenelitianAssignments, { transaction: t });
     }
 
     await t.commit();
@@ -1311,13 +1566,23 @@ exports.updateDosenProfil = async (req, res) => {
           through: { attributes: [] },
           required: false,
         },
+        {
+          model: BidangPenelitian,
+          as: "bidangPenelitians",
+          attributes: ["id", "nama"],
+          through: { attributes: [] },
+          required: false,
+        },
       ],
     });
 
     res.json({
       success: true,
       message: "Profil dosen berhasil diperbarui.",
-      data: refreshed,
+      data: {
+        ...refreshed.toJSON(),
+        bidang_penelitians: mapBidangPenelitianForDosen(refreshed.bidangPenelitians),
+      },
     });
   } catch (error) {
     if (!t.finished) await t.rollback();
@@ -1334,6 +1599,27 @@ exports.updateDosenProfil = async (req, res) => {
     res.status(500).json({
       success: false,
       message: "Terjadi kesalahan pada server",
+      error: error.message,
+    });
+  }
+};
+
+// GET /api/admin/dosen/jabatan-struktural/locks - Status penguncian pergantian Sekprodi
+exports.getJabatanStrukturalAssignmentLocks = async (req, res) => {
+  try {
+    const locks = await getSekprodiStructuralAssignmentLocks();
+    return res.json({
+      success: true,
+      data: {
+        locks,
+        locked_count: locks.filter((item) => item.locked).length,
+      },
+    });
+  } catch (error) {
+    console.error("Error di getJabatanStrukturalAssignmentLocks:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Gagal memeriksa proses Sekprodi yang belum diselesaikan.",
       error: error.message,
     });
   }
@@ -1394,6 +1680,37 @@ exports.updateJabatanStrukturalAssignments = async (req, res) => {
         return res.status(400).json({
           success: false,
           message: "Ada dosen yang tidak valid atau sudah tidak tersedia.",
+        });
+      }
+    }
+
+    const currentSekprodiRows = await Dosen.findAll({
+      where: {
+        jabatan_struktural: {
+          [Op.in]: STRUKTURAL_POSITIONS.filter((jabatan) => isAllowedSekretarisJabatan(jabatan)),
+        },
+      },
+      attributes: ["id", "nama", "jabatan_struktural"],
+      transaction: t,
+    });
+    const currentSekprodiByJabatan = new Map(
+      currentSekprodiRows.map((row) => [normalizeJabatanStrukturalInput(row.jabatan_struktural), row])
+    );
+    const sekprodiLocks = await getSekprodiStructuralAssignmentLocks({ transaction: t });
+    const sekprodiLockByJabatan = new Map(sekprodiLocks.map((item) => [item.jabatan, item]));
+
+    for (const assignment of normalizedAssignments) {
+      if (!isAllowedSekretarisJabatan(assignment.jabatan)) continue;
+      const currentHolder = currentSekprodiByJabatan.get(assignment.jabatan);
+      const holderChanged = Number(currentHolder?.id || 0) !== Number(assignment.dosenId || 0);
+      const assignmentLock = sekprodiLockByJabatan.get(assignment.jabatan);
+      if (holderChanged && currentHolder && assignmentLock?.locked) {
+        await t.rollback();
+        return res.status(409).json({
+          success: false,
+          code: "SEKPRODI_PENDING_PROCESSES",
+          message: assignmentLock.message,
+          data: { lock: assignmentLock },
         });
       }
     }

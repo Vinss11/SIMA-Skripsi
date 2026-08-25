@@ -96,7 +96,12 @@ router.get("/statistics", authenticateToken, authorizeRole("admin"), adminContro
 // ========== KUOTA DOSEN MANAGEMENT ==========
 
 router.get("/klasters", authenticateToken, authorizeRole("admin"), adminController.getAllKlasters);
+router.get("/bidang-penelitian", authenticateToken, authorizeRole("admin"), adminController.getAllBidangPenelitian);
+router.post("/bidang-penelitian", authenticateToken, authorizeRole("admin"), adminController.createBidangPenelitian);
+router.put("/bidang-penelitian/:id", authenticateToken, authorizeRole("admin"), adminController.updateBidangPenelitian);
+router.delete("/bidang-penelitian/:id", authenticateToken, authorizeRole("admin"), adminController.deleteBidangPenelitian);
 router.get("/dosen", authenticateToken, authorizeRole("admin"), adminController.getAllDosens);
+router.get("/dosen/jabatan-struktural/locks", authenticateToken, authorizeRole("admin"), adminController.getJabatanStrukturalAssignmentLocks);
 router.get("/dosen/export", authenticateToken, authorizeRole("admin"), adminController.exportDosensExcel);
 router.post("/dosen", authenticateToken, authorizeRole("admin"), adminController.createDosen);
 router.put("/dosen/jabatan-struktural", authenticateToken, authorizeRole("admin"), adminController.updateJabatanStrukturalAssignments);

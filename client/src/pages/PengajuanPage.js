@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, FileEdit, Info, Lightbulb, RotateCcw, Search, Send, SlidersHorizontal, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import Swal from "sweetalert2";
 import { formatDosenFullName } from "../utils/dosen";
@@ -183,15 +183,15 @@ function getMagangUrlError(value, { required = false, label = "URL" } = {}) {
   const text = String(value || "").trim();
   if (!text) return required ? `${label} wajib diisi.` : "";
   if (hasForbiddenMagangUrlCharacters(text)) {
-    return `${label} tidak boleh mengandung karakter { } [ ] ; ' " < > \\ atau pola --.`;
+    return `${label} tidak boleh mengandung karakter + { } [ ] ; ' " < > \\ atau pola --.`;
   }
   return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
 }
 
 const MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS = new Set([
-  "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
+  "+", "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
 ]);
-const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
+const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["+", "{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
 
 function containsForbiddenCharacters(value, forbiddenCharacters) {
   const text = String(value || "");
@@ -206,7 +206,7 @@ function getMagangAdditionalNoteError(value) {
   const text = String(value || "");
   if (!text) return "";
   return containsForbiddenCharacters(text, MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS)
-    ? "Catatan tambahan tidak boleh mengandung karakter { } [ ] : ; ' \" < > / \\ atau pola --."
+    ? "Catatan tambahan tidak boleh mengandung karakter + { } [ ] : ; ' \" < > / \\ atau pola --."
     : "";
 }
 
@@ -214,16 +214,120 @@ function FieldError({ message }) {
   return message ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{message}</p> : null;
 }
 
-function isInvalidGenericTextCharacter(character) {
-  const code = character.charCodeAt(0);
-  return character === "<" || character === ">" || code < 32 || code === 127;
+function BidangPenelitianCombobox({ options = [], value = [], onChange, disabled, loading, error }) {
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const orderedSelectedIds = (Array.isArray(value) ? value : []).map(Number);
+  const selectedIds = new Set(orderedSelectedIds);
+  const optionById = new Map(options.map((option) => [Number(option.id), option]));
+  const selectedOptions = orderedSelectedIds.map((id) => optionById.get(id)).filter(Boolean);
+  const normalizedQuery = query.trim().toLowerCase();
+  const availableOptions = options.filter((option) => (
+    !selectedIds.has(Number(option.id))
+    && (!normalizedQuery || [option.nama, option.deskripsi]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery))
+  ));
+
+  const selectOption = (option) => {
+    if (disabled || selectedIds.size >= 10) return;
+    onChange([...selectedIds, Number(option.id)]);
+    setQuery("");
+    setIsOpen(true);
+  };
+
+  const removeOption = (optionId) => {
+    if (disabled) return;
+    onChange([...selectedIds].filter((id) => id !== Number(optionId)));
+  };
+
+  return (
+    <div className="space-y-2">
+      {selectedOptions.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selectedOptions.map((option) => (
+            <span key={`bidang-selected-${option.id}`} className="inline-flex items-center gap-1.5 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+              {option.nama}
+              <button
+                type="button"
+                onClick={() => removeOption(option.id)}
+                disabled={disabled}
+                aria-label={`Hapus ${option.nama}`}
+                className="rounded-full p-0.5 hover:bg-[#cfddff] disabled:cursor-not-allowed"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+        <input
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls="bidang-penelitian-options"
+          value={query}
+          disabled={disabled || loading || selectedIds.size >= 10}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setIsOpen(true);
+          }}
+          placeholder={loading ? "Memuat bidang penelitian..." : "Cari dan pilih bidang penelitian"}
+          className={`w-full rounded-lg border bg-white py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6] ${
+            error ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20" : "border-[#d2dcef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+          }`}
+        />
+        {isOpen && !disabled && !loading ? (
+          <div id="bidang-penelitian-options" role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[260px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+            {availableOptions.length > 0 ? availableOptions.map((option) => (
+              <button
+                key={`bidang-option-${option.id}`}
+                type="button"
+                role="option"
+                aria-selected="false"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectOption(option)}
+                className="block w-full border-b border-[#edf1fb] px-3 py-2.5 text-left last:border-b-0 hover:bg-[#f4f7ff]"
+              >
+                <span className="block text-sm font-semibold text-[#30477e]">{option.nama}</span>
+                {option.deskripsi ? <span className="mt-0.5 block text-xs text-[#6c7a9e]">{option.deskripsi}</span> : null}
+              </button>
+            )) : (
+              <p className="px-3 py-3 text-sm font-semibold text-[#7282a8]">
+                {selectedIds.size >= 10 ? "Maksimal 10 bidang penelitian." : "Bidang penelitian tidak ditemukan."}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </div>
+      <p className="text-xs text-[#647398]">Anda dapat memilih lebih dari satu bidang penelitian.</p>
+      <FieldError message={error} />
+    </div>
+  );
 }
 
-function sanitizeGenericTextInput(value) {
-  return String(value || "")
-    .split("")
-    .filter((character) => !isInvalidGenericTextCharacter(character))
-    .join("");
+function isInvalidGenericTextCharacter(character) {
+  const code = character.charCodeAt(0);
+  return ["+", "=", "_", "{", "}", "[", "]", "<", ">", "/", "?", "\\", "|", ":", ";", "'", '"'].includes(character)
+    || code < 32
+    || code === 127;
+}
+
+function hasInvalidGenericText(value) {
+  const text = String(value || "");
+  return text.includes("--") || text.split("").some(isInvalidGenericTextCharacter);
+}
+
+function getInvalidGenericTextMessage(label) {
+  return `${label} tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' ", atau pola -- (komentar SQL).`;
 }
 
 function statusBadge(item) {
@@ -272,13 +376,18 @@ function getTopikOptionLabel(item) {
   if (!item) return "";
   const kode = item.kode || "-";
   const judul = item.judul || "-";
-  const dosenNama = formatDosenFullName(item.dosen?.nama, item.dosen?.gelar);
-  const dosen = dosenNama ? ` | ${dosenNama}` : "";
-  return `${kode} - ${judul}${dosen}`;
+  return `${kode} — ${judul} | ${formatCluster(item.cluster)}`;
+}
+
+function formatTopikResearchFields(item) {
+  return (Array.isArray(item?.bidangPenelitians) ? item.bidangPenelitians : [])
+    .map((field) => String(field?.nama || "").trim())
+    .filter(Boolean)
+    .join(", ");
 }
 
 function getTopikOptionSearchText(item) {
-  return [item?.kode, item?.judul, item?.keyword, item?.cluster, item?.dosen?.nama, item?.dosen?.gelar, formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar), item?.dosen?.nik]
+  return [item?.kode, item?.judul, formatTopikResearchFields(item), item?.cluster, item?.dosen?.nama, item?.dosen?.gelar, formatDosenFullName(item?.dosen?.nama, item?.dosen?.gelar), item?.dosen?.nik]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -528,7 +637,7 @@ function FormJudulDosen({
 
       if (!keyword) return true;
 
-      const haystack = [item.kode, item.judul, item.keyword, item.cluster, item.dosen?.nama, item.dosen?.gelar, formatDosenFullName(item.dosen?.nama, item.dosen?.gelar), item.dosen?.nik]
+      const haystack = [item.kode, item.judul, formatTopikResearchFields(item), item.cluster, item.dosen?.nama, item.dosen?.gelar, formatDosenFullName(item.dosen?.nama, item.dosen?.gelar), item.dosen?.nik]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -806,10 +915,11 @@ function FormJudulDosen({
   const getFilteredTopikOptionsForSlot = (slotNumber) => {
     const field = `topik_${slotNumber}_kode`;
     const keyword = String(topikComboQueries[field] || "").trim().toLowerCase();
-    if (!keyword) return [];
-    return optionListForSlot(slotNumber)
-      .filter((item) => getTopikOptionSearchText(item).includes(keyword))
-      .slice(0, 40);
+    const selectedTopik = topikByKode[selectedCodes[field]];
+    const selectedLabel = getTopikOptionLabel(selectedTopik).trim().toLowerCase();
+    const options = optionListForSlot(slotNumber);
+    if (!keyword || (selectedLabel && keyword === selectedLabel)) return options.slice(0, 40);
+    return options.filter((item) => getTopikOptionSearchText(item).includes(keyword)).slice(0, 40);
   };
 
   const handleSelectChange = (field, value) => {
@@ -961,7 +1071,7 @@ function FormJudulDosen({
     const field = `topik_${slotNumber}_kode`;
     const query = topikComboQueries[field] || "";
     const options = getFilteredTopikOptionsForSlot(slotNumber);
-    const showOptions = openTopikComboSlot === slotNumber && enabled && query.trim().length > 0;
+    const showOptions = openTopikComboSlot === slotNumber && enabled;
     const errorMessage = topikFieldErrors[field] || "";
 
     return (
@@ -979,7 +1089,7 @@ function FormJudulDosen({
             value={query}
             onChange={(event) => handleTopikComboInputChange(slotNumber, event.target.value)}
             onFocus={() => {
-              if (enabled && query.trim()) setOpenTopikComboSlot(slotNumber);
+              if (enabled) setOpenTopikComboSlot(slotNumber);
             }}
             onKeyDown={(event) => {
               if (event.key === "Escape") setOpenTopikComboSlot(null);
@@ -995,7 +1105,7 @@ function FormJudulDosen({
             type="button"
             aria-label={`Buka pilihan topik ${slotNumber}`}
             onClick={() => {
-              if (!enabled || !query.trim()) {
+              if (!enabled) {
                 setOpenTopikComboSlot(null);
                 return;
               }
@@ -1028,10 +1138,8 @@ function FormJudulDosen({
                       selectedCodes[field] === item.kode ? "bg-[#eef3ff] font-semibold text-[#254db4]" : "text-[#263a68]"
                     }`}
                   >
-                    <span className="block font-semibold">{item.kode} - {item.judul || "-"}</span>
-                    <span className="mt-0.5 block text-xs text-[#64739a]">
-                      {formatCluster(item.cluster)} | {formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"} | Keyword: {item.keyword || "-"}
-                    </span>
+                    <span className="block font-semibold">{item.kode || "-"} — {item.judul || "-"}</span>
+                    <span className="mt-0.5 block text-xs text-[#64739a]">Cluster: {formatCluster(item.cluster)}</span>
                   </button>
                 ))
               ) : (
@@ -1221,7 +1329,7 @@ function FormJudulDosen({
             <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
             <input
               type="text"
-              placeholder="Cari kode, judul, keyword, bidang, dosen..."
+              placeholder="Cari kode, judul, bidang penelitian, cluster, dosen..."
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               className="w-[340px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
@@ -1267,7 +1375,7 @@ function FormJudulDosen({
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode Topik</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bidang</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dosen</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
@@ -1286,7 +1394,7 @@ function FormJudulDosen({
                           <p className="font-semibold text-[#1f2d53]">{item.judul || "-"}</p>
                           <p className="text-xs text-[#6c7a9f]">{item.deskripsi || "-"}</p>
                           <p className="mt-1 text-xs font-semibold text-[#4f64a0]">
-                            Keyword: {item.keyword || "-"}
+                            Bidang Penelitian: {formatTopikResearchFields(item) || "-"}
                           </p>
                         </td>
                         <td className="px-3 py-2">{formatCluster(item.cluster)}</td>
@@ -1331,9 +1439,9 @@ function FormJudulDosen({
         <p className="mb-4 text-sm text-[#5d6c91]">Pilih minimal 1 topik. Pilihan tidak boleh duplikat.</p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {renderTopikCombobox(1, "Topik Pilihan 1", !disabled, "Ketik kode, judul, dosen, atau bidang", true)}
-          {renderTopikCombobox(2, "Topik Pilihan 2 (Opsional)", isTopik2Enabled, "Ketik untuk mencari topik 2")}
-          {renderTopikCombobox(3, "Topik Pilihan 3 (Opsional)", isTopik3Enabled, "Ketik untuk mencari topik 3")}
+          {renderTopikCombobox(1, "Topik Pilihan 1", !disabled, "Pilih atau cari judul maupun cluster", true)}
+          {renderTopikCombobox(2, "Topik Pilihan 2 (Opsional)", isTopik2Enabled, "Pilih atau cari judul maupun cluster")}
+          {renderTopikCombobox(3, "Topik Pilihan 3 (Opsional)", isTopik3Enabled, "Pilih atau cari judul maupun cluster")}
         </div>
 
         <div className="mt-6 rounded-lg border border-[#e8edf8] bg-[#f8fbff] p-4">
@@ -1349,7 +1457,7 @@ function FormJudulDosen({
                   <p className="text-xs text-[#62719a]">
                     Bidang: {formatCluster(item.cluster)} | Dosen: {formatDosenFullName(item.dosen?.nama, item.dosen?.gelar) || "-"}
                   </p>
-                  <p className="text-xs text-[#62719a]">Keyword: {item.keyword || "-"}</p>
+                  <p className="text-xs text-[#62719a]">Bidang Penelitian: {formatTopikResearchFields(item) || "-"}</p>
                 </div>
               ))}
             </div>
@@ -1409,7 +1517,9 @@ function FormJudulSendiri({
 }) {
   const [judulMandiri, setJudulMandiri] = useState("");
   const [deskripsiMandiri, setDeskripsiMandiri] = useState("");
-  const [keywordMandiri, setKeywordMandiri] = useState("");
+  const [bidangPenelitianRows, setBidangPenelitianRows] = useState([]);
+  const [selectedBidangPenelitianIds, setSelectedBidangPenelitianIds] = useState([]);
+  const [loadingBidangPenelitian, setLoadingBidangPenelitian] = useState(true);
   const [selectedCluster, setSelectedCluster] = useState("");
   const [dosenRows, setDosenRows] = useState([]);
   const [loadingDosen, setLoadingDosen] = useState(true);
@@ -1451,6 +1561,38 @@ function FormJudulSendiri({
       isMounted = false;
     };
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchBidangPenelitian = async () => {
+      setLoadingBidangPenelitian(true);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/jalur/bidang-penelitian`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const payload = await response.json().catch(() => null);
+        if (response.status === 401 || response.status === 403) {
+          onSessionExpired?.();
+          return;
+        }
+        if (!response.ok || !payload?.success) {
+          throw new Error(payload?.message || "Gagal memuat bidang penelitian.");
+        }
+        if (isMounted) setBidangPenelitianRows(Array.isArray(payload.data) ? payload.data : []);
+      } catch (error) {
+        if (isMounted) {
+          setBidangPenelitianRows([]);
+          setSubmitError(error.message || "Gagal memuat bidang penelitian.");
+        }
+      } finally {
+        if (isMounted) setLoadingBidangPenelitian(false);
+      }
+    };
+    fetchBidangPenelitian();
+    return () => {
+      isMounted = false;
+    };
+  }, [apiBaseUrl, onSessionExpired, session.token]);
 
   const selectedDosen = useMemo(
     () => dosenRows.find((item) => String(item.id) === String(selectedDosenId)) || null,
@@ -1517,11 +1659,16 @@ function FormJudulSendiri({
 
   const validateManualSubmission = () => {
     const nextErrors = {};
-    if (judulMandiri.trim().length < 8) {
+    if (hasInvalidGenericText(judulMandiri)) {
+      nextErrors.judulMandiri = getInvalidGenericTextMessage("Judul penelitian");
+    } else if (judulMandiri.trim().length < 8) {
       nextErrors.judulMandiri = "Judul penelitian wajib diisi minimal 8 karakter.";
     }
     if (deskripsiMandiri.trim().length < 20) {
       nextErrors.deskripsiMandiri = "Deskripsi singkat wajib diisi minimal 20 karakter.";
+    }
+    if (selectedBidangPenelitianIds.length === 0) {
+      nextErrors.bidangPenelitian = "Pilih minimal satu bidang penelitian.";
     }
     if (!selectedCluster) {
       nextErrors.selectedCluster = "Cluster penelitian wajib dipilih.";
@@ -1567,7 +1714,7 @@ function FormJudulSendiri({
   const resetForm = () => {
     setJudulMandiri("");
     setDeskripsiMandiri("");
-    setKeywordMandiri("");
+    setSelectedBidangPenelitianIds([]);
     setSelectedCluster("");
     setSelectedDosenId("");
     setDosenQuery("");
@@ -1607,7 +1754,7 @@ function FormJudulSendiri({
       const requestPayload = {
         judul_mandiri: judulMandiri.trim(),
         deskripsi_mandiri: deskripsiMandiri.trim(),
-        keyword_mandiri: keywordMandiri.trim(),
+        bidang_penelitian_ids: selectedBidangPenelitianIds,
         cluster_mandiri: selectedCluster,
         prospective_supervisor_id: Number(selectedDosenId),
       };
@@ -1670,25 +1817,41 @@ function FormJudulSendiri({
             type="text"
             value={judulMandiri}
             onChange={(event) => {
-              setJudulMandiri(event.target.value);
-              clearFieldError("judulMandiri");
+              const value = event.target.value;
+              setJudulMandiri(value);
+              setFieldErrors((prev) => ({
+                ...prev,
+                judulMandiri: hasInvalidGenericText(value)
+                  ? getInvalidGenericTextMessage("Judul penelitian")
+                  : "",
+              }));
             }}
             disabled={disabled || submitLoading}
             placeholder="Contoh: Sistem rekomendasi topik skripsi berbasis machine learning"
-            className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+            aria-invalid={Boolean(fieldErrors.judulMandiri)}
+            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6] ${
+              fieldErrors.judulMandiri
+                ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20"
+                : "border-[#d2dcef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+            }`}
           />
           <FieldError message={fieldErrors.judulMandiri} />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-semibold text-[#324c86]">Keyword</label>
-          <input
-            type="text"
-            value={keywordMandiri}
-            onChange={(event) => setKeywordMandiri(event.target.value)}
+          <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+            Bidang Penelitian <RequiredMark />
+          </label>
+          <BidangPenelitianCombobox
+            options={bidangPenelitianRows}
+            value={selectedBidangPenelitianIds}
+            loading={loadingBidangPenelitian}
             disabled={disabled || submitLoading}
-            placeholder="Pisahkan keyword dengan koma"
-            className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+            error={fieldErrors.bidangPenelitian}
+            onChange={(ids) => {
+              setSelectedBidangPenelitianIds(ids);
+              clearFieldError("bidangPenelitian");
+            }}
           />
         </div>
       </div>
@@ -1842,6 +2005,336 @@ function FormJudulSendiri({
   );
 }
 
+function PerintisanStudentCombobox({
+  inputId,
+  candidates,
+  value,
+  onChange,
+  unavailableIds,
+  loading,
+  hasError,
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const selected = candidates.find((candidate) => String(candidate.pendaftaran_id) === String(value)) || null;
+  const getCandidateLabel = (candidate) => candidate
+    ? `${candidate.nama} - ${candidate.nim}`
+    : "";
+  const selectedLabel = getCandidateLabel(selected);
+  const [query, setQuery] = useState(selectedLabel);
+
+  useEffect(() => {
+    if (!isOpen) setQuery(selectedLabel);
+  }, [isOpen, selectedLabel]);
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredCandidates = candidates.filter((candidate) => {
+    if (!normalizedQuery || normalizedQuery === selectedLabel.toLowerCase()) return true;
+    return [
+      candidate.nim,
+      candidate.nama,
+      candidate.jenis_pendaftaran,
+      formatJalurLabel(candidate.jenis_pendaftaran),
+    ].some((part) => String(part || "").toLowerCase().includes(normalizedQuery));
+  });
+
+  return (
+    <div className="relative mt-1">
+      <input
+        id={inputId}
+        type="text"
+        role="combobox"
+        autoComplete="off"
+        aria-autocomplete="list"
+        aria-controls={`${inputId}-options`}
+        aria-expanded={isOpen}
+        aria-invalid={hasError}
+        value={query}
+        disabled={loading}
+        onFocus={(event) => {
+          setIsOpen(true);
+          if (selected) event.currentTarget.select();
+        }}
+        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setIsOpen(false);
+        }}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (value) onChange("");
+          setIsOpen(true);
+        }}
+        placeholder={loading ? "Memuat kandidat..." : "Cari nama atau NIM mahasiswa"}
+        className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${
+          hasError
+            ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
+            : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+        }`}
+      />
+      {isOpen && !loading ? (
+        <div
+          id={`${inputId}-options`}
+          role="listbox"
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-[220px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg"
+        >
+          {filteredCandidates.length > 0 ? filteredCandidates.map((candidate) => {
+            const candidateId = String(candidate.pendaftaran_id);
+            const unavailable = unavailableIds.has(candidateId) && candidateId !== String(value);
+            return (
+              <button
+                key={`perintisan-candidate-${inputId}-${candidateId}`}
+                type="button"
+                role="option"
+                aria-selected={candidateId === String(value)}
+                disabled={unavailable}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onChange(candidateId);
+                  setQuery(getCandidateLabel(candidate));
+                  setIsOpen(false);
+                }}
+                className={`flex min-h-[44px] w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                  unavailable
+                    ? "cursor-not-allowed bg-[#f7f8fc] text-[#9aa6c2]"
+                    : "text-[#263a68] hover:bg-[#f4f7ff]"
+                }`}
+              >
+                <span className="font-semibold">{candidate.nama}</span>
+                <span className="shrink-0 text-xs">
+                  {unavailable ? "Sudah dipilih" : `NIM: ${candidate.nim}`}
+                </span>
+              </button>
+            );
+          }) : (
+            <p className="px-3 py-3 text-xs font-semibold text-[#7282a8]">Mahasiswa tidak ditemukan.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PerintisanGroupBuilder({ session, apiBaseUrl, onSessionExpired, onSaved, onOpenChange }) {
+  const emptyMember = { pendaftaran_id: "", peran_tim: "" };
+  const [selfRole, setSelfRole] = useState("");
+  const [members, setMembers] = useState([{ ...emptyMember }, { ...emptyMember }]);
+  const [candidates, setCandidates] = useState([]);
+  const [leader, setLeader] = useState(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+  const roles = [
+    { value: "hustler", label: "Hustler" },
+    { value: "hipster", label: "Hipster" },
+    { value: "hacker", label: "Hacker" },
+  ];
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/jalur/non-penelitian/perintisan-bisnis/group-candidates`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const data = await response.json().catch(() => null);
+        if (response.status === 401) {
+          onSessionExpired?.();
+          return;
+        }
+        if (!response.ok || !data?.success) throw new Error(data?.message || "Kandidat kelompok gagal dimuat.");
+        if (active) {
+          setCandidates(data.data?.kandidat || []);
+          setLeader(data.data?.ketua || null);
+        }
+      } catch (loadError) {
+        if (active) setError(loadError.message || "Kandidat kelompok gagal dimuat.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    load();
+    return () => { active = false; };
+  }, [apiBaseUrl, onSessionExpired, session.token]);
+
+  const updateMember = (index, patch) => {
+    setMembers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item));
+    setError("");
+    setFieldErrors((current) => {
+      const next = { ...current };
+      if (Object.prototype.hasOwnProperty.call(patch, "pendaftaran_id")) {
+        delete next[`member_${index}_student`];
+      }
+      if (Object.prototype.hasOwnProperty.call(patch, "peran_tim")) {
+        delete next[`member_${index}_role`];
+      }
+      return next;
+    });
+  };
+
+  const usedRegistrationIds = new Set(members.map((item) => String(item.pendaftaran_id)).filter(Boolean));
+  const usedRoles = new Set([selfRole, ...members.map((item) => item.peran_tim)].filter(Boolean));
+
+  const saveGroup = async () => {
+    setError("");
+    const teamRoles = [selfRole, ...members.map((item) => item.peran_tim)];
+    const nextFieldErrors = {};
+    if (!selfRole) nextFieldErrors.self_role = "Peran ketua wajib dipilih.";
+    members.forEach((member, index) => {
+      if (!member.pendaftaran_id) {
+        nextFieldErrors[`member_${index}_student`] = `Mahasiswa anggota ${index + 2} wajib dipilih.`;
+      }
+      if (!member.peran_tim) {
+        nextFieldErrors[`member_${index}_role`] = `Peran anggota ${index + 2} wajib dipilih.`;
+      }
+    });
+    if (teamRoles.every(Boolean) && new Set(teamRoles).size !== 3) {
+      nextFieldErrors.self_role = "Tetapkan tepat satu Hustler, satu Hipster, dan satu Hacker.";
+      members.forEach((_, index) => {
+        nextFieldErrors[`member_${index}_role`] = "Peran setiap anggota harus berbeda.";
+      });
+    }
+    setFieldErrors(nextFieldErrors);
+    if (Object.keys(nextFieldErrors).length > 0) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/jalur/non-penelitian/perintisan-bisnis/group`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          peran_tim: selfRole,
+          anggota: members,
+        }),
+      });
+      const data = await response.json().catch(() => null);
+      if (response.status === 401) {
+        onSessionExpired?.();
+        return;
+      }
+      if (!response.ok || !data?.success) throw new Error(data?.message || "Kelompok gagal disimpan.");
+      showSubmissionSuccessToast(data.message || "Kelompok Perintisan Bisnis berhasil disimpan.");
+      onSaved?.();
+    } catch (saveError) {
+      setError(saveError.message || "Kelompok gagal disimpan.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!formOpen) {
+    return (
+      <div className="mt-4 space-y-3 rounded-lg border border-[#9eb8f3] bg-[#f4f7ff] px-4 py-4 text-sm text-[#29477f]">
+        <p className="font-bold">Anda belum tergabung dalam kelompok Perintisan Bisnis.</p>
+        <p>Pilih tindakan sesuai posisi Anda:</p>
+        <ol className="list-decimal space-y-1 pl-5">
+          <li><strong>Jika Anda akan menjadi ketua:</strong> klik <strong>Buat Kelompok</strong>, lalu pilih dua mahasiswa sebagai anggota. Anda otomatis ditetapkan sebagai ketua.</li>
+          <li><strong>Jika Anda akan menjadi anggota:</strong> jangan membuat kelompok. Tunggu ketua memilih Anda, kemudian muat ulang halaman untuk melihat kelompok.</li>
+        </ol>
+        <p>Setiap kelompok wajib berisi tiga mahasiswa dengan satu Hustler, satu Hipster, dan satu Hacker.</p>
+        <div>
+          <button type="button" onClick={() => { setFormOpen(true); onOpenChange?.(true); }} className="rounded-lg bg-[#2f63e3] px-4 py-2 font-bold text-white">
+            Buat Kelompok
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 space-y-4">
+      <div className="rounded-lg border border-[#9eb8f3] bg-[#f4f7ff] px-4 py-3 text-sm text-[#29477f]">
+        <p className="font-bold">Anda sedang membuat kelompok Perintisan Bisnis sebagai ketua.</p>
+        <p className="mt-1">Pilih dua anggota, lalu tetapkan tepat satu Hustler, satu Hipster, dan satu Hacker. Nama kelompok dan jenis bisnis diisi pada bagian Detail Perintisan Bisnis.</p>
+      </div>
+      <div className="space-y-4 rounded-lg border border-[#dbe4f7] p-4">
+          <div className="rounded-lg border border-[#cbd9f5] bg-[#f8fbff] p-4">
+            <p className="text-xs font-bold uppercase text-[#7180a5]">Anggota 1 · Ketua</p>
+            <p className="mt-2 font-bold text-[#1b274b]">{leader?.nama || session?.user?.nama || "-"}</p>
+            <p className="text-sm text-[#5d6c91]">{leader?.nim || session?.user?.nim || "-"}</p>
+            <p className="mt-2 text-sm text-[#324c86]">
+              DPA: {leader?.dpa ? formatDosenFullName(leader.dpa.nama, leader.dpa.gelar) : "Belum tersedia"}
+            </p>
+          </div>
+          <label className="block text-sm font-semibold text-[#324c86]">
+            Peran Ketua <span className="text-[#c23737]">*</span>
+            <select
+              value={selfRole}
+              onChange={(event) => {
+                setSelfRole(event.target.value);
+                setError("");
+                setFieldErrors((current) => ({ ...current, self_role: "" }));
+              }}
+              aria-invalid={Boolean(fieldErrors.self_role)}
+              className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 ${fieldErrors.self_role ? "border-[#dc4c4c]" : "border-[#d0dbf4]"}`}
+            >
+              <option value="">Pilih peran</option>
+              {roles.map((role) => <option key={role.value} value={role.value} disabled={usedRoles.has(role.value) && selfRole !== role.value}>{role.label}</option>)}
+            </select>
+            <FieldError message={fieldErrors.self_role} />
+          </label>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {members.map((member, index) => (
+              <div key={`group-member-${index}`} className="rounded-lg border border-[#dbe4f7] bg-[#f8fbff] p-4">
+                <p className="font-bold text-[#1b274b]">Anggota {index + 2}</p>
+                <div className="mt-3 text-sm font-semibold text-[#324c86]">
+                  <label htmlFor={`perintisan-member-${index}`}>
+                    Mahasiswa <span className="text-[#c23737]">*</span>
+                  </label>
+                  <PerintisanStudentCombobox
+                    inputId={`perintisan-member-${index}`}
+                    candidates={candidates}
+                    value={member.pendaftaran_id}
+                    onChange={(selectedValue) => updateMember(index, { pendaftaran_id: selectedValue })}
+                    unavailableIds={usedRegistrationIds}
+                    loading={loading}
+                    hasError={Boolean(fieldErrors[`member_${index}_student`])}
+                  />
+                  <FieldError message={fieldErrors[`member_${index}_student`]} />
+                </div>
+                {(() => {
+                  const selected = candidates.find((candidate) => String(candidate.pendaftaran_id) === String(member.pendaftaran_id));
+                  return (
+                    <div className="mt-3 rounded-lg border border-[#e0e7f6] bg-white px-3 py-2 text-sm text-[#53689a]">
+                      <span className="font-semibold text-[#324c86]">DPA Anggota:</span>{" "}
+                      {selected?.dpa ? formatDosenFullName(selected.dpa.nama, selected.dpa.gelar) : "Pilih mahasiswa terlebih dahulu"}
+                    </div>
+                  );
+                })()}
+                <label className="mt-3 block text-sm font-semibold text-[#324c86]">
+                  Peran <span className="text-[#c23737]">*</span>
+                  <select
+                    value={member.peran_tim}
+                    onChange={(event) => updateMember(index, { peran_tim: event.target.value })}
+                    aria-invalid={Boolean(fieldErrors[`member_${index}_role`])}
+                    className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 ${fieldErrors[`member_${index}_role`] ? "border-[#dc4c4c]" : "border-[#d0dbf4]"}`}
+                  >
+                    <option value="">Pilih peran</option>
+                    {roles.map((role) => <option key={role.value} value={role.value} disabled={usedRoles.has(role.value) && member.peran_tim !== role.value}>{role.label}</option>)}
+                  </select>
+                  <FieldError message={fieldErrors[`member_${index}_role`]} />
+                </label>
+              </div>
+            ))}
+          </div>
+          {!loading && candidates.length < 2 ? <p className="text-sm text-[#9a6800]">Kandidat yang memenuhi syarat belum cukup. Setiap anggota harus mendaftar Perintisan Bisnis secara individual terlebih dahulu.</p> : null}
+          {error ? <p className="text-sm font-semibold text-[#c23737]">{error}</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setFormOpen(false); onOpenChange?.(false); }} disabled={saving} className="rounded-lg border border-[#cbd8f3] bg-white px-4 py-2 text-sm font-bold text-[#29477f] disabled:opacity-50">
+              Batal
+            </button>
+            <button type="button" onClick={saveGroup} disabled={saving || loading || candidates.length < 2} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+              {saving ? "Menyimpan..." : "Simpan Kelompok dan Lanjutkan"}
+            </button>
+          </div>
+      </div>
+    </div>
+  );
+}
+
 function FormNonPenelitianGeneric({
   jalur,
   jalurLabel,
@@ -1851,6 +2344,7 @@ function FormNonPenelitianGeneric({
   onSubmitted,
   studentProfile,
   initialTeam,
+  initialPayload,
   disabled,
 }) {
   const initialForm = useMemo(
@@ -1894,8 +2388,46 @@ function FormNonPenelitianGeneric({
   const [submitSuccess, setSubmitSuccess] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
   const [dokumenPendukungFile, setDokumenPendukungFile] = useState(null);
+  const [perintisanGroupFormOpen, setPerintisanGroupFormOpen] = useState(false);
   const dokumenPendukungInputRef = useRef(null);
   const isBisnis = jalur === "perintisan_bisnis";
+  const perintisanTeamReady = Boolean(initialTeam?.anggota?.length === 3);
+  const showSubmissionSections = !isBisnis || perintisanTeamReady || perintisanGroupFormOpen;
+  const perintisanLeader = isBisnis
+    ? (initialTeam?.anggota || []).find((item) => item.posisi === "ketua")
+    : null;
+  const isPerintisanMember = Boolean(
+    isBisnis && perintisanTeamReady && initialTeam?.is_ketua === false,
+  );
+  const detailDisabled = disabled || (isBisnis && (!perintisanTeamReady || !initialTeam?.is_ketua));
+
+  useEffect(() => {
+    if (!isBisnis || !initialTeam) return;
+    setFormData((current) => ({
+      ...current,
+      nama_kelompok: current.nama_kelompok || initialTeam.nama_kelompok || "",
+      jenis_bisnis: current.jenis_bisnis || initialTeam.jenis_bisnis || "",
+    }));
+  }, [initialTeam, isBisnis]);
+
+  useEffect(() => {
+    if (!isBisnis || !initialPayload || typeof initialPayload !== "object") return;
+    setFormData((current) => {
+      const hydrated = { ...current };
+      Object.keys(initialForm).forEach((field) => {
+        if (typeof initialPayload[field] === "string") {
+          hydrated[field] = initialPayload[field];
+        } else if (typeof initialPayload[field] === "boolean") {
+          hydrated[field] = initialPayload[field];
+        }
+      });
+      return hydrated;
+    });
+  }, [initialForm, initialPayload, isBisnis]);
+
+  const revisionNote = isBisnis && initialPayload?.workflow_status === "revision_required"
+    ? String(initialPayload?.review_dosen_pengampu?.note || "").trim()
+    : "";
 
   const getGenericFieldError = (field, label, value, { required = true, multiline = false } = {}) => {
     const text = String(value || "").trim();
@@ -1909,14 +2441,14 @@ function FormNonPenelitianGeneric({
     if (field === "tautan_bisnis") {
       return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
     }
+    if (hasInvalidGenericText(text)) {
+      return getInvalidGenericTextMessage(label);
+    }
     const maximumLength = multiline ? 2000 : field === "dokumen_pendukung" ? 255 : 150;
     if (text.length > maximumLength) return `${label} maksimal ${maximumLength} karakter.`;
     if (multiline && text.length < 10) return `${label} minimal 10 karakter.`;
     if (!multiline && required && text.length < 2) return `${label} minimal 2 karakter.`;
-    if (!/[\p{L}\p{N}]/u.test(text)) return `${label} tidak boleh hanya berisi simbol.`;
-    if (text.split("").some(isInvalidGenericTextCharacter)) {
-      return `${label} mengandung karakter yang tidak diperbolehkan.`;
-    }
+    if (!/[\p{L}\p{N}]/u.test(text)) return `${label} harus mengandung huruf atau angka.`;
     return "";
   };
 
@@ -1967,6 +2499,7 @@ function FormNonPenelitianGeneric({
         ];
     const specificRequired = isBisnis
       ? [
+          ["nama_kelompok", "Nama kelompok"],
           ["nama_bisnis", "Nama bisnis"],
           ["jenis_bisnis", "Jenis bisnis"],
           ["lokasi_bisnis", "Lokasi bisnis"],
@@ -2059,7 +2592,7 @@ function FormNonPenelitianGeneric({
   };
 
   const handleSubmit = async () => {
-    if (disabled) return;
+    if (detailDisabled) return;
     const validationMessage = validateForm();
     if (validationMessage) {
       return;
@@ -2137,7 +2670,7 @@ function FormNonPenelitianGeneric({
     fieldErrors[field]
       ? "border-[#dc4c4c] bg-[#fff8f8] focus:border-[#dc4c4c] focus:ring-2 focus:ring-[#dc4c4c]/15"
       : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-  } ${disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : ""}`;
+  } ${detailDisabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : ""}`;
   const renderInput = (field, label, options = {}) => {
     const required = options.required !== false;
     const isNim = ["anggota_1_nim", "anggota_2_nim"].includes(field);
@@ -2156,15 +2689,21 @@ function FormNonPenelitianGeneric({
           onChange={(event) => {
             const value = isNim
               ? event.target.value.replace(/\D/g, "").slice(0, 8)
-              : sanitizeGenericTextInput(event.target.value);
+              : event.target.value;
             updateField(field, value);
+            if (!isNim && field !== "tautan_bisnis" && hasInvalidGenericText(value)) {
+              setFieldErrors((prev) => ({
+                ...prev,
+                [field]: getInvalidGenericTextMessage(label),
+              }));
+            }
           }}
           onBlur={() => {
             const error = getGenericFieldError(field, label, formData[field], { required });
             setFieldErrors((prev) => ({ ...prev, [field]: error }));
           }}
-          disabled={disabled}
-          placeholder={options.placeholder || ""}
+          disabled={detailDisabled}
+          placeholder={options.placeholder || `Masukkan ${label.toLowerCase()}`}
           aria-invalid={Boolean(fieldErrors[field])}
           className={getInputClass(field)}
         />
@@ -2184,10 +2723,16 @@ function FormNonPenelitianGeneric({
           rows={options.rows || 3}
           maxLength={2000}
           value={formData[field]}
-          onChange={(event) => updateField(
-            field,
-            sanitizeGenericTextInput(event.target.value)
-          )}
+          onChange={(event) => {
+            const value = event.target.value;
+            updateField(field, value);
+            if (hasInvalidGenericText(value)) {
+              setFieldErrors((prev) => ({
+                ...prev,
+                [field]: getInvalidGenericTextMessage(label),
+              }));
+            }
+          }}
           onBlur={() => {
             const error = getGenericFieldError(field, label, formData[field], {
               required,
@@ -2195,8 +2740,8 @@ function FormNonPenelitianGeneric({
             });
             setFieldErrors((prev) => ({ ...prev, [field]: error }));
           }}
-          disabled={disabled}
-          placeholder={options.placeholder || ""}
+          disabled={detailDisabled}
+          placeholder={options.placeholder || `Masukkan ${label.toLowerCase()}`}
           aria-invalid={Boolean(fieldErrors[field])}
           className={getInputClass(field)}
         />
@@ -2211,16 +2756,28 @@ function FormNonPenelitianGeneric({
         <h2 className="text-xl font-black text-[#1b274b]">Form Pengajuan {jalurLabel}</h2>
         <p className="mt-1 text-sm text-[#5d6c91]">
           {isBisnis
-            ? "Form diisi oleh ketua. Susunan tim mengikuti data pada pendaftaran awal."
+            ? "Setiap mahasiswa mendaftar secara individual. Ketua menyusun kelompok pada bagian Data Kelompok sebelum mengisi detail bisnis."
             : "Form diisi oleh ketua kelompok. Anggota 1 wajib dan Anggota 2 dapat dikosongkan."}
         </p>
       </section>
 
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">Data Kelompok</h3>
-        {isBisnis ? (
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-            {(initialTeam?.anggota || []).map((item) => (
+        {isBisnis && !perintisanTeamReady ? (
+          <PerintisanGroupBuilder
+            session={session}
+            apiBaseUrl={apiBaseUrl}
+            onSessionExpired={onSessionExpired}
+            onSaved={onSubmitted}
+            onOpenChange={setPerintisanGroupFormOpen}
+          />
+        ) : isBisnis ? (
+          <>
+            <div className="mt-4 rounded-lg border border-[#b9e4ca] bg-[#f0fbf4] px-4 py-3 text-sm text-[#1f7140]">
+              Kelompok telah terbentuk. Data anggota bersifat read-only dan form detail bisnis hanya dapat dikirim oleh ketua.
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+              {(initialTeam?.anggota || []).map((item) => (
               <div key={`tim-perintisan-${item.mahasiswa_id}`} className="rounded-lg border border-[#dce5f7] bg-[#f8fbff] px-4 py-3">
                 <div className="flex items-start justify-between gap-2">
                   <p className="text-xs font-bold uppercase text-[#7180a5]">
@@ -2232,12 +2789,16 @@ function FormNonPenelitianGeneric({
                 </div>
                 <p className="mt-2 font-bold text-[#1b274b]">{item.nama || "-"}</p>
                 <p className="text-sm text-[#5d6c91]">{item.nim || "-"}</p>
+                <p className="mt-1 text-xs text-[#53689a]">
+                  DPA: {item.dpa ? formatDosenFullName(item.dpa.nama, item.dpa.gelar) : "Belum tersedia"}
+                </p>
                 <p className="mt-1 text-xs text-[#7180a5]">
                   Pendaftaran {formatJalurLabel(item.jenis_pendaftaran)}
                 </p>
               </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </>
         ) : (
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
             {renderInput("nama_kelompok", "Nama Kelompok", { wide: true })}
@@ -2255,13 +2816,53 @@ function FormNonPenelitianGeneric({
         )}
       </section>
 
+      {isPerintisanMember ? (
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
+          <h3 className="text-lg font-black text-[#1b274b]">Status Pengisian Detail Bisnis</h3>
+          <div className="mt-4 rounded-lg border border-[#9eb8f3] bg-[#f4f7ff] px-4 py-4 text-[#29477f]">
+            <p className="font-bold">
+              {disabled
+                ? "Detail Perintisan Bisnis telah dikirim oleh ketua kelompok."
+                : "Detail Perintisan Bisnis sedang dilengkapi oleh ketua kelompok."}
+            </p>
+            <p className="mt-2 text-sm leading-relaxed">
+              <span className="font-semibold">{perintisanLeader?.nama || "Ketua kelompok"}</span>
+              {perintisanLeader?.nim ? ` (${perintisanLeader.nim})` : ""} bertanggung jawab mengisi dan
+              mengirim detail bisnis untuk seluruh anggota kelompok.
+            </p>
+            <p className="mt-2 text-sm leading-relaxed">
+              {disabled
+                ? "Anda tidak perlu mengisi ulang form. Status pengajuan seluruh anggota akan mengikuti hasil proses pengajuan kelompok."
+                : "Anda tidak perlu mengisi form pada tahap ini. Tunggu ketua menyelesaikan dan mengirim pengajuan; status seluruh anggota akan diperbarui secara otomatis."}
+            </p>
+          </div>
+        </section>
+      ) : null}
+
+      {showSubmissionSections && !isPerintisanMember ? (
+        <>
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-6 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">
           {isBisnis ? "Detail Perintisan Bisnis" : "Detail Pengabdian Masyarakat"}
         </h3>
+        {revisionNote ? (
+          <div className="mt-3 rounded-lg border border-[#f0c66f] bg-[#fff8e7] px-4 py-3 text-sm text-[#7b5400]">
+            <p className="font-bold">Dosen pengampu meminta perbaikan detail Perintisan Bisnis.</p>
+            <p className="mt-1">{revisionNote}</p>
+            <p className="mt-2">Data sebelumnya tetap tersedia. Perbaiki bagian yang diminta, lalu kirim kembali form untuk direview.</p>
+          </div>
+        ) : null}
+        {isBisnis && !perintisanTeamReady ? (
+          <div className="mt-3 rounded-lg border border-[#f0d58b] bg-[#fff9e8] px-4 py-3 text-sm text-[#815a00]">
+            Selesaikan dan simpan Data Kelompok terlebih dahulu. Setelah kelompok berhasil disimpan, form Detail Perintisan Bisnis akan dapat diisi oleh ketua.
+          </div>
+        ) : null}
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           {isBisnis ? (
             <>
+              {renderInput("nama_kelompok", "Nama Kelompok", {
+                placeholder: "Masukkan nama kelompok",
+              })}
               {renderInput("nama_bisnis", "Nama Bisnis")}
               {renderInput("jenis_bisnis", "Jenis Bisnis")}
               {renderInput("lokasi_bisnis", "Lokasi Bisnis", { wide: true })}
@@ -2276,7 +2877,7 @@ function FormNonPenelitianGeneric({
               {renderInput("tautan_bisnis", "Tautan Bisnis / Media Sosial", {
                 wide: true,
                 required: false,
-                placeholder: "Opsional",
+                placeholder: "Masukkan tautan bisnis atau media sosial (opsional)",
               })}
             </>
           ) : (
@@ -2310,9 +2911,9 @@ function FormNonPenelitianGeneric({
               type="file"
               accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               onChange={handleDokumenPendukungChange}
-              disabled={disabled}
+              disabled={detailDisabled}
               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
-                disabled
+                detailDisabled
                   ? "cursor-not-allowed border-[#d0dbf4] bg-[#f3f5fb] text-[#8b97b6]"
                   : "border-[#d0dbf4] bg-white focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
@@ -2329,7 +2930,7 @@ function FormNonPenelitianGeneric({
                 type="checkbox"
                 checked={formData.persetujuan_anggota}
                 onChange={(event) => updateField("persetujuan_anggota", event.target.checked)}
-                disabled={disabled}
+                disabled={detailDisabled}
                 className="mt-1 h-4 w-4 accent-[#2f63e3]"
               />
               <span className="text-sm font-semibold leading-relaxed text-[#405070]">
@@ -2358,9 +2959,9 @@ function FormNonPenelitianGeneric({
               if (dokumenPendukungInputRef.current) dokumenPendukungInputRef.current.value = "";
               setSubmitSuccess("");
             }}
-            disabled={disabled}
+            disabled={detailDisabled}
             className={`inline-flex items-center gap-2 rounded-lg border border-[#d1daf0] px-5 py-2 text-sm font-semibold transition ${
-              disabled ? "cursor-not-allowed bg-[#f5f7fb] text-[#7f8aac]" : "text-[#314778] hover:bg-[#f4f7ff]"
+              detailDisabled ? "cursor-not-allowed bg-[#f5f7fb] text-[#7f8aac]" : "text-[#314778] hover:bg-[#f4f7ff]"
             }`}
           >
             <RotateCcw className="h-4 w-4" />
@@ -2369,9 +2970,9 @@ function FormNonPenelitianGeneric({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={disabled || submitLoading}
+            disabled={detailDisabled || submitLoading}
             className={`inline-flex items-center gap-2 rounded-lg px-5 py-2 text-sm font-bold transition ${
-              disabled || submitLoading
+              detailDisabled || submitLoading
                 ? "cursor-not-allowed bg-[#d5dbea] text-[#7a86a5]"
                 : "bg-[#2f63e3] text-white hover:brightness-110"
             }`}
@@ -2381,6 +2982,8 @@ function FormNonPenelitianGeneric({
           </button>
         </div>
       </section>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -2623,7 +3226,7 @@ function FormSuratRekomendasiMagang({
         ? "Internship Company website URL"
         : "Internship vacancy URL";
     const unsafeCharacterError = hasForbiddenMagangUrlCharacters(value)
-      ? `${label} tidak boleh mengandung karakter { } [ ] ; ' " < > \\ atau pola --.`
+      ? `${label} tidak boleh mengandung karakter + { } [ ] ; ' " < > \\ atau pola --.`
       : "";
     if (!unsafeCharacterError) return;
     setMagangFieldErrors((prev) => ({ ...prev, [field]: unsafeCharacterError }));
@@ -2972,9 +3575,7 @@ function FormSuratRekomendasiMagang({
     if (formData.sudah_apply_ke_mitra === null) {
       return "Konfirmasi status apply ke mitra wajib dipilih terlebih dahulu.";
     }
-    if (formData.sudah_apply_ke_mitra === false) {
-      return "Form hanya dapat dikirim setelah Anda melakukan apply ke mitra magang.";
-    }
+
     if (
       formData.sudah_apply_ke_mitra === true &&
       (!formData.tanggal_apply.trim() ||
@@ -3823,6 +4424,7 @@ function PengajuanPage({
     jalurEligibility?.pendaftaran_aktif?.kelompok_perintisan ||
     jalurStatus?.pendaftaran_aktif?.kelompok_perintisan ||
     null;
+  const initialNonPenelitianPayload = jalurStatus?.non_penelitian_form?.payload || null;
 
   return (
     <div className="w-full space-y-6 pb-8">
@@ -3894,6 +4496,7 @@ function PengajuanPage({
           onSubmitted={onEligibilityRefresh}
           studentProfile={studentProfile}
           initialTeam={renderJalur === "perintisan_bisnis" ? initialPerintisanTeam : null}
+          initialPayload={renderJalur === "perintisan_bisnis" ? initialNonPenelitianPayload : null}
           disabled={currentFormDisabled}
         />
       ) : null}
@@ -3902,5 +4505,3 @@ function PengajuanPage({
 }
 
 export default PengajuanPage;
-
-

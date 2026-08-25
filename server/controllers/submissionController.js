@@ -11,6 +11,7 @@ const {
   PendaftaranPenjaluran,
   PeriodePenjaluran,
   SekretarisProdi,
+  BidangPenelitian,
 } = require("../models");
 const {
   isTopikParallelSubmission,
@@ -128,6 +129,13 @@ async function loadTopikMetaByKode(kodes) {
   const topikRows = await Topik.findAll({
     where: { kode: { [Op.in]: normalizedKodes } },
     attributes: ["kode", "judul", "keyword", "cluster"],
+    include: [{
+      model: BidangPenelitian,
+      as: "bidangPenelitians",
+      attributes: ["id", "nama", "deskripsi"],
+      through: { attributes: [] },
+      required: false,
+    }],
   });
   topikRows.forEach((item) => {
     const normalizedKode = String(item.kode || "")
@@ -137,6 +145,9 @@ async function loadTopikMetaByKode(kodes) {
       topikByKode[normalizedKode] = {
         judul: item.judul || null,
         keyword: item.keyword || null,
+        bidang_penelitian: Array.isArray(item.bidangPenelitians)
+          ? item.bidangPenelitians.map((field) => field.toJSON())
+          : [],
         cluster: item.cluster || null,
       };
     }
@@ -280,6 +291,13 @@ function getSubmissionDetailIncludes() {
       model: Dosen,
       as: "prospectiveSupervisor",
       attributes: ["id", "nik", "nama", "gelar", "email"],
+    },
+    {
+      model: BidangPenelitian,
+      as: "bidangPenelitians",
+      attributes: ["id", "nama"],
+      through: { attributes: [] },
+      required: false,
     },
     {
       model: Pengajuan,
@@ -743,6 +761,7 @@ exports.getMySubmissions = async (req, res) => {
             kode: normalizedKode || item.kode,
             judul: item.judul || topikByKode[normalizedKode]?.judul || null,
             keyword: topikByKode[normalizedKode]?.keyword || null,
+            bidang_penelitian: topikByKode[normalizedKode]?.bidang_penelitian || [],
             cluster: topikByKode[normalizedKode]?.cluster || null,
           };
         });
@@ -751,13 +770,14 @@ exports.getMySubmissions = async (req, res) => {
         const slotStateBySlot = new Map(parallelState.slot_decisions.map((item) => [Number(item.slot), item]));
 
         base.topik_dipilih = topikList.map(({ kode }) => kode);
-        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul, keyword, cluster, dosen, dosen_id: dosenId }) => {
+        base.topik_dipilih_detail = topikList.map(({ slot, kode, judul, keyword, bidang_penelitian, cluster, dosen, dosen_id: dosenId }) => {
           const slotState = slotStateBySlot.get(Number(slot));
           return {
             slot,
             kode,
             judul,
             keyword: keyword || null,
+            bidang_penelitian: bidang_penelitian || [],
             cluster: cluster || null,
             dosen: dosen || null,
             dosen_id: dosenId || null,
@@ -772,6 +792,7 @@ exports.getMySubmissions = async (req, res) => {
               kode: approvedTopik.kode,
               judul: approvedTopik.judul,
               keyword: approvedTopik.keyword || null,
+              bidang_penelitian: approvedTopik.bidang_penelitian || [],
               cluster: approvedTopik.cluster || null,
             }
           : null;
@@ -1150,6 +1171,7 @@ exports.getSubmissionById = async (req, res) => {
           kode: normalizedKode || item.kode,
           judul: item.judul || topikMeta.judul || null,
           keyword: topikMeta.keyword || null,
+          bidang_penelitian: topikMeta.bidang_penelitian || [],
           cluster: topikMeta.cluster || null,
           reviewer_status: slotState?.reviewer_status || null,
           reviewer_note: slotState?.reviewer_note || null,
@@ -1177,6 +1199,7 @@ exports.getSubmissionById = async (req, res) => {
             kode,
             judul,
             keyword,
+            bidang_penelitian,
             cluster,
             dosen,
             dosen_id: dosenId,
@@ -1190,6 +1213,7 @@ exports.getSubmissionById = async (req, res) => {
             kode,
             judul,
             keyword: keyword || null,
+            bidang_penelitian: bidang_penelitian || [],
             cluster: cluster || null,
             dosen,
             dosen_id: dosenId || null,
@@ -1210,6 +1234,7 @@ exports.getSubmissionById = async (req, res) => {
               kode: approvedTopik.kode,
               judul: approvedTopik.judul,
               keyword: approvedTopik.keyword || null,
+              bidang_penelitian: approvedTopik.bidang_penelitian || [],
               cluster: approvedTopik.cluster || null,
             }
         : null;
@@ -1235,7 +1260,10 @@ exports.getSubmissionById = async (req, res) => {
         diajukan_pada: submission.createdAt,
         judul_mandiri: submission.judul_mandiri,
         deskripsi_mandiri: submission.deskripsi_mandiri,
-        keyword_mandiri: submission.keyword_mandiri,
+        bidang_penelitian: (submission.bidangPenelitians || []).map((bidang) => ({
+          id: bidang.id,
+          nama: bidang.nama,
+        })),
         cluster_mandiri: submission.cluster_mandiri,
         calon_dosen_pembimbing: submission.prospectiveSupervisor
           ? {
@@ -1388,6 +1416,8 @@ exports.getSubmissionById = async (req, res) => {
       riwayat_persetujuan: riwayatOrdered.map((item) => ({
         status: item.status,
         tipe_approval: item.tipe_approval || "calon_pembimbing",
+        topik_slot: item.topik_slot || null,
+        topik_kode: item.topik_kode || null,
         keterangan: item.keterangan,
         tanggal_keputusan: item.tanggal_keputusan || item.createdAt,
         dosen: item.dosen

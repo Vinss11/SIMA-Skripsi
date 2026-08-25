@@ -147,18 +147,24 @@ const MAGANG_APPLICATION_METHOD_OPTIONS = [
 const TOPIK_UPLOAD_PREVIEW_MAX_ROWS = 10;
 const TOPIK_UPLOAD_PREVIEW_PAGE_SIZE = 5;
 const TOPIK_CLUSTER_OPTIONS = ["Sirkel", "Siber", "ITSC", "MVK"];
-const TOPIK_CLUSTER_CODE_BY_LABEL = {
-  Sirkel: "SIRKEL",
-  Siber: "SIBER",
-  ITSC: "ITSC",
-  MVK: "MVK",
-};
 const TOPIK_CLUSTER_LABEL_BY_CODE = {
   SIRKEL: "Sirkel",
   SIBER: "Siber",
   ITSC: "ITSC",
   MVK: "MVK",
 };
+const TOPIK_TITLE_FORBIDDEN_CHARACTERS = new Set([
+  "+", "=", "_", "{", "}", "[", "]", "<", ">", "/", "?", "\\", "|", ":", ";", "'", '"',
+]);
+
+function getTopikTitleValidationError(value) {
+  const text = String(value || "");
+  const containsForbiddenCharacter = text.includes("--")
+    || Array.from(text).some((character) => TOPIK_TITLE_FORBIDDEN_CHARACTERS.has(character));
+  return containsForbiddenCharacter
+    ? "Judul topik tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' \", atau pola -- (komentar SQL)."
+    : "";
+}
 const PERIODE_MASTER_KETUA_FIELDS = [
   {
     key: "ketua_itsc_dosen_id",
@@ -535,6 +541,81 @@ function ReplacementDosenCombobox({
   );
 }
 
+function TopikBidangPenelitianCombobox({ options = [], value = [], onChange, error }) {
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedIds = new Set((Array.isArray(value) ? value : []).map(Number));
+  const selectedOptions = options.filter((option) => selectedIds.has(Number(option.id)));
+  const normalizedQuery = query.trim().toLowerCase();
+  const availableOptions = options.filter((option) => (
+    !selectedIds.has(Number(option.id))
+    && (!normalizedQuery || [option.nama, option.deskripsi]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+      .includes(normalizedQuery))
+  ));
+  const disabled = options.length === 0 || selectedIds.size >= 10;
+
+  const selectOption = (option) => {
+    if (selectedIds.size >= 10) return;
+    onChange([...selectedIds, Number(option.id)]);
+    setQuery("");
+    setIsOpen(true);
+  };
+
+  const removeOption = (optionId) => {
+    onChange([...selectedIds].filter((id) => id !== Number(optionId)));
+  };
+
+  return (
+    <div className="space-y-2">
+      {selectedOptions.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selectedOptions.map((option) => (
+            <span key={`topik-bidang-selected-${option.id}`} className="inline-flex items-center gap-1.5 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+              {option.nama}
+              <button type="button" onClick={() => removeOption(option.id)} aria-label={`Hapus ${option.nama}`} className="rounded-full p-0.5 hover:bg-[#cfddff]">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+        <input
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls="topik-bidang-penelitian-options"
+          value={query}
+          disabled={disabled}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => { setQuery(event.target.value); setIsOpen(true); }}
+          placeholder={options.length === 0 ? "Bidang penelitian dosen belum dikonfigurasi" : "Cari dan pilih bidang penelitian"}
+          className={`w-full rounded-lg border bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6] ${
+            error ? "border-[#d93030] focus:border-[#d93030] focus:ring-[#d93030]/20" : "border-[#d3dbef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+          }`}
+        />
+        {isOpen && options.length > 0 ? (
+          <div id="topik-bidang-penelitian-options" role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[260px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg">
+            {availableOptions.length > 0 ? availableOptions.map((option) => (
+              <button key={`topik-bidang-option-${option.id}`} type="button" role="option" aria-selected="false" onMouseDown={(event) => event.preventDefault()} onClick={() => selectOption(option)} className="block w-full border-b border-[#edf1fb] px-3 py-2.5 text-left last:border-b-0 hover:bg-[#f4f7ff]">
+                <span className="block text-sm font-semibold text-[#30477e]">{option.nama}</span>
+                {option.deskripsi ? <span className="mt-0.5 block text-xs text-[#6c7a9e]">{option.deskripsi}</span> : null}
+              </button>
+            )) : <p className="px-3 py-3 text-sm font-semibold text-[#7282a8]">{selectedIds.size >= 10 ? "Maksimal 10 bidang penelitian." : "Bidang penelitian tidak ditemukan."}</p>}
+          </div>
+        ) : null}
+      </div>
+      {error ? <p className="text-xs font-semibold text-[#d93030]">{error}</p> : null}
+    </div>
+  );
+}
+
 function ResearchReviewReadonlyInput({ label, value }) {
   return (
     <div>
@@ -546,6 +627,38 @@ function ResearchReviewReadonlyInput({ label, value }) {
         value={value || ""}
         className="w-full cursor-default rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#5c6888] outline-none disabled:cursor-default disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
       />
+    </div>
+  );
+}
+
+function ResearchReviewReadonlyText({ label, value }) {
+  return (
+    <div>
+      <p className="mb-1 text-sm font-semibold text-[#324c86]">{label}</p>
+      <div className="min-h-[42px] whitespace-pre-wrap break-words rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2 text-sm leading-6 text-[#5c6888]">
+        {value || "-"}
+      </div>
+    </div>
+  );
+}
+
+function ResearchReviewReadonlyTags({ label, items = [] }) {
+  const visibleItems = (Array.isArray(items) ? items : [])
+    .map((item) => String(item?.nama || "").trim())
+    .filter(Boolean);
+
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
+      <div className="flex min-h-[42px] flex-wrap items-center gap-2 rounded-lg border border-[#d2dcef] bg-[#f3f5fb] px-3 py-2">
+        {visibleItems.length > 0 ? visibleItems.map((item) => (
+          <span key={item} className="rounded-full bg-[#e1e9fb] px-3 py-1 text-sm font-semibold text-[#526b9f]">
+            {item}
+          </span>
+        )) : (
+          <span className="text-sm text-[#8b97b6]">-</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -572,8 +685,11 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
     return (
       <section className="bg-white">
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <ResearchReviewReadonlyInput label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri || "-"} />
-          <ResearchReviewReadonlyInput label="Keyword" value={detail.detail_pengajuan?.keyword_mandiri || "-"} />
+          <ResearchReviewReadonlyText label="Judul Penelitian" value={detail.detail_pengajuan?.judul_mandiri} />
+          <ResearchReviewReadonlyTags
+            label="Bidang Penelitian"
+            items={detail.detail_pengajuan?.bidang_penelitian}
+          />
         </div>
         <div className="mt-4">
           <ResearchReviewReadonlyTextarea label="Deskripsi Singkat" value={detail.detail_pengajuan?.deskripsi_mandiri || "-"} />
@@ -605,8 +721,11 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
             <div key={`research-review-topic-${item.slot || index}-${item.kode || "none"}`}>
               <h3 className="text-sm font-black text-[#1b274b]">Topik Pilihan {item.slot || index + 1}</h3>
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <ResearchReviewReadonlyInput label="Judul Penelitian" value={item.judul || "-"} />
-                <ResearchReviewReadonlyInput label="Keyword" value={item.keyword || "-"} />
+                <ResearchReviewReadonlyText label="Judul Penelitian" value={item.judul} />
+                <ResearchReviewReadonlyTags
+                  label="Bidang Penelitian"
+                  items={item.bidang_penelitian || item.bidangPenelitians}
+                />
               </div>
               <div className="mt-4">
                 <ResearchReviewReadonlyTextarea
@@ -1659,20 +1778,9 @@ function normalizeTopikClusterLabel(value) {
   return TOPIK_CLUSTER_LABEL_BY_CODE[code] || null;
 }
 
-function resolveTopikClusterFromKode(kode) {
-  const normalizedKode = String(kode || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "")
-    .replace(/[^A-Z0-9]/g, "");
-  if (!normalizedKode) return null;
-  const prefix = normalizedKode.replace(/[0-9].*$/, "");
-  const code = normalizeTopikClusterCode(prefix);
-  if (!code) return null;
-  return {
-    code,
-    label: TOPIK_CLUSTER_LABEL_BY_CODE[code] || null,
-  };
+function formatTopikBidangPenelitian(topik) {
+  const rows = Array.isArray(topik?.bidangPenelitians) ? topik.bidangPenelitians : [];
+  return rows.map((item) => String(item?.nama || "").trim()).filter(Boolean).join(", ");
 }
 
 function pickTopikUploadField(rawRow, candidates) {
@@ -1717,6 +1825,7 @@ const DOSEN_PENGAMPU_REVIEW_TABS = {
     noteLabel: "Catatan Perintisan Bisnis",
     emptyMessage: "Belum ada review perintisan bisnis yang menunggu keputusan.",
     approveSuccess: "Proposal perintisan bisnis disetujui dan diteruskan ke Sekprodi.",
+    revisionSuccess: "Detail Perintisan Bisnis dikembalikan kepada ketua untuk diperbaiki tanpa menghapus data yang sudah diisi.",
     rejectSuccess: "Pengajuan perintisan bisnis berhasil ditolak.",
   },
 };
@@ -2004,6 +2113,10 @@ function buildTabHeaders(isSekretaris) {
 
 function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpenProfile, isSekretaris = false }) {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const sidangPeriodLeaveGuardRef = useRef(null);
+  const registerSidangPeriodLeaveGuard = useCallback((guard) => {
+    sidangPeriodLeaveGuardRef.current = typeof guard === "function" ? guard : null;
+  }, []);
   const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const submissionNotificationRef = useRef(null);
   const showSubmissionNotificationPanel = false;
@@ -2013,6 +2126,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const handleToggleSubmissionNotificationPanel = () => setActiveTab("notifications");
   const [masterDosenTab, setMasterDosenTab] = useState("penanggung-jawab");
   const [topikMode, setTopikMode] = useState("list");
+  const [editingTopikId, setEditingTopikId] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -2039,8 +2153,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [finalResearchDecision, setFinalResearchDecision] = useState("");
   const [finalResearchDecisionNote, setFinalResearchDecisionNote] = useState("");
   const [finalResearchDecisionError, setFinalResearchDecisionError] = useState("");
-  const [finalResearchPrimarySupervisorId, setFinalResearchPrimarySupervisorId] = useState("");
-  const [finalResearchSecondarySupervisorId, setFinalResearchSecondarySupervisorId] = useState("");
   const [finalNonPenelitianMode, setFinalNonPenelitianMode] = useState("list");
   const [selectedFinalNonPenelitianId, setSelectedFinalNonPenelitianId] = useState(null);
   const [finalNonPenelitianDetail, setFinalNonPenelitianDetail] = useState(null);
@@ -2259,12 +2371,12 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const hasPendingDosenStatusReplacement = dosenStatusFollowUpBlockingCount > 0;
 
   const [topikForm, setTopikForm] = useState({
-    kode: "",
     judul: "",
     deskripsi: "",
-    keyword: "",
+    bidang_penelitian_ids: [],
     cluster: "Sirkel",
   });
+  const [topikBidangPenelitianOptions, setTopikBidangPenelitianOptions] = useState([]);
   const [topikFormErrors, setTopikFormErrors] = useState({});
   const allowedTopikClusters = useMemo(() => {
     const klasterRows = Array.isArray(kuotaData?.dosen?.klasters) ? kuotaData.dosen.klasters : [];
@@ -2277,6 +2389,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
     return labels.length > 0 ? labels : TOPIK_CLUSTER_OPTIONS;
   }, [kuotaData?.dosen?.klasters]);
+  const generatedTopikCodePreview = "Otomatis oleh sistem";
   const [topikUploadFile, setTopikUploadFile] = useState(null);
   const [uploadingTopik, setUploadingTopik] = useState(false);
   const [savingUploadedTopik, setSavingUploadedTopik] = useState(false);
@@ -2298,7 +2411,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       kode: String(item?.kode || "-"),
       cluster: String(item?.cluster || "-"),
       judul: String(item?.judul || "-"),
-      keyword: String(item?.keyword || "-"),
+      bidang_penelitian: String(item?.bidang_penelitian || "-"),
       status: "valid",
       pesan_error: "-",
     }));
@@ -2309,10 +2422,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         key: `err-${item?.row ?? index}-${index}`,
         nomor: normalizedSuccess.length + index + 1,
         baris: item?.row ?? "-",
-        kode: pickTopikUploadField(rawRow, ["Kode Topik", "kode", "KODE"]) || "-",
+        kode: "-",
         cluster: pickTopikUploadField(rawRow, ["Cluster", "cluster", "CLUSTER"]) || "-",
         judul: pickTopikUploadField(rawRow, ["Judul", "judul", "JUDUL"]) || "-",
-        keyword: pickTopikUploadField(rawRow, ["Keyword", "keyword", "KEYWORD", "Kata Kunci", "kata_kunci"]) || "-",
+        bidang_penelitian:
+          pickTopikUploadField(rawRow, ["Bidang Penelitian", "bidang_penelitian", "bidangPenelitian"]) || "-",
         status: "error",
         pesan_error: String(item?.error || "Data tidak valid."),
       };
@@ -2987,13 +3101,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   }, []);
 
   const handleOpenFinalResearchDetail = async (submission) => {
-    try {
-      await loadPeriodeOverview();
-    } catch (overviewError) {
-      if (overviewError.message === "__SESSION_EXPIRED__") return;
-      showErrorToast(overviewError.message || "Gagal memperbarui daftar calon pembimbing.");
-      return;
-    }
     const approvedTopics = Array.isArray(submission?.topik_lolos_cluster)
       ? [...submission.topik_lolos_cluster].sort((left, right) => Number(left.slot) - Number(right.slot))
       : [];
@@ -3004,8 +3111,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalResearchDecision("");
     setFinalResearchDecisionNote("");
     setFinalResearchDecisionError("");
-    setFinalResearchPrimarySupervisorId("");
-    setFinalResearchSecondarySupervisorId("");
     setFinalResearchMode("review");
   };
 
@@ -3017,8 +3122,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setFinalResearchDecision("");
     setFinalResearchDecisionNote("");
     setFinalResearchDecisionError("");
-    setFinalResearchPrimarySupervisorId("");
-    setFinalResearchSecondarySupervisorId("");
   };
 
   const handleSelectFinalResearchTopic = (slot) => {
@@ -3042,11 +3145,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       );
       return;
     }
-    if (finalResearchDecision === "approve" && !Number(finalResearchPrimarySupervisorId)) {
-      setFinalResearchDecisionError("Pembimbing 1 wajib dipilih oleh sekretaris prodi.");
-      return;
-    }
-
     setFinalResearchActionId(finalResearchDetail.id);
     try {
       await fetchWithAuth(
@@ -3057,12 +3155,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
             keterangan: note,
             ...(finalResearchFocusedTopic?.slot != null
               ? { topik_slot: Number(finalResearchFocusedTopic.slot) }
-              : {}),
-            ...(finalResearchDecision === "approve"
-              ? { dosen_pembimbing_1_id: Number(finalResearchPrimarySupervisorId) }
-              : {}),
-            ...(finalResearchDecision === "approve" && finalResearchSecondarySupervisorId
-              ? { dosen_pembimbing_2_id: Number(finalResearchSecondarySupervisorId) }
               : {}),
           }),
         }
@@ -3096,6 +3188,18 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       resolvedKuota = null;
       setKuotaData(null);
       issues.push(kuotaError.message || "Gagal memuat data kuota dosen.");
+    }
+
+    if (sessionExpiredRef.current) return;
+
+    try {
+      const assignedResearchFields = await fetchWithAuth("/api/topics/my-research-fields");
+      setTopikBidangPenelitianOptions(
+        Array.isArray(assignedResearchFields) ? assignedResearchFields : []
+      );
+    } catch (researchFieldError) {
+      setTopikBidangPenelitianOptions([]);
+      console.warn("Gagal memuat bidang penelitian dosen:", researchFieldError.message);
     }
 
     if (sessionExpiredRef.current) return;
@@ -3821,7 +3925,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     if (!keyword) return topikRows;
 
     return topikRows.filter((row) => {
-      const haystack = [row.kode, row.judul, row.keyword, row.cluster, row.status]
+      const haystack = [row.kode, row.judul, formatTopikBidangPenelitian(row), row.cluster, row.status]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
@@ -3911,7 +4015,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       const haystack = [
         row.kode,
         row.judul,
-        row.keyword,
+        formatTopikBidangPenelitian(row),
         row.cluster,
         row.status,
         row.dosen?.nama,
@@ -4155,12 +4259,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           })
         : allTopikRows;
 
-    return [...sourceRows].sort((left, right) => {
+    const enrichedRows = sourceRows.map((item) => {
+      const normalizedCode = String(item?.kode || "").trim().toUpperCase();
+      const masterTopik = topikRows.find(
+        (topik) => String(topik?.kode || "").trim().toUpperCase() === normalizedCode
+      );
+      return masterTopik
+        ? {
+            ...masterTopik,
+            ...item,
+            bidangPenelitians: masterTopik.bidangPenelitians || [],
+          }
+        : item;
+    });
+
+    return enrichedRows.sort((left, right) => {
       const leftSlot = Number(left?.slot ?? 0);
       const rightSlot = Number(right?.slot ?? 0);
       return leftSlot - rightSlot;
     });
-  }, [submissionDetail]);
+  }, [submissionDetail, topikRows]);
   const submissionReviewTopikFocused = useMemo(() => {
     if (submissionReviewTopikOptions.length === 0) return null;
     const selected = submissionReviewTopikOptions.find(
@@ -4266,6 +4384,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       ) || finalResearchApprovedTopics[0] || null,
     [finalResearchApprovedTopics, finalResearchFocusSlot]
   );
+  const isFinalResearchJudulMandiri = finalResearchDetail?.tipe_pengajuan === "judul_mandiri";
+  const finalResearchAutomaticSupervisorName = formatDosenFullName(
+    finalResearchFocusedTopic?.dosen_nama,
+    finalResearchFocusedTopic?.dosen_gelar
+  ) || "Dosen pembimbing belum tersedia";
   const hasViewedAllFinalResearchTopics =
     finalResearchApprovedTopics.length > 0 &&
     finalResearchApprovedTopics.every((item) => finalResearchViewedSlots.includes(getFinalResearchTopicKey(item)));
@@ -4474,22 +4597,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     () => (Array.isArray(periodeOverview.ketua_klaster_options) ? periodeOverview.ketua_klaster_options : []),
     [periodeOverview.ketua_klaster_options]
   );
-  const finalResearchClusterCode = useMemo(() => {
-    const explicitCluster = normalizeTopikClusterCode(
-      finalResearchFocusedTopic?.cluster || finalResearchDetail?.cluster_penelitian
-    );
-    return explicitCluster || resolveTopikClusterFromKode(finalResearchFocusedTopic?.kode)?.code || "";
-  }, [finalResearchDetail?.cluster_penelitian, finalResearchFocusedTopic?.cluster, finalResearchFocusedTopic?.kode]);
-  const finalResearchSupervisorOptions = useMemo(() => {
-    if (!finalResearchClusterCode) return [];
-    return periodeDosenPembimbingOptions.filter((dosen) => {
-      const clusterCodes = Array.isArray(dosen.cluster_codes) ? dosen.cluster_codes : [];
-      const isClusterMember = clusterCodes.some(
-        (code) => normalizeResearchClusterCode(code) === finalResearchClusterCode
-      );
-      return isClusterMember && dosen.kuota?.is_penuh !== true;
-    });
-  }, [finalResearchClusterCode, periodeDosenPembimbingOptions]);
   const periodeDosenMap = useMemo(
     () => new Map(periodeDosenPembimbingOptions.map((item) => [Number(item.id), item])),
     [periodeDosenPembimbingOptions]
@@ -4514,49 +4621,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setFinalNonPenelitianDosen2Query("");
       removedSelection = true;
     }
-    if (
-      finalResearchPrimarySupervisorId
-      && !validIds.has(Number(finalResearchPrimarySupervisorId))
-    ) {
-      setFinalResearchPrimarySupervisorId("");
-      removedSelection = true;
-    }
-    if (
-      finalResearchSecondarySupervisorId
-      && !validIds.has(Number(finalResearchSecondarySupervisorId))
-    ) {
-      setFinalResearchSecondarySupervisorId("");
-      removedSelection = true;
-    }
-
     if (removedSelection) {
       showInfoToast("Pilihan pembimbing dihapus karena dosen tidak lagi tersedia pada periode aktif.");
     }
   }, [
     finalNonPenelitianDosenPembimbing2Id,
     finalNonPenelitianDosenPembimbingId,
-    finalResearchPrimarySupervisorId,
-    finalResearchSecondarySupervisorId,
     periodeDosenPembimbingOptions,
-  ]);
-  useEffect(() => {
-    const eligibleIds = new Set(finalResearchSupervisorOptions.map((dosen) => Number(dosen.id)));
-    let removedSelection = false;
-    if (finalResearchPrimarySupervisorId && !eligibleIds.has(Number(finalResearchPrimarySupervisorId))) {
-      setFinalResearchPrimarySupervisorId("");
-      removedSelection = true;
-    }
-    if (finalResearchSecondarySupervisorId && !eligibleIds.has(Number(finalResearchSecondarySupervisorId))) {
-      setFinalResearchSecondarySupervisorId("");
-      removedSelection = true;
-    }
-    if (removedSelection) {
-      showInfoToast("Pilihan pembimbing dihapus karena tidak sesuai cluster atau tidak menerima bimbingan baru.");
-    }
-  }, [
-    finalResearchPrimarySupervisorId,
-    finalResearchSecondarySupervisorId,
-    finalResearchSupervisorOptions,
   ]);
   const selectedFinalNonPenelitianDosen = useMemo(
     () => periodeDosenMap.get(Number(finalNonPenelitianDosenPembimbingId || 0)) || null,
@@ -5735,20 +5806,22 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     }
 
     const isApprove = decision === "approve";
+    const isRevision = decision === "revision";
     const note = String(pengampuReviewDecisionNote || "").trim();
     if (!isApprove && !note) {
-      showErrorToast("Alasan penolakan wajib diisi.");
+      showErrorToast(isRevision ? "Catatan perbaikan wajib diisi." : "Alasan penolakan wajib diisi.");
       return;
     }
 
     const actionKey = `${config.jalur}-${id}`;
     setPengampuReviewActionId(actionKey);
     try {
-      await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}/${isApprove ? "approve" : "reject"}`, {
+      const endpointAction = isApprove ? "approve" : isRevision ? "revision" : "reject";
+      await fetchWithAuth(`/api/dosen/non-penelitian/${config.endpointSlug}/reviews/${id}/${endpointAction}`, {
         method: "POST",
         body: JSON.stringify({ keterangan: note }),
       });
-      showSuccessToast(isApprove ? config.approveSuccess : config.rejectSuccess);
+      showSuccessToast(isApprove ? config.approveSuccess : isRevision ? config.revisionSuccess : config.rejectSuccess);
       await loadAllData();
       handleBackToPengampuReviewList();
     } catch (decisionError) {
@@ -6066,27 +6139,49 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setTopikForm((prev) => ({ ...prev, [name]: value }));
     setTopikFormErrors((prev) => ({
       ...prev,
-      [name]: "",
-      ...(name === "kode" || name === "cluster" ? { kode: "", cluster: "" } : {}),
+      [name]: name === "judul" ? getTopikTitleValidationError(value) : "",
+      ...(name === "cluster" ? { cluster: "" } : {}),
     }));
+  };
+
+  const handleEditTopik = (topik) => {
+    const bidangPenelitianIds = (Array.isArray(topik?.bidangPenelitians) ? topik.bidangPenelitians : [])
+      .map((item) => Number(item?.id))
+      .filter((id) => Number.isInteger(id) && id > 0);
+    setEditingTopikId(Number(topik.id));
+    setTopikForm({
+      judul: String(topik?.judul || ""),
+      deskripsi: String(topik?.deskripsi || ""),
+      bidang_penelitian_ids: bidangPenelitianIds,
+      cluster: normalizeTopikClusterLabel(topik?.cluster) || allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
+    });
+    setTopikFormErrors({});
+    setTopikMode("edit");
   };
 
   const handleTopikApiSubmit = async (event) => {
     event.preventDefault();
     const normalizedCluster = normalizeTopikClusterLabel(topikForm.cluster);
     const payload = {
-      kode: topikForm.kode.trim().toUpperCase(),
       judul: topikForm.judul.trim(),
       deskripsi: topikForm.deskripsi.trim(),
-      keyword: topikForm.keyword.trim(),
+      bidang_penelitian_ids: topikForm.bidang_penelitian_ids,
       cluster: normalizedCluster || topikForm.cluster,
     };
 
     const nextErrors = {};
-    if (!payload.kode) nextErrors.kode = "Kode topik wajib diisi.";
     if (!payload.cluster) nextErrors.cluster = "Cluster wajib dipilih.";
-    if (!payload.judul) nextErrors.judul = "Judul topik wajib diisi.";
-    if (!payload.keyword) nextErrors.keyword = "Keyword wajib diisi.";
+    if (!payload.judul) {
+      nextErrors.judul = "Judul topik wajib diisi.";
+    } else {
+      const judulValidationError = getTopikTitleValidationError(payload.judul);
+      if (judulValidationError) nextErrors.judul = judulValidationError;
+    }
+    if (!Array.isArray(payload.bidang_penelitian_ids) || payload.bidang_penelitian_ids.length === 0) {
+      nextErrors.bidang_penelitian_ids = topikBidangPenelitianOptions.length === 0
+        ? "Bidang penelitian Anda belum dikonfigurasi. Hubungi admin."
+        : "Pilih minimal satu bidang penelitian.";
+    }
 
     if (Object.keys(nextErrors).length > 0) {
       setTopikFormErrors(nextErrors);
@@ -6098,37 +6193,26 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       return;
     }
 
-    const kodeCluster = resolveTopikClusterFromKode(payload.kode);
-    if (!kodeCluster || !kodeCluster.label) {
-      setTopikFormErrors({ kode: "Format kode topik tidak valid. Gunakan prefix: SIRKEL, SIBER, ITSC, atau MVK." });
-      return;
-    }
-
-    if (kodeCluster.label !== payload.cluster) {
-      const expectedCode = TOPIK_CLUSTER_CODE_BY_LABEL[payload.cluster] || payload.cluster;
-      setTopikFormErrors({
-        kode: `Kode topik ${payload.kode} tidak sesuai dengan cluster ${payload.cluster}.`,
-        cluster: `Prefix kode harus ${expectedCode}.`,
-      });
-      return;
-    }
-
     setTopikFormErrors({});
     setSavingTopik(true);
     try {
-      await fetchWithAuth("/api/topics", {
-        method: "POST",
+      const savedTopik = await fetchWithAuth(editingTopikId ? `/api/topics/${editingTopikId}` : "/api/topics", {
+        method: editingTopikId ? "PUT" : "POST",
         body: JSON.stringify(payload),
       });
       setTopikForm({
-        kode: "",
         judul: "",
         deskripsi: "",
-        keyword: "",
+        bidang_penelitian_ids: [],
         cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
       });
+      setEditingTopikId(null);
       setTopikFormErrors({});
-      showSuccessToast("Topik berhasil ditambahkan.");
+      showSuccessToast(
+        editingTopikId
+          ? `Topik ${savedTopik?.kode || ""} berhasil diperbarui.`
+          : `Topik ${savedTopik?.kode || "baru"} berhasil ditambahkan.`
+      );
       await loadAllData();
       setTopikMode("list");
     } catch (createError) {
@@ -6807,6 +6891,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   }, [loadDosenPeriodAvailability]);
 
   const confirmAvailabilityDraftDiscard = useCallback(async () => {
+    if (activeTab === "sidang-akhir" && sidangPeriodLeaveGuardRef.current) {
+      const canLeaveSidangSetup = await sidangPeriodLeaveGuardRef.current();
+      if (!canLeaveSidangSetup) return false;
+    }
+
     const leavingAvailability = activeTab === "master-dosen"
       && masterDosenTab === "ketersediaan-periode";
     if (!leavingAvailability || dirtyAvailabilityDosenIdsRef.current.length === 0) return true;
@@ -8286,9 +8375,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 </div>
               ) : null}
             </div>
-                                       <button
+            <button
               type="button"
-              onClick={onOpenProfile}
+              onClick={async () => {
+                if (await confirmAvailabilityDraftDiscard()) onOpenProfile?.();
+              }}
               title="Edit profil"
               className="flex items-center gap-2 rounded-lg px-2 py-1 text-right transition hover:bg-white/15"
             >
@@ -8300,7 +8391,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
             </button>
             <button
               type="button"
-              onClick={onLogout}
+              onClick={async () => {
+                if (await confirmAvailabilityDraftDiscard()) onLogout?.();
+              }}
               className="rounded-lg border border-white/30 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/20"
             >
               <span className="inline-flex items-center gap-1">
@@ -8451,6 +8544,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     setActiveTab("dokumen-sidang-review");
                   } else if (notification?.action_key === "view_change_pamit") {
                     setActiveTab("pamit");
+                  } else if (notification?.action_key === "lecturer_submission_review") {
+                    setActiveTab("submissions");
+                    const submissionId = Number(notification?.reference_id || 0);
+                    if (submissionId > 0) handleOpenSubmissionReview(submissionId);
                   }
                 }}
               />
@@ -9037,6 +9134,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                 session={session}
                 apiBaseUrl={apiBaseUrl}
                 onSessionExpired={onSessionExpired}
+                onRegisterLeaveGuard={registerSidangPeriodLeaveGuard}
               />
             ) : null}
             {!loading && isSekretaris && activeTab === "akademik" ? (
@@ -9190,8 +9288,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           type="button"
                           onClick={() => {
                             setFinalResearchDecision("reject");
-                            setFinalResearchPrimarySupervisorId("");
-                            setFinalResearchSecondarySupervisorId("");
                             setFinalResearchDecisionError("");
                           }}
                           className={`rounded-lg px-4 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-50 ${
@@ -9221,45 +9317,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       {finalResearchDecision ? (
                         <div className="mt-3">
                           {finalResearchDecision === "approve" ? (
-                            <div className="mb-3 grid gap-3 md:grid-cols-2">
-                              <div>
-                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                                  Pembimbing 1 <span className="text-[#b73a3a]">*</span>
-                                </label>
-                                <ReplacementDosenCombobox
-                                  inputId="final-research-primary-supervisor"
-                                  candidates={finalResearchSupervisorOptions.filter(
-                                    (dosen) => Number(dosen.id) !== Number(finalResearchSecondarySupervisorId || 0)
-                                  )}
-                                  value={finalResearchPrimarySupervisorId}
-                                  onChange={(value) => {
-                                    setFinalResearchPrimarySupervisorId(value);
-                                    setFinalResearchDecisionError("");
-                                  }}
-                                  hasError={finalResearchDecisionError.startsWith("Pembimbing 1")}
-                                  placeholder="Cari nama, kode, atau NIK dosen..."
-                                />
-                              </div>
-                              <div>
-                                <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                                  Pembimbing 2 <span className="font-normal text-[#7582a2]">(opsional)</span>
-                                </label>
-                                <ReplacementDosenCombobox
-                                  inputId="final-research-secondary-supervisor"
-                                  candidates={finalResearchSupervisorOptions.filter(
-                                    (dosen) => Number(dosen.id) !== Number(finalResearchPrimarySupervisorId || 0)
-                                  )}
-                                  value={finalResearchSecondarySupervisorId}
-                                  onChange={(value) => {
-                                    setFinalResearchSecondarySupervisorId(value);
-                                    setFinalResearchDecisionError("");
-                                  }}
-                                  placeholder="Cari nama, kode, atau NIK dosen..."
-                                  allowEmpty
-                                />
-                              </div>
-                              <p className="md:col-span-2 text-xs font-semibold text-[#60709a]">
-                                Hanya menampilkan dosen cluster {finalResearchClusterCode || "topik terpilih"} yang menerima bimbingan baru dan masih memiliki kuota.
+                            <div className="mb-3 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-3">
+                              <ResearchReviewReadonlyInput
+                                label="Dosen Pembimbing (ditetapkan otomatis)"
+                                value={finalResearchAutomaticSupervisorName}
+                              />
+                              <p className="mt-2 text-xs font-semibold text-[#52658f]">
+                                {isFinalResearchJudulMandiri
+                                  ? "Pembimbing adalah dosen yang dipilih mahasiswa pada pengajuan Judul Mandiri."
+                                  : "Pembimbing adalah dosen pemilik topik yang sedang ditetapkan sebagai topik final."}
                               </p>
                             </div>
                           ) : null}
@@ -11024,7 +11090,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       {String(getPengampuReviewStatus(pengampuReviewDetail) || "").toLowerCase() === "submitted" ? (
                         <>
                           <p className="mt-1 text-sm text-[#5d6c91]">
-                            Approve akan memproses pengajuan ke tahap berikutnya. Tolak wajib menyertakan alasan.
+                            {activePengampuReviewConfig.jalur === "perintisan_bisnis"
+                              ? "Setujui akan meneruskan pengajuan ke Sekprodi. Minta Perbaikan mengembalikan form kepada ketua tanpa menghapus data yang sudah diisi. Tolak Pengajuan menghentikan pengajuan."
+                              : "Setujui akan memproses pengajuan ke tahap berikutnya. Tolak wajib menyertakan alasan."}
                           </p>
                           <div className="mt-3">
                             <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
@@ -11034,7 +11102,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               rows={4}
                               value={pengampuReviewDecisionNote}
                               onChange={(event) => setPengampuReviewDecisionNote(event.target.value)}
-                              placeholder="Isi catatan persetujuan atau alasan penolakan..."
+                              placeholder={activePengampuReviewConfig.jalur === "perintisan_bisnis"
+                                ? "Isi catatan persetujuan, arahan perbaikan, atau alasan penolakan..."
+                                : "Isi catatan persetujuan atau alasan penolakan..."}
                               className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
                             />
                           </div>
@@ -11045,15 +11115,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               onClick={() => handleSubmitPengampuReviewDecision(activePengampuReviewConfig, "reject")}
                               className="rounded-lg bg-[#b73a3a] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              Tolak
+                              {activePengampuReviewConfig.jalur === "perintisan_bisnis" ? "Tolak Pengajuan" : "Tolak"}
                             </button>
+                            {activePengampuReviewConfig.jalur === "perintisan_bisnis" ? (
+                              <button
+                                type="button"
+                                disabled={pengampuReviewActionId === `${activePengampuReviewConfig.jalur}-${selectedPengampuReviewId}`}
+                                onClick={() => handleSubmitPengampuReviewDecision(activePengampuReviewConfig, "revision")}
+                                className="rounded-lg bg-[#d58a12] px-4 py-2 text-sm font-bold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                Minta Perbaikan
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               disabled={pengampuReviewActionId === `${activePengampuReviewConfig.jalur}-${selectedPengampuReviewId}`}
                               onClick={() => handleSubmitPengampuReviewDecision(activePengampuReviewConfig, "approve")}
                               className="rounded-lg bg-[#137748] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                             >
-                              Approve
+                              {activePengampuReviewConfig.jalur === "perintisan_bisnis" ? "Setujui" : "Approve"}
                             </button>
                           </div>
                         </>
@@ -13114,7 +13194,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         type="text"
                         value={masterTopikQuery}
                         onChange={(event) => setMasterTopikQuery(event.target.value)}
-                        placeholder="Cari kode, judul, keyword, cluster, dosen, status..."
+                        placeholder="Cari kode, judul, bidang penelitian, cluster, dosen, status..."
                         className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                       />
                     </div>
@@ -13136,7 +13216,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
-                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Keyword</th>
+                        <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bidang Penelitian</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Dosen</th>
                         <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
@@ -13152,7 +13232,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               </td>
                               <td className="px-3 py-2 font-semibold text-[#254080]">{row.kode || "-"}</td>
                               <td className="px-3 py-2">{row.judul || "-"}</td>
-                              <td className="px-3 py-2">{row.keyword || "-"}</td>
+                              <td className="px-3 py-2">{formatTopikBidangPenelitian(row) || "-"}</td>
                               <td className="px-3 py-2">{row.cluster || "-"}</td>
                               <td className="px-3 py-2">
                                 {formatDosenFullName(
@@ -13222,7 +13302,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setTopikMode("list")}
+                      onClick={() => {
+                        setTopikMode("list");
+                        setEditingTopikId(null);
+                        setTopikFormErrors({});
+                      }}
                       disabled={topikMode === "list"}
                       className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
                       aria-label="Kembali ke data topik"
@@ -13239,7 +13323,17 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTopikMode("add")}
+                      onClick={() => {
+                        setEditingTopikId(null);
+                        setTopikForm({
+                          judul: "",
+                          deskripsi: "",
+                          bidang_penelitian_ids: [],
+                          cluster: allowedTopikClusters[0] || TOPIK_CLUSTER_OPTIONS[0],
+                        });
+                        setTopikFormErrors({});
+                        setTopikMode("add");
+                      }}
                       className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
                         topikMode === "add"
                           ? "bg-[#2f63e3] text-white"
@@ -13275,7 +13369,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             type="text"
                             value={topikQuery}
                             onChange={(event) => setTopikQuery(event.target.value)}
-                            placeholder="Cari kode, judul, keyword, cluster, status..."
+                            placeholder="Cari kode, judul, bidang penelitian, cluster, status..."
                             className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                           />
                         </div>
@@ -13297,10 +13391,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kode</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul</th>
-                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Keyword</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bidang Penelitian</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Updated</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -13310,10 +13405,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                   <td className="px-3 py-2">{(topikPage - 1) * TOPIK_PAGE_SIZE + index + 1}</td>
                                   <td className="px-3 py-2 font-semibold text-[#254080]">{row.kode || "-"}</td>
                                   <td className="px-3 py-2">{row.judul || "-"}</td>
-                                  <td className="px-3 py-2">{row.keyword || "-"}</td>
+                                  <td className="px-3 py-2">{formatTopikBidangPenelitian(row) || "-"}</td>
                                   <td className="px-3 py-2">{row.cluster || "-"}</td>
                                   <td className="px-3 py-2">{formatLabel(row.status)}</td>
                                   <td className="px-3 py-2">{formatDateTime(row.updatedAt)}</td>
+                                  <td className="px-3 py-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEditTopik(row)}
+                                      className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-2.5 py-1.5 text-xs font-bold text-white transition hover:brightness-110"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                      Edit
+                                    </button>
+                                  </td>
                                 </tr>
                               ))
                             : null}
@@ -13371,7 +13476,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         </a>
                       </div>
                       <p className="text-sm text-[#5d6c91]">
-                        Gunakan template topik. Sistem otomatis memasangkan topik ke akun dosen yang sedang login.
+                        Gunakan template topik tanpa mengisi kode. Isi kolom Bidang Penelitian dengan nama yang sama persis seperti bidang yang ditetapkan admin untuk profil Anda; pisahkan beberapa bidang dengan koma. Kode topik dibuat otomatis berdasarkan cluster dan ditampilkan pada preview.
                       </p>
 
                       <div className="mt-4 space-y-3">
@@ -13419,10 +13524,10 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <tr>
                                   <th className="px-3 py-2">No</th>
                                   <th className="px-3 py-2">Baris Excel</th>
-                                  <th className="px-3 py-2">Kode Topik</th>
+                                  <th className="px-3 py-2">Kode Topik (Otomatis)</th>
                                   <th className="px-3 py-2">Cluster</th>
                                   <th className="px-3 py-2">Judul Topik</th>
-                                  <th className="px-3 py-2">Keyword</th>
+                                  <th className="px-3 py-2">Bidang Penelitian</th>
                                   <th className="px-3 py-2">Status</th>
                                   <th className="px-3 py-2">Pesan Error</th>
                                 </tr>
@@ -13441,7 +13546,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                       <td className="px-3 py-2">{row.kode}</td>
                                       <td className="px-3 py-2">{row.cluster}</td>
                                       <td className="px-3 py-2">{row.judul}</td>
-                                      <td className="px-3 py-2">{row.keyword}</td>
+                                      <td className="px-3 py-2">{row.bidang_penelitian}</td>
                                       <td className="px-3 py-2">
                                         <span
                                           className={`inline-flex rounded-full px-2 py-0.5 text-xs font-bold ${
@@ -13522,9 +13627,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </div>
                     ) : null}
 
-                    {topikMode === "add" ? (
+                    {topikMode === "add" || topikMode === "edit" ? (
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-                      <h3 className="mb-3 text-lg font-black text-[#1b274b]">Tambah Topik via Form</h3>
+                      <h3 className="mb-3 text-lg font-black text-[#1b274b]">
+                        {topikMode === "edit" ? "Edit Topik" : "Tambah Topik via Form"}
+                      </h3>
                       <form onSubmit={handleTopikApiSubmit} className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                         <div>
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
@@ -13532,17 +13639,20 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                           </label>
                           <input
                             type="text"
-                            name="kode"
-                            value={topikForm.kode}
-                            onChange={handleTopikFormChange}
-                            placeholder="Contoh: SIRKEL99"
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              topikFormErrors.kode ? "border-[#d93030]" : "border-[#d3dbef]"
-                            }`}
+                            value={
+                              topikMode === "edit"
+                                ? topikRows.find((item) => Number(item.id) === Number(editingTopikId))?.kode || "-"
+                                : generatedTopikCodePreview
+                            }
+                            readOnly
+                            aria-readonly="true"
+                            className="w-full cursor-not-allowed rounded-lg border border-[#d3dbef] bg-[#f3f5fb] px-3 py-2 text-sm text-[#667394] outline-none"
                           />
-                          {topikFormErrors.kode ? (
-                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.kode}</p>
-                          ) : null}
+                          <p className="mt-1 text-xs text-[#6b789e]">
+                            {topikMode === "edit"
+                              ? "Kode topik tetap dan tidak diubah saat penyuntingan."
+                              : "Kode unik dibuat oleh sistem saat topik disimpan."}
+                          </p>
                         </div>
                         <div>
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
@@ -13552,6 +13662,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             name="cluster"
                             value={topikForm.cluster}
                             onChange={handleTopikFormChange}
+                            disabled={topikMode === "edit"}
                             className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                               topikFormErrors.cluster ? "border-[#d93030]" : "border-[#d3dbef]"
                             }`}
@@ -13566,7 +13677,9 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.cluster}</p>
                           ) : null}
                           <p className="mt-1 text-xs text-[#6b789e]">
-                            Opsi cluster mengikuti assignment cluster dosen login.
+                            {topikMode === "edit"
+                              ? "Cluster tidak dapat diubah karena menjadi bagian dari kode topik."
+                              : "Opsi cluster mengikuti assignment cluster dosen login."}
                           </p>
                         </div>
                         <div className="lg:col-span-2">
@@ -13579,6 +13692,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             value={topikForm.judul}
                             onChange={handleTopikFormChange}
                             placeholder="Masukkan judul topik"
+                            aria-invalid={Boolean(topikFormErrors.judul)}
                             className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
                               topikFormErrors.judul ? "border-[#d93030]" : "border-[#d3dbef]"
                             }`}
@@ -13589,24 +13703,25 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         </div>
                         <div className="lg:col-span-2">
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
-                            Keyword <span className="text-[#d93030]">*</span>
+                            Bidang Penelitian <span className="text-[#d93030]">*</span>
                           </label>
-                          <input
-                            type="text"
-                            name="keyword"
-                            value={topikForm.keyword}
-                            onChange={handleTopikFormChange}
-                            placeholder="Contoh: machine learning, rekomendasi, sistem informasi"
-                            className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-[#2f63e3] ${
-                              topikFormErrors.keyword ? "border-[#d93030]" : "border-[#d3dbef]"
-                            }`}
+                          <TopikBidangPenelitianCombobox
+                            options={topikBidangPenelitianOptions}
+                            value={topikForm.bidang_penelitian_ids}
+                            onChange={(ids) => {
+                              setTopikForm((previous) => ({ ...previous, bidang_penelitian_ids: ids }));
+                              setTopikFormErrors((previous) => ({ ...previous, bidang_penelitian_ids: "" }));
+                            }}
+                            error={topikFormErrors.bidang_penelitian_ids}
                           />
-                          {topikFormErrors.keyword ? (
-                            <p className="mt-1 text-xs font-semibold text-[#d93030]">{topikFormErrors.keyword}</p>
-                          ) : null}
                           <p className="mt-1 text-xs text-[#6b789e]">
-                            Pisahkan beberapa keyword dengan koma agar mudah dicari mahasiswa.
+                            Pilihan dibatasi pada bidang penelitian yang ditetapkan admin untuk profil Anda. Anda dapat memilih lebih dari satu bidang.
                           </p>
+                          {topikBidangPenelitianOptions.length === 0 ? (
+                            <p className="mt-1 text-xs font-semibold text-[#b45309]">
+                              Bidang penelitian Anda belum dikonfigurasi. Hubungi admin sebelum menambahkan topik.
+                            </p>
+                          ) : null}
                         </div>
                         <div className="lg:col-span-2">
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">Deskripsi (opsional)</label>
@@ -13622,11 +13737,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <div className="lg:col-span-2">
                           <button
                             type="submit"
-                            disabled={savingTopik}
+                            disabled={savingTopik || topikBidangPenelitianOptions.length === 0}
                             className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <FileSpreadsheet className="h-4 w-4" />
-                            {savingTopik ? "Menyimpan..." : "Simpan Topik"}
+                            {savingTopik
+                              ? "Menyimpan..."
+                              : topikMode === "edit"
+                                ? "Simpan Perubahan"
+                                : "Simpan Topik"}
                           </button>
                         </div>
                       </form>

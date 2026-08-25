@@ -124,6 +124,14 @@ exports.login = async (req, res) => {
     if (!username || typeof password !== "string" || password.length === 0) {
       return res.status(400).json({ success: false, message: "Username dan password harus diisi", code: "LOGIN_INPUT_REQUIRED" });
     }
+    if (/[+\-=[\]{}<>/?\\|]/.test(username)) {
+      return res.status(400).json({
+        success: false,
+        message: "Username tidak boleh mengandung karakter +-=[]{}<>/?\\|.",
+        code: "LOGIN_USERNAME_FORMAT_INVALID",
+        detail: { field: "username" },
+      });
+    }
     await rateLimit.consume("login_ip", req.ip || req.socket?.remoteAddress, { limit: 30 });
     await rateLimit.consume("login_identifier", username, { limit: 10 });
     let resolved = null;

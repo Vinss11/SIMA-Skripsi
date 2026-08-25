@@ -1,22 +1,19 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ClipboardPlus, Loader2, Send } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardPlus, Info, Loader2, Send } from "lucide-react";
 import { formatDosenFullName } from "../utils/dosen";
 
 const PENDAFTARAN_OPTIONS = [
   {
     value: "baru",
     label: "Baru",
-    description: "Pendaftaran pertama kali untuk menentukan jalur skripsi.",
+    description:
+      "Pilih Baru jika ini pendaftaran penjaluran pertama Anda. Setelah melanjutkan, Anda akan mengisi form sesuai jalur skripsi yang dipilih.",
   },
   {
-    value: "ulang",
-    label: "Ulang",
-    description: "Mendaftar kembali pada jalur yang sama dengan periode sebelumnya.",
-  },
-  {
-    value: "alih",
-    label: "Alih",
-    description: "Berpindah ke jalur lain dari periode sebelumnya.",
+    value: "ulang_alih",
+    label: "Ulang / Alih",
+    description:
+      "Pilih Ulang / Alih untuk melanjutkan proses melalui sistem. Setelah akun disiapkan, masuk dan ganti password awal, lalu tentukan Ulang atau Alih melalui menu Alih / Ulang Jalur.",
   },
 ];
 
@@ -41,11 +38,13 @@ const PERAN_TIM_OPTIONS = [
   { value: "hacker", label: "Hacker" },
 ];
 const MAHASISWA_EMAIL_DOMAIN = "students.uii.ac.id";
-const NAMA_REGEX = /^[a-zA-Z\s'.-]+$/;
+const INITIAL_GROUP_SELECTION_ENABLED = false;
+const NAMA_REGEX = /^[a-zA-Z\s'.]+$/;
+const FORBIDDEN_NAMA_CHARACTERS = /[+\-=[\]{}<>/?\\|]/;
 const ANGGOTA_NAMA_REGEX = /^[a-zA-Z\s]+$/;
 const NIM_REGEX = /^\d{2}523\d{3}$/;
 const NIM_FORMAT_ERROR =
-  "NIM harus berbentuk Angkatan (2 digit), Kode Prodi 523, dan Nomor Urut Mahasiswa (3 digit). Contoh: 22523001.";
+  "NIM harus berupa 2 digit angkatan, diikuti angka 523 (kode program studi), dan 3 digit nomor mahasiswa.";
 const getNimValidationError = (nim) => {
   const normalizedNim = String(nim || "").trim();
   if (!normalizedNim) return "NIM wajib diisi.";
@@ -59,7 +58,7 @@ const getNamaValidationError = (nama) => {
     return "Nama wajib 2 sampai 100 karakter.";
   }
   if (!NAMA_REGEX.test(normalizedNama)) {
-    return "Nama hanya boleh berisi huruf, spasi, titik, apostrof, dan tanda hubung.";
+    return "Nama hanya boleh berisi huruf, spasi, titik, dan apostrof; karakter +-=[]{}<>/?\\| tidak diperbolehkan.";
   }
   return "";
 };
@@ -161,9 +160,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
   const selectedTargetJalur =
     formData.pendaftaran === "baru"
       ? formData.jenis_jalur_diambil
-      : formData.pendaftaran === "ulang"
-        ? formData.jenis_jalur_ulang
-        : formData.penjaluran_baru;
+      : "";
   const isPerintisanBisnis = selectedTargetJalur === "perintisan_bisnis";
   const anggotaNimValidationKey = formData.anggota_perintisan
     .map((anggota) => `${anggota.jenis_pendaftaran}:${String(anggota.nim || "").trim()}`)
@@ -239,7 +236,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       const jenisPendaftaran = separatorIndex >= 0 ? entry.slice(0, separatorIndex) : "";
       const nim = separatorIndex >= 0 ? entry.slice(separatorIndex + 1).trim() : "";
       const structuralError = getNimValidationError(nim);
-      if (!isPerintisanBisnis || jenisPendaftaran !== "baru" || structuralError) {
+      if (!INITIAL_GROUP_SELECTION_ENABLED || !isPerintisanBisnis || jenisPendaftaran !== "baru" || structuralError) {
         setAnggotaNimAvailability((prev) => {
           const next = [...prev];
           next[index] = "idle";
@@ -334,6 +331,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     const timers = formData.anggota_perintisan.map((anggota, index) => {
       const query = String(anggotaSearchQueries[index] || "").trim();
       if (
+        !INITIAL_GROUP_SELECTION_ENABLED ||
         !isPerintisanBisnis ||
         anggota.jenis_pendaftaran === "baru" ||
         query.length < 2
@@ -529,7 +527,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       value = value.slice(0, 100);
       setFieldErrors((prev) => ({
         ...prev,
-        nama: touchedFields.nama ? getNamaValidationError(value) : "",
+        nama:
+          touchedFields.nama || FORBIDDEN_NAMA_CHARACTERS.test(value)
+            ? getNamaValidationError(value)
+            : "",
       }));
     }
 
@@ -906,18 +907,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       return;
     }
 
-    if (formData.pendaftaran === "ulang") {
-      setFormData((prev) => ({
-        ...prev,
-        jenis_jalur_diambil: "",
-        dosen_pembimbing_ta_mode: "belum_dapat",
-        dosen_pembimbing_ta_id: "",
-        penjaluran_sebelumnya: "",
-        penjaluran_baru: "",
-      }));
-      return;
-    }
-
     setFormData((prev) => ({
       ...prev,
       jenis_jalur_diambil: "",
@@ -962,60 +951,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
     setNimAvailability("idle");
     setNimAccountMode("unknown");
     setStep(1);
-  };
-
-  const validateKelompokPerintisan = () => {
-    if (!formData.ketua_peran_tim) {
-      return "Pilih peran tim untuk ketua kelompok.";
-    }
-    const roles = [
-      formData.ketua_peran_tim,
-      ...formData.anggota_perintisan.map((item) => item.peran_tim),
-    ];
-    if (
-      roles.some((role) => !role) ||
-      new Set(roles).size !== 3 ||
-      !PERAN_TIM_OPTIONS.every((option) => roles.includes(option.value))
-    ) {
-      return "Kelompok wajib memiliki tepat satu Hustler, satu Hipster, dan satu Hacker.";
-    }
-
-    const nextAnggotaErrors = formData.anggota_perintisan.map(() => ({ nim: "", nama: "" }));
-    let firstAnggotaError = "";
-    for (let index = 0; index < formData.anggota_perintisan.length; index += 1) {
-      const anggota = formData.anggota_perintisan[index];
-      const label = `Anggota ${index + 1}`;
-      if (anggota.jenis_pendaftaran === "baru") {
-        const nimError =
-          getNimValidationError(anggota.nim) ||
-          getAnggotaNimConflict(index) ||
-          (anggotaNimAvailability[index] === "unavailable" ? "NIM sudah terdaftar." : "") ||
-          (anggotaNimAvailability[index] === "checking" ? "NIM sedang diperiksa." : "") ||
-          (anggotaNimAvailability[index] !== "available" ? "Ketersediaan NIM belum berhasil diverifikasi." : "");
-        const namaError = getAnggotaNamaValidationError(anggota.nama);
-        nextAnggotaErrors[index] = { nim: nimError, nama: namaError };
-        if (!firstAnggotaError && nimError) firstAnggotaError = `${label}: ${nimError}`;
-        if (!firstAnggotaError && namaError) firstAnggotaError = `${label}: ${namaError}`;
-        if (!firstAnggotaError && !anggota.dosen_pembimbing_akademik_id) {
-          firstAnggotaError = `${label}: Dosen Pembimbing Akademik wajib dipilih.`;
-        }
-      } else if (!anggota.mahasiswa_id || !anggota.mahasiswa?.eligible) {
-        if (!firstAnggotaError) {
-          firstAnggotaError = `${label}: pilih mahasiswa ${anggota.jenis_pendaftaran} yang memenuhi syarat dari master data.`;
-        }
-      }
-    }
-    setAnggotaFieldErrors(nextAnggotaErrors);
-    if (firstAnggotaError) return firstAnggotaError;
-
-    const nims = [
-      formData.nim,
-      ...formData.anggota_perintisan.map((item) => item.nim),
-    ].map((item) => String(item || "").trim());
-    if (new Set(nims).size !== 3) {
-      return "Ketua dan kedua anggota harus merupakan mahasiswa yang berbeda.";
-    }
-    return "";
   };
 
   const validateStepOne = () => {
@@ -1181,14 +1116,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       }
     }
 
-    if (isPerintisanBisnis) {
-      const kelompokError = validateKelompokPerintisan();
-      if (kelompokError) {
-        setError(kelompokError);
-        return;
-      }
-    }
-
     try {
       setIsSubmitting(true);
       const normalizedNim = formData.nim.trim();
@@ -1217,17 +1144,6 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           dosen_pembimbing_ta_baru_id: null,
           penjaluran_sebelumnya: formData.penjaluran_sebelumnya,
           penjaluran_baru: formData.penjaluran_baru,
-          ketua_peran_tim: formData.ketua_peran_tim,
-          anggota_perintisan: formData.anggota_perintisan.map((item) => ({
-            jenis_pendaftaran: item.jenis_pendaftaran,
-            peran_tim: item.peran_tim,
-            mahasiswa_id: item.mahasiswa_id ? Number(item.mahasiswa_id) : null,
-            nim: String(item.nim || "").trim(),
-            nama: String(item.nama || "").trim(),
-            dosen_pembimbing_akademik_id: item.dosen_pembimbing_akademik_id
-              ? Number(item.dosen_pembimbing_akademik_id)
-              : null,
-          })),
         }),
       });
 
@@ -1268,6 +1184,10 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
       setIsSubmitting(false);
     }
   };
+
+  const selectedPendaftaran =
+    PENDAFTARAN_OPTIONS.find((option) => option.value === formData.pendaftaran) ||
+    PENDAFTARAN_OPTIONS[0];
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#d7e7ff]">
@@ -1416,29 +1336,21 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                     value: formData.pendaftaran,
                     options: PENDAFTARAN_OPTIONS,
                   })}
-                  <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
-                    {PENDAFTARAN_OPTIONS.map((option) => {
-                      const isActive = formData.pendaftaran === option.value;
-                      return (
-                        <div
-                          key={`keterangan-${option.value}`}
-                          className={`rounded-lg border px-3 py-2 ${
-                            isActive
-                              ? "border-[#a9bff5] bg-[#f1f5ff]"
-                              : "border-[#e2e8f6] bg-[#fbfcff]"
-                          }`}
-                        >
-                          <p className="text-sm font-bold text-[#21396f]">{option.label}</p>
-                          <p className="mt-1 text-xs text-[#53689a]">{option.description}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-                  {formData.pendaftaran !== "baru" ? (
-                    <div className="mt-3 rounded-lg border border-[#bfd0f7] bg-[#f3f7ff] px-4 py-3 text-sm text-[#34528f]">
-                      Sistem akan membuat akun saja tanpa menyimpan pendaftaran penjaluran. Setelah login dan mengganti password, selesaikan proses {formData.pendaftaran === "ulang" ? "Ulang" : "Alih"} dari menu yang tersedia.
+                  <div
+                    role="note"
+                    aria-label={`Informasi pendaftaran ${selectedPendaftaran.label}`}
+                    className="mt-3 flex items-start gap-3 rounded-lg border border-[#d7e2fa] border-l-4 border-l-[#2f63e3] bg-[#f7f9ff] px-4 py-3"
+                  >
+                    <Info className="mt-0.5 h-5 w-5 shrink-0 text-[#2f63e3]" aria-hidden="true" />
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wide text-[#526895]">
+                        Informasi Pendaftaran {selectedPendaftaran.label}
+                      </p>
+                      <p className="mt-1 text-sm leading-5 text-[#34528f]">
+                        {selectedPendaftaran.description}
+                      </p>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
 
               </section>
@@ -1556,7 +1468,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
               </section>
             ) : null}
 
-            {step === 2 && isPerintisanBisnis ? (
+            {false ? (
               <section
                 id="kelompok-perintisan-bisnis"
                 className="scroll-mt-4 rounded-xl border border-[#9eb8f3] bg-white p-4 shadow-sm"
@@ -1952,7 +1864,7 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
                       ? "Memproses..."
                       : formData.pendaftaran === "baru"
                         ? "Lanjutkan"
-                        : `Buat Akun ${formData.pendaftaran === "ulang" ? "Ulang" : "Alih"}`}
+                        : "Lanjutkan Proses"}
                     <ArrowRight className="h-4 w-4" />
                   </button>
                 </>

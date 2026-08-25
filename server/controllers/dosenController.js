@@ -36,6 +36,9 @@ const {
 const { decideExtensionAndTransitionSemester } = require("../services/extensionTransitionService");
 const { SemesterAssignmentError } = require("../services/semesterAssignmentService");
 const { getCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
+const { createSystemNotification } = require("../services/notificationService");
+const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+const { recoverRejectedResearchSubmission } = require("../services/researchRejectionRecoveryService");
 const {
   isTopikParallelSubmission,
   isJudulMandiriSubmission,
@@ -2397,8 +2400,9 @@ exports.rejectSubmission = async (req, res) => {
 
     const [mahasiswa, riwayat] = await Promise.all([
       Mahasiswa.findByPk(submission.mahasiswa_id, {
-        attributes: ["id", "nim", "nama", "email"],
+        attributes: ["id", "nim", "nama", "email", "status_jalur_saat_ini", "pengajuan_aktif_id"],
         transaction: t,
+        lock: t.LOCK.UPDATE,
       }),
       RiwayatPersetujuan.findAll({
         where: { pengajuan_id: submission.id },
@@ -2628,6 +2632,18 @@ exports.rejectSubmission = async (req, res) => {
           }
         );
       }
+    }
+
+    if ((isJudulMandiri || isTopikDosen) && finalStatus === "rejected") {
+      const rejectionActor = rejectionApprovalType === "koordinator"
+        ? "Ketua cluster"
+        : "Calon dosen pembimbing";
+      await recoverRejectedResearchSubmission({
+        submission,
+        transaction: t,
+        reason: keterangan,
+        actorLabel: rejectionActor,
+      });
     }
 
     await t.commit();

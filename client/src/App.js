@@ -98,7 +98,10 @@ function App() {
     if (authScreen === "register") return <PendaftaranJalurPage apiBaseUrl={API_BASE_URL} onBack={() => setAuthScreen("login")}
       onRegisterSuccess={(result) => {
         setRegistrationData(result || null);
-        setPendingChangeType(result?.next_action?.registration_type || null);
+        setPendingChangeType(
+          result?.next_action?.registration_type ||
+          (result?.next_action?.registration_scope === "ulang_alih" ? "ulang_alih" : null)
+        );
         setAuthScreen("register-success");
       }} />;
     if (authScreen === "register-success") return <PendaftaranSuccessPage registrationData={registrationData} onOpenMahasiswaBaruLogin={() => setAuthScreen("login")} />;

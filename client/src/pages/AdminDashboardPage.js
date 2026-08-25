@@ -15,8 +15,10 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   Upload,
   UserCircle2,
+  X,
 } from "lucide-react";
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
@@ -96,6 +98,7 @@ const JABATAN_STRUKTURAL_OPTIONS = [
 const DOSEN_MANAGEMENT_TABS = [
   { key: "data-dosen", label: "Data Dosen" },
   { key: "jabatan-struktural", label: "Jabatan Struktural" },
+  { key: "bidang-penelitian", label: "Bidang Penelitian" },
 ];
 const DOSEN_STATUS_OPTIONS = [
   { value: "active", label: "Aktif" },
@@ -155,6 +158,98 @@ function formatDosenFullName(namaValue, gelarValue) {
   const prefixParts = [];
   while (titleParts.length > 0 && isDosenPrefixTitle(titleParts[0])) prefixParts.push(titleParts.shift());
   return `${prefixParts.length ? `${prefixParts.join(" ")} ` : ""}${nama}${titleParts.length ? `, ${titleParts.join(", ")}` : ""}`;
+}
+
+function BidangPenelitianMultiCombobox({ options = [], value = [], onChange, inputId }) {
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedIds = new Set((Array.isArray(value) ? value : []).map(Number));
+  const selectedOptions = options.filter((option) => selectedIds.has(Number(option.id)));
+  const normalizedQuery = query.trim().toLowerCase();
+  const availableOptions = options.filter((option) => (
+    !selectedIds.has(Number(option.id))
+    && (!normalizedQuery || String(option.nama || "").toLowerCase().includes(normalizedQuery))
+  ));
+
+  const selectOption = (option) => {
+    onChange([...selectedIds, Number(option.id)]);
+    setQuery("");
+    setIsOpen(true);
+  };
+
+  const removeOption = (optionId) => {
+    onChange([...selectedIds].filter((id) => id !== Number(optionId)));
+  };
+
+  return (
+    <div className="space-y-2">
+      {selectedOptions.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {selectedOptions.map((option) => (
+            <span key={`${inputId}-selected-${option.id}`} className="inline-flex items-center gap-1.5 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+              {option.nama}
+              <button
+                type="button"
+                aria-label={`Hapus ${option.nama}`}
+                onClick={() => removeOption(option.id)}
+                className="rounded-full p-0.5 hover:bg-[#cfddff]"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+        <input
+          id={inputId}
+          type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          aria-controls={`${inputId}-options`}
+          value={query}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setIsOpen(true);
+          }}
+          placeholder="Cari dan pilih bidang penelitian..."
+          className="w-full rounded-lg border border-[#d0dbf4] bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+        />
+
+        {isOpen ? (
+          <div
+            id={`${inputId}-options`}
+            role="listbox"
+            aria-multiselectable="true"
+            className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-[260px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-lg"
+          >
+            {availableOptions.length > 0 ? availableOptions.map((option) => (
+              <button
+                key={`${inputId}-option-${option.id}`}
+                type="button"
+                role="option"
+                aria-selected="false"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => selectOption(option)}
+                className="block w-full border-b border-[#edf1fb] px-3 py-2.5 text-left text-sm font-semibold text-[#30477e] last:border-b-0 hover:bg-[#f4f7ff]"
+              >
+                {option.nama}
+              </button>
+            )) : (
+              <p className="px-3 py-3 text-sm font-semibold text-[#7282a8]">
+                {selectedOptions.length === options.length ? "Semua bidang sudah dipilih." : "Bidang penelitian tidak ditemukan."}
+              </p>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 function validateDosenImportPreviewRow(row) {
@@ -248,7 +343,15 @@ function formatAdminDosenOptionLabel(dosen) {
 }
 
 function getAdminDosenSearchHaystack(dosen) {
-  return [dosen?.nama, dosen?.nik, dosen?.kode_dosen, dosen?.email]
+  return [
+    dosen?.nama,
+    dosen?.nik,
+    dosen?.kode_dosen,
+    dosen?.email,
+    ...(Array.isArray(dosen?.bidang_penelitians)
+      ? dosen.bidang_penelitians.map((item) => item.nama)
+      : []),
+  ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -514,6 +617,16 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [dosenManagementTab, setDosenManagementTab] = useState("data-dosen");
   const [dosenPage, setDosenPage] = useState(1);
   const [klasterOptions, setKlasterOptions] = useState([]);
+  const [bidangPenelitianRows, setBidangPenelitianRows] = useState([]);
+  const [bidangPenelitianQuery, setBidangPenelitianQuery] = useState("");
+  const [bidangPenelitianMode, setBidangPenelitianMode] = useState("list");
+  const [bidangPenelitianForm, setBidangPenelitianForm] = useState({
+    id: null,
+    nama: "",
+    deskripsi: "",
+  });
+  const [savingBidangPenelitian, setSavingBidangPenelitian] = useState(false);
+  const [bidangPenelitianError, setBidangPenelitianError] = useState("");
   const [createDosenForm, setCreateDosenForm] = useState({
     nik: "",
     nama: "",
@@ -538,6 +651,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     continue_existing_supervision: true,
     status_effective_at: todayJakarta(),
     status_reason: "",
+    bidang_penelitian_ids: [],
   });
   const [dosenEditGelarError, setDosenEditGelarError] = useState("");
   const [savingDosenStatus, setSavingDosenStatus] = useState(false);
@@ -550,6 +664,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const [activeJabatanSearchField, setActiveJabatanSearchField] = useState("");
   const [savingJabatanStruktural, setSavingJabatanStruktural] = useState(false);
   const [jabatanActionError, setJabatanActionError] = useState("");
+  const [jabatanAssignmentLocks, setJabatanAssignmentLocks] = useState([]);
   const sessionExpiredRef = useRef(false);
   const contentScrollRef = useRef(null);
   const dosenGridScrollRef = useRef(null);
@@ -597,11 +712,13 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setLoading(true);
     setError("");
 
-    const [statsResult, pengajuanResult, dosenResult, klasterResult] = await Promise.allSettled([
+    const [statsResult, pengajuanResult, dosenResult, klasterResult, jabatanLocksResult, bidangPenelitianResult] = await Promise.allSettled([
       fetchWithAuth("/api/admin/statistics"),
       fetchWithAuth("/api/admin/pengajuan"),
       fetchWithAuth("/api/admin/dosen"),
       fetchWithAuth("/api/admin/klasters"),
+      fetchWithAuth("/api/admin/dosen/jabatan-struktural/locks"),
+      fetchWithAuth("/api/admin/bidang-penelitian"),
     ]);
 
     if (sessionExpiredRef.current) return;
@@ -634,6 +751,22 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     } else {
       setKlasterOptions([]);
       issues.push(klasterResult.reason?.message || "Gagal memuat data klaster.");
+    }
+
+    if (jabatanLocksResult.status === "fulfilled") {
+      setJabatanAssignmentLocks(
+        Array.isArray(jabatanLocksResult.value?.locks) ? jabatanLocksResult.value.locks : []
+      );
+    } else {
+      setJabatanAssignmentLocks([]);
+      issues.push(jabatanLocksResult.reason?.message || "Gagal memuat status tugas Sekprodi.");
+    }
+
+    if (bidangPenelitianResult.status === "fulfilled") {
+      setBidangPenelitianRows(Array.isArray(bidangPenelitianResult.value) ? bidangPenelitianResult.value : []);
+    } else {
+      setBidangPenelitianRows([]);
+      issues.push(bidangPenelitianResult.reason?.message || "Gagal memuat bidang penelitian.");
     }
 
     setError(issues.join(" "));
@@ -672,6 +805,17 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   }, [dosenManagementTab, dosenMode]);
 
   const summary = useMemo(() => aggregateStatistics(statistics), [statistics]);
+  const filteredBidangPenelitianRows = useMemo(() => {
+    const keyword = bidangPenelitianQuery.trim().toLowerCase();
+    if (!keyword) return bidangPenelitianRows;
+    return bidangPenelitianRows.filter((row) =>
+      [row.nama, row.deskripsi]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(keyword)
+    );
+  }, [bidangPenelitianQuery, bidangPenelitianRows]);
   const activeTabHeader = TAB_HEADERS[activeTab] || TAB_HEADERS.dashboard;
   const templateDosenUrl = `${apiBaseUrl}/api/admin/upload/dosen-template?v=status-dosen-v2`;
   const templateMahasiswaUrl = `${apiBaseUrl}/api/admin/upload/mahasiswa-template`;
@@ -687,6 +831,15 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         };
       }),
     [dosenRows]
+  );
+
+  const jabatanAssignmentLockByRole = useMemo(
+    () => new Map(jabatanAssignmentLocks.map((item) => [item.jabatan, item])),
+    [jabatanAssignmentLocks]
+  );
+  const activeJabatanAssignmentLocks = useMemo(
+    () => jabatanAssignmentLocks.filter((item) => item.locked),
+    [jabatanAssignmentLocks]
   );
 
   const jabatanDraftFromRows = useMemo(() => {
@@ -819,6 +972,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       const klasterLabel = Array.isArray(row.klasters)
         ? row.klasters.map((item) => `${item.kode} ${item.nama}`).join(" ")
         : "";
+      const bidangPenelitianLabel = Array.isArray(row.bidang_penelitians)
+        ? row.bidang_penelitians.map((item) => item.nama).join(" ")
+        : "";
       const haystack = [
         row.kode_dosen,
         row.nik,
@@ -827,6 +983,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         row.email,
         row.jabatan_struktural,
         klasterLabel,
+        bidangPenelitianLabel,
       ]
         .filter(Boolean)
         .join(" ")
@@ -1210,6 +1367,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       continue_existing_supervision: dosen?.continue_existing_supervision !== false,
       status_effective_at: dosen?.status_effective_at || todayJakarta(),
       status_reason: "",
+      bidang_penelitian_ids: Array.isArray(dosen?.bidang_penelitians)
+        ? dosen.bidang_penelitians.map((item) => Number(item.id))
+        : [],
     });
     fetchWithAuth(`/api/admin/dosen/${dosen.id}/status-history`)
       .then((rows) => setDosenStatusHistory(Array.isArray(rows) ? rows : []))
@@ -1473,6 +1633,10 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     const gelarError = validateDosenTitleInput(dosenEditForm.gelar);
     setDosenEditGelarError(gelarError);
     if (gelarError) return;
+    if (bidangPenelitianRows.length > 0 && dosenEditForm.bidang_penelitian_ids.length === 0) {
+      setDosenActionError("Pilih minimal satu bidang penelitian.");
+      return;
+    }
     try {
       const response = await fetch(`${apiBaseUrl}/api/admin/dosen/${selectedDosen.id}/profil`, {
         method: "PUT",
@@ -1484,6 +1648,11 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           gelar: normalizeDosenTitleInput(dosenEditForm.gelar),
           jabatan_struktural: dosenEditForm.jabatan_struktural,
           klaster_ids: dosenEditForm.klaster_ids,
+          ...(bidangPenelitianRows.length > 0
+            ? {
+                bidang_penelitian_ids: dosenEditForm.bidang_penelitian_ids,
+              }
+            : {}),
         }),
       });
 
@@ -1511,6 +1680,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       nama: item.nama,
                     }))
                   : item.klasters || [],
+                bidang_penelitians: Array.isArray(payload.data?.bidang_penelitians)
+                  ? payload.data.bidang_penelitians
+                  : item.bidang_penelitians || [],
                 updatedAt: payload.data?.updatedAt ?? item.updatedAt,
               }
             : item
@@ -1523,6 +1695,9 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
               ...prev,
               gelar: payload.data?.gelar ?? null,
               jabatan_struktural: payload.data?.jabatan_struktural ?? null,
+              bidang_penelitians: Array.isArray(payload.data?.bidang_penelitians)
+                ? payload.data.bidang_penelitians
+                : prev.bidang_penelitians || [],
               updatedAt: payload.data?.updatedAt ?? prev.updatedAt,
             }
           : prev
@@ -1535,6 +1710,128 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       setDosenActionError(saveError.message || "Terjadi kesalahan saat menyimpan.");
     }
   };
+
+  const resetBidangPenelitianForm = () => {
+    setBidangPenelitianForm({ id: null, nama: "", deskripsi: "" });
+    setBidangPenelitianError("");
+  };
+
+  const handleOpenAddBidangPenelitian = () => {
+    resetBidangPenelitianForm();
+    setBidangPenelitianMode("form");
+  };
+
+  const handleBackToBidangPenelitianGrid = () => {
+    resetBidangPenelitianForm();
+    setBidangPenelitianMode("list");
+  };
+
+  const handleEditBidangPenelitian = (row) => {
+    setBidangPenelitianForm({
+      id: row.id,
+      nama: row.nama || "",
+      deskripsi: row.deskripsi || "",
+    });
+    setBidangPenelitianError("");
+    setBidangPenelitianMode("form");
+  };
+
+  const handleSaveBidangPenelitian = async (event) => {
+    event.preventDefault();
+    if (savingBidangPenelitian) return;
+    setBidangPenelitianError("");
+
+    const nama = bidangPenelitianForm.nama.trim();
+    const deskripsi = bidangPenelitianForm.deskripsi.trim();
+    if (nama.length < 3) {
+      setBidangPenelitianError("Nama bidang penelitian minimal 3 karakter.");
+      return;
+    }
+    if (deskripsi.length < 10) {
+      setBidangPenelitianError("Deskripsi minimal 10 karakter agar dapat digunakan sebagai konteks AI.");
+      return;
+    }
+
+    setSavingBidangPenelitian(true);
+    try {
+      const isEditing = Boolean(bidangPenelitianForm.id);
+      const response = await fetch(
+        `${apiBaseUrl}/api/admin/bidang-penelitian${isEditing ? `/${bidangPenelitianForm.id}` : ""}`,
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            Authorization: `Bearer ${session.token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            nama,
+            deskripsi,
+          }),
+        }
+      );
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        onSessionExpired?.();
+        return;
+      }
+      if (!response.ok || !payload?.success) {
+        throw new Error(payload?.message || "Gagal menyimpan bidang penelitian.");
+      }
+
+      setBidangPenelitianRows((prev) => {
+        const next = isEditing
+          ? prev.map((item) => item.id === bidangPenelitianForm.id ? { ...item, ...payload.data } : item)
+          : [...prev, payload.data];
+        return next.sort((a, b) => String(a.nama || "").localeCompare(String(b.nama || ""), "id"));
+      });
+      resetBidangPenelitianForm();
+      setBidangPenelitianMode("list");
+      showSuccessToast(payload.message || "Bidang penelitian berhasil disimpan.");
+    } catch (saveError) {
+      setBidangPenelitianError(saveError.message || "Gagal menyimpan bidang penelitian.");
+    } finally {
+      setSavingBidangPenelitian(false);
+    }
+  };
+
+  const handleDeleteBidangPenelitian = async (row) => {
+    const usageCount = Number(row.jumlah_dosen || 0) + Number(row.jumlah_topik || 0) + Number(row.jumlah_pengajuan || 0);
+    if (usageCount > 0) {
+      setBidangPenelitianError(
+        `Bidang ${row.nama} masih digunakan dan tidak dapat dihapus. Lepaskan seluruh relasinya terlebih dahulu.`
+      );
+      return;
+    }
+    const confirmation = await Swal.fire({
+      icon: "warning",
+      title: `Hapus ${row.nama}?`,
+      text: "Bidang penelitian yang belum digunakan akan dihapus permanen.",
+      showCancelButton: true,
+      confirmButtonText: "Hapus",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#c2413b",
+    });
+    if (!confirmation.isConfirmed) return;
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/admin/bidang-penelitian/${row.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.status === 401 || response.status === 403) {
+        onSessionExpired?.();
+        return;
+      }
+      if (!response.ok || !payload?.success) throw new Error(payload?.message || "Gagal menghapus bidang penelitian.");
+      setBidangPenelitianRows((prev) => prev.filter((item) => item.id !== row.id));
+      if (bidangPenelitianForm.id === row.id) resetBidangPenelitianForm();
+      showSuccessToast(payload.message || "Bidang penelitian berhasil dihapus.");
+    } catch (deleteError) {
+      setBidangPenelitianError(deleteError.message || "Gagal menghapus bidang penelitian.");
+    }
+  };
+
   const findDosenByDraftValue = (selectedValue) => {
     const normalizedValue = String(selectedValue || "").trim();
     if (!normalizedValue) return null;
@@ -1575,6 +1872,31 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
     setJabatanDraft((prev) => ({ ...prev, [jabatan]: "" }));
     setJabatanSearchQueryByField((prev) => ({ ...prev, [jabatan]: "" }));
     setActiveJabatanSearchField("");
+  };
+
+  const handleShowSekprodiAssignmentLockDetail = (assignmentLock) => {
+    const taskLines = Array.isArray(assignmentLock?.tasks)
+      ? assignmentLock.tasks.map((task, index) => {
+          const mahasiswa = task?.mahasiswa;
+          const identity = mahasiswa
+            ? `${mahasiswa.nim || "-"} - ${mahasiswa.nama || "-"}`
+            : "Mahasiswa tidak ditemukan";
+          const period = task?.periode?.label_periode || "Periode tidak ditemukan";
+          return `${index + 1}. ${identity}\n${task?.jenis_proses || "Proses penjaluran"} · ${period}`;
+        })
+      : [];
+
+    Swal.fire({
+      title: `Tugas Sekprodi ${assignmentLock?.program_label || ""}`.trim(),
+      text:
+        taskLines.length > 0
+          ? `Selesaikan proses berikut sebelum mengganti Sekprodi:\n\n${taskLines.join("\n\n")}`
+          : "Tidak ada proses penjaluran yang tertunda.",
+      icon: taskLines.length > 0 ? "warning" : "info",
+      confirmButtonColor: "#2f63e3",
+      confirmButtonText: "Tutup",
+      width: 680,
+    });
   };
 
   const handleStartEditJabatanStruktural = () => {
@@ -1650,11 +1972,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
         throw new Error(payload?.message || "Gagal menyimpan jabatan struktural.");
       }
 
-      if (Array.isArray(payload.data?.rows)) {
-        setDosenRows(payload.data.rows);
-      } else {
-        await loadData();
-      }
+      await loadData();
       setIsEditingJabatanStruktural(false);
       showSuccessToast(payload.message || "Jabatan struktural berhasil disimpan.");
     } catch (saveError) {
@@ -1837,6 +2155,8 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       setSelectedDosen(null);
                       setDosenActionError("");
                       setDosenActionMessage("");
+                      resetBidangPenelitianForm();
+                      setBidangPenelitianMode("list");
                       if (item.key !== "data-dosen") {
                         setDosenMode("list");
                       }
@@ -2379,6 +2699,35 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
 
                       <div className="md:col-span-2 rounded-xl border border-[#dce4f7] bg-[#f8fbff] p-4">
                         <div className="mb-3">
+                          <h4 className="font-black text-[#1b274b]">Bidang Penelitian</h4>
+                          <p className="text-xs text-[#5d6c91]">
+                            Pilih satu atau beberapa bidang yang akan digunakan untuk pencocokan penguji.
+                          </p>
+                        </div>
+                        {bidangPenelitianRows.length === 0 ? (
+                          <div className="rounded-lg border border-[#e4cf9c] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#8a6118]">
+                            Belum ada master bidang penelitian. Tambahkan terlebih dahulu melalui tab Bidang Penelitian.
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+                              Bidang Penelitian <span className="text-[#c33]">*</span>
+                            </label>
+                            <BidangPenelitianMultiCombobox
+                              inputId="edit-dosen-bidang-penelitian"
+                              options={bidangPenelitianRows}
+                              value={dosenEditForm.bidang_penelitian_ids}
+                              onChange={(ids) => {
+                                setDosenEditForm((prev) => ({ ...prev, bidang_penelitian_ids: ids }));
+                                setDosenActionError("");
+                              }}
+                            />
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="md:col-span-2 rounded-xl border border-[#dce4f7] bg-[#f8fbff] p-4">
+                        <div className="mb-3">
                           <h4 className="font-black text-[#1b274b]">Status Akademik dan Akun</h4>
                           <p className="text-xs text-[#5d6c91]">Status akademik mengatur penugasan; status akun hanya mengatur akses login.</p>
                         </div>
@@ -2448,6 +2797,15 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             </div>
                           )) : <p className="text-sm text-[#7180a3]">Belum ada perubahan status.</p>}
                         </div>
+                      </div>
+
+                      <div className="md:col-span-2 flex justify-end border-t border-[#e8edf8] pt-4">
+                        <button
+                          type="submit"
+                          className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110"
+                        >
+                          Simpan Profil &amp; Bidang Penelitian
+                        </button>
                       </div>
 
                     </form>
@@ -2705,7 +3063,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       className="relative overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height"
                       style={{ overflowAnchor: "none" }}
                     >
-                      <table className="min-w-[2150px] text-left text-sm">
+                      <table className="min-w-[2380px] text-left text-sm">
                         <thead>
                           <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
@@ -2716,6 +3074,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Email</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jabatan Struktural</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Klaster</th>
+                            <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bidang Penelitian</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Kuota</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bimbingan (Total)</th>
                             <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Rincian Jalur</th>
@@ -2740,6 +3099,11 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                                 <td className="px-3 py-2">
                                   {Array.isArray(row.klasters) && row.klasters.length > 0
                                     ? row.klasters.map((item) => item.kode).join(", ")
+                                    : "-"}
+                                </td>
+                                <td className="px-3 py-2 text-xs leading-5 text-[#526184]">
+                                  {Array.isArray(row.bidang_penelitians) && row.bidang_penelitians.length > 0
+                                    ? row.bidang_penelitians.map((item) => item.nama).join(", ")
                                     : "-"}
                                 </td>
                                 <td className="px-3 py-2">{row.kuota_bimbingan ?? "-"}</td>
@@ -2825,8 +3189,30 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                   </div>
                 ) : null}
 
+                {activeJabatanAssignmentLocks.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {activeJabatanAssignmentLocks.map((assignmentLock) => (
+                      <div
+                        key={`sekprodi-lock-${assignmentLock.jabatan}`}
+                        className="flex flex-col gap-2 rounded-lg border border-[#efc36f] bg-[#fff8e8] px-3 py-2 text-sm text-[#8a5900] sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <span className="font-semibold">{assignmentLock.message}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleShowSekprodiAssignmentLockDetail(assignmentLock)}
+                          className="shrink-0 rounded-lg border border-[#dfa53c] bg-white px-3 py-1.5 text-xs font-bold text-[#8a5900] hover:bg-[#fffdf8]"
+                        >
+                          Detail ({assignmentLock.pending_count || 0})
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
                 <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
                   {jabatanAssignments.map((item) => {
+                    const assignmentLock = jabatanAssignmentLockByRole.get(item.jabatan);
+                    const isLockedSekprodi = Boolean(assignmentLock?.locked && item.dosen_id);
                     const selectedValue = jabatanDraft[item.jabatan] || "";
                     const selectedDosen = selectedValue
                       ? dosenRows.find((row) => Number(row.id) === Number(selectedValue))
@@ -2839,6 +3225,7 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     const inputValue = searchValue || selectedDosenLabel;
                     const normalizedSearch = searchValue.trim().toLowerCase();
                     const shouldShowResults =
+                      !isLockedSekprodi &&
                       activeJabatanSearchField === item.jabatan &&
                       normalizedSearch.length > 0 &&
                       normalizedSearch !== selectedDosenLabel.trim().toLowerCase();
@@ -2860,27 +3247,36 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                         <label className="mb-2 block text-sm font-bold text-[#24427c]">{item.jabatan}</label>
                         {isEditingJabatanStruktural ? (
                           <div className="relative">
-                            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                            <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-[#7282a8]" />
                             <input
                               type="text"
                               value={inputValue}
-                              onFocus={() => setActiveJabatanSearchField(item.jabatan)}
+                              onFocus={() => {
+                                if (!isLockedSekprodi) setActiveJabatanSearchField(item.jabatan);
+                              }}
                               onBlur={() => handleJabatanSearchBlur(item.jabatan)}
                               onChange={(event) => handleJabatanSearchQueryChange(item.jabatan, event.target.value)}
+                              disabled={isLockedSekprodi}
                               placeholder="Cari nama, NIK, kode, atau email dosen"
-                              className={`w-full rounded-lg border border-[#cdd8f0] bg-white py-2 pl-9 text-sm text-[#25395f] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 ${
+                              className={`w-full rounded-lg border border-[#cdd8f0] py-2 pl-9 text-sm text-[#25395f] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#edf1f8] disabled:text-[#667493] ${
                                 selectedValue ? "pr-24" : "pr-3"
                               }`}
                             />
-                            {selectedValue ? (
+                            {selectedValue && !isLockedSekprodi ? (
                               <button
                                 type="button"
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => handleClearJabatanDosen(item.jabatan)}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md border border-[#d7e0f4] bg-[#f8fbff] px-2 py-1 text-xs font-bold text-[#53658f] hover:bg-white"
+                                className="absolute right-2 top-[7px] rounded-md border border-[#d7e0f4] bg-[#f8fbff] px-2 py-1 text-xs font-bold text-[#53658f] hover:bg-white"
                               >
                                 Kosongkan
                               </button>
+                            ) : null}
+
+                            {isLockedSekprodi ? (
+                              <p className="mt-2 text-xs font-semibold text-[#9a6500]">
+                                Selesaikan {assignmentLock.pending_count} proses Sekprodi sebelum pemegang jabatan ini dapat diganti.
+                              </p>
                             ) : null}
 
                             {shouldShowResults ? (
@@ -2971,6 +3367,194 @@ function AdminDashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     </button>
                   )}
                 </div>
+              </div>
+            ) : null}
+
+            {dosenManagementTab === "bidang-penelitian" ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-[#dce4f7] bg-white p-3 shadow-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleBackToBidangPenelitianGrid}
+                      disabled={bidangPenelitianMode === "list"}
+                      title="Kembali ke grid bidang penelitian"
+                      aria-label="Kembali ke grid bidang penelitian"
+                      className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <ArrowLeft className="h-4 w-4" />
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={loadData}
+                      className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Refresh
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleOpenAddBidangPenelitian}
+                      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition ${
+                        bidangPenelitianMode === "form" && !bidangPenelitianForm.id
+                          ? "bg-[#2f63e3] text-white"
+                          : "border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"
+                      }`}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {bidangPenelitianMode === "form" ? (
+                <form
+                  onSubmit={handleSaveBidangPenelitian}
+                  className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">
+                        {bidangPenelitianForm.id ? "Edit Bidang Penelitian" : "Tambah Bidang Penelitian"}
+                      </h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Deskripsi menjadi konteks terstruktur untuk klasifikasi AI.
+                      </p>
+                    </div>
+                  </div>
+
+                  {bidangPenelitianError ? (
+                    <div className="mt-3 rounded-lg border border-[#f6d7d7] bg-[#fff2f2] px-3 py-2 text-sm font-semibold text-[#a03f3f]">
+                      {bidangPenelitianError}
+                    </div>
+                  ) : null}
+
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+                        Nama Bidang <span className="text-[#c33]">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        maxLength={150}
+                        value={bidangPenelitianForm.nama}
+                        onChange={(event) => setBidangPenelitianForm((prev) => ({ ...prev, nama: event.target.value }))}
+                        placeholder="Contoh: Computer Vision"
+                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                      />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="mb-1 block text-sm font-semibold text-[#324c86]">
+                        Deskripsi <span className="text-[#c33]">*</span>
+                      </label>
+                      <textarea
+                        rows={3}
+                        maxLength={2000}
+                        value={bidangPenelitianForm.deskripsi}
+                        onChange={(event) => setBidangPenelitianForm((prev) => ({ ...prev, deskripsi: event.target.value }))}
+                        placeholder="Jelaskan ruang lingkup bidang agar AI dapat membedakannya dari bidang lain."
+                        className="w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={savingBidangPenelitian}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Plus className="h-4 w-4" />
+                      {savingBidangPenelitian
+                        ? "Menyimpan..."
+                        : bidangPenelitianForm.id
+                          ? "Simpan Perubahan"
+                          : "Tambah Bidang"}
+                    </button>
+                  </div>
+                </form>
+                ) : (
+                <div className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black text-[#1b274b]">Daftar Bidang Penelitian</h3>
+                      <p className="mt-1 text-sm text-[#5d6c91]">
+                        Bidang yang sudah digunakan tidak dapat dihapus agar histori tetap konsisten.
+                      </p>
+                    </div>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+                      <input
+                        type="text"
+                        value={bidangPenelitianQuery}
+                        onChange={(event) => setBidangPenelitianQuery(event.target.value)}
+                        placeholder="Cari nama atau deskripsi..."
+                        className="w-[300px] max-w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="relative overflow-auto rounded-lg border border-[#e6ecf8] grid-unified-height">
+                    <table className="w-full table-fixed text-left text-sm">
+                      <colgroup>
+                        <col className="w-[22%]" />
+                        <col className="w-[52%]" />
+                        <col className="w-[10%]" />
+                        <col className="w-[16%]" />
+                      </colgroup>
+                      <thead>
+                        <tr className="border-b border-[#e6ecf8] text-[#4d5e89]">
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Bidang Penelitian</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Deskripsi</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 text-center font-semibold">Dosen</th>
+                          <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBidangPenelitianRows.map((row) => {
+                          const usageCount = Number(row.jumlah_dosen || 0) + Number(row.jumlah_topik || 0) + Number(row.jumlah_pengajuan || 0);
+                          return (
+                            <tr key={`bidang-penelitian-${row.id}`} className="border-b border-[#eff3fb] align-top">
+                              <td className="px-3 py-3 font-semibold text-[#1f315f]">{row.nama}</td>
+                              <td className="max-w-[520px] px-3 py-3 text-xs leading-5 text-[#526184]">
+                                <p>{row.deskripsi}</p>
+                              </td>
+                              <td className="px-3 py-3 text-center">{row.jumlah_dosen || 0}</td>
+                              <td className="px-3 py-3">
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditBidangPenelitian(row)}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110"
+                                  >
+                                    <PencilLine className="h-3.5 w-3.5" /> Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteBidangPenelitian(row)}
+                                    disabled={usageCount > 0}
+                                    title={usageCount > 0 ? "Bidang masih digunakan" : "Hapus bidang"}
+                                    className="inline-flex items-center gap-1 rounded-md border border-[#e4b6b6] px-3 py-1.5 text-xs font-bold text-[#a43c3c] hover:bg-[#fff2f2] disabled:cursor-not-allowed disabled:opacity-45"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" /> Hapus
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    {filteredBidangPenelitianRows.length === 0 ? (
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
+                        Belum ada bidang penelitian yang sesuai.
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                )}
               </div>
             ) : null}
           </div>

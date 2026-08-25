@@ -34,6 +34,7 @@ const handleNonPenelitianUpload = (req, res, next) => {
 
 router.get("/status", authenticateToken, authorizeRole("mahasiswa"), jalurController.checkStatusJalur);
 router.get("/eligibility", authenticateToken, authorizeRole("mahasiswa"), jalurController.getJalurEligibility);
+router.get("/bidang-penelitian", authenticateToken, authorizeRole("mahasiswa"), jalurController.getBidangPenelitianOptions);
 router.get("/change/eligibility", authenticateToken, authorizeRole("mahasiswa"), changeController.getEligibility);
 router.post("/change/pamit", authenticateToken, authorizeRole("mahasiswa"), changeController.submitPamit);
 router.get("/change/pamit/:id", authenticateToken, authorizeRole("mahasiswa"), changeController.getPamit);
@@ -45,6 +46,18 @@ router.get(
   authenticateToken,
   authorizeRole("mahasiswa"),
   mitraMagangController.getMitraMagangOptions
+);
+router.get(
+  "/non-penelitian/perintisan-bisnis/group-candidates",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  jalurController.getPerintisanGroupCandidates
+);
+router.post(
+  "/non-penelitian/perintisan-bisnis/group",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  jalurController.createPerintisanGroup
 );
 router.post(
   "/non-penelitian/submit",

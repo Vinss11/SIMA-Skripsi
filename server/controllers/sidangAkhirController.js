@@ -1016,6 +1016,82 @@ exports.createSekretarisPeriodeSidang = async (req, res) => {
   }
 };
 
+exports.discardSekretarisPeriodeSidangDraft = async (req, res) => {
+  const transaction = await sequelize.transaction();
+  try {
+    const periodeId = Number(req.params.id);
+    if (!Number.isInteger(periodeId) || periodeId <= 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: "ID periode sidang tidak valid.",
+      });
+    }
+
+    const periode = await PeriodeSidang.findByPk(periodeId, {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!periode) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: "Draft periode sidang tidak ditemukan.",
+      });
+    }
+
+    if (String(periode.status || "").toLowerCase() !== "draft") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Periode sidang yang sudah dibuka atau ditutup tidak dapat dibatalkan sebagai draft.",
+      });
+    }
+
+    const currentSekretarisId = Number(req.user?.sekretaris_prodi_id || 0);
+    const creatorSekretarisId = Number(periode.created_by_sekretaris_id || 0);
+    if (currentSekretarisId && creatorSekretarisId && currentSekretarisId !== creatorSekretarisId) {
+      await transaction.rollback();
+      return res.status(403).json({
+        success: false,
+        message: "Draft periode sidang ini dibuat oleh Sekretaris Prodi lain.",
+      });
+    }
+
+    const registrationCount = await PendaftaranSidang.count({
+      where: { periode_sidang_id: periode.id },
+      transaction,
+    });
+    if (registrationCount > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Draft tidak dapat dibatalkan karena sudah memiliki data pendaftaran sidang.",
+      });
+    }
+
+    await periode.destroy({ transaction });
+    await transaction.commit();
+
+    return res.json({
+      success: true,
+      message: "Draft periode sidang dibatalkan. Proses pembukaan dapat dimulai kembali dari awal.",
+    });
+  } catch (error) {
+    try {
+      await transaction.rollback();
+    } catch (rollbackError) {
+      // no-op
+    }
+    console.error("Error di discardSekretarisPeriodeSidangDraft:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Terjadi kesalahan saat membatalkan draft periode sidang.",
+      error: error.message,
+    });
+  }
+};
+
 exports.updateSekretarisPeriodeSidang = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {

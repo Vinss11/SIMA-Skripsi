@@ -225,7 +225,7 @@ function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onC
   );
 }
 
-function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired }) {
+function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired, onRegisterLeaveGuard }) {
   const todayDateOnly = useMemo(() => getJakartaTodayDateOnly(), []);
   const [activeTab, setActiveTab] = useState("periode-pendaftaran");
   const [periodePageMode, setPeriodePageMode] = useState("list");
@@ -235,6 +235,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [setupDraftPeriodeId, setSetupDraftPeriodeId] = useState(null);
 
   const [overview, setOverview] = useState({ active_periode: null, periodes: [] });
   const [selectedPeriodeId, setSelectedPeriodeId] = useState("");
@@ -311,7 +312,12 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       const fallbackId =
         data?.active_periode?.id ||
         (Array.isArray(data?.periodes) && data.periodes.length > 0 ? data.periodes[0].id : "");
-      setSelectedPeriodeId((prev) => (prev ? prev : fallbackId ? String(fallbackId) : ""));
+      setSelectedPeriodeId((prev) => {
+        const previousStillExists = prev && (data?.periodes || []).some(
+          (item) => String(item.id) === String(prev)
+        );
+        return previousStillExists ? prev : fallbackId ? String(fallbackId) : "";
+      });
     } catch (loadError) {
       if (loadError.message !== "__SESSION_EXPIRED__") {
         setError(loadError.message || "Gagal memuat periode sidang.");
@@ -513,7 +519,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
 
       setSuccess("Data periode tersimpan sebagai draft. Lengkapi hari dan ruangan untuk membuka periode.");
       setOpenPeriodeErrors({});
-      setPeriodePageMode("list");
+      setSetupDraftPeriodeId(periodeId);
       setSelectedPeriodeId(String(periodeId));
       setOpenPeriodeForm({
         periode: "uts",
@@ -533,6 +539,78 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
       setSavingForm(false);
     }
   };
+
+  const confirmAndDiscardSetupDraft = useCallback(async () => {
+    if (periodePageMode !== "configure" || !setupDraftPeriodeId) return true;
+
+    const confirmation = await Swal.fire({
+      title: "Keluar dari pengaturan periode?",
+      text: "Periode belum selesai dibuka. Jika keluar, data sementara akan dihapus dan pengisian periode harus dimulai kembali dari awal.",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Ya, Keluar dan Ulangi",
+      cancelButtonText: "Tetap di Halaman",
+      confirmButtonColor: "#b5473c",
+    });
+    if (!confirmation.isConfirmed) return false;
+
+    try {
+      setSavingForm(true);
+      const response = await fetchWithAuth(
+        `/api/sekretaris/sidang/periode/${setupDraftPeriodeId}/draft`,
+        { method: "DELETE" }
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !body?.success) {
+        throw new Error(body?.message || "Gagal membatalkan draft periode sidang.");
+      }
+
+      setSetupDraftPeriodeId(null);
+      setSelectedPeriodeId("");
+      setCalendarOpen(false);
+      setEditRoomInput("");
+      setEditRoomError("");
+      setSuccess("");
+      await loadOverview();
+      return true;
+    } catch (actionError) {
+      if (actionError.message !== "__SESSION_EXPIRED__") {
+        showErrorToast(actionError.message || "Gagal membatalkan draft periode sidang.");
+      }
+      return false;
+    } finally {
+      setSavingForm(false);
+    }
+  }, [fetchWithAuth, loadOverview, periodePageMode, setupDraftPeriodeId]);
+
+  useEffect(() => {
+    onRegisterLeaveGuard?.(confirmAndDiscardSetupDraft);
+    return () => onRegisterLeaveGuard?.(null);
+  }, [confirmAndDiscardSetupDraft, onRegisterLeaveGuard]);
+
+  useEffect(() => {
+    if (periodePageMode !== "configure" || !setupDraftPeriodeId) return undefined;
+    const warnBeforeBrowserExit = (event) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const discardDraftAfterBrowserExit = () => {
+      fetch(`${apiBaseUrl}/api/sekretaris/sidang/periode/${setupDraftPeriodeId}/draft`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          "Content-Type": "application/json",
+        },
+        keepalive: true,
+      }).catch(() => {});
+    };
+    window.addEventListener("beforeunload", warnBeforeBrowserExit);
+    window.addEventListener("pagehide", discardDraftAfterBrowserExit);
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeBrowserExit);
+      window.removeEventListener("pagehide", discardDraftAfterBrowserExit);
+    };
+  }, [apiBaseUrl, periodePageMode, session.token, setupDraftPeriodeId]);
 
   const handleSaveSelectedPeriode = async () => {
     if (!selectedPeriode) return;
@@ -681,6 +759,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
         throw new Error(body?.message || "Gagal membuka periode sidang.");
       }
       setSuccess(body?.message || "Periode sidang berhasil dibuka.");
+      setSetupDraftPeriodeId(null);
+      setPeriodePageMode("list");
       await loadOverview();
       await loadQueueByPeriode(selectedPeriode.id);
     } catch (actionError) {
@@ -798,7 +878,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
             <button
               key={`sidang-tab-${tab.id}`}
               type="button"
-              onClick={() => {
+              onClick={async () => {
+                if (!(await confirmAndDiscardSetupDraft())) return;
                 setActiveTab("periode-pendaftaran");
                 setSelectedRegistrantId(null);
                 setSelectedRegistrantDetail(null);
@@ -829,7 +910,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
+                if (!(await confirmAndDiscardSetupDraft())) return;
                 setPeriodePageMode("list");
                 setOpenPeriodeErrors({});
                 setError("");
@@ -857,7 +939,8 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired 
               <button
                 type="button"
                 disabled={savingForm}
-                onClick={() => {
+                onClick={async () => {
+                  if (!(await confirmAndDiscardSetupDraft())) return;
                   setPeriodePageMode("open");
                   setOpenPeriodeErrors({});
                   setError("");

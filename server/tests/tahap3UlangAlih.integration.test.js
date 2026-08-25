@@ -310,21 +310,22 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
     assert.ok(eligibility.blocker_details.some((item) => item.code === "ACTIVE_RESEARCH_WORKFLOW"));
   });
 
-  await t.test("akun bootstrap Ulang menyelesaikan pamit dan baru membuat root pendaftaran", async () => {
+  await t.test("akun bootstrap netral dapat memilih Ulang saat mengirim pamit", async () => {
     const bootstrap = await Mahasiswa.create({
       nim: `B3${suffix}1`,
       nama: "Mahasiswa Bootstrap Ulang T3",
       email: `t3.bootstrap.${suffix}@test.local`,
       password: "password",
       angkatan: "2022",
-      pending_registration_type: "ulang",
+      pending_registration_type: "ulang_alih",
       pending_program_kuliah: "internasional",
     }, { hooks: false });
     studentIds.push(bootstrap.id);
 
     const initial = await getEligibility(bootstrap.id);
     assert.equal(initial.bootstrap_change, true);
-    assert.equal(initial.pending_registration_type, "ulang");
+    assert.equal(initial.pending_registration_type, "ulang_alih");
+    assert.equal(initial.change_type, null);
     assert.ok(initial.blocker_details.some((item) => item.code === "SOURCE_TRACK_REQUIRED"));
     assert.ok(initial.blocker_details.some((item) => item.code === "PREVIOUS_SUPERVISOR_REQUIRED"));
 
@@ -360,14 +361,14 @@ test("lifecycle ulang dan alih jalur Tahap 3", async (t) => {
     assert.equal(bootstrap.pending_program_kuliah, null);
   });
 
-  await t.test("akun bootstrap Alih wajib mengisi jalur asal dan tujuan yang berbeda", async () => {
+  await t.test("akun bootstrap netral dapat memilih Alih dan wajib memakai jalur tujuan berbeda", async () => {
     const bootstrap = await Mahasiswa.create({
       nim: `B3${suffix}2`,
       nama: "Mahasiswa Bootstrap Alih T3",
       email: `t3.bootstrap.alih.${suffix}@test.local`,
       password: "password",
       angkatan: "2022",
-      pending_registration_type: "alih",
+      pending_registration_type: "ulang_alih",
       pending_program_kuliah: "reguler",
     }, { hooks: false });
     studentIds.push(bootstrap.id);

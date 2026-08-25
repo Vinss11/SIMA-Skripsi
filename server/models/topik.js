@@ -9,6 +9,18 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "dosen_id",
         as: "dosen",
       });
+
+      Topik.belongsToMany(models.BidangPenelitian, {
+        through: models.TopikBidangPenelitian,
+        foreignKey: "topik_id",
+        otherKey: "bidang_penelitian_id",
+        as: "bidangPenelitians",
+      });
+
+      Topik.hasMany(models.TopikBidangPenelitian, {
+        foreignKey: "topik_id",
+        as: "topikBidangPenelitians",
+      });
     }
   }
 

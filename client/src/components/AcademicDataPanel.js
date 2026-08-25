@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Download, RefreshCcw, Search, SlidersHorizontal, Upload } from "lucide-react";
+import { ArrowLeft, ChevronDown, Download, RefreshCcw, Search, SlidersHorizontal, Upload } from "lucide-react";
 import Swal from "sweetalert2";
 
 const PAGE_SIZE = 10;
@@ -61,29 +61,109 @@ function StudentSummary({ data }) {
   );
 }
 
+function PeriodCombobox({ periods, value, onChange, activePeriodId }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(0);
+  const selectedPeriod = periods.find((period) => String(period.id) === String(value)) || null;
+  const formatPeriodLabel = useCallback((period) => (
+    `${period?.label_periode || "Periode tanpa label"}${String(period?.id) === String(activePeriodId) ? " (Aktif)" : ""}`
+  ), [activePeriodId]);
+  const selectedLabel = selectedPeriod ? formatPeriodLabel(selectedPeriod) : "";
+
+  const selectPeriod = (period) => {
+    onChange(String(period.id));
+    setIsOpen(false);
+  };
+
+  const openOptions = () => {
+    const selectedIndex = periods.findIndex((period) => String(period.id) === String(value));
+    setHighlightedIndex(selectedIndex >= 0 ? selectedIndex : 0);
+    setIsOpen(true);
+  };
+
+  return (
+    <div className="relative min-w-0 flex-1 sm:w-[240px] sm:flex-none">
+      <button
+        type="button"
+        role="combobox"
+        aria-label="Pilih periode pendaftaran"
+        aria-controls="academic-period-options"
+        aria-expanded={isOpen}
+        aria-activedescendant={isOpen && periods[highlightedIndex] ? `academic-period-${periods[highlightedIndex].id}` : undefined}
+        onClick={() => (isOpen ? setIsOpen(false) : openOptions())}
+        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            if (!isOpen) openOptions();
+            else setHighlightedIndex((current) => Math.min(current + 1, Math.max(0, periods.length - 1)));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!isOpen) openOptions();
+            setHighlightedIndex((current) => Math.max(0, current - 1));
+          } else if (event.key === "Enter" && isOpen && periods[highlightedIndex]) {
+            event.preventDefault();
+            selectPeriod(periods[highlightedIndex]);
+          } else if (event.key === "Escape") {
+            setIsOpen(false);
+          }
+        }}
+        className="flex w-full items-center justify-between gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-left text-sm text-[#23396b] outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+      >
+        <span className="truncate">{selectedLabel || "Pilih periode"}</span>
+        <ChevronDown className={`h-4 w-4 shrink-0 text-[#7282a8] transition-transform ${isOpen ? "rotate-180" : ""}`} />
+      </button>
+      {isOpen ? (
+        <div id="academic-period-options" role="listbox" className="absolute left-0 right-0 top-[calc(100%+6px)] z-[80] max-h-[210px] overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-xl">
+          {periods.length ? periods.map((period, index) => (
+            <button
+              id={`academic-period-${period.id}`}
+              key={`academic-period-${period.id}`}
+              type="button"
+              role="option"
+              aria-selected={String(period.id) === String(value)}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              onClick={() => selectPeriod(period)}
+              className={`flex min-h-[42px] w-full items-center justify-between gap-3 border-b border-[#edf1fb] px-3 py-2 text-left text-sm last:border-b-0 ${
+                highlightedIndex === index ? "bg-[#f0f5ff]" : "hover:bg-[#f4f7ff]"
+              }`}
+            >
+              <span className="font-semibold text-[#213460]">{period.label_periode || "Periode tanpa label"}</span>
+              {String(period.id) === String(activePeriodId) ? <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-700">Aktif</span> : null}
+            </button>
+          )) : (
+            <p className="px-3 py-3 text-xs font-semibold text-[#7282a8]">Periode belum tersedia.</p>
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [trackFilter, setTrackFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [showFilters, setShowFilters] = useState(false);
-  const [filterDraft, setFilterDraft] = useState({ periodId: "", type: "", track: "", status: "" });
+  const [filterDraft, setFilterDraft] = useState({ type: "", track: "", status: "" });
   const [page, setPage] = useState(1);
   const filterPanelRef = useRef(null);
 
   const filteredRows = useMemo(() => rows.filter((row) => {
     const needle = query.trim().toLowerCase();
-    const searchable = `${row.nim} ${row.nama} ${row.periode} ${row.jalur_label} ${row.mata_kuliah}`.toLowerCase();
+    const searchable = `${row.nim || ""} ${row.nama || ""}`.toLowerCase();
     return (!needle || searchable.includes(needle))
       && (!typeFilter || row.jenis_pendaftaran === typeFilter)
       && (!trackFilter || row.jalur === trackFilter)
       && (!statusFilter || row.status_nilai === statusFilter);
   }), [rows, query, typeFilter, trackFilter, statusFilter]);
 
-  const defaultPeriodId = periods.length ? String(periods[0].id) : "";
-  const activeFilterCount = [typeFilter, trackFilter, statusFilter].filter(Boolean).length
-    + (periodId && String(periodId) !== defaultPeriodId ? 1 : 0);
-  const hasActiveFilters = Boolean(query || activeFilterCount);
+  const activePeriod = periods.find((period) => period.is_active === true || String(period.status || "").toLowerCase() === "active");
+  const defaultPeriodId = activePeriod ? String(activePeriod.id) : (periods.length ? String(periods[0].id) : "");
+  const activeFilterCount = [typeFilter, trackFilter, statusFilter].filter(Boolean).length;
+  const hasActiveFilters = Boolean(query || activeFilterCount || (periodId && String(periodId) !== defaultPeriodId));
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
   const pagedRows = filteredRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -94,8 +174,8 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
   useEffect(() => { setPage(1); }, [periodId, query, typeFilter, trackFilter, statusFilter]);
 
   useEffect(() => {
-    if (!showFilters) setFilterDraft({ periodId: String(periodId || ""), type: typeFilter, track: trackFilter, status: statusFilter });
-  }, [periodId, showFilters, statusFilter, trackFilter, typeFilter]);
+    if (!showFilters) setFilterDraft({ type: typeFilter, track: trackFilter, status: statusFilter });
+  }, [showFilters, statusFilter, trackFilter, typeFilter]);
 
   useEffect(() => {
     if (!showFilters) return undefined;
@@ -116,12 +196,11 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
   };
 
   const toggleFilters = () => {
-    setFilterDraft({ periodId: String(periodId || defaultPeriodId), type: typeFilter, track: trackFilter, status: statusFilter });
+    setFilterDraft({ type: typeFilter, track: trackFilter, status: statusFilter });
     setShowFilters((current) => !current);
   };
 
   const applyFilters = () => {
-    setPeriodId(filterDraft.periodId);
     setTypeFilter(filterDraft.type);
     setTrackFilter(filterDraft.track);
     setStatusFilter(filterDraft.status);
@@ -129,11 +208,10 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
     setShowFilters(false);
   };
 
-  const resetDraft = () => setFilterDraft({ periodId: defaultPeriodId, type: "", track: "", status: "" });
-  const draftIsDirty = String(filterDraft.periodId) !== String(periodId || "")
-    || filterDraft.type !== typeFilter || filterDraft.track !== trackFilter || filterDraft.status !== statusFilter;
-  const hasDraftFilters = filterDraft.type || filterDraft.track || filterDraft.status
-    || (filterDraft.periodId && filterDraft.periodId !== defaultPeriodId);
+  const resetDraft = () => setFilterDraft({ type: "", track: "", status: "" });
+  const draftIsDirty = filterDraft.type !== typeFilter
+    || filterDraft.track !== trackFilter || filterDraft.status !== statusFilter;
+  const hasDraftFilters = filterDraft.type || filterDraft.track || filterDraft.status;
 
   return (
     <section className="rounded-xl border border-[#dce4f4] bg-white p-4 shadow-sm">
@@ -145,8 +223,14 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <div className="relative min-w-0 flex-1 sm:w-[340px] sm:flex-none">
             <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]"/>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari NIM, nama, periode, jalur, mata kuliah..." className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"/>
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari NIM atau nama..." className="w-full rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"/>
           </div>
+          <PeriodCombobox
+            periods={periods}
+            value={periodId}
+            onChange={setPeriodId}
+            activePeriodId={defaultPeriodId}
+          />
           <div className="relative" ref={filterPanelRef}>
             <button type="button" onClick={toggleFilters} className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${showFilters || activeFilterCount ? "border-[#2f63e3] bg-[#eef3ff] text-[#2348a5]" : "border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff]"}`}>
               <SlidersHorizontal className="h-4 w-4"/>Filter{activeFilterCount ? <span className="rounded-full bg-[#2f63e3] px-1.5 py-0.5 text-xs font-bold leading-none text-white">{activeFilterCount}</span> : null}
@@ -159,7 +243,6 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
                 </div>
                 <div className="space-y-3 overflow-auto p-3">
                   {[
-                    { key: "periodId", label: "Periode Pendaftaran", empty: "Periode terbaru", options: periods.map((item) => ({ value: String(item.id), label: item.label_periode })) },
                     { key: "type", label: "Jenis Pendaftaran", empty: "Semua jenis pendaftaran", options: [{ value: "baru", label: "Baru" }, { value: "ulang", label: "Ulang" }, { value: "alih", label: "Alih" }] },
                     { key: "track", label: "Jalur Penjaluran", empty: "Semua jalur penjaluran", options: [{ value: "penelitian", label: "Penelitian" }, { value: "magang", label: "Magang" }, { value: "perintisan_bisnis", label: "Perintisan Bisnis" }] },
                     { key: "status", label: "Status Nilai", empty: "Semua status nilai", options: ["Belum tersedia", "Sedang mengambil", "Lulus", "Tidak lulus"].map((value) => ({ value, label: value })) },
@@ -167,10 +250,10 @@ function GradeGrid({ periods, periodId, setPeriodId, rows, policy }) {
                     <div key={filter.key} className="rounded-lg border border-[#e6ecf8] p-3">
                       <div className="mb-2 flex items-center justify-between">
                         <p className="text-sm font-semibold text-[#2a4175]">{filter.label}</p>
-                        <button type="button" onClick={() => setFilterDraft((current) => ({ ...current, [filter.key]: filter.key === "periodId" ? defaultPeriodId : "" }))} className="text-xs font-semibold text-[#2f63e3] hover:underline">Reset</button>
+                        <button type="button" onClick={() => setFilterDraft((current) => ({ ...current, [filter.key]: "" }))} className="text-xs font-semibold text-[#2f63e3] hover:underline">Reset</button>
                       </div>
                       <select value={filterDraft[filter.key]} onChange={(event) => setFilterDraft((current) => ({ ...current, [filter.key]: event.target.value }))} className="w-full rounded-lg border border-[#d3dbef] px-3 py-2 text-sm text-[#23396b] outline-none focus:border-[#2f63e3]">
-                        {filter.key !== "periodId" ? <option value="">{filter.empty}</option> : null}
+                        <option value="">{filter.empty}</option>
                         {filter.options.map((option) => <option key={`${filter.key}-${option.value}`} value={option.value}>{option.label}</option>)}
                       </select>
                     </div>
@@ -329,8 +412,14 @@ function AcademicManagement({ api, token, readOnly = false, onBack, onSessionExp
   useEffect(() => {
     request(`${endpoint}/nilai/periode`)
       .then(({ data }) => {
-        setPeriods(data || []);
-        if (data?.length) setPeriodId((current) => current || String(data[0].id));
+        const availablePeriods = data || [];
+        const activePeriod = availablePeriods.find(
+          (period) => period.is_active === true || String(period.status || "").toLowerCase() === "active",
+        );
+        setPeriods(availablePeriods);
+        if (availablePeriods.length) {
+          setPeriodId((current) => current || String(activePeriod?.id || availablePeriods[0].id));
+        }
       })
       .catch((error) => setMessage(error.message));
   }, [endpoint, request]);

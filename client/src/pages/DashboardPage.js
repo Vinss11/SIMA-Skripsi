@@ -40,15 +40,17 @@ const JALUR_OPTIONS = [
   { value: "magang", label: "Magang" },
 ];
 
-function showDashboardSuccessToast(message) {
+function showChangeRegistrationSuccessNotice(registrationType) {
+  const isAlih = String(registrationType || "").toLowerCase() === "alih";
+
   return Swal.fire({
-    toast: true,
-    position: "top-end",
     icon: "success",
-    title: message,
-    showConfirmButton: false,
-    timer: 2800,
-    timerProgressBar: true,
+    title: isAlih ? "Pendaftaran Alih Jalur Berhasil" : "Pendaftaran Ulang Jalur Berhasil",
+    html: isAlih
+      ? "Pendaftaran Anda ke jalur baru telah berhasil dikirim. Mata kuliah penjaluran untuk jalur baru akan di-key-in oleh prodi. Silakan periksa Gateway secara berkala untuk melihat mata kuliah yang telah tersedia."
+      : "Pendaftaran ulang Anda telah berhasil dikirim. Mata kuliah penjaluran untuk periode ini akan di-key-in oleh prodi. Silakan periksa Gateway secara berkala untuk melihat mata kuliah yang telah tersedia.",
+    confirmButtonText: "Mengerti",
+    confirmButtonColor: "#2f63e3",
   });
 }
 
@@ -527,7 +529,9 @@ function UlangAlihJalurCard({
   onGoToPengajuan,
   initialChangeType = "ulang",
 }) {
-  const [activeFlow, setActiveFlow] = useState(initialChangeType === "alih" ? "alih" : "ulang");
+  const [activeFlow, setActiveFlow] = useState(
+    ["ulang", "alih"].includes(initialChangeType) ? initialChangeType : ""
+  );
   const [pamitForm, setPamitForm] = useState({
     alasan_ulang: "",
     pesan_ke_dosen_pembimbing: "",
@@ -541,6 +545,7 @@ function UlangAlihJalurCard({
     dosen_pembimbing_ta_baru_id: "",
     alasan_pengajuan: "",
   });
+  const neutralChoiceInitializedRef = useRef(false);
   const periodeAktif = jalurEligibility?.periode_aktif || null;
   const access = getUlangAlihAccess({ jalurEligibility, jalurStatus });
   const bootstrapChange = Boolean(changeEligibility?.bootstrap_change);
@@ -559,6 +564,9 @@ function UlangAlihJalurCard({
   const activePamit = changeEligibility?.pamit || jalurStatus?.active_pamit || null;
   const activePamitStatus = String(activePamit?.status || activePamit?.status_dospem || "").toLowerCase();
   const activeRegistration = jalurEligibility?.pendaftaran_aktif || null;
+  const pendingRegistrationType = changeEligibility?.pending_registration_type || null;
+  const hasOpenChangeChoice = pendingRegistrationType === "ulang_alih";
+  const hasFixedPendingChange = ["ulang", "alih"].includes(pendingRegistrationType);
   const hasUlangPenelitianRegistration =
     activeRegistration?.jalur === "ulang" && activeRegistration?.selected_jalur === "penelitian";
   const previousSupervisor = profile?.dosenPembimbingSkripsi || null;
@@ -580,7 +588,16 @@ function UlangAlihJalurCard({
 
   useEffect(() => {
     if (["ulang", "alih"].includes(changeEligibility?.pending_registration_type)) {
+      neutralChoiceInitializedRef.current = false;
       setActiveFlow(changeEligibility.pending_registration_type);
+    } else if (
+      changeEligibility?.pending_registration_type === "ulang_alih" &&
+      !neutralChoiceInitializedRef.current
+    ) {
+      neutralChoiceInitializedRef.current = true;
+      setActiveFlow("");
+    } else if (!changeEligibility?.pending_registration_type) {
+      neutralChoiceInitializedRef.current = false;
     }
   }, [changeEligibility?.pending_registration_type]);
 
@@ -594,24 +611,54 @@ function UlangAlihJalurCard({
     onSubmit?.(form);
   };
 
+  const handleFlowTabClick = async (flow) => {
+    if (activePamit || (pendingRegistrationType && !hasOpenChangeChoice)) return;
+
+    const isUlang = flow === "ulang";
+    const result = await Swal.fire({
+      icon: "warning",
+      title: `Anda akan memilih ${isUlang ? "Ulang Jalur" : "Alih Jalur"}`,
+      text: isUlang
+        ? "Ulang Jalur berarti Anda melanjutkan jalur penjaluran yang sama dengan periode sebelumnya. Pastikan Anda tidak ingin berpindah ke jalur lain."
+        : "Alih Jalur berarti Anda berpindah ke jalur penjaluran lain. Anda wajib memilih jalur tujuan yang berbeda dari jalur sebelumnya.",
+      showCancelButton: true,
+      confirmButtonText: `Ya, pilih ${isUlang ? "Ulang Jalur" : "Alih Jalur"}`,
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#2f63e3",
+      cancelButtonColor: "#64748b",
+      reverseButtons: true,
+      focusCancel: true,
+    });
+
+    if (result.isConfirmed) setActiveFlow(flow);
+  };
+
   const flowTabs = (
-    <div className="mt-5 inline-flex rounded-lg border border-[#d5def2] bg-[#f7f9fe] p-1">
+    <div className="mt-5 flex flex-wrap items-center gap-2" role="tablist" aria-label="Jenis perubahan jalur">
       <button
         type="button"
-        onClick={() => { if (!activePamit && !changeEligibility?.pending_registration_type) setActiveFlow("ulang"); }}
-        disabled={(Boolean(activePamit) || Boolean(changeEligibility?.pending_registration_type)) && activeFlow !== "ulang"}
-        className={`rounded-md px-4 py-2 text-sm font-bold transition ${
-          activeFlow === "ulang" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
+        role="tab"
+        aria-selected={activeFlow === "ulang"}
+        onClick={() => handleFlowTabClick("ulang")}
+        disabled={(Boolean(activePamit) || hasFixedPendingChange) && activeFlow !== "ulang"}
+        className={`rounded-full border px-4 py-2 text-sm font-bold transition ${
+          activeFlow === "ulang"
+            ? "border-[#2f63e3] bg-[#2f63e3] text-white shadow-sm"
+            : "border-[#cdd8f0] bg-white text-[#314778] hover:border-[#9db4e8] hover:bg-[#f5f8ff]"
         } disabled:cursor-not-allowed disabled:opacity-45`}
       >
         Ulang Jalur
       </button>
       <button
         type="button"
-        onClick={() => { if (!activePamit && !changeEligibility?.pending_registration_type) setActiveFlow("alih"); }}
-        disabled={(Boolean(activePamit) || Boolean(changeEligibility?.pending_registration_type)) && activeFlow !== "alih"}
-        className={`rounded-md px-4 py-2 text-sm font-bold transition ${
-          activeFlow === "alih" ? "bg-[#2f63e3] text-white shadow-sm" : "text-[#53658f]"
+        role="tab"
+        aria-selected={activeFlow === "alih"}
+        onClick={() => handleFlowTabClick("alih")}
+        disabled={(Boolean(activePamit) || hasFixedPendingChange) && activeFlow !== "alih"}
+        className={`rounded-full border px-4 py-2 text-sm font-bold transition ${
+          activeFlow === "alih"
+            ? "border-[#2f63e3] bg-[#2f63e3] text-white shadow-sm"
+            : "border-[#cdd8f0] bg-white text-[#314778] hover:border-[#9db4e8] hover:bg-[#f5f8ff]"
         } disabled:cursor-not-allowed disabled:opacity-45`}
       >
         Alih Jalur
@@ -664,8 +711,42 @@ function UlangAlihJalurCard({
           </span>
         ) : null}
       </div>
+      {bootstrapChange && hasOpenChangeChoice && !activePamit && !activeFlow ? (
+        <div role="alert" className="mt-5 flex gap-3 rounded-lg border border-[#efd38d] border-l-4 border-l-[#d99614] bg-[#fff9e9] px-4 py-3">
+          <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#b87500]" />
+          <div>
+            <p className="text-sm font-black text-[#765000]">Pilih jenis pendaftaran dengan teliti</p>
+            <p className="mt-1 text-sm leading-5 text-[#806528]">
+              Pilih <strong>Ulang Jalur</strong> jika tetap melanjutkan jalur sebelumnya. Pilih <strong>Alih Jalur</strong> hanya jika ingin berpindah ke jalur lain.
+            </p>
+          </div>
+        </div>
+      ) : null}
       {flowTabs}
-      {bootstrapChange && !activePamit ? (
+      {bootstrapChange && hasOpenChangeChoice && !activePamit && activeFlow ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`mt-4 flex gap-3 rounded-lg border border-l-4 px-4 py-3 ${
+            activeFlow === "ulang"
+              ? "border-[#bcd2ff] border-l-[#2f63e3] bg-[#f3f7ff]"
+              : "border-[#efd38d] border-l-[#d58a00] bg-[#fff9e9]"
+          }`}
+        >
+          <AlertCircle className={`mt-0.5 h-5 w-5 shrink-0 ${activeFlow === "ulang" ? "text-[#2f63e3]" : "text-[#b87500]"}`} />
+          <div>
+            <p className={`text-base font-black ${activeFlow === "ulang" ? "text-[#1f4dad]" : "text-[#765000]"}`}>
+              Anda memilih {activeFlow === "ulang" ? "Ulang Jalur" : "Alih Jalur"}
+            </p>
+            <p className={`mt-1 text-sm leading-5 ${activeFlow === "ulang" ? "text-[#526895]" : "text-[#806528]"}`}>
+              {activeFlow === "ulang"
+                ? "Jalur tujuan akan tetap sama dengan jalur penjaluran sebelumnya. Jangan pilih Ulang Jalur jika Anda ingin berpindah ke jalur lain."
+                : "Anda wajib memilih jalur tujuan yang berbeda dari jalur sebelumnya. Jangan pilih Alih Jalur jika Anda ingin tetap pada jalur yang sama."}
+            </p>
+          </div>
+        </div>
+      ) : null}
+      {bootstrapChange && !activePamit && activeFlow ? (
         <div className="mt-5 grid gap-4 rounded-lg border border-[#cfe0ff] bg-[#f7faff] p-5 md:grid-cols-2">
           <label className="text-sm font-semibold text-[#324c86]">
             Jalur penjaluran sebelumnya <span className="text-[#c43f3f]">*</span>
@@ -731,7 +812,7 @@ function UlangAlihJalurCard({
         <div key={item.code} className="mt-4 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] p-3 text-sm font-semibold text-[#7a5a00]">{item.message}</div>
       ))}
 
-      {requiresPamit && !activePamit ? (
+      {requiresPamit && !activePamit && activeFlow ? (
         <form onSubmit={(event) => {
           event.preventDefault();
           onSubmitPamit?.({
@@ -742,11 +823,11 @@ function UlangAlihJalurCard({
             previous_supervisor_id: form.dosen_pembimbing_ta_sebelumnya_id || null,
           });
         }} className="mt-5 grid gap-4 rounded-lg border border-[#e3eaf8] p-5">
-          <h4 className="text-lg font-black text-[#1a2648]">Pemberitahuan Pamit kepada Pembimbing Sebelumnya</h4>
-          <textarea rows={3} value={pamitForm.alasan_ulang} onChange={(event) => setPamitForm((prev) => ({ ...prev, alasan_ulang: event.target.value }))} placeholder="Alasan ulang/alih jalur" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
+          <h4 className="text-lg font-black text-[#1a2648]">Pemberitahuan Pamit untuk {activeFlow === "ulang" ? "Ulang Jalur" : "Alih Jalur"}</h4>
+          <textarea rows={3} value={pamitForm.alasan_ulang} onChange={(event) => setPamitForm((prev) => ({ ...prev, alasan_ulang: event.target.value }))} placeholder={`Alasan memilih ${activeFlow === "ulang" ? "Ulang Jalur" : "Alih Jalur"}`} className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
           <textarea rows={3} value={pamitForm.pesan_ke_dosen_pembimbing} onChange={(event) => setPamitForm((prev) => ({ ...prev, pesan_ke_dosen_pembimbing: event.target.value }))} placeholder="Pesan kepada Pembimbing 1" className="rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm" />
           <p className="text-xs text-[#5f6b89]">Pamit hanya dikirim sebagai pemberitahuan dan tidak memerlukan approve atau reject dari dosen.</p>
-          <button disabled={isSubmitting || !sourceTrack || (activeFlow === "alih" && !targetTrack) || (bootstrapChange && !form.dosen_pembimbing_ta_sebelumnya_id) || pamitForm.alasan_ulang.trim().length < 10 || pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10} className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Kirim Pemberitahuan Pamit</button>
+          <button disabled={isSubmitting || !sourceTrack || (activeFlow === "alih" && !targetTrack) || (bootstrapChange && !form.dosen_pembimbing_ta_sebelumnya_id) || pamitForm.alasan_ulang.trim().length < 10 || pamitForm.pesan_ke_dosen_pembimbing.trim().length < 10} className="w-fit rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:opacity-50">Kirim Pamit untuk {activeFlow === "ulang" ? "Ulang Jalur" : "Alih Jalur"}</button>
         </form>
       ) : null}
 
@@ -1543,6 +1624,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
   const changeRegistrationIdempotencyRef = useRef(null);
   const autoRegistrationPamitRef = useRef(null);
   const extensionIdempotencyRef = useRef(null);
+  const previousActiveTabRef = useRef(activeTab);
   const notificationState = useNotifications({ apiBaseUrl, token: session.token, onSessionExpired });
   const mustChangePassword = Boolean(session?.user?.role === "mahasiswa" && session?.prompt_change_password);
   const semesterLanjutanGate = jalurStatus?.semester_lanjutan_gate || null;
@@ -1557,7 +1639,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
   const isChangeOnboarding = Boolean(
     isLockedByOnboarding &&
     onboardingState?.target_form === "ulang_alih" &&
-    ["ulang", "alih"].includes(onboardingState?.registration_type)
+    ["ulang", "alih", "ulang_alih"].includes(onboardingState?.registration_type)
   );
   const isPathFormOnboarding = Boolean(
     pendingPathFormTarget ||
@@ -1582,6 +1664,14 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
   useEffect(() => {
     if (isPathFormOnboarding && activeTab !== "pengajuan") setActiveTab("pengajuan");
   }, [activeTab, isPathFormOnboarding]);
+
+  useEffect(() => {
+    const previousTab = previousActiveTabRef.current;
+    previousActiveTabRef.current = activeTab;
+    if (activeTab === "pengajuan" && previousTab !== "pengajuan") {
+      setRefreshTick((previous) => previous + 1);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (
@@ -2010,7 +2100,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
       setPendingPathFormTarget(form?.target_track || "penelitian");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");
-      showDashboardSuccessToast("Pamit berhasil dikirim. Silakan lengkapi form pendaftaran penjaluran.");
+      showChangeRegistrationSuccessNotice(form?.pendaftaran);
     } catch (requestError) {
       setUlangAlihError("Tidak dapat terhubung ke server.");
     } finally {
@@ -2061,7 +2151,7 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
       setPendingPathFormTarget(form?.target_track || "penelitian");
       setRefreshTick((prev) => prev + 1);
       setActiveTab("pengajuan");
-      showDashboardSuccessToast(data?.message || "Pendaftaran ulang/alih berhasil.");
+      showChangeRegistrationSuccessNotice(form?.pendaftaran);
     } catch (requestError) {
       setUlangAlihError("Tidak dapat terhubung ke server.");
     } finally {
@@ -2250,7 +2340,13 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
               <NotificationPage
                 notificationState={notificationState}
                 onNavigate={(notification) => {
-                  setActiveTab(notification?.action_key === "student_defense_documents" ? "dokumen" : "dashboard");
+                  if (notification?.action_key === "student_defense_documents") {
+                    setActiveTab("dokumen");
+                  } else if (notification?.action_key === "student_submission_status") {
+                    setActiveTab("status");
+                  } else {
+                    setActiveTab("dashboard");
+                  }
                 }}
               />
             ) : null}

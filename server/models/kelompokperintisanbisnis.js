@@ -36,6 +36,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
+      nama_kelompok: {
+        type: DataTypes.STRING(150),
+        allowNull: true,
+      },
+      jenis_bisnis: {
+        type: DataTypes.STRING(150),
+        allowNull: true,
+      },
       status: {
         type: DataTypes.ENUM("draft", "submitted", "approved", "rejected", "needs_review"),
         allowNull: false,

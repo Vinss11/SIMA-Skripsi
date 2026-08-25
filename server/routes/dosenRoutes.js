@@ -120,6 +120,12 @@ router.post(
   jalurController.approvePerintisanBisnisReviewByDosen
 );
 router.post(
+  "/non-penelitian/perintisan-bisnis/reviews/:id/revision",
+  authenticateToken,
+  authorizeRole("dosen"),
+  jalurController.requestPerintisanBisnisRevisionByDosen
+);
+router.post(
   "/non-penelitian/perintisan-bisnis/reviews/:id/reject",
   authenticateToken,
   authorizeRole("dosen"),

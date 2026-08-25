@@ -9,7 +9,9 @@ function PendaftaranSuccessPage({
 }) {
   const username = registrationData?.akun_login?.username || "-";
   const isNewAccount = Boolean(registrationData?.akun_login?.prompt_change_password);
-  const pendingChangeType = registrationData?.next_action?.registration_type || null;
+  const isChangeRegistration =
+    registrationData?.next_action?.target_form === "ulang_alih" ||
+    registrationData?.next_action?.registration_scope === "ulang_alih";
   const groupMembers = Array.isArray(registrationData?.anggota_kelompok)
     ? registrationData.anggota_kelompok
     : [];
@@ -32,11 +34,11 @@ function PendaftaranSuccessPage({
           </div>
 
           <h1 className="mt-5 text-3xl font-black text-[#10224f] sm:text-4xl">
-            {pendingChangeType ? "Akun Mahasiswa Berhasil Dibuat" : "Pendaftaran Penjaluran Berhasil"}
+            {isChangeRegistration ? "Akun Mahasiswa Berhasil Dibuat" : "Pendaftaran Penjaluran Berhasil"}
           </h1>
           <p className="mt-2 text-sm text-[#4f5f85] sm:text-base">
-            {pendingChangeType
-              ? `Login, ganti password awal, lalu selesaikan pendaftaran ${pendingChangeType} melalui menu Alih / Ulang Jalur.`
+            {isChangeRegistration
+              ? "Login, ganti password awal, lalu pilih dan selesaikan pendaftaran Ulang atau Alih melalui menu Alih / Ulang Jalur."
               : "Mata kuliah penjaluran semester pertama akan di-key-in oleh prodi. Pantau gateway untuk melihat mata kuliah yang sudah tersedia."}
           </p>
 

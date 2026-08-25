@@ -5,6 +5,12 @@ const { authenticateToken, authorizeRole } = require("../middlewares/authMiddlew
 
 // Public routes (bisa diakses mahasiswa dan dosen)
 router.get("/", authenticateToken, topikController.getTopics);
+router.get(
+  "/my-research-fields",
+  authenticateToken,
+  authorizeRole("dosen", "sekretaris_prodi"),
+  topikController.getMyResearchFields
+);
 router.get("/:id", authenticateToken, topikController.getTopicById);
 
 // Admin, dosen, dan sekretaris prodi routes
