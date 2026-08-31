@@ -663,6 +663,31 @@ function ResearchReviewReadonlyTags({ label, items = [] }) {
   );
 }
 
+function enrichResearchReviewTopik(item, masterRows = []) {
+  const normalizedCode = String(item?.kode || "").trim().toUpperCase();
+  const masterTopik = masterRows.find(
+    (topik) => String(topik?.kode || "").trim().toUpperCase() === normalizedCode
+  );
+  const detailResearchFields = Array.isArray(item?.bidang_penelitian) && item.bidang_penelitian.length > 0
+    ? item.bidang_penelitian
+    : null;
+  const masterResearchFields = Array.isArray(masterTopik?.bidangPenelitians) && masterTopik.bidangPenelitians.length > 0
+    ? masterTopik.bidangPenelitians
+    : Array.isArray(masterTopik?.bidang_penelitian) ? masterTopik.bidang_penelitian : [];
+  const researchFields = detailResearchFields || masterResearchFields;
+  const inferredCluster = normalizeTopikClusterLabel(normalizedCode.replace(/[0-9].*$/, ""));
+
+  return {
+    ...(masterTopik || {}),
+    ...item,
+    judul: item?.judul || masterTopik?.judul || null,
+    deskripsi: item?.deskripsi || masterTopik?.deskripsi || null,
+    cluster: item?.cluster || masterTopik?.cluster || inferredCluster,
+    bidang_penelitian: researchFields,
+    bidangPenelitians: researchFields,
+  };
+}
+
 function ResearchReviewReadonlyTextarea({ label, value, rows = 4 }) {
   return (
     <div>
@@ -696,9 +721,6 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
         </div>
         <div className="mt-4">
           <ResearchReviewReadonlyInput label="Cluster Penelitian" value={detail.detail_pengajuan?.cluster_mandiri || "-"} />
-          <p className="mt-1 text-xs text-[#60709a]">
-            Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
-          </p>
         </div>
         <div className="mt-4">
           <ResearchReviewReadonlyInput
@@ -734,12 +756,7 @@ function ResearchReviewDetailForm({ detail, topikRows = [] }) {
                 />
               </div>
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
-                <div>
-                  <ResearchReviewReadonlyInput label="Cluster Penelitian" value={item.cluster || "-"} />
-                  <p className="mt-1 text-xs text-[#60709a]">
-                    Cluster ini menentukan daftar calon dosen dan ketua cluster yang akan mereview setelah dosen pembimbing.
-                  </p>
-                </div>
+                <ResearchReviewReadonlyInput label="Cluster Penelitian" value={item.cluster || "-"} />
                 <ResearchReviewReadonlyInput label="Calon Dosen Pembimbing" value={item.dosen || "-"} />
               </div>
               <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1915,7 +1932,7 @@ function buildNavSections(isSekretaris, responsibilityItems = []) {
         label: "Sidang",
         items: [
           { id: "dokumen-sidang-review", label: "Review Dokumen Sidang", icon: FileSpreadsheet },
-          { id: "ketersediaan-sidang", label: "Ketersediaan Sidang", icon: CalendarRange },
+          { id: "ketersediaan-sidang", label: "Manajemen Jadwal Sidang", icon: CalendarRange },
         ],
       },
     ];
@@ -2012,8 +2029,8 @@ function buildTabHeaders(isSekretaris) {
     },
     "ketersediaan-sidang": {
       icon: CalendarRange,
-      title: "Ketersediaan Sidang",
-      subtitle: "Kelola tanggal ketersediaan dan preferensi penjadwalan Anda sebagai penguji sidang.",
+      title: "Manajemen Jadwal Sidang",
+      subtitle: "Kelola ketersediaan dan lihat jadwal penugasan Anda sebagai penguji sidang.",
     },
     submissions: {
       icon: ClipboardList,
@@ -4259,26 +4276,15 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
           })
         : allTopikRows;
 
-    const enrichedRows = sourceRows.map((item) => {
-      const normalizedCode = String(item?.kode || "").trim().toUpperCase();
-      const masterTopik = topikRows.find(
-        (topik) => String(topik?.kode || "").trim().toUpperCase() === normalizedCode
-      );
-      return masterTopik
-        ? {
-            ...masterTopik,
-            ...item,
-            bidangPenelitians: masterTopik.bidangPenelitians || [],
-          }
-        : item;
-    });
+    const availableMasterTopikRows = [...masterTopikRows, ...topikRows];
+    const enrichedRows = sourceRows.map((item) => enrichResearchReviewTopik(item, availableMasterTopikRows));
 
     return enrichedRows.sort((left, right) => {
       const leftSlot = Number(left?.slot ?? 0);
       const rightSlot = Number(right?.slot ?? 0);
       return leftSlot - rightSlot;
     });
-  }, [submissionDetail, topikRows]);
+  }, [masterTopikRows, submissionDetail, topikRows]);
   const submissionReviewTopikFocused = useMemo(() => {
     if (submissionReviewTopikOptions.length === 0) return null;
     const selected = submissionReviewTopikOptions.find(
@@ -4373,9 +4379,11 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
   const finalResearchApprovedTopics = useMemo(
     () =>
       Array.isArray(finalResearchDetail?.topik_lolos_cluster)
-        ? [...finalResearchDetail.topik_lolos_cluster].sort((left, right) => Number(left.slot) - Number(right.slot))
+        ? finalResearchDetail.topik_lolos_cluster
+            .map((item) => enrichResearchReviewTopik(item, [...masterTopikRows, ...topikRows]))
+            .sort((left, right) => Number(left.slot) - Number(right.slot))
         : [],
-    [finalResearchDetail]
+    [finalResearchDetail, masterTopikRows, topikRows]
   );
   const finalResearchFocusedTopic = useMemo(
     () =>
@@ -4384,11 +4392,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
       ) || finalResearchApprovedTopics[0] || null,
     [finalResearchApprovedTopics, finalResearchFocusSlot]
   );
-  const isFinalResearchJudulMandiri = finalResearchDetail?.tipe_pengajuan === "judul_mandiri";
-  const finalResearchAutomaticSupervisorName = formatDosenFullName(
-    finalResearchFocusedTopic?.dosen_nama,
-    finalResearchFocusedTopic?.dosen_gelar
-  ) || "Dosen pembimbing belum tersedia";
   const hasViewedAllFinalResearchTopics =
     finalResearchApprovedTopics.length > 0 &&
     finalResearchApprovedTopics.every((item) => finalResearchViewedSlots.includes(getFinalResearchTopicKey(item)));
@@ -8607,7 +8610,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       <div>
                         <p className="text-xs font-bold uppercase text-[#68779e]">Dokumen Sidang</p>
                         <p className="mt-1 text-base font-black text-[#1f2d53]">
-                          {selectedMonitoringMahasiswa?.dokumen?.approved || 0}/{selectedMonitoringMahasiswa?.dokumen?.target || 3} disetujui
+                          {selectedMonitoringMahasiswa?.dokumen?.approved || 0}/{selectedMonitoringMahasiswa?.dokumen?.target || 4} disetujui
                         </p>
                       </div>
                       <div>
@@ -8818,7 +8821,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                             </td>
                             <td className="px-3 py-3">
                               <p className="font-bold text-[#2f426f]">
-                                {row.dokumen?.approved || 0}/{row.dokumen?.target || 3} disetujui
+                                {row.dokumen?.approved || 0}/{row.dokumen?.target || 4} disetujui
                               </p>
                               <p className="mt-0.5 text-xs text-[#69779d]">
                                 {row.dokumen?.submitted || 0} menunggu review
@@ -9213,8 +9216,13 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
                       <h3 className="text-lg font-black text-[#1b274b]">Review Final Penelitian</h3>
                       <p className="mt-1 text-sm text-[#5d6c91]">
-                        Tinjau topik yang telah disetujui Ketua Cluster. Tolak berlaku untuk topik aktif, sedangkan approve menetapkannya sebagai topik final.
+                        Tinjau seluruh topik yang telah disetujui Ketua Cluster, lalu pilih satu topik untuk ditetapkan sebagai topik final.
                       </p>
+                      {finalResearchApprovedTopics.length > 1 ? (
+                        <div className="mt-3 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] px-3 py-2 text-sm font-semibold text-[#315086]">
+                          Buka dan tinjau semua pilihan topik. Setelah itu, pilih satu topik yang akan disetujui sebagai topik final. Ketika topik tersebut disetujui, pilihan topik lainnya akan otomatis dibatalkan.
+                        </div>
+                      ) : null}
 
                       <div className="mt-4 flex flex-wrap gap-2">
                         {finalResearchApprovedTopics.map((topik) => {
@@ -9235,8 +9243,8 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                               <p className="font-black text-[#27407b]">
                                 {topik.slot != null ? `Pilihan ${topik.slot} - ${topik.kode || "-"}` : "Judul Mandiri"}
                               </p>
-                              <p className={`mt-1 font-semibold ${viewed ? "text-[#137748]" : "text-[#6b789b]"}`}>
-                                {viewed ? "Sudah dilihat" : "Belum dilihat"}
+                              <p className={`mt-1 font-semibold ${active || viewed ? "text-[#137748]" : "text-[#6b789b]"}`}>
+                                {active || viewed ? "Sudah dibuka" : "Belum dibuka"}
                               </p>
                             </button>
                           );
@@ -9276,7 +9284,7 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                     <div className="rounded-xl border border-[#e4e9f6] bg-white p-4">
                       <h3 className="text-lg font-black text-[#1b274b]">Form Keputusan</h3>
                       <p className="mt-1 text-sm text-[#5d6c91]">
-                        Penolakan berlaku pada topik yang sedang dibuka. Approve menetapkan topik tersebut sebagai topik final dan membatalkan proses topik lainnya.
+                        Keputusan berlaku untuk topik yang sedang ditinjau. Approve menetapkan topik tersebut sebagai topik final, sedangkan Tolak melanjutkan proses ke pilihan topik berikutnya.
                       </p>
                       {!hasViewedAllFinalResearchTopics ? (
                         <div className="mt-3 rounded-lg border border-[#f0d99d] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#8a6200]">
@@ -9316,19 +9324,6 @@ function DosenWorkspacePage({ session, apiBaseUrl, onLogout, onSessionExpired, o
                       </div>
                       {finalResearchDecision ? (
                         <div className="mt-3">
-                          {finalResearchDecision === "approve" ? (
-                            <div className="mb-3 rounded-lg border border-[#cfe0ff] bg-[#f4f8ff] p-3">
-                              <ResearchReviewReadonlyInput
-                                label="Dosen Pembimbing (ditetapkan otomatis)"
-                                value={finalResearchAutomaticSupervisorName}
-                              />
-                              <p className="mt-2 text-xs font-semibold text-[#52658f]">
-                                {isFinalResearchJudulMandiri
-                                  ? "Pembimbing adalah dosen yang dipilih mahasiswa pada pengajuan Judul Mandiri."
-                                  : "Pembimbing adalah dosen pemilik topik yang sedang ditetapkan sebagai topik final."}
-                              </p>
-                            </div>
-                          ) : null}
                           <label className="mb-1 block text-sm font-semibold text-[#344b7f]">
                             {finalResearchDecision === "approve" ? "Catatan keputusan" : "Alasan penolakan"}
                             <span className="ml-1 text-[#b73a3a]">*</span>

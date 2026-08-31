@@ -111,6 +111,23 @@ function normalizePermohonanStatusLabel(status) {
 function serializeRow(row) {
   const item = row?.toJSON ? row.toJSON() : row;
   if (!item) return null;
+  const storedResumeHistory = Array.isArray(item.resume_history)
+    ? item.resume_history
+        .map((version, index) => ({
+          id: `${item.id}-resume-${version.version_number || index + 1}`,
+          version_number: Number(version.version_number) || index + 1,
+          resume_text: version.resume_text || "",
+          status: version.status || "submitted",
+          submitted_at: version.submitted_at || null,
+          reviewed_at: version.reviewed_at || null,
+          review_note: version.review_note || null,
+          submitted_by_mahasiswa_id: version.submitted_by_mahasiswa_id || null,
+          reviewed_by_dosen_id: version.reviewed_by_dosen_id || null,
+          invalidated_at: version.invalidated_at || null,
+          invalidation_reason: version.invalidation_reason || null,
+        }))
+        .sort((left, right) => right.version_number - left.version_number)
+    : [];
   return {
     id: item.id,
     mahasiswa_id: item.mahasiswa_id,
@@ -151,9 +168,14 @@ function serializeRow(row) {
     reviewer_dosen_id: item.reviewer_dosen_id,
     reassigned_reviewer_at: item.reassigned_reviewer_at,
     is_counted: Boolean(item.is_counted),
-    resume_versions: item.resume_mahasiswa ? [{ id: item.id, version_number: 1, resume_text: item.resume_mahasiswa,
-      status: item.status_resume, submitted_at: item.updatedAt, reviewed_at: item.tanggal_review_resume,
-      review_note: item.catatan_review_resume }] : [],
+    resume_versions: storedResumeHistory.length > 0
+      ? storedResumeHistory
+      : item.resume_mahasiswa
+        ? [{ id: `${item.id}-resume-1`, version_number: 1, resume_text: item.resume_mahasiswa,
+          status: item.status_resume === "revisi" ? "revision_required" : item.status_resume,
+          submitted_at: item.updatedAt, reviewed_at: item.tanggal_review_resume,
+          review_note: item.catatan_review_resume }]
+        : [],
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     mahasiswa: item.mahasiswa

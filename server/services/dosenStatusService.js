@@ -510,6 +510,7 @@ async function analyzeDosenStatusImpact(dosenId, transaction = null) {
           { transkrip_status: "submitted" },
           { cept_status: "submitted" },
           { draft_skripsi_status: "submitted" },
+          { paper_status: "submitted" },
         ],
       },
       include: [{

@@ -1486,7 +1486,7 @@ function StatusPage({
   const countedSessions = Number(sidangStatus?.eligibility?.counted_sessions || 0);
   const targetSessions = Number(sidangStatus?.eligibility?.target_minimum || 8);
   const approvedDocs = Number(sidangStatus?.eligibility?.dokumen_approved_count || 0);
-  const totalDocs = Number(sidangStatus?.eligibility?.dokumen_total_required || 3);
+  const totalDocs = Number(sidangStatus?.eligibility?.dokumen_total_required || 4);
 
   const handleOpenDetail = (submissionId) => {
     setSelectedSubmissionId(submissionId);

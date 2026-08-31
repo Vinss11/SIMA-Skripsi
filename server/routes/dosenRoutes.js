@@ -5,6 +5,7 @@ const dosenController = require("../controllers/dosenController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const sidangPenilaianController = require("../controllers/sidangPenilaianController");
 const submissionController = require("../controllers/submissionController");
 const jalurController = require("../controllers/jalurController");
 const uploadController = require("../controllers/uploadController");
@@ -235,5 +236,10 @@ router.post(
   authorizeRole("dosen"),
   sidangAkhirController.saveDosenKetersediaanSidang
 );
+router.get("/sidang/penilaian", authenticateToken, authorizeRole("dosen"), sidangPenilaianController.getDosenAssessmentList);
+router.get("/sidang/penilaian/:id", authenticateToken, authorizeRole("dosen"), sidangPenilaianController.getDosenAssessmentDetail);
+router.post("/sidang/penilaian/:id", authenticateToken, authorizeRole("dosen"), sidangPenilaianController.submitDosenAssessment);
+router.post("/sidang/revisi/:id/review", authenticateToken, authorizeRole("dosen"), sidangPenilaianController.reviewDosenDefenseRevision);
+router.get("/sidang/revisi/:id/download", authenticateToken, authorizeRole("dosen"), sidangPenilaianController.downloadDosenDefenseRevision);
 
 module.exports = router;

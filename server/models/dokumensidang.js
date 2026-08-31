@@ -92,6 +92,31 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.DATE,
         allowNull: true,
       },
+      paper_file_path: {
+        type: DataTypes.STRING(500),
+        allowNull: true,
+      },
+      paper_file_name: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+      },
+      paper_status: {
+        type: DataTypes.ENUM("belum_upload", "submitted", "revisi", "approved"),
+        allowNull: false,
+        defaultValue: "belum_upload",
+      },
+      paper_uploaded_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      paper_review_note: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      paper_reviewed_at: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
     },
     {
       sequelize,
@@ -103,4 +128,3 @@ module.exports = (sequelize, DataTypes) => {
 
   return DokumenSidang;
 };
-

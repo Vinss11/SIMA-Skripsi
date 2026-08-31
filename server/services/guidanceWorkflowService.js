@@ -7,6 +7,7 @@ const { resolveActiveGuidanceContext } = require("./guidanceContextService");
 const { getExistingSupervisionPermission } = require("./dosenStatusService");
 const { createSystemNotification } = require("./notificationService");
 const { NOTIFICATION_TYPES } = require("../constants/notificationTypes");
+const { validateGuidanceDecisionFields } = require("./guidanceDecisionTextValidationService");
 
 class GuidanceWorkflowError extends Error {
   constructor(message, status = 409, code = "GUIDANCE_WORKFLOW_ERROR", detail = null) {
@@ -29,6 +30,13 @@ function requireKey(value) {
 function scheduledAt(date, time) {
   const result = new Date(`${date}T${time}:00+07:00`);
   return Number.isNaN(result.getTime()) ? null : result;
+}
+function getResumeHistory(row) {
+  const history = row?.resume_history;
+  return Array.isArray(history) ? history.map((item) => ({ ...item })) : [];
+}
+function nextResumeVersionNumber(history) {
+  return history.reduce((highest, item) => Math.max(highest, Number(item?.version_number) || 0), 0) + 1;
 }
 function publicGuidance(row) {
   const value = row?.toJSON ? row.toJSON() : row;
@@ -85,6 +93,17 @@ async function createRequest({ mahasiswaId, targetMemberId = null, targetDosenId
 
 async function decideRequest({ guidanceId, dosenId, action, catatan, tanggal, jam, lokasi, expectedVersion, idempotencyKey }) {
   requireKey(idempotencyKey);
+  const validation = validateGuidanceDecisionFields({ action, catatan, lokasi });
+  if (validation.error) {
+    throw new GuidanceWorkflowError(
+      validation.error.message,
+      400,
+      validation.error.code,
+      { field: validation.error.field }
+    );
+  }
+  const { normalizedCatatan, normalizedLokasi } = validation;
+
   return db.sequelize.transaction(async (transaction) => {
     const row = await db.BimbinganSkripsi.findByPk(guidanceId, { transaction, lock: transaction.LOCK.UPDATE });
     if (!row) throw new GuidanceWorkflowError("Data bimbingan tidak ditemukan.", 404, "GUIDANCE_NOT_FOUND");
@@ -92,16 +111,15 @@ async function decideRequest({ guidanceId, dosenId, action, catatan, tanggal, ja
     if (row.request_status !== "pending") throw new GuidanceWorkflowError("Permohonan sudah diproses.", 409, "GUIDANCE_STATE_CONFLICT");
     let next;
     if (action === "reject") {
-      if (String(catatan || "").trim().length < 5) throw new GuidanceWorkflowError("Alasan penolakan minimal 5 karakter.", 400, "GUIDANCE_REJECTION_REASON_REQUIRED");
       next = "rejected"; row.status_permohonan = "rejected";
     } else {
       const at = scheduledAt(tanggal, jam);
       if (!at || at < new Date()) throw new GuidanceWorkflowError("Jadwal keputusan tidak valid.", 400, "GUIDANCE_SCHEDULE_INVALID");
       next = row.scheduled_at && new Date(row.scheduled_at).getTime() !== at.getTime() ? "rescheduled" : "accepted";
       row.status_permohonan = next === "accepted" ? "approved" : "rescheduled";
-      row.permintaan_tanggal = tanggal; row.permintaan_jam = jam; row.scheduled_at = at; row.lokasi_bimbingan = String(lokasi || "").trim() || null;
+      row.permintaan_tanggal = tanggal; row.permintaan_jam = jam; row.scheduled_at = at; row.lokasi_bimbingan = normalizedLokasi;
     }
-    row.request_status = next; row.catatan_dosen = String(catatan || "").trim() || null; row.request_decided_at = new Date();
+    row.request_status = next; row.catatan_dosen = normalizedCatatan; row.request_decided_at = new Date();
     row.tanggal_keputusan = row.request_decided_at; row.row_version += 1; await row.save({ transaction });
     await createSystemNotification({ recipientType: "mahasiswa", recipientId: row.mahasiswa_id, type: NOTIFICATION_TYPES.GUIDANCE_REQUEST_DECIDED_STUDENT,
       message: next === "rejected" ? "Permohonan bimbingan Anda ditolak. Lihat detail untuk alasannya." : "Jadwal bimbingan Anda telah dikonfirmasi.",
@@ -122,6 +140,19 @@ async function submitResumeVersion({ guidanceId, mahasiswaId, resume, expectedVe
     if (!["accepted", "rescheduled"].includes(row.request_status)) throw new GuidanceWorkflowError("Resume hanya dapat dikirim untuk sesi yang disetujui.", 409, "GUIDANCE_STATE_CONFLICT");
     if (!row.scheduled_at || new Date(row.scheduled_at) > new Date()) throw new GuidanceWorkflowError("Resume belum dapat dikirim sebelum sesi dimulai.", 409, "WAITING_SESSION_START");
     if (!["belum_diisi", "revisi", "rejected"].includes(row.status_resume)) throw new GuidanceWorkflowError("Resume saat ini tidak dapat direvisi.", 409, "GUIDANCE_STATE_CONFLICT");
+    const submittedAt = new Date();
+    const resumeHistory = getResumeHistory(row);
+    resumeHistory.push({
+      version_number: nextResumeVersionNumber(resumeHistory),
+      resume_text: text,
+      status: "submitted",
+      submitted_at: submittedAt.toISOString(),
+      reviewed_at: null,
+      review_note: null,
+      submitted_by_mahasiswa_id: Number(mahasiswaId),
+      reviewed_by_dosen_id: null,
+    });
+    row.resume_history = resumeHistory;
     row.resume_mahasiswa = text; row.status_resume = "submitted"; row.catatan_review_resume = null; row.tanggal_review_resume = null;
     row.is_counted = false; row.row_version += 1; await row.save({ transaction });
     const member = await db.PenetapanPembimbingDosen.findByPk(row.effective_reviewer_assignment_member_id, { transaction });
@@ -145,8 +176,39 @@ async function reviewResumeVersion({ guidanceId, dosenId, action, catatan, expec
     if (!row) throw new GuidanceWorkflowError("Data bimbingan tidak ditemukan.", 404, "GUIDANCE_NOT_FOUND");
     assertVersion(row, expectedVersion); await assertReviewer(row, dosenId, transaction);
     if (row.status_resume !== "submitted" || !row.resume_mahasiswa) throw new GuidanceWorkflowError("Resume tidak sedang menunggu review.", 409, "GUIDANCE_STATE_CONFLICT");
-    row.status_resume = approve ? "approved" : "revisi"; row.catatan_review_resume = String(catatan || "").trim() || null;
-    row.tanggal_review_resume = new Date(); row.is_counted = approve;
+    const reviewedAt = new Date();
+    const reviewNote = String(catatan || "").trim() || null;
+    const resumeHistory = getResumeHistory(row);
+    let currentVersionIndex = -1;
+    for (let index = resumeHistory.length - 1; index >= 0; index -= 1) {
+      if (resumeHistory[index]?.status === "submitted") {
+        currentVersionIndex = index;
+        break;
+      }
+    }
+    if (currentVersionIndex < 0) {
+      resumeHistory.push({
+        version_number: nextResumeVersionNumber(resumeHistory),
+        resume_text: row.resume_mahasiswa,
+        status: "submitted",
+        submitted_at: new Date(row.updatedAt || reviewedAt).toISOString(),
+        reviewed_at: null,
+        review_note: null,
+        submitted_by_mahasiswa_id: Number(row.mahasiswa_id),
+        reviewed_by_dosen_id: null,
+      });
+      currentVersionIndex = resumeHistory.length - 1;
+    }
+    resumeHistory[currentVersionIndex] = {
+      ...resumeHistory[currentVersionIndex],
+      status: approve ? "approved" : "revision_required",
+      reviewed_at: reviewedAt.toISOString(),
+      review_note: reviewNote,
+      reviewed_by_dosen_id: Number(dosenId),
+    };
+    row.resume_history = resumeHistory;
+    row.status_resume = approve ? "approved" : "revisi"; row.catatan_review_resume = reviewNote;
+    row.tanggal_review_resume = reviewedAt; row.is_counted = approve;
     if (approve) { row.occurred_at = row.occurred_at || row.scheduled_at || new Date(); row.occurrence_source = "approved_resume"; }
     row.row_version += 1; await row.save({ transaction });
     const decision = approve ? "approved" : "revision_required";
@@ -180,7 +242,21 @@ async function invalidateResumeApproval({ guidanceId, actorId, reason, expectedV
     if (!row) throw new GuidanceWorkflowError("Data bimbingan tidak ditemukan.", 404, "GUIDANCE_NOT_FOUND");
     assertVersion(row, expectedVersion);
     if (row.status_resume !== "approved") throw new GuidanceWorkflowError("Approval resume tidak aktif.", 409, "GUIDANCE_STATE_CONFLICT");
-    row.status_resume = "revisi"; row.is_counted = false; row.catatan_review_resume = note; row.tanggal_review_resume = new Date(); row.row_version += 1;
+    const invalidatedAt = new Date();
+    const resumeHistory = getResumeHistory(row);
+    if (resumeHistory.length > 0) {
+      const currentVersionIndex = resumeHistory.length - 1;
+      resumeHistory[currentVersionIndex] = {
+        ...resumeHistory[currentVersionIndex],
+        status: "invalidated",
+        reviewed_at: invalidatedAt.toISOString(),
+        review_note: note,
+        invalidated_at: invalidatedAt.toISOString(),
+        invalidation_reason: note,
+      };
+      row.resume_history = resumeHistory;
+    }
+    row.status_resume = "revisi"; row.is_counted = false; row.catatan_review_resume = note; row.tanggal_review_resume = invalidatedAt; row.row_version += 1;
     await row.save({ transaction });
     return { status: 200, data: publicGuidance(row), replayed: false, actor_id: actorId };
   });

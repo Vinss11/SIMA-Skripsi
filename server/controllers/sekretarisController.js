@@ -10,6 +10,7 @@ const {
   Klaster,
   Pengajuan,
   Topik,
+  BidangPenelitian,
   RiwayatPersetujuan,
   KlasterKetuaPeriode,
   MasterPenanggungJawabPenjaluran,
@@ -4196,7 +4197,46 @@ function getFinalResearchWinner(submission) {
   return null;
 }
 
-function formatPenelitianFinalRow(submission) {
+async function loadPenelitianFinalTopikMeta(submissions, transaction = null) {
+  const normalizedCodes = [
+    ...new Set(
+      (Array.isArray(submissions) ? submissions : [])
+        .flatMap((submission) => buildTopikListFromSubmission(submission).map((item) => item.kode))
+        .map((kode) => String(kode || "").trim().toUpperCase())
+        .filter(Boolean)
+    ),
+  ];
+  if (normalizedCodes.length === 0) return {};
+
+  const rows = await Topik.findAll({
+    where: { kode: { [Op.in]: normalizedCodes } },
+    attributes: ["kode", "judul", "deskripsi", "cluster"],
+    include: [{
+      model: BidangPenelitian,
+      as: "bidangPenelitians",
+      attributes: ["id", "nama", "deskripsi"],
+      through: { attributes: [] },
+      required: false,
+    }],
+    transaction: transaction || undefined,
+  });
+
+  return Object.fromEntries(rows.map((row) => {
+    const normalizedCode = String(row.kode || "").trim().toUpperCase();
+    return [normalizedCode, {
+      judul: row.judul || null,
+      deskripsi: row.deskripsi || null,
+      cluster: row.cluster || null,
+      bidang_penelitian: (Array.isArray(row.bidangPenelitians) ? row.bidangPenelitians : []).map((field) => ({
+        id: field.id,
+        nama: field.nama,
+        deskripsi: field.deskripsi || null,
+      })),
+    }];
+  }));
+}
+
+function formatPenelitianFinalRow(submission, topikMetaByKode = {}) {
   const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
   const state =
     submission.tipe_pengajuan === "topik_dosen"
@@ -4224,38 +4264,45 @@ function formatPenelitianFinalRow(submission) {
   const winner = getFinalResearchWinner(submission);
   const topik =
     submission.tipe_pengajuan === "topik_dosen"
-      ? (state?.slot_decisions || []).map((item) => ({
-          ...(clusterState?.cluster_decisions_by_slot.get(Number(item.slot))?.row
-            ? {
-                status_ketua_cluster: clusterState.cluster_decisions_by_slot.get(Number(item.slot)).status,
-                catatan_ketua_cluster:
-                  clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.keterangan || null,
-                ketua_cluster:
-                  clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.dosen || null,
-                tanggal_keputusan_ketua:
-                  clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.tanggal_keputusan ||
-                  clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.createdAt ||
-                  null,
-              }
-            : {
-                status_ketua_cluster: "pending",
-                catatan_ketua_cluster: null,
-                ketua_cluster: null,
-                tanggal_keputusan_ketua: null,
-              }),
-          slot: item.slot,
-          kode: item.kode,
-          judul: item.judul,
-          dosen_id: item.dosen_id,
-          dosen_nama: item.dosen_nama,
-          dosen_gelar: submission[`dosen${Number(item.slot)}`]?.gelar || null,
-          status: item.reviewer_status,
-          catatan: item.reviewer_note || null,
-          dipilih: Number(item.slot) === Number(winner?.slot),
-          status_sekprodi: sekprodiState?.sekprodi_decisions_by_slot.get(Number(item.slot))?.status || null,
-          catatan_sekprodi:
-            sekprodiState?.sekprodi_decisions_by_slot.get(Number(item.slot))?.row?.keterangan || null,
-        }))
+      ? (state?.slot_decisions || []).map((item) => {
+          const normalizedCode = String(item.kode || "").trim().toUpperCase();
+          const topikMeta = topikMetaByKode[normalizedCode] || {};
+          return {
+            ...(clusterState?.cluster_decisions_by_slot.get(Number(item.slot))?.row
+              ? {
+                  status_ketua_cluster: clusterState.cluster_decisions_by_slot.get(Number(item.slot)).status,
+                  catatan_ketua_cluster:
+                    clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.keterangan || null,
+                  ketua_cluster:
+                    clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.dosen || null,
+                  tanggal_keputusan_ketua:
+                    clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.tanggal_keputusan ||
+                    clusterState.cluster_decisions_by_slot.get(Number(item.slot)).row.createdAt ||
+                    null,
+                }
+              : {
+                  status_ketua_cluster: "pending",
+                  catatan_ketua_cluster: null,
+                  ketua_cluster: null,
+                  tanggal_keputusan_ketua: null,
+                }),
+            slot: item.slot,
+            kode: normalizedCode || item.kode,
+            judul: item.judul || topikMeta.judul || null,
+            deskripsi: topikMeta.deskripsi || null,
+            bidang_penelitian: topikMeta.bidang_penelitian || [],
+            cluster: topikMeta.cluster || normalizeTopikClusterCode(normalizedCode.replace(/[0-9].*$/, "")),
+            dosen_id: item.dosen_id,
+            dosen_nama: item.dosen_nama,
+            dosen_gelar: submission[`dosen${Number(item.slot)}`]?.gelar || null,
+            status: item.reviewer_status,
+            catatan: item.reviewer_note || null,
+            dipilih: Number(item.slot) === Number(winner?.slot),
+            status_sekprodi: sekprodiState?.sekprodi_decisions_by_slot.get(Number(item.slot))?.status || null,
+            catatan_sekprodi:
+              sekprodiState?.sekprodi_decisions_by_slot.get(Number(item.slot))?.row?.keterangan || null,
+          };
+        })
       : [
           {
             slot: null,
@@ -4415,11 +4462,12 @@ exports.getPenelitianFinalQueue = async (req, res) => {
       order: [["updatedAt", "ASC"]],
       distinct: true,
     });
+    const topikMetaByKode = await loadPenelitianFinalTopikMeta(rows);
 
     return res.json({
       success: true,
       data: rows
-        .map(formatPenelitianFinalRow)
+        .map((row) => formatPenelitianFinalRow(row, topikMetaByKode))
         .filter(
           (item) =>
             (item.tipe_pengajuan === "topik_dosen" && item.topik_lolos_cluster.length > 0) ||

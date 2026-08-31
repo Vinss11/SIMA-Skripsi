@@ -4084,6 +4084,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           "transkrip_status",
           "cept_status",
           "draft_skripsi_status",
+          "paper_status",
           "updatedAt",
         ],
       }),
@@ -4134,6 +4135,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           row.transkrip_status,
           row.cept_status,
           row.draft_skripsi_status,
+          row.paper_status,
         ];
         return [
           Number(row.mahasiswa_id),
@@ -4197,7 +4199,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
       } else if (sidang?.status === "submitted") {
         tahap = "Menunggu Penjadwalan Sidang";
         nextAction = "dokumen-sidang-review";
-      } else if (dokumen.approved === 3) {
+      } else if (dokumen.approved === 4) {
         tahap = "Siap Mendaftar Sidang";
         nextAction = "dokumen-sidang-review";
       } else if (guidanceProgress?.enforcement?.sufficient) {
@@ -4261,7 +4263,7 @@ exports.getMonitoringMahasiswa = async (req, res) => {
           evaluation_status: guidanceProgress?.evaluation_state?.status || "current",
           progress_percent: guidanceTarget > 0 ? Math.min(100, Math.round((bimbingan.tervalidasi / guidanceTarget) * 100)) : 0,
         },
-        dokumen: { ...dokumen, target: 3 },
+        dokumen: { ...dokumen, target: 4 },
         sidang: sidang
           ? {
               id: sidang.id,

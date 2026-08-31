@@ -60,6 +60,16 @@ const DOKUMEN_FIELD_MAP = {
     reviewNoteField: "draft_skripsi_review_note",
     reviewedAtField: "draft_skripsi_reviewed_at",
   },
+  paper: {
+    key: "paper",
+    label: "Paper",
+    pathField: "paper_file_path",
+    nameField: "paper_file_name",
+    statusField: "paper_status",
+    uploadedAtField: "paper_uploaded_at",
+    reviewNoteField: "paper_review_note",
+    reviewedAtField: "paper_reviewed_at",
+  },
 };
 
 const DOKUMEN_KEYS = Object.keys(DOKUMEN_FIELD_MAP);
@@ -71,6 +81,7 @@ function resolveDokumenKey(rawKey) {
   if (normalized === "transkrip_nilai" || normalized === "transkrip") return "transkrip";
   if (normalized === "sertifikat_cept" || normalized === "cept") return "cept";
   if (normalized === "draft" || normalized === "draft_skripsi") return "draft_skripsi";
+  if (normalized === "paper" || normalized === "makalah") return "paper";
   return null;
 }
 
@@ -203,6 +214,7 @@ function buildGate(progress) {
     target_minimum: required,
     counted_sessions: counted,
     unlocked: Boolean(progress) && progress.enforcement.sufficient,
+    document_upload_unlocked: true,
     remaining_sessions: Math.max(required - counted, 0),
   };
 }
@@ -322,15 +334,6 @@ exports.uploadMahasiswaDokumenSidang = async (req, res) => {
 
     const countedSessions = await countValidBimbinganSessions(mahasiswaId, transaction);
     const gate = buildGate(countedSessions);
-    if (!gate.unlocked) {
-      cleanupUploadedFileFromRequest(req);
-      await transaction.rollback();
-      return res.status(403).json({
-        success: false,
-        message: `Upload dokumen dibuka setelah minimal ${gate.target_minimum} bimbingan tervalidasi.`,
-        data: { gate },
-      });
-    }
 
     const dokumenRow = await findOrCreateDokumenSidang(mahasiswaId, transaction);
     const cfg = DOKUMEN_FIELD_MAP[dokumenKey];
@@ -513,7 +516,13 @@ exports.getDosenDokumenSidangList = async (req, res) => {
       })
     );
 
-    const onlyEligible = items.filter((item) => item.gate.unlocked);
+    const onlyEligible = items.filter(
+      (item) =>
+        item.gate.unlocked ||
+        item.summary.submitted_dokumen > 0 ||
+        item.summary.revisi_dokumen > 0 ||
+        item.summary.approved_dokumen > 0
+    );
 
     return res.json({
       success: true,
@@ -572,7 +581,10 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
       });
     }
 
-    const countedSessions = await countValidBimbinganSessions(mahasiswaId);
+    const [countedSessions, mataKuliahPenjaluran] = await Promise.all([
+      countValidBimbinganSessions(mahasiswaId),
+      getPenjaluranGradeRequirement(mahasiswaId),
+    ]);
     const gate = buildGate(countedSessions);
     const dokumenRow = await findOrCreateDokumenSidang(mahasiswaId);
     const dokumen = serializeDokumenPayload(dokumenRow);
@@ -600,6 +612,7 @@ exports.getDosenDokumenSidangDetail = async (req, res) => {
             }
           : null,
         dokumen,
+        persyaratan_sistem: { mata_kuliah_penjaluran: mataKuliahPenjaluran },
         can_review: Number(supervisorRoleMap.get(mahasiswaId)?.urutan) === 1,
         access_mode: Number(supervisorRoleMap.get(mahasiswaId)?.urutan) === 1 ? "primary" : "active_co_supervisor",
       },
@@ -659,14 +672,6 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
 
     const countedSessions = await countValidBimbinganSessions(mahasiswaId, transaction);
     const gate = buildGate(countedSessions);
-    if (!gate.unlocked) {
-      await transaction.rollback();
-      return res.status(409).json({
-        success: false,
-        message: `Review dokumen dibuka setelah mahasiswa menyelesaikan minimal ${gate.target_minimum} bimbingan tervalidasi.`,
-        data: { gate },
-      });
-    }
 
     const dokumenKey = resolveDokumenKey(req.body?.document_key);
     const decision = String(req.body?.decision || "").trim().toLowerCase();
@@ -739,8 +744,8 @@ exports.reviewDosenDokumenSidang = async (req, res) => {
     await dokumenRow.save({ transaction });
 
     const decisionMessage = decision === "approve"
-      ? `${cfg.label} Anda telah disetujui dosen pembimbing. Dokumen tersebut kini dikunci.`
-      : `${cfg.label} Anda perlu direvisi. Catatan dosen: ${note}`;
+      ? `${cfg.label} telah disetujui dan dikunci oleh dosen pembimbing.`
+      : `${cfg.label} perlu direvisi. Catatan dosen: ${note}`;
     await createSystemNotification({
       recipientType: "mahasiswa",
       recipientId: mahasiswaId,

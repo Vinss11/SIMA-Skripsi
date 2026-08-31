@@ -33,6 +33,16 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: "penguji2_dosen_id",
         as: "penguji2",
       });
+
+      JadwalSidangPenguji.hasMany(models.SidangPenilaian, {
+        foreignKey: "jadwal_sidang_id",
+        as: "penilaians",
+      });
+
+      JadwalSidangPenguji.hasOne(models.SidangKeputusan, {
+        foreignKey: "jadwal_sidang_id",
+        as: "keputusanSidang",
+      });
     }
   }
 

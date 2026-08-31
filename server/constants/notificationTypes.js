@@ -33,6 +33,9 @@ const NOTIFICATION_TYPES = Object.freeze({
   GUIDANCE_REVIEWER_RESOLUTION_REQUIRED: "guidance_reviewer_resolution_required",
   DEFENSE_DOCUMENT_SUBMITTED_LECTURER: "defense_document_submitted_lecturer",
   DEFENSE_DOCUMENT_DECIDED_STUDENT: "defense_document_decided_student",
+  DEFENSE_DECIDED_STUDENT: "defense_decided_student",
+  DEFENSE_REVISION_SUBMITTED_LECTURER: "defense_revision_submitted_lecturer",
+  DEFENSE_REVISION_DECIDED_STUDENT: "defense_revision_decided_student",
 });
 
 const NOTIFICATION_TITLES = Object.freeze({
@@ -68,6 +71,9 @@ const NOTIFICATION_TITLES = Object.freeze({
   [NOTIFICATION_TYPES.GUIDANCE_REVIEWER_RESOLUTION_REQUIRED]: "Reviewer Bimbingan Perlu Ditetapkan",
   [NOTIFICATION_TYPES.DEFENSE_DOCUMENT_SUBMITTED_LECTURER]: "Dokumen Sidang Perlu Direview",
   [NOTIFICATION_TYPES.DEFENSE_DOCUMENT_DECIDED_STUDENT]: "Hasil Review Dokumen Sidang",
+  [NOTIFICATION_TYPES.DEFENSE_DECIDED_STUDENT]: "Keputusan Sidang",
+  [NOTIFICATION_TYPES.DEFENSE_REVISION_SUBMITTED_LECTURER]: "Revisi Sidang Perlu Direview",
+  [NOTIFICATION_TYPES.DEFENSE_REVISION_DECIDED_STUDENT]: "Hasil Review Revisi Sidang",
 });
 
 module.exports = { NOTIFICATION_TYPES, NOTIFICATION_TITLES };

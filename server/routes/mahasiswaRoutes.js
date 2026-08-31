@@ -4,6 +4,7 @@ const mahasiswaController = require("../controllers/mahasiswaController");
 const bimbinganController = require("../controllers/bimbinganController");
 const dokumenSidangController = require("../controllers/dokumenSidangController");
 const sidangAkhirController = require("../controllers/sidangAkhirController");
+const sidangPenilaianController = require("../controllers/sidangPenilaianController");
 const academicController = require("../controllers/academicController");
 const penetapanPembimbingController = require("../controllers/penetapanPembimbingController");
 const sidangDokumenUpload = require("../middlewares/sidangDokumenUploadMiddleware");
@@ -102,4 +103,18 @@ router.post(
   authorizeRole("mahasiswa"),
   sidangAkhirController.registerMahasiswaSidang
 );
+router.get("/sidang/hasil", authenticateToken, authorizeRole("mahasiswa"), sidangPenilaianController.getMahasiswaDefenseResult);
+router.post(
+  "/sidang/revisi/upload",
+  authenticateToken,
+  authorizeRole("mahasiswa"),
+  (req, res, next) => {
+    sidangDokumenUpload.single("file")(req, res, (err) => {
+      if (err) return handleSidangMulterError(err, res);
+      return next();
+    });
+  },
+  sidangPenilaianController.uploadMahasiswaDefenseRevision
+);
+router.get("/sidang/revisi/:id/download", authenticateToken, authorizeRole("mahasiswa"), sidangPenilaianController.downloadMahasiswaDefenseRevision);
 module.exports = router;

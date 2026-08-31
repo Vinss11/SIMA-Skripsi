@@ -111,6 +111,19 @@ function buildTopikList(submission) {
   }));
 }
 
+const TOPIK_CLUSTER_LABEL_BY_PREFIX = {
+  SIRKEL: "Sirkel",
+  SIBER: "Siber",
+  ITSC: "ITSC",
+  MVK: "MVK",
+};
+
+function inferTopikClusterFromKode(kode) {
+  const normalizedKode = String(kode || "").trim().toUpperCase().replace(/\s+/g, "");
+  const prefix = normalizedKode.replace(/\d.*$/, "");
+  return TOPIK_CLUSTER_LABEL_BY_PREFIX[prefix] || null;
+}
+
 async function loadTopikMetaByKode(kodes) {
   const normalizedKodes = [
     ...new Set(
@@ -128,7 +141,7 @@ async function loadTopikMetaByKode(kodes) {
 
   const topikRows = await Topik.findAll({
     where: { kode: { [Op.in]: normalizedKodes } },
-    attributes: ["kode", "judul", "keyword", "cluster"],
+    attributes: ["kode", "judul", "deskripsi", "keyword", "cluster"],
     include: [{
       model: BidangPenelitian,
       as: "bidangPenelitians",
@@ -144,6 +157,7 @@ async function loadTopikMetaByKode(kodes) {
     if (normalizedKode) {
       topikByKode[normalizedKode] = {
         judul: item.judul || null,
+        deskripsi: item.deskripsi || null,
         keyword: item.keyword || null,
         bidang_penelitian: Array.isArray(item.bidangPenelitians)
           ? item.bidangPenelitians.map((field) => field.toJSON())
@@ -1170,9 +1184,10 @@ exports.getSubmissionById = async (req, res) => {
           ...item,
           kode: normalizedKode || item.kode,
           judul: item.judul || topikMeta.judul || null,
+          deskripsi: topikMeta.deskripsi || null,
           keyword: topikMeta.keyword || null,
           bidang_penelitian: topikMeta.bidang_penelitian || [],
-          cluster: topikMeta.cluster || null,
+          cluster: topikMeta.cluster || inferTopikClusterFromKode(normalizedKode),
           reviewer_status: slotState?.reviewer_status || null,
           reviewer_note: slotState?.reviewer_note || null,
           reviewer_decided_at: slotState?.reviewer_decided_at || null,
@@ -1198,6 +1213,7 @@ exports.getSubmissionById = async (req, res) => {
             slot,
             kode,
             judul,
+            deskripsi,
             keyword,
             bidang_penelitian,
             cluster,
@@ -1212,6 +1228,7 @@ exports.getSubmissionById = async (req, res) => {
             slot,
             kode,
             judul,
+            deskripsi: deskripsi || null,
             keyword: keyword || null,
             bidang_penelitian: bidang_penelitian || [],
             cluster: cluster || null,
@@ -1233,6 +1250,7 @@ exports.getSubmissionById = async (req, res) => {
               slot: approvedTopik.slot,
               kode: approvedTopik.kode,
               judul: approvedTopik.judul,
+              deskripsi: approvedTopik.deskripsi || null,
               keyword: approvedTopik.keyword || null,
               bidang_penelitian: approvedTopik.bidang_penelitian || [],
               cluster: approvedTopik.cluster || null,

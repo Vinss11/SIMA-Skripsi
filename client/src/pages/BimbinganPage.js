@@ -1,10 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  CheckCircle2,
   Clock3,
   Eye,
-  MapPin,
   MessageSquareText,
   Pencil,
   RefreshCcw,
@@ -829,16 +827,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                   className="w-[320px] rounded-lg border border-[#d3dbef] py-2 pl-8 pr-3 text-sm outline-none focus:border-[#2f63e3]"
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  handleRefresh().catch(() => {});
-                }}
-                className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff]"
-              >
-                <RefreshCcw className="h-4 w-4" />
-                Refresh
-              </button>
             </div>
           </div>
 
@@ -1037,7 +1025,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {formErrors.dosen_pembimbing_id ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.dosen_pembimbing_id}</p> : null}
             </div>
             <div className="lg:col-span-3">
-              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Pesan ke dosen</label>
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">
+                Pesan ke dosen <span className="text-[#d93030]">*</span>
+              </label>
               <textarea
                 value={form.pesan}
                 onChange={(event) => {
@@ -1053,7 +1043,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {formErrors.pesan ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.pesan}</p> : null}
             </div>
             <div>
-              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Tanggal</label>
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">
+                Tanggal <span className="text-[#d93030]">*</span>
+              </label>
               <input
                 type="date"
                 value={form.tanggal}
@@ -1068,7 +1060,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
               {formErrors.tanggal ? <p className="mt-1 text-xs font-semibold text-[#c23737]">{formErrors.tanggal}</p> : null}
             </div>
             <div>
-              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Jam</label>
+              <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">
+                Jam <span className="text-[#d93030]">*</span>
+              </label>
               <input
                 type="time"
                 value={form.jam}
@@ -1115,59 +1109,84 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
                     <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Sesi Bimbingan</h4>
-                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
-                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Tanggal/Jam</span>
-                        <span className="font-semibold text-[#1f2d53]">
-                          {formatDate(selectedRow.permintaan_tanggal)} | {selectedRow.permintaan_jam || "-"}
-                        </span>
+                    <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Tanggal Bimbingan</label>
+                        <input
+                          type="text"
+                          value={formatDate(selectedRow.permintaan_tanggal)}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
-                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Lokasi</span>
-                        <span className="font-semibold text-[#1f2d53]">{selectedRow.lokasi_bimbingan || "-"}</span>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Waktu Bimbingan</label>
+                        <input
+                          type="text"
+                          value={selectedRow.permintaan_jam || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
-                      <div className="grid grid-cols-[140px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Status Resume</span>
-                        <span>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Ruangan Bimbingan</label>
+                        <input
+                          type="text"
+                          value={selectedRow.lokasi_bimbingan || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Status Resume</label>
+                        <div className="mt-2 flex min-h-[28px] items-center">
                           <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${selectedResumeStatusMeta.badgeClass}`}>
                             {selectedResumeStatusMeta.label || "-"}
                           </span>
-                        </span>
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                     <h4 className="text-sm font-black text-[#1b274b]">Catatan Dosen</h4>
-                    <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_dosen || "-"}</p>
-                    <p className="mt-3 inline-flex items-center gap-1 text-sm text-[#42588f]">
-                      <MapPin className="h-4 w-4" />
-                      Lokasi: {selectedRow.lokasi_bimbingan || "-"}
-                    </p>
+                    <div className="mt-3 space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Catatan/Pesan dari Dosen</label>
+                        <textarea
+                          rows={4}
+                          value={selectedRow.catatan_dosen || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full resize-none rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Ruangan Bimbingan</label>
+                        <input
+                          type="text"
+                          value={selectedRow.lokasi_bimbingan || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   {selectedRow.catatan_review_resume ? (
                     <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                       <h4 className="text-sm font-black text-[#1b274b]">Catatan Review Dosen</h4>
-                      <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{selectedRow.catatan_review_resume || "-"}</p>
-                    </div>
-                  ) : null}
-                  {Array.isArray(selectedRow.resume_versions) && selectedRow.resume_versions.length > 0 ? (
-                    <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                      <h4 className="text-sm font-black text-[#1b274b]">Riwayat Versi Resume</h4>
-                      <div className="mt-3 space-y-3">
-                        {selectedRow.resume_versions.map((version) => (
-                          <div key={version.id} className="rounded-lg border border-[#e6ebf7] bg-[#f8faff] p-3">
-                            <div className="flex flex-wrap justify-between gap-2 text-xs font-bold text-[#51648f]">
-                              <span>Versi {version.version_number} • {String(version.status || "-").replaceAll("_", " ")}</span>
-                              <span>{formatDateTime(version.submitted_at)}</span>
-                            </div>
-                            <p className="mt-2 whitespace-pre-wrap text-sm text-[#2c406f]">{version.resume_text}</p>
-                            {version.review_note ? <p className="mt-2 text-xs text-[#68779b]">Catatan: {version.review_note}</p> : null}
-                            {version.invalidated_at ? <p className="mt-1 text-xs font-bold text-[#b43b3b]">Di-invalidasi: {version.invalidation_reason || "-"}</p> : null}
-                          </div>
-                        ))}
-                      </div>
+                      <textarea
+                        rows={4}
+                        value={selectedRow.catatan_review_resume || "-"}
+                        readOnly
+                        disabled
+                        className="mt-3 w-full resize-none rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                      />
                     </div>
                   ) : null}
                 </>
@@ -1180,18 +1199,30 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
                     <h4 className="text-sm font-black text-[#1b274b]">Ringkasan Permohonan</h4>
-                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Tanggal Bimbingan</span>
-                        <span className="font-semibold text-[#1f2d53]">{formatDate(selectedRow.permintaan_tanggal)}</span>
+                    <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Tanggal Bimbingan</label>
+                        <input
+                          type="text"
+                          value={formatDate(selectedRow.permintaan_tanggal)}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Waktu Bimbingan</span>
-                        <span className="font-semibold text-[#1f2d53]">{selectedRow.permintaan_jam || "-"}</span>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Waktu Bimbingan</label>
+                        <input
+                          type="text"
+                          value={selectedRow.permintaan_jam || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Status Permohonan</span>
-                        <span>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Status Permohonan</label>
+                        <div className="mt-2 flex min-h-[40px] items-center">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${statusPermohonanBadge(
                               selectedRow.status_permohonan,
@@ -1202,36 +1233,55 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                               ? "Terlampaui (Pending)"
                               : selectedRow.status_permohonan_label || "-"}
                           </span>
-                        </span>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Status Resume</span>
-                        <span>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Status Resume</label>
+                        <div className="mt-2 flex min-h-[40px] items-center">
                           <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${selectedResumeStatusMeta.badgeClass}`}>
                             {selectedResumeStatusMeta.label || "-"}
                           </span>
-                        </span>
+                        </div>
                       </div>
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Pesan Mahasiswa</span>
-                        <p className="whitespace-pre-wrap font-semibold text-[#1f2d53]">{selectedRow.permintaan_pesan || "-"}</p>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-semibold text-[#5a6a93]">Pesan Mahasiswa</label>
+                        <textarea
+                          rows={4}
+                          value={selectedRow.permintaan_pesan || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full resize-none rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
                     </div>
                   </div>
 
                   <div className="rounded-lg border border-[#e2e9f8] bg-white p-4">
                     <h4 className="text-sm font-black text-[#1b274b]">Pesan dari Dosen</h4>
-                    <div className="mt-3 space-y-2 text-sm text-[#324c86]">
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Catatan Dosen</span>
-                        <p className="whitespace-pre-wrap font-semibold text-[#1f2d53]">{selectedRow.catatan_dosen || "-"}</p>
+                    <div className="mt-3 space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">
+                          Catatan/Pesan dari Dosen
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={selectedRow.catatan_dosen || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full resize-none rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
-                      <div className="grid grid-cols-[160px_minmax(0,1fr)] gap-3">
-                        <span className="font-semibold text-[#5a6a93]">Lokasi</span>
-                        <p className="inline-flex items-center gap-1 font-semibold text-[#1f2d53]">
-                          <MapPin className="h-4 w-4" />
-                          {selectedRow.lokasi_bimbingan || "-"}
-                        </p>
+                      <div>
+                        <label className="block text-sm font-semibold text-[#5a6a93]">
+                          Ruangan Bimbingan
+                        </label>
+                        <input
+                          type="text"
+                          value={selectedRow.lokasi_bimbingan || "-"}
+                          readOnly
+                          disabled
+                          className="mt-2 w-full rounded-lg border border-[#d6deef] bg-[#f7f9ff] px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                        />
                       </div>
                     </div>
                   </div>
@@ -1300,12 +1350,9 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                     aria-invalid={Boolean(resumeErrors[selectedRow.id])}
                     className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm text-[#1b274b] outline-none focus:border-[#2f63e3] ${resumeErrors[selectedRow.id] ? "border-red-400 bg-red-50/40" : "border-[#cfdaf0]"}`}
                   />
-                  <div className="mt-1 flex items-start justify-between gap-3 text-xs">
+                  <div className="mt-1 text-xs">
                     <p className={resumeErrors[selectedRow.id] ? "font-semibold text-red-600" : "text-[#667393]"}>
                       {resumeErrors[selectedRow.id] || "Resume wajib berisi minimal 20 karakter."}
-                    </p>
-                    <p className={`shrink-0 font-semibold ${String(resumeDraft[selectedRow.id] || "").trim().length < 20 ? "text-[#9b6d00]" : "text-[#1f8a58]"}`}>
-                      {String(resumeDraft[selectedRow.id] || "").trim().length}/20 karakter
                     </p>
                   </div>
                   <div className="mt-3 flex justify-end">
@@ -1328,13 +1375,6 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
                 <div className="inline-flex items-center gap-2 rounded-md bg-[#edf3ff] px-3 py-2 text-sm font-semibold text-[#2f63e3]">
                   <Clock3 className="h-4 w-4" />
                   Resume sedang menunggu review dosen pembimbing.
-                </div>
-              ) : null}
-
-              {selectedRow.status_resume === "approved" && selectedRow.is_counted ? (
-                <div className="inline-flex items-center gap-2 rounded-md bg-[#e8f8ef] px-3 py-2 text-sm font-semibold text-[#1f8a58]">
-                  <CheckCircle2 className="h-4 w-4" />
-                  Sesi ini sudah dihitung ke progres minimum {stats?.target_minimum || 0} bimbingan.
                 </div>
               ) : null}
 
@@ -1397,5 +1437,3 @@ function BimbinganPage({ session, apiBaseUrl, onSessionExpired, onUpdated }) {
 }
 
 export default BimbinganPage;
-
-

@@ -15,6 +15,9 @@ const {
   KetersediaanPengujiSidang,
   PreferensiPengujiSidang,
   JadwalSidangPenguji,
+  DosenBidangPenelitian,
+  PengajuanBidangPenelitian,
+  Topik,
 } = require("../models");
 const { canContinueExistingSupervision } = require("../services/dosenStatusService");
 const {
@@ -23,11 +26,23 @@ const {
 } = require("../services/mahasiswaSupervisionAccessService");
 const { getSidangRequirement: getPenjaluranGradeRequirement } = require("../services/penjaluranGradeService");
 const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
+const {
+  buildResearchProfile,
+  rankLecturersForStudent,
+} = require("../services/examinerRecommendationService");
+const {
+  buildTopikListFromSubmission,
+  evaluateTopikClusterReviewState,
+  evaluateTopikParallelState,
+  evaluateTopikSekprodiReviewState,
+  isTopikParallelSubmission,
+} = require("../services/topikParallelReviewService");
 
 const DOKUMEN_APPROVAL_FIELDS = [
   "transkrip_status",
   "cept_status",
   "draft_skripsi_status",
+  "paper_status",
 ];
 const EXAMINER_PROFILE_HIGH_INTENSITY = "intensitas_tinggi";
 const EXAMINER_PROFILE_SUPPORTIVE = "suportif";
@@ -72,6 +87,31 @@ function resolveJudulSkripsiFromPengajuan(pengajuan) {
     pengajuan.topik_3_judul ||
     "-"
   );
+}
+
+function resolveFinalTopikFromPengajuan(pengajuan) {
+  if (!pengajuan || pengajuan.tipe_pengajuan !== "topik_dosen") return null;
+  const topikList = buildTopikListFromSubmission(pengajuan);
+  if (topikList.length === 0) return null;
+  if (isTopikParallelSubmission(pengajuan)) {
+    const sekprodiState = evaluateTopikSekprodiReviewState(pengajuan);
+    const clusterState = evaluateTopikClusterReviewState(pengajuan);
+    const parallelState = evaluateTopikParallelState(pengajuan);
+    const finalSlot = sekprodiState.sekprodi_final_winner?.slot
+      || clusterState.final_winner?.slot
+      || parallelState.approved_topik?.slot;
+    if (finalSlot) return topikList.find((item) => Number(item.slot) === Number(finalSlot)) || null;
+  }
+  const approvedWithSlot = [...(pengajuan.riwayat || [])]
+    .filter((item) => item.status === "approved" && Number(item.topik_slot || 0) > 0)
+    .sort((left, right) => new Date(right.tanggal_keputusan || right.createdAt || 0) - new Date(left.tanggal_keputusan || left.createdAt || 0))[0];
+  if (approvedWithSlot) {
+    return topikList.find((item) => Number(item.slot) === Number(approvedWithSlot.topik_slot)) || null;
+  }
+  const rejectedCount = (pengajuan.riwayat || []).filter(
+    (item) => item.status === "rejected" && String(item.tipe_approval || "calon_pembimbing") === "calon_pembimbing"
+  ).length;
+  return topikList.find((item) => Number(item.slot) === Math.min(rejectedCount + 1, topikList.length)) || topikList[0];
 }
 
 function nowJakartaDateTime() {
@@ -181,6 +221,7 @@ async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) 
       { key: "transkrip", label: "Transkrip Nilai", status: "belum_upload", approved: false },
       { key: "cept", label: "Sertifikat CEPT", status: "belum_upload", approved: false },
       { key: "draft_skripsi", label: "Draft Skripsi", status: "belum_upload", approved: false },
+      { key: "paper", label: "Paper", status: "belum_upload", approved: false },
     ],
   };
   if (!doc) return summary;
@@ -188,6 +229,7 @@ async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) 
     { key: "transkrip", label: "Transkrip Nilai", status: String(doc.transkrip_status || "belum_upload"), approved: String(doc.transkrip_status || "").toLowerCase() === "approved" },
     { key: "cept", label: "Sertifikat CEPT", status: String(doc.cept_status || "belum_upload"), approved: String(doc.cept_status || "").toLowerCase() === "approved" },
     { key: "draft_skripsi", label: "Draft Skripsi", status: String(doc.draft_skripsi_status || "belum_upload"), approved: String(doc.draft_skripsi_status || "").toLowerCase() === "approved" },
+    { key: "paper", label: "Paper", status: String(doc.paper_status || "belum_upload"), approved: String(doc.paper_status || "").toLowerCase() === "approved" },
   ];
   let approved = 0;
   DOKUMEN_APPROVAL_FIELDS.forEach((field) => {
@@ -397,6 +439,7 @@ function serializeJadwalRow(row) {
           id: item.penguji1.id,
           nama: item.penguji1.nama,
           nik: item.penguji1.nik,
+          gelar: item.penguji1.gelar,
         }
       : null,
     penguji2: item.penguji2
@@ -404,6 +447,7 @@ function serializeJadwalRow(row) {
           id: item.penguji2.id,
           nama: item.penguji2.nama,
           nik: item.penguji2.nik,
+          gelar: item.penguji2.gelar,
         }
       : null,
   };
@@ -1469,29 +1513,88 @@ exports.getSekretarisSidangQueue = async (req, res) => {
       });
     }
 
-    const rows = await PendaftaranSidang.findAll({
-      where: { periode_sidang_id: targetPeriode.id },
-      include: [
-        {
-          model: Mahasiswa,
-          as: "mahasiswa",
-          attributes: ["id", "nim", "nama", "angkatan", "email"],
-        },
-        {
+    const [rows, hariRows, availabilityRows, preferenceRows] = await Promise.all([
+      PendaftaranSidang.findAll({
+        where: { periode_sidang_id: targetPeriode.id },
+        include: [
+          {
+            model: Mahasiswa,
+            as: "mahasiswa",
+            attributes: ["id", "nim", "nama", "angkatan", "email"],
+          },
+          {
+            model: Dosen,
+            as: "dosenPembimbing",
+            attributes: ["id", "nama", "nik", "gelar"],
+          },
+          {
+            model: JadwalSidangPenguji,
+            as: "jadwalSidang",
+            include: [
+              { model: Dosen, as: "penguji1", attributes: ["id", "nama", "nik", "gelar"] },
+              { model: Dosen, as: "penguji2", attributes: ["id", "nama", "nik", "gelar"] },
+            ],
+          },
+        ],
+        order: [["registered_at", "ASC"]],
+      }),
+      PeriodeSidangHari.findAll({
+        where: { periode_sidang_id: targetPeriode.id },
+        order: [["tanggal_sidang", "ASC"]],
+      }),
+      KetersediaanPengujiSidang.findAll({
+        where: { periode_sidang_id: targetPeriode.id },
+        include: [{
           model: Dosen,
-          as: "dosenPembimbing",
-          attributes: ["id", "nama", "nik"],
-        },
-        {
-          model: JadwalSidangPenguji,
-          as: "jadwalSidang",
-          include: [
-            { model: Dosen, as: "penguji1", attributes: ["id", "nama", "nik"] },
-            { model: Dosen, as: "penguji2", attributes: ["id", "nama", "nik"] },
-          ],
-        },
-      ],
-      order: [["registered_at", "ASC"]],
+          as: "dosen",
+          attributes: ["id", "nama", "nik", "kode_dosen", "gelar", "email", "profil_penilaian_penguji"],
+        }],
+        order: [["dosen_id", "ASC"], ["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
+      }),
+      PreferensiPengujiSidang.findAll({
+        where: { periode_sidang_id: targetPeriode.id },
+      }),
+    ]);
+
+    const preferenceByDosenId = new Map(
+      preferenceRows.map((item) => [Number(item.dosen_id), item])
+    );
+    const availableDosenMap = new Map();
+    availabilityRows.forEach((item) => {
+      const dosenId = Number(item.dosen_id);
+      if (!availableDosenMap.has(dosenId)) {
+        const preference = preferenceByDosenId.get(dosenId) || null;
+        availableDosenMap.set(dosenId, {
+          id: dosenId,
+          nama: item.dosen?.nama || "-",
+          gelar: item.dosen?.gelar || null,
+          nik: item.dosen?.nik || null,
+          kode_dosen: item.dosen?.kode_dosen || null,
+          email: item.dosen?.email || null,
+          profil_penilaian_penguji: item.dosen?.profil_penilaian_penguji || null,
+          jumlah_slot_tersedia: 0,
+          tanggal_tersedia: [],
+          slot_tersedia: [],
+          preferensi: preference
+            ? {
+                mobilitas_ruangan: preference.mobilitas_ruangan,
+                maksimal_sesi_per_hari: preference.maksimal_sesi_per_hari,
+                membutuhkan_jeda: preference.membutuhkan_jeda,
+                submitted_at: preference.submitted_at,
+              }
+            : null,
+        });
+      }
+      const target = availableDosenMap.get(dosenId);
+      target.jumlah_slot_tersedia += 1;
+      if (!target.tanggal_tersedia.includes(String(item.tanggal_sidang))) {
+        target.tanggal_tersedia.push(String(item.tanggal_sidang));
+      }
+      target.slot_tersedia.push({
+        tanggal_sidang: item.tanggal_sidang,
+        sesi_ke: item.sesi_ke,
+        kondisi_fisik: item.kondisi_fisik,
+      });
     });
 
     const enrichedRows = await Promise.all(
@@ -1570,6 +1673,11 @@ exports.getSekretarisSidangQueue = async (req, res) => {
           tanggal_selesai_pendaftaran: targetPeriode.tanggal_selesai_pendaftaran,
           status: targetPeriode.status,
         },
+        hari_sidang: hariRows.map((item) => ({
+          tanggal_sidang: item.tanggal_sidang,
+          sesi: getSessionTemplateByDate(item.tanggal_sidang),
+        })),
+        dosen_tersedia: Array.from(availableDosenMap.values()),
         rows: enrichedRows.filter(
           (row) => row.program_kuliah === req.user?.program_kuliah
         ),
@@ -1660,7 +1768,6 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
         where: { mahasiswa_id: mahasiswaId },
         attributes: [
           "id",
-          "program_kuliah",
           "status",
           "jenis_jalur",
           "tipe_pengajuan",
@@ -1679,6 +1786,7 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
         where: { mahasiswa_id: mahasiswaId },
         attributes: [
           "id",
+          "program_kuliah",
           "jalur",
           "semester_mahasiswa",
           "jenis_jalur_diambil",
@@ -1801,6 +1909,7 @@ exports.getSekretarisSidangRegistrantDetail = async (req, res) => {
 exports.autoAssignSidangPenguji = async (req, res) => {
   const transaction = await sequelize.transaction();
   try {
+    const shouldCommit = req.body?.commit === true;
     const periodeSidangId = Number(req.body?.periode_sidang_id || req.query?.periode_sidang_id || 0);
     if (!periodeSidangId) {
       await transaction.rollback();
@@ -1812,13 +1921,21 @@ exports.autoAssignSidangPenguji = async (req, res) => {
 
     const periode = await PeriodeSidang.findByPk(periodeSidangId, {
       transaction,
-      lock: transaction.LOCK.UPDATE,
+      ...(shouldCommit ? { lock: transaction.LOCK.UPDATE } : {}),
     });
     if (!periode) {
       await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: "Periode sidang tidak ditemukan.",
+      });
+    }
+
+    if (String(periode.status || "").toLowerCase() !== "open") {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Assign dosen penguji hanya dapat dilakukan pada periode sidang aktif.",
       });
     }
 
@@ -1850,7 +1967,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       });
     }
 
-    const pendingRegistrations = await PendaftaranSidang.findAll({
+    const rawPendingRegistrations = await PendaftaranSidang.findAll({
       where: {
         periode_sidang_id: periode.id,
         status: "submitted",
@@ -1863,9 +1980,30 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         },
       ],
       transaction,
-      lock: transaction.LOCK.UPDATE,
+      ...(shouldCommit
+        ? { lock: { level: transaction.LOCK.UPDATE, of: PendaftaranSidang } }
+        : {}),
       order: [["registered_at", "ASC"], ["id", "ASC"]],
     });
+
+    const rawStudentIds = [...new Set(rawPendingRegistrations.map((item) => Number(item.mahasiswa_id)).filter(Boolean))];
+    const penjaluranRows = rawStudentIds.length
+      ? await PendaftaranPenjaluran.findAll({
+          where: { mahasiswa_id: { [Op.in]: rawStudentIds } },
+          attributes: ["id", "mahasiswa_id", "program_kuliah", "jenis_jalur_diambil", "penjaluran_baru", "catatan", "form_lanjutan_payload", "createdAt"],
+          order: [["createdAt", "DESC"], ["id", "DESC"]],
+          transaction,
+        })
+      : [];
+    const latestPenjaluranByStudent = new Map();
+    penjaluranRows.forEach((item) => {
+      const mahasiswaId = Number(item.mahasiswa_id);
+      if (!latestPenjaluranByStudent.has(mahasiswaId)) latestPenjaluranByStudent.set(mahasiswaId, item);
+    });
+    const pendingRegistrations = rawPendingRegistrations.filter((item) =>
+      String(latestPenjaluranByStudent.get(Number(item.mahasiswa_id))?.program_kuliah || "reguler")
+        === String(req.user?.program_kuliah || "reguler")
+    );
 
     if (pendingRegistrations.length === 0) {
       await transaction.rollback();
@@ -1875,16 +2013,69 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       });
     }
 
-    const availabilityRows = await KetersediaanPengujiSidang.findAll({
-      where: { periode_sidang_id: periode.id },
-      transaction,
-    });
+    let requestedAssignmentByRegistrationId = null;
+    if (shouldCommit && Array.isArray(req.body?.assignments)) {
+      requestedAssignmentByRegistrationId = new Map();
+      for (const item of req.body.assignments) {
+        const registrationId = Number(item?.pendaftaran_sidang_id || 0);
+        if (!registrationId || requestedAssignmentByRegistrationId.has(registrationId)) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: "Data hasil penugasan mengandung pendaftaran yang tidak valid atau duplikat.",
+            detail: { code: "INVALID_ASSIGNMENT_DRAFT" },
+          });
+        }
+        requestedAssignmentByRegistrationId.set(registrationId, {
+          tanggal_sidang: normalizeDateOnly(item?.tanggal_sidang),
+          sesi_ke: Number(item?.sesi_ke || 0),
+          ruangan: String(item?.ruangan || "").trim(),
+          penguji1_dosen_id: Number(item?.penguji1_dosen_id || 0),
+          penguji2_dosen_id: Number(item?.penguji2_dosen_id || 0),
+        });
+      }
+      const pendingRegistrationIds = new Set(pendingRegistrations.map((item) => Number(item.id)));
+      const hasUnknownRegistration = [...requestedAssignmentByRegistrationId.keys()]
+        .some((id) => !pendingRegistrationIds.has(id));
+      if (hasUnknownRegistration || requestedAssignmentByRegistrationId.size !== pendingRegistrationIds.size) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Draft penugasan sudah tidak sesuai dengan daftar pendaftar terbaru. Jalankan Assign Dosen Penguji kembali.",
+          detail: { code: "STALE_ASSIGNMENT_DRAFT" },
+        });
+      }
+    }
+
+    const availabilityRows = await KetersediaanPengujiSidang.findAll({ where: { periode_sidang_id: periode.id }, transaction });
     const eligibleDosens = await Dosen.findAll({
       where: { status_keaktifan: "active" },
-      attributes: ["id", "nama", "profil_penilaian_penguji"],
+      attributes: ["id", "nama", "nik", "gelar", "profil_penilaian_penguji"],
       transaction,
     });
-    const unconfiguredExaminers = eligibleDosens.filter(
+    const eligibleIds = new Set(eligibleDosens.map((item) => Number(item.id)));
+    const filteredAvailabilityRows = availabilityRows.filter((item) => eligibleIds.has(Number(item.dosen_id)));
+    const availableDosenIds = [...new Set(filteredAvailabilityRows.map((item) => Number(item.dosen_id)).filter(Boolean))];
+    if (availableDosenIds.length === 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Belum ada dosen yang mengisi ketersediaan sidang pada periode ini.",
+        detail: { code: "NO_EXAMINER_AVAILABILITY", available_examiner_count: 0, required_examiner_count: 2 },
+      });
+    }
+    if (availableDosenIds.length < 2) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `Dosen yang mengisi ketersediaan baru ${availableDosenIds.length}. Minimal diperlukan 2 dosen penguji.`,
+        detail: { code: "INSUFFICIENT_EXAMINERS", available_examiner_count: availableDosenIds.length, required_examiner_count: 2 },
+      });
+    }
+
+    const availableIdSet = new Set(availableDosenIds);
+    const availableDosens = eligibleDosens.filter((item) => availableIdSet.has(Number(item.id)));
+    const unconfiguredExaminers = availableDosens.filter(
       (item) => !VALID_EXAMINER_PROFILES.has(String(item.profil_penilaian_penguji || ""))
     );
     if (unconfiguredExaminers.length > 0) {
@@ -1898,9 +2089,8 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         },
       });
     }
-    const eligibleIds = new Set(eligibleDosens.map((item) => Number(item.id)));
     const profileByDosenId = new Map(
-      eligibleDosens.map((item) => [Number(item.id), item.profil_penilaian_penguji])
+      availableDosens.map((item) => [Number(item.id), item.profil_penilaian_penguji])
     );
     const supervisorIds = [...new Set(pendingRegistrations.map((item) => Number(
       item.dosen_pembimbing_id || item.mahasiswa?.dosen_pembimbing_skripsi_id || 0
@@ -1915,28 +2105,93 @@ exports.autoAssignSidangPenguji = async (req, res) => {
     const supervisorCanAttend = new Map(
       supervisorRows.map((item) => [Number(item.id), canContinueExistingSupervision(item)])
     );
-    const filteredAvailabilityRows = availabilityRows.filter((item) => eligibleIds.has(Number(item.dosen_id)));
-    if (filteredAvailabilityRows.length === 0) {
-      await transaction.rollback();
-      return res.status(409).json({
-        success: false,
-        message: "Belum ada dosen yang mengisi ketersediaan penguji.",
-      });
-    }
-
     const availabilityBySlot = mapAvailabilityRows(filteredAvailabilityRows, profileByDosenId);
-    const assignedRows = await JadwalSidangPenguji.findAll({
+    const studentIds = pendingRegistrations.map((item) => Number(item.mahasiswa_id));
+    const [assignedRows, preferenceRows, dosenFieldRows, pengajuanRows] = await Promise.all([
+      JadwalSidangPenguji.findAll({
       where: {
         periode_sidang_id: periode.id,
         assignment_status: { [Op.in]: ["assigned", "finalized"] },
       },
       transaction,
-      lock: transaction.LOCK.UPDATE,
+        ...(shouldCommit ? { lock: transaction.LOCK.UPDATE } : {}),
+      }),
+      PreferensiPengujiSidang.findAll({ where: { periode_sidang_id: periode.id, dosen_id: { [Op.in]: availableDosenIds } }, transaction }),
+      DosenBidangPenelitian.findAll({
+        where: { dosen_id: { [Op.in]: availableDosenIds } },
+        include: [{ association: "bidangPenelitian", attributes: ["id", "nama", "deskripsi"] }],
+        transaction,
+      }),
+      Pengajuan.findAll({
+        where: {
+          mahasiswa_id: { [Op.in]: studentIds },
+          status: { [Op.in]: ["approved", "completed"] },
+        },
+        attributes: ["id", "mahasiswa_id", "tipe_pengajuan", "status", "judul_mandiri", "deskripsi_mandiri", "topik_1_kode", "topik_1_judul", "topik_2_kode", "topik_2_judul", "topik_3_kode", "topik_3_judul", "updatedAt"],
+        include: [{ association: "riwayat", attributes: ["id", "status", "tipe_approval", "topik_slot", "topik_kode", "keterangan", "tanggal_keputusan", "createdAt"], required: false }],
+        order: [["updatedAt", "DESC"], ["id", "DESC"]],
+        transaction,
+      }),
+    ]);
+
+    const latestPengajuanByStudent = new Map();
+    pengajuanRows.forEach((item) => {
+      const mahasiswaId = Number(item.mahasiswa_id);
+      if (!latestPengajuanByStudent.has(mahasiswaId)) latestPengajuanByStudent.set(mahasiswaId, item);
+    });
+    const pengajuanIds = [...latestPengajuanByStudent.values()].map((item) => Number(item.id));
+    const finalTopikCodes = [...new Set([...latestPengajuanByStudent.values()]
+      .map((item) => resolveFinalTopikFromPengajuan(item)?.kode)
+      .map((item) => String(item || "").trim().toUpperCase())
+      .filter(Boolean))];
+    const [pengajuanFieldRows, finalTopikRows] = await Promise.all([
+      pengajuanIds.length ? PengajuanBidangPenelitian.findAll({
+          where: { pengajuan_id: { [Op.in]: pengajuanIds } },
+          include: [{ association: "bidangPenelitian", attributes: ["id", "nama", "deskripsi"] }],
+          transaction,
+        }) : [],
+      finalTopikCodes.length ? Topik.findAll({
+        where: { kode: { [Op.in]: finalTopikCodes } },
+        attributes: ["kode", "judul", "deskripsi"],
+        include: [{ association: "bidangPenelitians", attributes: ["id", "nama", "deskripsi"], through: { attributes: [] }, required: false }],
+        transaction,
+      }) : [],
+    ]);
+    const finalTopikByCode = new Map(finalTopikRows.map((item) => [String(item.kode || "").trim().toUpperCase(), item]));
+
+    const preferenceByDosenId = new Map(preferenceRows.map((item) => [Number(item.dosen_id), item]));
+    const lecturerFields = new Map();
+    dosenFieldRows.forEach((item) => {
+      const dosenId = Number(item.dosen_id);
+      if (!lecturerFields.has(dosenId)) lecturerFields.set(dosenId, []);
+      if (item.bidangPenelitian) lecturerFields.get(dosenId).push(item.bidangPenelitian);
+    });
+    const fieldsByPengajuanId = new Map();
+    pengajuanFieldRows.forEach((item) => {
+      const pengajuanId = Number(item.pengajuan_id);
+      if (!fieldsByPengajuanId.has(pengajuanId)) fieldsByPengajuanId.set(pengajuanId, []);
+      if (item.bidangPenelitian) fieldsByPengajuanId.get(pengajuanId).push(item.bidangPenelitian);
+    });
+    const lecturerProfiles = availableDosens.map((item) => {
+      const fields = lecturerFields.get(Number(item.id)) || [];
+      return {
+        id: Number(item.id),
+        nama: item.nama,
+        nik: item.nik,
+        gelar: item.gelar,
+        profil_penilaian_penguji: item.profil_penilaian_penguji,
+        researchProfile: buildResearchProfile({
+          fieldIds: fields.map((field) => field.id),
+          fieldTexts: fields.map((field) => field.nama),
+          text: fields.map((field) => field.deskripsi).join(" "),
+        }),
+      };
     });
 
     const usedRoomSlots = new Set();
     const dosenBusyBySlot = new Map();
     const dosenDailyRoomConstraint = new Map();
+    const dosenDailySessions = new Map();
     const dosenLoadCounter = new Map();
 
     assignedRows.forEach((row) => {
@@ -1947,6 +2202,14 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       dosenBusyBySlot.get(slotKey).add(Number(row.penguji2_dosen_id));
       dosenLoadCounter.set(Number(row.penguji1_dosen_id), (dosenLoadCounter.get(Number(row.penguji1_dosen_id)) || 0) + 1);
       dosenLoadCounter.set(Number(row.penguji2_dosen_id), (dosenLoadCounter.get(Number(row.penguji2_dosen_id)) || 0) + 1);
+      [Number(row.penguji1_dosen_id), Number(row.penguji2_dosen_id)].forEach((dosenId) => {
+        const dayKey = `${row.tanggal_sidang}#${dosenId}`;
+        if (!dosenDailySessions.has(dayKey)) dosenDailySessions.set(dayKey, new Set());
+        dosenDailySessions.get(dayKey).add(Number(row.sesi_ke));
+        if (preferenceByDosenId.get(dosenId)?.mobilitas_ruangan === "satu_ruangan") {
+          dosenDailyRoomConstraint.set(dayKey, row.ruangan);
+        }
+      });
     });
 
     const autoAssigned = [];
@@ -1966,16 +2229,94 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         continue;
       }
       let foundSchedule = null;
+      const pengajuan = latestPengajuanByStudent.get(Number(reg.mahasiswa_id));
+      const penjaluran = latestPenjaluranByStudent.get(Number(reg.mahasiswa_id));
+      const finalTopikRef = resolveFinalTopikFromPengajuan(pengajuan);
+      const finalTopik = finalTopikByCode.get(String(finalTopikRef?.kode || "").trim().toUpperCase());
+      const fields = finalTopik
+        ? (finalTopik.bidangPenelitians || [])
+        : (fieldsByPengajuanId.get(Number(pengajuan?.id)) || []);
+      const studentProfile = buildResearchProfile({
+        fieldIds: fields.map((field) => field.id),
+        fieldTexts: fields.map((field) => field.nama),
+        text: [
+          finalTopik?.judul || finalTopikRef?.judul || resolveJudulSkripsiFromPengajuan(pengajuan),
+          finalTopik?.deskripsi,
+          pengajuan?.deskripsi_mandiri,
+          penjaluran?.catatan,
+          penjaluran?.form_lanjutan_payload ? JSON.stringify(penjaluran.form_lanjutan_payload) : "",
+        ].filter(Boolean).join(" "),
+      });
+      const rankedLecturers = rankLecturersForStudent(studentProfile, lecturerProfiles, dosenLoadCounter);
+      const rankByDosenId = new Map(rankedLecturers.map((item, index) => [Number(item.id), { ...item, rank: index }]));
+      const requestedAssignment = requestedAssignmentByRegistrationId?.get(Number(reg.id)) || null;
+      if (requestedAssignment && (
+        !requestedAssignment.tanggal_sidang
+        || !requestedAssignment.sesi_ke
+        || !requestedAssignment.ruangan
+        || !requestedAssignment.penguji1_dosen_id
+        || !requestedAssignment.penguji2_dosen_id
+        || requestedAssignment.penguji1_dosen_id === requestedAssignment.penguji2_dosen_id
+      )) {
+        unassigned.push({
+          pendaftaran_sidang_id: reg.id,
+          mahasiswa_id: reg.mahasiswa_id,
+          mahasiswa_nim: reg.mahasiswa?.nim || "-",
+          mahasiswa_nama: reg.mahasiswa?.nama || "-",
+          reason: "Data hari, sesi, ruangan, atau dosen penguji pada draft belum lengkap.",
+        });
+        continue;
+      }
 
-      for (const slot of slots) {
+      const candidateSlots = requestedAssignment
+        ? slots.filter((slot) =>
+            String(slot.tanggal_sidang) === String(requestedAssignment.tanggal_sidang)
+            && Number(slot.sesi_ke) === Number(requestedAssignment.sesi_ke)
+            && String(slot.ruangan) === String(requestedAssignment.ruangan)
+          )
+        : slots;
+
+      for (const slot of candidateSlots) {
         const roomSlotKey = slot.slot_key;
         if (usedRoomSlots.has(roomSlotKey)) continue;
 
         const availabilitySlotKey = buildSidangSlotKey(slot.tanggal_sidang, slot.sesi_ke);
-        const candidates = availabilityBySlot.get(availabilitySlotKey) || [];
+        const busyInSlot = dosenBusyBySlot.get(availabilitySlotKey) || new Set();
+        const rankedSlotCandidates = (availabilityBySlot.get(availabilitySlotKey) || [])
+          .map((candidate) => ({ ...candidate, ...(rankByDosenId.get(Number(candidate.dosen_id)) || {}) }))
+          .sort((left, right) => Number(left.rank ?? 99999) - Number(right.rank ?? 99999))
+          .filter((candidate) => {
+            if (candidate.dosen_id === pembimbingId || busyInSlot.has(candidate.dosen_id)) return false;
+            const dayKey = `${slot.tanggal_sidang}#${candidate.dosen_id}`;
+            const sessions = dosenDailySessions.get(dayKey) || new Set();
+            const preference = preferenceByDosenId.get(candidate.dosen_id);
+            const roomBound = dosenDailyRoomConstraint.get(dayKey);
+            if (sessions.size >= Number(preference?.maksimal_sesi_per_hari || 5)) return false;
+            if (preference?.membutuhkan_jeda && (sessions.has(slot.sesi_ke - 1) || sessions.has(slot.sesi_ke + 1))) return false;
+            if ((candidate.kondisi_fisik === "tidak_fit" || preference?.mobilitas_ruangan === "satu_ruangan") && roomBound && roomBound !== slot.ruangan) return false;
+            return true;
+          });
+        // Batasi pencarian pasangan tanpa menghilangkan variasi profil penilaian.
+        // Kompleksitas per slot tetap konstan walau jumlah dosen bertambah besar.
+        const candidatePoolById = new Map();
+        [EXAMINER_PROFILE_HIGH_INTENSITY, EXAMINER_PROFILE_SUPPORTIVE].forEach((profile) => {
+          rankedSlotCandidates
+            .filter((candidate) => candidate.profil_penilaian_penguji === profile)
+            .slice(0, 20)
+            .forEach((candidate) => candidatePoolById.set(candidate.dosen_id, candidate));
+        });
+        if (requestedAssignment) {
+          rankedSlotCandidates
+            .filter((candidate) => [
+              requestedAssignment.penguji1_dosen_id,
+              requestedAssignment.penguji2_dosen_id,
+            ].includes(Number(candidate.dosen_id)))
+            .forEach((candidate) => candidatePoolById.set(candidate.dosen_id, candidate));
+        }
+        const candidates = [...candidatePoolById.values()]
+          .sort((left, right) => Number(left.rank ?? 99999) - Number(right.rank ?? 99999));
         if (candidates.length < 2) continue;
 
-        const busyInSlot = dosenBusyBySlot.get(availabilitySlotKey) || new Set();
         const validPairs = [];
         for (let i = 0; i < candidates.length; i += 1) {
           for (let j = i + 1; j < candidates.length; j += 1) {
@@ -1992,11 +2333,19 @@ exports.autoAssignSidangPenguji = async (req, res) => {
 
             const firstDayKey = `${slot.tanggal_sidang}#${first.dosen_id}`;
             const secondDayKey = `${slot.tanggal_sidang}#${second.dosen_id}`;
+            const firstSessions = dosenDailySessions.get(firstDayKey) || new Set();
+            const secondSessions = dosenDailySessions.get(secondDayKey) || new Set();
+            const firstPreference = preferenceByDosenId.get(first.dosen_id);
+            const secondPreference = preferenceByDosenId.get(second.dosen_id);
+            if (firstSessions.size >= Number(firstPreference?.maksimal_sesi_per_hari || 5)) continue;
+            if (secondSessions.size >= Number(secondPreference?.maksimal_sesi_per_hari || 5)) continue;
+            if (firstPreference?.membutuhkan_jeda && (firstSessions.has(slot.sesi_ke - 1) || firstSessions.has(slot.sesi_ke + 1))) continue;
+            if (secondPreference?.membutuhkan_jeda && (secondSessions.has(slot.sesi_ke - 1) || secondSessions.has(slot.sesi_ke + 1))) continue;
             const firstRoomBound = dosenDailyRoomConstraint.get(firstDayKey);
             const secondRoomBound = dosenDailyRoomConstraint.get(secondDayKey);
 
-            if (first.kondisi_fisik === "tidak_fit" && firstRoomBound && firstRoomBound !== slot.ruangan) continue;
-            if (second.kondisi_fisik === "tidak_fit" && secondRoomBound && secondRoomBound !== slot.ruangan) continue;
+            if ((first.kondisi_fisik === "tidak_fit" || firstPreference?.mobilitas_ruangan === "satu_ruangan") && firstRoomBound && firstRoomBound !== slot.ruangan) continue;
+            if ((second.kondisi_fisik === "tidak_fit" || secondPreference?.mobilitas_ruangan === "satu_ruangan") && secondRoomBound && secondRoomBound !== slot.ruangan) continue;
 
             validPairs.push({
               dosenA: first.dosen_id,
@@ -2008,13 +2357,42 @@ exports.autoAssignSidangPenguji = async (req, res) => {
               loadScore:
                 Number(dosenLoadCounter.get(first.dosen_id) || 0) + Number(dosenLoadCounter.get(second.dosen_id) || 0),
               idScore: first.dosen_id + second.dosen_id,
+              expertiseScore: Number(first.expertise?.score || 0) + Number(second.expertise?.score || 0),
+              firstExpertise: first.expertise,
+              secondExpertise: second.expertise,
             });
           }
         }
 
         if (validPairs.length === 0) continue;
-        validPairs.sort(pairPreferenceScore);
-        const chosen = validPairs[0];
+        validPairs.sort((left, right) => {
+          const profileOrder = pairPreferenceScore(left, right);
+          const leftProfileCount = (left.profileA === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0) + (left.profileB === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0);
+          const rightProfileCount = (right.profileA === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0) + (right.profileB === EXAMINER_PROFILE_HIGH_INTENSITY ? 1 : 0);
+          if ((leftProfileCount === 1) !== (rightProfileCount === 1)) return profileOrder;
+          if (right.expertiseScore !== left.expertiseScore) return right.expertiseScore - left.expertiseScore;
+          return profileOrder;
+        });
+        let chosen = validPairs[0];
+        if (requestedAssignment) {
+          const requestedPair = validPairs.find((pair) => {
+            const pairIds = new Set([Number(pair.dosenA), Number(pair.dosenB)]);
+            return pairIds.has(requestedAssignment.penguji1_dosen_id)
+              && pairIds.has(requestedAssignment.penguji2_dosen_id);
+          });
+          if (!requestedPair) continue;
+          const firstRequested = rankByDosenId.get(requestedAssignment.penguji1_dosen_id);
+          const secondRequested = rankByDosenId.get(requestedAssignment.penguji2_dosen_id);
+          chosen = {
+            ...requestedPair,
+            dosenA: requestedAssignment.penguji1_dosen_id,
+            dosenB: requestedAssignment.penguji2_dosen_id,
+            kondisiA: candidates.find((item) => Number(item.dosen_id) === requestedAssignment.penguji1_dosen_id)?.kondisi_fisik,
+            kondisiB: candidates.find((item) => Number(item.dosen_id) === requestedAssignment.penguji2_dosen_id)?.kondisi_fisik,
+            firstExpertise: firstRequested?.expertise,
+            secondExpertise: secondRequested?.expertise,
+          };
+        }
 
         foundSchedule = {
           ...slot,
@@ -2022,6 +2400,8 @@ exports.autoAssignSidangPenguji = async (req, res) => {
           penguji2_dosen_id: chosen.dosenB,
           kondisiA: chosen.kondisiA,
           kondisiB: chosen.kondisiB,
+          expertiseA: chosen.firstExpertise,
+          expertiseB: chosen.secondExpertise,
         };
         break;
       }
@@ -2032,13 +2412,16 @@ exports.autoAssignSidangPenguji = async (req, res) => {
           mahasiswa_id: reg.mahasiswa_id,
           mahasiswa_nim: reg.mahasiswa?.nim || "-",
           mahasiswa_nama: reg.mahasiswa?.nama || "-",
-          reason: "Tidak menemukan kombinasi penguji yang memenuhi aturan pada slot tersedia.",
+          reason: requestedAssignment
+            ? "Hasil edit tidak memenuhi ketersediaan atau aturan penjadwalan dosen penguji."
+            : "Tidak menemukan kombinasi penguji yang memenuhi aturan pada slot tersedia.",
         });
         continue;
       }
 
-      const scheduleRow = await JadwalSidangPenguji.create(
-        {
+      let scheduleRow = null;
+      if (shouldCommit) {
+        scheduleRow = await JadwalSidangPenguji.create({
           periode_sidang_id: periode.id,
           pendaftaran_sidang_id: reg.id,
           mahasiswa_id: reg.mahasiswa_id,
@@ -2052,13 +2435,12 @@ exports.autoAssignSidangPenguji = async (req, res) => {
           penguji2_dosen_id: foundSchedule.penguji2_dosen_id,
           assignment_status: "assigned",
           generated_at: assignedAtNow,
-        },
-        { transaction }
-      );
+        }, { transaction });
 
-      reg.status = "scheduled";
-      reg.assigned_at = assignedAtNow;
-      await reg.save({ transaction });
+        reg.status = "scheduled";
+        reg.assigned_at = assignedAtNow;
+        await reg.save({ transaction });
+      }
 
       const roomSlotKey = buildRoomSlotKey(foundSchedule.tanggal_sidang, foundSchedule.sesi_ke, foundSchedule.ruangan);
       const sidangSlotKey = buildSidangSlotKey(foundSchedule.tanggal_sidang, foundSchedule.sesi_ke);
@@ -2074,14 +2456,19 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         foundSchedule.penguji2_dosen_id,
         Number(dosenLoadCounter.get(foundSchedule.penguji2_dosen_id) || 0) + 1
       );
+      [foundSchedule.penguji1_dosen_id, foundSchedule.penguji2_dosen_id].forEach((dosenId) => {
+        const dayKey = `${foundSchedule.tanggal_sidang}#${dosenId}`;
+        if (!dosenDailySessions.has(dayKey)) dosenDailySessions.set(dayKey, new Set());
+        dosenDailySessions.get(dayKey).add(Number(foundSchedule.sesi_ke));
+      });
 
-      if (foundSchedule.kondisiA === "tidak_fit") {
+      if (foundSchedule.kondisiA === "tidak_fit" || preferenceByDosenId.get(foundSchedule.penguji1_dosen_id)?.mobilitas_ruangan === "satu_ruangan") {
         dosenDailyRoomConstraint.set(
           `${foundSchedule.tanggal_sidang}#${foundSchedule.penguji1_dosen_id}`,
           foundSchedule.ruangan
         );
       }
-      if (foundSchedule.kondisiB === "tidak_fit") {
+      if (foundSchedule.kondisiB === "tidak_fit" || preferenceByDosenId.get(foundSchedule.penguji2_dosen_id)?.mobilitas_ruangan === "satu_ruangan") {
         dosenDailyRoomConstraint.set(
           `${foundSchedule.tanggal_sidang}#${foundSchedule.penguji2_dosen_id}`,
           foundSchedule.ruangan
@@ -2089,7 +2476,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       }
 
       autoAssigned.push({
-        jadwal_id: scheduleRow.id,
+        jadwal_id: scheduleRow?.id || null,
         pendaftaran_sidang_id: reg.id,
         mahasiswa_id: reg.mahasiswa_id,
         mahasiswa_nim: reg.mahasiswa?.nim || "-",
@@ -2101,14 +2488,36 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         ruangan: foundSchedule.ruangan,
         penguji1_dosen_id: foundSchedule.penguji1_dosen_id,
         penguji2_dosen_id: foundSchedule.penguji2_dosen_id,
+        penguji1: (() => {
+          const item = rankByDosenId.get(Number(foundSchedule.penguji1_dosen_id));
+          return item ? { id: item.id, nama: item.nama, nik: item.nik, gelar: item.gelar, match_score: item.expertise?.score || 0 } : null;
+        })(),
+        penguji2: (() => {
+          const item = rankByDosenId.get(Number(foundSchedule.penguji2_dosen_id));
+          return item ? { id: item.id, nama: item.nama, nik: item.nik, gelar: item.gelar, match_score: item.expertise?.score || 0 } : null;
+        })(),
+        match_score: Math.round(((Number(foundSchedule.expertiseA?.score || 0) + Number(foundSchedule.expertiseB?.score || 0)) / 2) * 10) / 10,
+        matched_fields: [...new Set([...(foundSchedule.expertiseA?.matchedFields || []), ...(foundSchedule.expertiseB?.matchedFields || [])])],
       });
     }
 
-    await transaction.commit();
+    if (unassigned.length > 0) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: `${unassigned.length} mahasiswa belum dapat dijadwalkan karena kombinasi dosen, sesi, atau ruangan belum mencukupi.`,
+        detail: { code: "INSUFFICIENT_ASSIGNMENT_CAPACITY", unassigned },
+      });
+    }
+
+    if (shouldCommit) await transaction.commit();
+    else await transaction.rollback();
 
     return res.json({
       success: true,
-      message: `Auto-assign selesai. ${autoAssigned.length} mahasiswa berhasil dijadwalkan.`,
+      message: shouldCommit
+        ? `${autoAssigned.length} penugasan dosen penguji berhasil disimpan.`
+        : `Rekomendasi AI selesai untuk ${autoAssigned.length} mahasiswa. Periksa hasil sebelum disimpan.`,
       data: {
         periode_sidang: {
           id: periode.id,
@@ -2119,6 +2528,7 @@ exports.autoAssignSidangPenguji = async (req, res) => {
         unassigned_count: unassigned.length,
         assigned: autoAssigned,
         unassigned,
+        committed: shouldCommit,
       },
     });
   } catch (error) {
@@ -2167,7 +2577,7 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
       });
     }
 
-    const [allHariRows, allRoomRows, allAvailabilityRows, preferenceRows] = await Promise.all([
+    const [allHariRows, allRoomRows, allAvailabilityRows, preferenceRows, allScheduleRows] = await Promise.all([
       PeriodeSidangHari.findAll({
         where: { periode_sidang_id: { [Op.in]: periodeIds } },
         order: [["periode_sidang_id", "ASC"], ["tanggal_sidang", "ASC"]],
@@ -2190,6 +2600,15 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
         },
         order: [["updatedAt", "DESC"]],
       }),
+      JadwalSidangPenguji.findAll({
+        where: {
+          periode_sidang_id: { [Op.in]: periodeIds },
+          [Op.or]: [{ penguji1_dosen_id: dosenId }, { penguji2_dosen_id: dosenId }],
+          assignment_status: { [Op.in]: ["assigned", "finalized"] },
+        },
+        include: [{ model: Mahasiswa, as: "mahasiswa", attributes: ["id", "nim", "nama"] }],
+        order: [["periode_sidang_id", "ASC"], ["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
+      }),
     ]);
 
     const groupByPeriode = (rows) => rows.reduce((result, row) => {
@@ -2201,6 +2620,7 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
     const hariByPeriode = groupByPeriode(allHariRows);
     const roomByPeriode = groupByPeriode(allRoomRows);
     const availabilityByPeriode = groupByPeriode(allAvailabilityRows);
+    const scheduleByPeriode = groupByPeriode(allScheduleRows);
     const preferenceByPeriode = new Map(preferenceRows.map((item) => [Number(item.periode_sidang_id), item]));
 
     const serializedPeriodes = periodes.map((item) => {
@@ -2208,12 +2628,16 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
       const availability = availabilityByPeriode.get(id) || [];
       const selectedDates = new Set(availability.map((row) => String(row.tanggal_sidang)));
       const preference = preferenceByPeriode.get(id) || null;
+      const schedules = scheduleByPeriode.get(id) || [];
+      const scheduledDates = new Set(schedules.map((row) => String(row.tanggal_sidang)));
       return {
         ...serializePeriode(item, hariByPeriode.get(id) || [], roomByPeriode.get(id) || []),
         jumlah_hari_sidang: (hariByPeriode.get(id) || []).length,
         ketersediaan_diisi: Boolean(preference),
         jumlah_tanggal_tersedia: selectedDates.size,
         ketersediaan_diperbarui_at: preference?.updatedAt || null,
+        jumlah_jadwal_penguji: schedules.length,
+        jumlah_hari_menguji: scheduledDates.size,
       };
     });
 
@@ -2237,15 +2661,7 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
       }));
       selectedAvailability = availabilityByPeriode.get(selectedId) || [];
       selectedPreference = preferenceByPeriode.get(selectedId) || null;
-      jadwalRows = await JadwalSidangPenguji.findAll({
-        where: {
-          periode_sidang_id: selectedId,
-          [Op.or]: [{ penguji1_dosen_id: dosenId }, { penguji2_dosen_id: dosenId }],
-          assignment_status: { [Op.in]: ["assigned", "finalized"] },
-        },
-        include: [{ model: Mahasiswa, as: "mahasiswa", attributes: ["id", "nim", "nama"] }],
-        order: [["tanggal_sidang", "ASC"], ["sesi_ke", "ASC"]],
-      });
+      jadwalRows = scheduleByPeriode.get(selectedId) || [];
     }
 
     return res.json({
@@ -2281,6 +2697,7 @@ exports.getDosenKetersediaanSidang = async (req, res) => {
           sesi_mulai: row.sesi_mulai,
           sesi_selesai: row.sesi_selesai,
           ruangan: row.ruangan,
+          peran_penguji: Number(row.penguji1_dosen_id) === dosenId ? "Penguji 1" : "Penguji 2",
           mahasiswa: row.mahasiswa
             ? {
                 id: row.mahasiswa.id,

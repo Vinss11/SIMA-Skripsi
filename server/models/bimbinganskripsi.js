@@ -119,6 +119,11 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.TEXT,
         allowNull: true,
       },
+      resume_history: {
+        type: DataTypes.JSONB,
+        allowNull: false,
+        defaultValue: [],
+      },
       catatan_review_resume: {
         type: DataTypes.TEXT,
         allowNull: true,

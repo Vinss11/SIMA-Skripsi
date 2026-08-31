@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CheckCircle2, Download, RefreshCcw, Search, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, Eye, FileText, RefreshCcw, Search, XCircle } from "lucide-react";
 import Swal from "sweetalert2";
 
 const PAGE_SIZE = 20;
-const DOC_ORDER = ["transkrip", "cept", "draft_skripsi"];
+const DOC_ORDER = ["transkrip", "cept", "draft_skripsi", "paper"];
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -34,6 +34,18 @@ function tahapSidangLabel(status) {
   return "Belum Selesai";
 }
 
+function showSuccessToast(message) {
+  Swal.fire({
+    toast: true,
+    position: "top-end",
+    icon: "success",
+    title: message,
+    showConfirmButton: false,
+    timer: 2500,
+    timerProgressBar: true,
+  });
+}
+
 function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired }) {
   const [mode, setMode] = useState("list");
   const [loading, setLoading] = useState(true);
@@ -45,12 +57,13 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [detail, setDetail] = useState(null);
   const [savingDocKey, setSavingDocKey] = useState("");
+  const [revisionDocKey, setRevisionDocKey] = useState("");
   const [reviewNotes, setReviewNotes] = useState({
     transkrip: "",
     cept: "",
     draft_skripsi: "",
+    paper: "",
   });
-  const [reviewMessages, setReviewMessages] = useState({});
   const [reviewErrors, setReviewErrors] = useState({});
 
   const fetchWithAuth = useCallback(async (path, options = {}) => {
@@ -110,12 +123,13 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       }
       const nextDetail = payload?.data || null;
       setDetail(nextDetail);
-      setReviewMessages({});
+      setRevisionDocKey("");
       setReviewErrors({});
       setReviewNotes({
         transkrip: "",
         cept: "",
         draft_skripsi: "",
+        paper: "",
       });
     } catch (detailError) {
       if (detailError.message !== "__SESSION_EXPIRED__") {
@@ -189,6 +203,36 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
     }
   };
 
+  const handleView = async (docKey) => {
+    if (!selectedMahasiswaId) return;
+    const previewWindow = window.open("about:blank", "_blank");
+    if (previewWindow) previewWindow.opener = null;
+    try {
+      setError("");
+      const response = await fetchWithAuth(
+        `/api/dosen/dokumen-sidang/${selectedMahasiswaId}/${docKey}/download`,
+        { headers: { Authorization: `Bearer ${session.token}` } }
+      );
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.message || "Gagal membuka dokumen.");
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      if (previewWindow) {
+        previewWindow.location.href = url;
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60_000);
+    } catch (viewError) {
+      previewWindow?.close();
+      if (viewError.message !== "__SESSION_EXPIRED__") {
+        setError(viewError.message || "Gagal membuka dokumen.");
+      }
+    }
+  };
+
   const handleReview = async (docKey, decision) => {
     if (!selectedMahasiswaId) return;
     const currentDocument = detail?.dokumen?.[docKey];
@@ -203,7 +247,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       }));
       return;
     }
-    const note = String(reviewNotes[docKey] || "").trim();
+    const note = decision === "revisi" ? String(reviewNotes[docKey] || "").trim() : "";
     if (decision === "revisi" && note.length < 5) {
       setReviewErrors((current) => ({ ...current, [docKey]: "Catatan revisi minimal 5 karakter." }));
       return;
@@ -224,7 +268,6 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       setSavingDocKey(docKey);
       setError("");
       setReviewErrors((current) => ({ ...current, [docKey]: "" }));
-      setReviewMessages((current) => ({ ...current, [docKey]: "" }));
       const response = await fetchWithAuth(`/api/dosen/dokumen-sidang/${selectedMahasiswaId}/review`, {
         method: "POST",
         body: JSON.stringify({
@@ -245,12 +288,12 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
         dokumen: payload.data?.dokumen || current.dokumen,
       } : current);
       setReviewNotes((current) => ({ ...current, [docKey]: "" }));
-      setReviewMessages((current) => ({
-        ...current,
-        [docKey]: decision === "approve"
-          ? "Dokumen berhasil disetujui. Keputusan dikunci dan mahasiswa tidak dapat mengunggah ulang."
-          : "Permintaan revisi berhasil dikirim. Menunggu mahasiswa mengunggah ulang sebelum review berikutnya.",
-      }));
+      setRevisionDocKey("");
+      showSuccessToast(
+        decision === "approve"
+          ? "Dokumen berhasil disetujui dan dikunci."
+          : "Permintaan revisi terkirim. Menunggu mahasiswa mengunggah ulang dokumen."
+      );
       await loadRows();
     } catch (reviewError) {
       if (reviewError.message !== "__SESSION_EXPIRED__") {
@@ -326,6 +369,7 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                   <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Transkrip</th>
                   <th className="bg-[#f8fbff] px-3 py-2 font-semibold">CEPT</th>
                   <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Draft Skripsi</th>
+                  <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Paper</th>
                   <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
                   <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th>
                 </tr>
@@ -414,6 +458,9 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
       {mode === "detail" ? (
         <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
           <h3 className="text-lg font-black text-[#1b274b]">Review Dokumen Sidang Mahasiswa</h3>
+          <p className="mt-1 text-sm text-[#5d6c91]">
+            Periksa dokumen kelayakan sidang, berikan catatan, lalu tentukan keputusan untuk setiap dokumen.
+          </p>
           {loadingDetail ? (
             <div className="mt-3 rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4 text-sm font-semibold text-[#60709a]">
               Memuat detail dokumen sidang...
@@ -421,19 +468,82 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
           ) : null}
 
           {!loadingDetail && detail ? (
-            <div className="mt-4 space-y-3">
-              <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-4">
-                <p className="text-sm text-[#324c86]">
-                  <span className="font-semibold">Mahasiswa:</span> {detail?.mahasiswa?.nama || "-"} ({detail?.mahasiswa?.nim || "-"})
-                </p>
-                <p className="mt-1 text-sm text-[#324c86]">
-                  <span className="font-semibold">Progress Bimbingan Valid:</span>{" "}
-                  {Number(detail?.gate?.counted_sessions || 0)} / {Number(detail?.gate?.target_minimum || 8)}
-                </p>
-                <p className="mt-1 text-sm text-[#324c86]">
-                  <span className="font-semibold">Status Tahap:</span> {tahapSidangLabel(detail?.status_pendaftaran_sidang)}
-                </p>
+            <div className="mt-4 space-y-4">
+              <div className="rounded-xl border border-[#e2e9f8] bg-[#f8fbff] p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-base font-black text-[#1b274b]">Progress dan Identitas Mahasiswa</h4>
+                    <p className="mt-1 text-sm text-[#5d6c91]">Ringkasan mahasiswa dan kesiapan bimbingan menuju pendaftaran sidang.</p>
+                  </div>
+                  <span className="rounded-full bg-[#edf3ff] px-3 py-1 text-xs font-bold text-[#2f63e3]">
+                    {tahapSidangLabel(detail?.status_pendaftaran_sidang)}
+                  </span>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div>
+                    <label className="block text-sm font-semibold text-[#5a6a93]">Nama Mahasiswa</label>
+                    <input
+                      type="text"
+                      value={detail?.mahasiswa?.nama || "-"}
+                      readOnly
+                      disabled
+                      className="mt-2 w-full rounded-lg border border-[#d6deef] bg-white px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-[#5a6a93]">NIM</label>
+                    <input
+                      type="text"
+                      value={detail?.mahasiswa?.nim || "-"}
+                      readOnly
+                      disabled
+                      className="mt-2 w-full rounded-lg border border-[#d6deef] bg-white px-3 py-2 text-sm text-[#50618f] outline-none disabled:cursor-default disabled:opacity-100"
+                    />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <div className="flex items-center justify-between gap-3 text-sm text-[#415480]">
+                    <span className="font-semibold">Progress Bimbingan Valid</span>
+                    <span className="font-black text-[#1b274b]">
+                      {Number(detail?.gate?.counted_sessions || 0)} / {Number(detail?.gate?.target_minimum || 8)}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-[#dfe6f7]">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-[#2f63e3] to-[#2740a3]"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          Math.round(
+                            (Number(detail?.gate?.counted_sessions || 0) /
+                              Math.max(1, Number(detail?.gate?.target_minimum || 8))) *
+                              100
+                          )
+                        )}%`,
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
+
+              {detail?.persyaratan_sistem?.mata_kuliah_penjaluran ? (
+                <div className="rounded-xl border border-[#e2e9f8] bg-white p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-base font-black text-[#1b274b]">Mata Kuliah Penjaluran</h4>
+                      <p className="mt-1 text-sm text-[#5d6c91]">Syarat otomatis dari Data Akademik dan tidak memerlukan keputusan manual dosen.</p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${detail.persyaratan_sistem.mata_kuliah_penjaluran.fulfilled ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                      {detail.persyaratan_sistem.mata_kuliah_penjaluran.syarat_sidang || (detail.persyaratan_sistem.mata_kuliah_penjaluran.fulfilled ? "Terpenuhi" : "Belum Terpenuhi")}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid gap-2 rounded-lg bg-[#f8fbff] p-3 text-sm text-[#42588f] md:grid-cols-3">
+                    <p><span className="font-semibold">Mata kuliah:</span> {detail.persyaratan_sistem.mata_kuliah_penjaluran.mata_kuliah || "-"}</p>
+                    <p><span className="font-semibold">Nilai:</span> {detail.persyaratan_sistem.mata_kuliah_penjaluran.nilai || "-"}</p>
+                    <p><span className="font-semibold">Status:</span> {detail.persyaratan_sistem.mata_kuliah_penjaluran.status || "Belum tersedia"}</p>
+                  </div>
+                </div>
+              ) : null}
 
               {detail?.can_review === false ? (
                 <div className="rounded-lg border border-[#cfdcf6] bg-[#f3f7ff] p-4 text-sm font-semibold text-[#34549b]">
@@ -441,110 +551,154 @@ function DosenDokumenSidangReviewPage({ session, apiBaseUrl, onSessionExpired })
                 </div>
               ) : null}
 
-              {DOC_ORDER.map((docKey) => {
-                const doc = detail?.dokumen?.[docKey];
-                if (!doc) return null;
-                const canDecide = detail?.can_review !== false && doc.can_review === true;
-                return (
-                  <div key={`detail-doc-${docKey}`} className="rounded-lg border border-[#e2e9f8] bg-white p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-base font-black text-[#1b274b]">{doc.label}</p>
-                      <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-bold ${docStatusBadge(doc.status)}`}>
-                        {doc.status_label}
-                      </span>
-                    </div>
-
-                    <div className="mt-2 space-y-1 text-sm text-[#42588f]">
-                      <p>
-                        <span className="font-semibold">Nama File:</span> {doc.file_name || "-"}
-                      </p>
-                      <p>
-                        <span className="font-semibold">Tanggal Upload:</span> {formatDateTime(doc.uploaded_at)}
-                      </p>
-                    </div>
-
-                    <div className="mt-3">
-                      <button
-                        type="button"
-                        disabled={!doc.has_file || savingDocKey === docKey}
-                        onClick={() => {
-                          handleDownload(docKey, doc.file_name).catch(() => {});
-                        }}
-                        className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-60"
+              <div className="rounded-xl border border-[#e2e9f8] bg-white p-4">
+                <h4 className="text-lg font-black text-[#1b274b]">Dokumen Kelayakan Sidang</h4>
+                <p className="mt-1 text-sm text-[#5d6c91]">
+                  Buka dokumen untuk memeriksa isinya, kemudian setujui atau kembalikan kepada mahasiswa untuk direvisi.
+                </p>
+                <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {DOC_ORDER.map((docKey) => {
+                    const doc = detail?.dokumen?.[docKey];
+                    if (!doc) return null;
+                    const canDecide = detail?.can_review !== false && doc.can_review === true;
+                    const isRevision = String(doc.status || "").toLowerCase() === "revisi";
+                    const resultStatusMessage = isRevision
+                      ? "Permintaan revisi terkirim. Menunggu mahasiswa mengunggah ulang dokumen."
+                      : doc.status === "approved"
+                        ? "Dokumen berhasil disetujui dan dikunci."
+                        : "";
+                    return (
+                      <article
+                        key={`detail-doc-${docKey}`}
+                        className={`flex min-h-[540px] flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
+                          isRevision ? "border-[#efb4b4]" : "border-[#dfe6f4]"
+                        }`}
                       >
-                        <Download className="h-4 w-4" />
-                        Unduh File
-                      </button>
-                    </div>
+                        <div className="flex items-start justify-between gap-3 border-b border-[#edf1f8] px-4 py-4">
+                          <div className="min-w-0">
+                            <h5 className="break-words text-base font-black text-[#24396d]">{doc.label}</h5>
+                            <p className="mt-1 text-xs font-semibold text-[#8693b2]">Dokumen Kelayakan Sidang</p>
+                          </div>
+                          <span className={`inline-flex shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${docStatusBadge(doc.status)}`}>
+                            {doc.status_label}
+                          </span>
+                        </div>
 
-                    {doc.review_note ? (
-                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm ${doc.status === "revisi" ? "border-red-200 bg-red-50 text-red-700" : "border-[#dce4f7] bg-[#f8fbff] text-[#42588f]"}`}>
-                        <p className="font-semibold">Catatan keputusan terakhir</p>
-                        <p className="mt-1 whitespace-pre-wrap">{doc.review_note}</p>
-                      </div>
-                    ) : null}
+                        <div className="flex flex-1 flex-col items-center justify-center px-4 py-6 text-center">
+                          <FileText className={`h-16 w-16 ${isRevision ? "text-[#d04a4a]" : "text-[#3f5cc4]"}`} strokeWidth={1.6} />
+                          <p className="mt-3 max-w-full break-words text-sm font-semibold text-[#475574]">
+                            {doc.file_name || "Belum ada file yang diunggah"}
+                          </p>
+                          <p className="mt-1 text-xs text-[#8490ac]">
+                            {doc.uploaded_at ? `Terakhir diunggah ${formatDateTime(doc.uploaded_at)}` : "Dokumen belum tersedia"}
+                          </p>
+                          {doc.review_note ? (
+                            <div className={`mt-4 max-h-40 w-full overflow-y-auto rounded-lg border px-3 py-2 text-left text-xs ${isRevision ? "border-red-200 bg-red-50 text-red-700" : "border-[#dce4f7] bg-[#f8fbff] text-[#42588f]"}`}>
+                              <p className="font-black">Catatan keputusan terakhir</p>
+                              <p className="mt-1 whitespace-pre-wrap break-words leading-5">{doc.review_note}</p>
+                            </div>
+                          ) : null}
+                        </div>
 
-                    <div className="mt-3 rounded-lg border border-[#dce4f7] bg-[#f8fbff] p-3">
-                      <label className="mb-1 block text-sm font-semibold text-[#3d4f7d]">Catatan Dosen</label>
-                      <textarea
-                        rows={3}
-                        value={reviewNotes[docKey] || ""}
-                        onChange={(event) =>
-                          setReviewNotes((prev) => ({
-                            ...prev,
-                            [docKey]: event.target.value,
-                          }))
-                        }
-                        className="w-full rounded-lg border border-[#d1daf0] px-3 py-2 text-sm text-[#1f2d53] outline-none focus:border-[#2f63e3]"
-                        placeholder="Isi catatan jika dokumen perlu revisi..."
-                        disabled={!canDecide || savingDocKey === docKey}
-                      />
-                      {reviewErrors[docKey] ? <p className="mt-2 text-sm font-semibold text-red-600">{reviewErrors[docKey]}</p> : null}
-                    </div>
+                        <div className="grid grid-cols-2 gap-2 border-t border-[#edf1f8] p-3">
+                          <button
+                            type="button"
+                            disabled={!doc.has_file || savingDocKey === docKey}
+                            onClick={() => handleView(docKey).catch(() => {})}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#3854b8] px-3 py-2 text-xs font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Eye className="h-4 w-4" />
+                            Lihat
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!doc.has_file || savingDocKey === docKey}
+                            onClick={() => handleDownload(docKey, doc.file_name).catch(() => {})}
+                            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-xs font-bold text-[#405680] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <Download className="h-4 w-4" />
+                            Unduh
+                          </button>
+                        </div>
 
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={!canDecide || savingDocKey === docKey}
-                        onClick={() => {
-                          handleReview(docKey, "approve").catch(() => {});
-                        }}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#137748] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        {savingDocKey === docKey ? "Menyimpan..." : "Approve"}
-                      </button>
-                      <button
-                        type="button"
-                        disabled={!canDecide || savingDocKey === docKey}
-                        onClick={() => {
-                          handleReview(docKey, "revisi").catch(() => {});
-                        }}
-                        className="inline-flex items-center gap-2 rounded-lg bg-[#b73a3a] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        <XCircle className="h-4 w-4" />
-                        {savingDocKey === docKey ? "Menyimpan..." : "Revisi"}
-                      </button>
-                    </div>
-
-                    {doc.status === "revisi" ? (
-                      <div className="mt-3 rounded-lg border border-[#f2dfb3] bg-[#fff9e9] px-3 py-2 text-sm font-semibold text-[#7a5a00]">
-                        Menunggu mahasiswa mengunggah ulang. Approve dan Revisi dinonaktifkan sampai ada file baru.
-                      </div>
-                    ) : null}
-                    {doc.status === "approved" ? (
-                      <div className="mt-3 rounded-lg border border-[#d6f1e2] bg-[#ecfaf2] px-3 py-2 text-sm font-semibold text-[#196a45]">
-                        Dokumen sudah disetujui. Keputusan dan upload mahasiswa telah dikunci.
-                      </div>
-                    ) : null}
-                    {reviewMessages[docKey] ? (
-                      <div className={`mt-3 rounded-lg border px-3 py-2 text-sm font-semibold ${doc.status === "approved" ? "border-[#d6f1e2] bg-[#ecfaf2] text-[#196a45]" : "border-[#f2dfb3] bg-[#fff9e9] text-[#7a5a00]"}`}>
-                        {reviewMessages[docKey]}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+                        <div className="border-t border-[#edf1f8] bg-[#f8fbff] p-3">
+                          {revisionDocKey === docKey ? (
+                            <div>
+                              <label className="block text-sm font-semibold text-[#3d4f7d]">
+                                Alasan Revisi <span className="text-[#d93030]">*</span>
+                              </label>
+                              <textarea
+                                autoFocus
+                                rows={3}
+                                value={reviewNotes[docKey] || ""}
+                                onChange={(event) =>
+                                  setReviewNotes((prev) => ({ ...prev, [docKey]: event.target.value }))
+                                }
+                                className="mt-2 w-full resize-none rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm text-[#1f2d53] outline-none focus:border-[#b73a3a]"
+                                placeholder="Jelaskan bagian dokumen yang wajib diperbaiki..."
+                                disabled={!canDecide || savingDocKey === docKey}
+                              />
+                              {reviewErrors[docKey] ? <p className="mt-2 text-xs font-semibold text-red-600">{reviewErrors[docKey]}</p> : null}
+                              <div className="mt-3 grid grid-cols-2 gap-2">
+                                <button
+                                  type="button"
+                                  disabled={savingDocKey === docKey}
+                                  onClick={() => {
+                                    setRevisionDocKey("");
+                                    setReviewNotes((current) => ({ ...current, [docKey]: "" }));
+                                    setReviewErrors((current) => ({ ...current, [docKey]: "" }));
+                                  }}
+                                  className="inline-flex items-center justify-center rounded-lg border border-[#d3dbef] bg-white px-3 py-2 text-xs font-bold text-[#405680] disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  Batal
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!canDecide || savingDocKey === docKey}
+                                  onClick={() => handleReview(docKey, "revisi").catch(() => {})}
+                                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b73a3a] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                  <XCircle className="h-4 w-4" />
+                                  {savingDocKey === docKey ? "Menyimpan..." : "Kirim Revisi"}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-2">
+                              <button
+                                type="button"
+                                disabled={!canDecide || savingDocKey === docKey}
+                                onClick={() => handleReview(docKey, "approve").catch(() => {})}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#137748] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                                {savingDocKey === docKey ? "Menyimpan..." : "Approve"}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={!canDecide || savingDocKey === docKey}
+                                onClick={() => {
+                                  setRevisionDocKey(docKey);
+                                  setReviewErrors((current) => ({ ...current, [docKey]: "" }));
+                                }}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#b73a3a] px-3 py-2 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <XCircle className="h-4 w-4" />
+                                Revisi
+                              </button>
+                            </div>
+                          )}
+                          {resultStatusMessage ? (
+                            <p className={`mt-3 rounded-lg border px-3 py-2 text-xs font-semibold ${doc.status === "approved" ? "border-[#d6f1e2] bg-[#ecfaf2] text-[#196a45]" : "border-[#f2dfb3] bg-[#fff9e9] text-[#7a5a00]"}`}>
+                              {resultStatusMessage}
+                            </p>
+                          ) : null}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           ) : null}
         </section>

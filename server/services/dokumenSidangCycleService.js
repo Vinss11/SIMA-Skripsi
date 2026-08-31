@@ -10,7 +10,7 @@ const SIDANG_UPLOAD_ROOT = process.env.VERCEL
   ? path.join("/tmp", "uploads", "sidang-dokumen")
   : path.join(SERVER_ROOT_DIR, "uploads", "sidang-dokumen");
 
-const DOCUMENT_PREFIXES = ["transkrip", "cept", "draft_skripsi"];
+const DOCUMENT_PREFIXES = ["transkrip", "cept", "draft_skripsi", "paper"];
 
 function isUlangOrAlih(registration) {
   return ["ulang", "alih"].includes(String(registration?.jalur || "").trim().toLowerCase());
