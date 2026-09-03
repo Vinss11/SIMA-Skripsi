@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, Pencil, RefreshCcw, Save, X } from "lucide-react";
+import { ArrowLeft, CalendarDays, CalendarRange, ChevronLeft, ChevronRight, Eye, Pencil, RefreshCcw, Save, Search, SlidersHorizontal, X } from "lucide-react";
 import Swal from "sweetalert2";
 import { formatDosenFullName } from "../utils/dosen";
 
@@ -7,7 +7,8 @@ const GRID_PAGE_SIZE = 20;
 const EXAMINER_GRID_PAGE_SIZE = 5;
 const SIDANG_TABS = [
   { id: "periode-pendaftaran", label: "Periode Pendaftaran Sidang" },
-  { id: "pendaftar-sidang", label: "Assign Dosen Penguji" },
+  { id: "data-ketersediaan", label: "Data Ketersediaan" },
+  { id: "assign-penguji", label: "Assign Dosen Penguji" },
 ];
 const SIDANG_ROOM_OPTIONS = [
   "Ruang Sidang Pendadaran 1",
@@ -79,6 +80,23 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function getAssignmentGridValues(registration, decision) {
+  const schedule = registration?.jadwal_sidang;
+  return {
+    penguji1: formatDosenFullName(
+      decision?.penguji1?.nama || schedule?.penguji1?.nama,
+      decision?.penguji1?.gelar || schedule?.penguji1?.gelar
+    ) || "",
+    penguji2: formatDosenFullName(
+      decision?.penguji2?.nama || schedule?.penguji2?.nama,
+      decision?.penguji2?.gelar || schedule?.penguji2?.gelar
+    ) || "",
+    tanggal_sidang: String(decision?.tanggal_sidang || schedule?.tanggal_sidang || ""),
+    sesi_ke: String(decision?.sesi_ke || schedule?.sesi_ke || ""),
+    ruangan: String(decision?.ruangan || schedule?.ruangan || ""),
+  };
+}
+
 function statusPendaftaranBadge(status) {
   const normalized = String(status || "").toLowerCase();
   if (normalized === "scheduled") return "bg-[#dff3ec] text-[#106d45]";
@@ -143,7 +161,7 @@ function parseLocalDate(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onClose, onApply }) {
+function MultiDateCalendarModal({ open, selectedDates, lockedDates = [], minDate, initialDate, onClose, onApply, onLockedDateClick }) {
   const [visibleMonth, setVisibleMonth] = useState(() => new Date());
   const [draftDates, setDraftDates] = useState([]);
 
@@ -168,10 +186,15 @@ function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onC
   const firstDayOffset = (new Date(year, month, 1).getDay() + 6) % 7;
   const cells = Array.from({ length: 42 }, (_, index) => new Date(year, month, index - firstDayOffset + 1));
   const selectedSet = new Set(draftDates);
+  const lockedSet = new Set((lockedDates || []).map(String));
   const monthLabel = new Intl.DateTimeFormat("id-ID", { month: "long", year: "numeric" }).format(visibleMonth);
   const today = toLocalDateOnly(new Date());
 
   const toggleDate = (dateOnly) => {
+    if (lockedSet.has(dateOnly)) {
+      onLockedDateClick?.(dateOnly);
+      return;
+    }
     setDraftDates((current) => current.includes(dateOnly)
       ? current.filter((item) => item !== dateOnly)
       : uniqueSorted([...current, dateOnly]));
@@ -203,12 +226,14 @@ function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onC
                 const isPast = dateOnly < minDate;
                 const disabled = !inCurrentMonth || isPast;
                 const selected = selectedSet.has(dateOnly);
+                const locked = lockedSet.has(dateOnly);
                 return (
                   <button
                     key={dateOnly}
                     type="button"
                     disabled={disabled}
                     onClick={() => toggleDate(dateOnly)}
+                    title={locked ? "Tanggal sudah memiliki jadwal sidang dan tidak dapat dihapus" : undefined}
                     className={`relative flex min-h-[58px] items-center justify-center rounded-xl border text-sm font-bold transition ${
                       selected
                         ? "border-[#2f63e3] bg-[#2f63e3] text-white shadow-md"
@@ -217,7 +242,7 @@ function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onC
                           : disabled
                             ? "border-transparent bg-transparent text-[#b5bfd4]"
                             : "border-[#e0e7f5] bg-white text-[#263b6f] hover:border-[#7799ed] hover:bg-[#f2f6ff]"
-                    } disabled:cursor-not-allowed`}
+                    } ${locked ? "cursor-not-allowed ring-2 ring-[#f3b4b4] ring-offset-1" : ""} disabled:cursor-not-allowed`}
                   >
                     {date.getDate()}
                     {dateOnly === today ? <span className={`absolute bottom-1 text-[9px] ${selected ? "text-white" : "text-[#2f63e3]"}`}>Hari ini</span> : null}
@@ -229,10 +254,11 @@ function MultiDateCalendarModal({ open, selectedDates, minDate, initialDate, onC
           </div>
 
           <div className="mx-auto mt-4 max-w-3xl rounded-xl border border-[#dce4f5] p-4">
-            <div className="flex items-center justify-between gap-3"><p className="text-sm font-bold text-[#263b6f]">Tanggal dipilih ({draftDates.length})</p>{draftDates.length ? <button type="button" onClick={() => setDraftDates([])} className="text-xs font-bold text-[#b73a3a] hover:underline">Hapus semua</button> : null}</div>
+            <div className="flex items-center justify-between gap-3"><p className="text-sm font-bold text-[#263b6f]">Tanggal dipilih ({draftDates.length})</p>{draftDates.length ? <button type="button" onClick={() => setDraftDates((current) => current.filter((dateOnly) => lockedSet.has(dateOnly)))} className="text-xs font-bold text-[#b73a3a] hover:underline">Hapus tanggal yang dapat dihapus</button> : null}</div>
             <div className="mt-3 flex min-h-[38px] flex-wrap gap-2">
               {draftDates.length ? draftDates.map((dateOnly) => <button key={dateOnly} type="button" onClick={() => toggleDate(dateOnly)} className="inline-flex items-center gap-1 rounded-full border border-[#c8d7f7] bg-[#eef3ff] px-3 py-1.5 text-xs font-bold text-[#274b9f]">{formatDateLabel(dateOnly)} <X className="h-3 w-3" /></button>) : <p className="text-sm text-[#7a88a9]">Belum ada tanggal yang dipilih.</p>}
             </div>
+            {lockedSet.size > 0 ? <p className="mt-3 text-xs font-semibold text-[#a35b00]">Tanggal yang sudah memiliki jadwal sidang dikunci dan tidak dapat dihapus.</p> : null}
           </div>
         </div>
 
@@ -636,8 +662,18 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
   const [queueContext, setQueueContext] = useState({ hari_sidang: [], dosen_tersedia: [] });
   const [selectedAvailableDosen, setSelectedAvailableDosen] = useState(null);
   const [examinerPage, setExaminerPage] = useState(1);
+  const [examinerQuery, setExaminerQuery] = useState("");
   const [queueQuery, setQueueQuery] = useState("");
   const [queuePage, setQueuePage] = useState(1);
+  const [showAssignmentFilters, setShowAssignmentFilters] = useState(false);
+  const [assignmentFilters, setAssignmentFilters] = useState({
+    penguji1: "",
+    penguji2: "",
+    tanggal_sidang: "",
+    sesi_ke: "",
+    ruangan: "",
+  });
+  const [selectedAssignmentRegistrantIds, setSelectedAssignmentRegistrantIds] = useState([]);
   const [assignmentRows, setAssignmentRows] = useState([]);
   const [assignmentCommitted, setAssignmentCommitted] = useState(false);
   const [editingAssignment, setEditingAssignment] = useState(null);
@@ -789,6 +825,10 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
       showErrorToast("Pilih periode sidang terlebih dahulu.");
       return;
     }
+    if (!commit && selectedAssignmentRegistrantIds.length === 0) {
+      showErrorToast("Pilih minimal satu mahasiswa yang akan diproses oleh AI.");
+      return;
+    }
     try {
       if (commit) setSavingAssignments(true);
       else setAssigningExaminers(true);
@@ -797,6 +837,9 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
         body: JSON.stringify({
           periode_sidang_id: Number(selectedPeriodeId),
           commit,
+          pendaftaran_sidang_ids: commit
+            ? assignmentRows.map((row) => Number(row.pendaftaran_sidang_id))
+            : selectedAssignmentRegistrantIds.map(Number),
           ...(commit ? {
             assignments: assignmentRows.map((row) => ({
               pendaftaran_sidang_id: row.pendaftaran_sidang_id,
@@ -828,7 +871,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
       if (commit) setSavingAssignments(false);
       else setAssigningExaminers(false);
     }
-  }, [assignmentRows, fetchWithAuth, loadQueueByPeriode, selectedPeriodeId]);
+  }, [assignmentRows, fetchWithAuth, loadQueueByPeriode, selectedAssignmentRegistrantIds, selectedPeriodeId]);
 
   useEffect(() => {
     loadOverview().catch(() => {});
@@ -849,12 +892,36 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
     setSelectedRegistrantDetail(null);
     setAssignmentRows([]);
     setAssignmentCommitted(false);
+    setSelectedAssignmentRegistrantIds([]);
+    setShowAssignmentFilters(false);
+    setAssignmentFilters({ penguji1: "", penguji2: "", tanggal_sidang: "", sesi_ke: "", ruangan: "" });
   }, [loadQueueByPeriode, selectedPeriodeId]);
 
   const selectedPeriode = useMemo(() => {
     const numericId = Number(selectedPeriodeId || 0);
     return (overview?.periodes || []).find((item) => Number(item.id) === numericId) || null;
   }, [overview, selectedPeriodeId]);
+
+  const scheduledSidangDates = useMemo(() => uniqueSorted(
+    queueRows
+      .map((row) => row?.jadwal_sidang?.tanggal_sidang)
+      .filter(Boolean)
+      .map(String)
+  ), [queueRows]);
+
+  const handleRemoveSidangDate = useCallback((tanggal) => {
+    if (scheduledSidangDates.includes(String(tanggal))) {
+      showErrorToast(
+        `Hari sidang ${formatDateLabel(tanggal)} tidak dapat dihapus karena sudah memiliki jadwal dan dosen penguji.`
+      );
+      return;
+    }
+    setEditPeriodeForm((prev) => ({
+      ...prev,
+      tanggal_sidang_list: (prev.tanggal_sidang_list || []).filter((item) => item !== tanggal),
+    }));
+    setEditPeriodeErrors((prev) => ({ ...prev, tanggal_sidang_list: "" }));
+  }, [scheduledSidangDates]);
 
   useEffect(() => {
     if (!["configure", "registrants"].includes(periodePageMode)) return;
@@ -1071,11 +1138,24 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
     if (!selectedPeriode) return;
     const tanggalSelesai = String(editPeriodeForm.tanggal_selesai_pendaftaran || "").trim();
     const tanggalMulai = String(selectedPeriode.tanggal_mulai_pendaftaran || "").slice(0, 10);
+    const tanggalSidangList = Array.isArray(editPeriodeForm.tanggal_sidang_list)
+      ? uniqueSorted(editPeriodeForm.tanggal_sidang_list)
+      : [];
+    const ruanganList = Array.isArray(editPeriodeForm.ruangan_list)
+      ? uniqueSorted(editPeriodeForm.ruangan_list)
+      : [];
     const validationErrors = {};
     if (!tanggalSelesai) {
       validationErrors.tanggal_selesai_pendaftaran = "Tanggal selesai pendaftaran wajib diisi.";
     } else if (tanggalMulai && tanggalSelesai < tanggalMulai) {
       validationErrors.tanggal_selesai_pendaftaran = "Tanggal selesai tidak boleh sebelum tanggal mulai pendaftaran.";
+    }
+    if (tanggalSidangList.length === 0) {
+      validationErrors.tanggal_sidang_list = "Pilih minimal satu hari sidang.";
+    }
+    if (ruanganList.length === 0) {
+      validationErrors.ruangan_list = "Tambahkan minimal satu ruangan sidang.";
+      setEditRoomError(validationErrors.ruangan_list);
     }
     setEditPeriodeErrors(validationErrors);
     if (Object.keys(validationErrors).length > 0) {
@@ -1092,12 +1172,17 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
         method: "PATCH",
         body: JSON.stringify({
           tanggal_selesai_pendaftaran: tanggalSelesai,
+          tanggal_sidang_list: tanggalSidangList,
+          ruangan_list: ruanganList,
         }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok || !body?.success) {
         if (body?.field_errors && typeof body.field_errors === "object") {
           setEditPeriodeErrors(body.field_errors);
+          if (Array.isArray(body?.protected_dates) && body.protected_dates.length > 0) {
+            showErrorToast(body?.message || "Hari yang sudah memiliki jadwal sidang tidak dapat dihapus.");
+          }
           setError("");
           return;
         }
@@ -1105,6 +1190,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
       }
       setSuccess(body?.message || "Periode sidang berhasil diperbarui.");
       setEditPeriodeErrors({});
+      setEditRoomError("");
       setPeriodePageMode("list");
       await loadOverview();
       await loadQueueByPeriode(selectedPeriode.id);
@@ -1181,10 +1267,20 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
 
   const handleCloseSelectedPeriode = async () => {
     if (!selectedPeriode) return;
-    const confirm = window.confirm(
-      `Tutup periode sidang ${selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)}?`
-    );
-    if (!confirm) return;
+    const periodeLabel = selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode);
+    const confirmation = await Swal.fire({
+      title: "Tutup periode sidang?",
+      text: `Periode ${periodeLabel} akan ditutup dan tidak dapat digunakan untuk pendaftaran baru.`,
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "Ya, Tutup Periode",
+      cancelButtonText: "Batal",
+      confirmButtonColor: "#b73a3a",
+      cancelButtonColor: "#64748b",
+      reverseButtons: true,
+      focusCancel: true,
+    });
+    if (!confirmation.isConfirmed) return;
 
     try {
       setSavingForm(true);
@@ -1200,7 +1296,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
       }
       setSuccess("");
       showSuccessToast(
-        `Periode sidang ${selectedPeriode.label_periode || formatPeriodeSidangLabel(selectedPeriode)} berhasil ditutup.`
+        `Periode sidang ${periodeLabel} berhasil ditutup.`
       );
       setPeriodePageMode("list");
       await loadOverview();
@@ -1214,22 +1310,66 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
     }
   };
 
+  const assignmentFilterOptions = useMemo(() => {
+    const decisionByRegistrationId = new Map(
+      assignmentRows.map((row) => [Number(row.pendaftaran_sidang_id), row])
+    );
+    const values = queueRows.map((registration) => getAssignmentGridValues(
+      registration,
+      decisionByRegistrationId.get(Number(registration.id))
+    ));
+    const distinct = (items) => Array.from(new Set(items.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), "id"));
+    return {
+      penguji1: distinct(values.map((item) => item.penguji1)),
+      penguji2: distinct(values.map((item) => item.penguji2)),
+      tanggal_sidang: distinct([
+        ...queueContext.hari_sidang.map((item) => item?.tanggal_sidang),
+        ...values.map((item) => item.tanggal_sidang),
+      ]),
+      sesi_ke: distinct([
+        ...queueContext.hari_sidang.flatMap((item) => (item?.sesi || []).map((sesi) => String(sesi?.sesi_ke || sesi || ""))),
+        ...values.map((item) => item.sesi_ke),
+      ]),
+      ruangan: distinct([
+        ...(Array.isArray(selectedPeriode?.ruangan_sidang) ? selectedPeriode.ruangan_sidang : []),
+        ...values.map((item) => item.ruangan),
+      ]),
+    };
+  }, [assignmentRows, queueContext.hari_sidang, queueRows, selectedPeriode]);
+
   const filteredQueueRows = useMemo(() => {
     const keyword = String(queueQuery || "").trim().toLowerCase();
-    if (!keyword) return queueRows;
+    const decisionByRegistrationId = new Map(
+      assignmentRows.map((row) => [Number(row.pendaftaran_sidang_id), row])
+    );
     return queueRows.filter((row) => {
       const haystack = [
         row?.mahasiswa?.nim,
         row?.mahasiswa?.nama,
-        row?.judul_skripsi,
-        row?.status,
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
-      return haystack.includes(keyword);
+      if (keyword && !haystack.includes(keyword)) return false;
+      if (periodePageMode !== "registrants") return true;
+
+      const values = getAssignmentGridValues(row, decisionByRegistrationId.get(Number(row.id)));
+      return (!assignmentFilters.penguji1 || values.penguji1 === assignmentFilters.penguji1)
+        && (!assignmentFilters.penguji2 || values.penguji2 === assignmentFilters.penguji2)
+        && (!assignmentFilters.tanggal_sidang || values.tanggal_sidang === assignmentFilters.tanggal_sidang)
+        && (!assignmentFilters.sesi_ke || values.sesi_ke === assignmentFilters.sesi_ke)
+        && (!assignmentFilters.ruangan || values.ruangan === assignmentFilters.ruangan);
     });
-  }, [queueRows, queueQuery]);
+  }, [assignmentFilters, assignmentRows, periodePageMode, queueRows, queueQuery]);
+
+  const filteredAvailableExaminers = useMemo(() => {
+    const keyword = String(examinerQuery || "").trim().toLowerCase();
+    if (!keyword) return queueContext.dosen_tersedia;
+    return queueContext.dosen_tersedia.filter((dosen) => [
+      dosen?.nik,
+      dosen?.nama,
+    ].filter(Boolean).join(" ").toLowerCase().includes(keyword));
+  }, [examinerQuery, queueContext.dosen_tersedia]);
 
   const totalPages = Math.max(1, Math.ceil(filteredQueueRows.length / GRID_PAGE_SIZE));
   const currentPage = Math.min(queuePage, totalPages);
@@ -1243,25 +1383,34 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
   );
   const examinerTotalPages = Math.max(
     1,
-    Math.ceil(queueContext.dosen_tersedia.length / EXAMINER_GRID_PAGE_SIZE)
+    Math.ceil(filteredAvailableExaminers.length / EXAMINER_GRID_PAGE_SIZE)
   );
   const currentExaminerPage = Math.min(examinerPage, examinerTotalPages);
-  const examinerPageStart = queueContext.dosen_tersedia.length
+  const examinerPageStart = filteredAvailableExaminers.length
     ? (currentExaminerPage - 1) * EXAMINER_GRID_PAGE_SIZE + 1
     : 0;
-  const examinerPageEnd = queueContext.dosen_tersedia.length
-    ? Math.min(queueContext.dosen_tersedia.length, currentExaminerPage * EXAMINER_GRID_PAGE_SIZE)
+  const examinerPageEnd = filteredAvailableExaminers.length
+    ? Math.min(filteredAvailableExaminers.length, currentExaminerPage * EXAMINER_GRID_PAGE_SIZE)
     : 0;
-  const pagedAvailableExaminers = queueContext.dosen_tersedia.slice(
+  const pagedAvailableExaminers = filteredAvailableExaminers.slice(
     (currentExaminerPage - 1) * EXAMINER_GRID_PAGE_SIZE,
     currentExaminerPage * EXAMINER_GRID_PAGE_SIZE
   );
   // Disiapkan sebagai sumber data hasil keputusan AI pada integrasi berikutnya.
   const assignmentDecisionRows = assignmentRows;
-  const activeSidangMenuTab = periodePageMode === "registrants"
-    || periodePageMode === "assignment-list"
-      ? "pendaftar-sidang"
+  const assignmentDecisionByRegistrationId = new Map(
+    assignmentDecisionRows.map((row) => [Number(row.pendaftaran_sidang_id), row])
+  );
+  const activeSidangMenuTab = periodePageMode === "availability"
+    ? "data-ketersediaan"
+    : periodePageMode === "registrants"
+      ? "assign-penguji"
       : "periode-pendaftaran";
+  const assignableRegistrantIds = filteredQueueRows
+    .filter((row) => String(row?.status || "").toLowerCase() === "submitted")
+    .map((row) => Number(row.id));
+  const allAssignableRegistrantsSelected = assignableRegistrantIds.length > 0
+    && assignableRegistrantIds.every((id) => selectedAssignmentRegistrantIds.includes(id));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
@@ -1279,8 +1428,23 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 setSelectedRegistrantDetail(null);
                 setError("");
                 setSuccess("");
-                if (tab.id === "pendaftar-sidang") {
-                  setPeriodePageMode("assignment-list");
+                if (tab.id === "data-ketersediaan") {
+                  const activeId = overview?.active_periode?.id || selectedPeriodeId;
+                  if (activeId) setSelectedPeriodeId(String(activeId));
+                  setQueueQuery("");
+                  setExaminerQuery("");
+                  setQueuePage(1);
+                  setExaminerPage(1);
+                  setPeriodePageMode("availability");
+                  return;
+                }
+                if (tab.id === "assign-penguji") {
+                  const activeId = overview?.active_periode?.id || selectedPeriodeId;
+                  if (activeId) setSelectedPeriodeId(String(activeId));
+                  setQueueQuery("");
+                  setQueuePage(1);
+                  setSelectedAssignmentRegistrantIds([]);
+                  setPeriodePageMode("registrants");
                   return;
                 }
                 setPeriodePageMode("list");
@@ -1305,13 +1469,13 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
               onClick={async () => {
                 if (!(await confirmAndDiscardSetupDraft())) return;
                 setPeriodePageMode(
-                  periodePageMode === "registrants" ? "assignment-list" : "list"
+                  "list"
                 );
                 setOpenPeriodeErrors({});
                 setError("");
                 setSuccess("");
               }}
-              disabled={["list", "assignment-list"].includes(periodePageMode)}
+              disabled={["list", "availability", "registrants"].includes(periodePageMode)}
               aria-label="Kembali ke daftar sebelumnya"
               className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] transition hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"
             >
@@ -1329,7 +1493,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
               <RefreshCcw className="h-4 w-4" />
               Refresh
             </button>
-            {!["registrants", "assignment-list"].includes(periodePageMode) ? (
+            {!["registrants", "availability"].includes(periodePageMode) ? (
               <button
                 type="button"
                 disabled={savingForm}
@@ -1470,7 +1634,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
             </section>
           ) : null}
 
-          {["list", "assignment-list", "registrants"].includes(periodePageMode) ? (
+          {["list", "assignment-list", "availability", "registrants"].includes(periodePageMode) ? (
             <>
           {periodePageMode === "list" ? (
           <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
@@ -1618,31 +1782,111 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
             </section>
           ) : null}
 
-          {periodePageMode === "registrants" ? (
+          {["availability", "registrants"].includes(periodePageMode) ? (
           <section className="flex flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-lg font-black text-[#1b274b]">
-                  {String(selectedPeriode?.status || "").toLowerCase() === "open" ? "Assign Dosen Penguji" : "Detail Assign Dosen Penguji"}
+                  {periodePageMode === "availability" ? "Data Ketersediaan Sidang" : "Assign Dosen Penguji"}
                 </h3>
                 <p className="mt-1 text-sm text-[#66769a]">
                   {selectedPeriode?.label_periode || formatPeriodeSidangLabel(selectedPeriode)}
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="text"
-                  value={queueQuery}
-                  onChange={(event) => {
-                    setQueueQuery(event.target.value);
-                    setQueuePage(1);
-                  }}
-                  placeholder="Cari NIM, nama, judul, status..."
-                  className="w-[300px] rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
-                />
+                <select
+                  value={selectedPeriodeId}
+                  onChange={(event) => setSelectedPeriodeId(event.target.value)}
+                  aria-label="Filter periode sidang"
+                  className="w-[280px] rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+                >
+                  {(overview?.periodes || []).map((item) => (
+                    <option key={`filter-period-${item.id}`} value={item.id}>
+                      {item.label_periode || formatPeriodeSidangLabel(item)}{String(item.status || "").toLowerCase() === "open" ? " (Aktif)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <div className="relative flex items-center gap-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7890bd]" />
+                    <input
+                      type="text"
+                      value={queueQuery}
+                      onChange={(event) => {
+                        setQueueQuery(event.target.value);
+                        setQueuePage(1);
+                      }}
+                      placeholder="Cari NIM atau nama mahasiswa..."
+                      className="w-[300px] rounded-lg border border-[#d1daf0] py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3]"
+                    />
+                  </div>
+                  {periodePageMode === "registrants" ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowAssignmentFilters((current) => !current)}
+                        className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition ${showAssignmentFilters ? "border-[#2f63e3] bg-[#eef3ff] text-[#234ca7]" : "border-[#d1daf0] bg-white text-[#263f78] hover:bg-[#f7f9ff]"}`}
+                        aria-expanded={showAssignmentFilters}
+                      >
+                        <SlidersHorizontal className="h-4 w-4" /> Filter
+                      </button>
+                      {showAssignmentFilters ? (
+                        <div className="absolute right-0 top-[calc(100%+8px)] z-30 w-[620px] max-w-[calc(100vw-48px)] rounded-xl border border-[#dce4f5] bg-white p-4 shadow-xl">
+                          <div className="mb-3 flex items-center justify-between gap-3">
+                            <p className="font-bold text-[#203666]">Filter Penugasan Dosen Penguji</p>
+                            <button type="button" onClick={() => setShowAssignmentFilters(false)} aria-label="Tutup filter" className="rounded-md p-1 text-[#61739d] hover:bg-[#f0f4fd]"><X className="h-4 w-4" /></button>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            {[
+                              ["penguji1", "Dosen Penguji 1", assignmentFilterOptions.penguji1],
+                              ["penguji2", "Dosen Penguji 2", assignmentFilterOptions.penguji2],
+                              ["tanggal_sidang", "Hari Sidang", assignmentFilterOptions.tanggal_sidang],
+                              ["sesi_ke", "Sesi", assignmentFilterOptions.sesi_ke],
+                              ["ruangan", "Ruangan", assignmentFilterOptions.ruangan],
+                            ].map(([key, label, options]) => (
+                              <label key={key} className="text-sm font-semibold text-[#314778]">
+                                {label}
+                                <select
+                                  value={assignmentFilters[key]}
+                                  onChange={(event) => {
+                                    setAssignmentFilters((current) => ({ ...current, [key]: event.target.value }));
+                                    setQueuePage(1);
+                                  }}
+                                  className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm font-normal text-[#263b6f] outline-none focus:border-[#2f63e3]"
+                                >
+                                  <option value="">Semua {label}</option>
+                                  {options.map((option) => (
+                                    <option key={`${key}-${option}`} value={option}>
+                                      {key === "tanggal_sidang" ? formatDateLabel(option) : key === "sesi_ke" ? `Sesi ${option}` : option}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="mt-4 flex justify-end gap-2 border-t border-[#e8edf8] pt-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAssignmentFilters({ penguji1: "", penguji2: "", tanggal_sidang: "", sesi_ke: "", ruangan: "" });
+                                setQueuePage(1);
+                              }}
+                              className="rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm font-semibold text-[#314778] hover:bg-[#f7f9ff]"
+                            >
+                              Reset
+                            </button>
+                            <button type="button" onClick={() => setShowAssignmentFilters(false)} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white hover:brightness-110">Terapkan</button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </div>
               </div>
             </div>
 
+            {periodePageMode === "availability" ? (
+            <>
             <div className="mb-4 rounded-xl border border-[#dce5f7] bg-[#f8fbff] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <h4 className="font-black text-[#1f2d53]">Hari Sidang yang Dibuka</h4>
@@ -1664,6 +1908,16 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 <h4 className="font-black text-[#1f2d53]">Dosen Bersedia Menjadi Penguji</h4>
                 <p className="mt-1 text-sm text-[#66769a]">Data dosen yang telah mengisi ketersediaan pada periode ini.</p>
               </div>
+              <input
+                type="text"
+                value={examinerQuery}
+                onChange={(event) => {
+                  setExaminerQuery(event.target.value);
+                  setExaminerPage(1);
+                }}
+                placeholder="Cari NIK atau nama dosen..."
+                className="w-[300px] rounded-lg border border-[#d1daf0] px-3 py-2 text-sm outline-none focus:border-[#2f63e3]"
+              />
             </div>
 
             <div className="relative h-[286px] overflow-auto rounded-lg border border-[#e6ecf8]">
@@ -1671,18 +1925,22 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 <thead><tr className="border-y border-[#e6ecf8] text-[#4d5e89]"><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">No</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Dosen</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Hari Tersedia</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Slot Tersedia</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Mobilitas Ruangan</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Maksimal Sesi</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Kebutuhan Jeda</th><th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Aksi</th></tr></thead>
                 <tbody>{pagedAvailableExaminers.map((dosen, index) => <tr key={`available-examiner-${dosen.id}`} className="border-b border-[#eff3fb]"><td className="px-3 py-3 font-semibold text-[#254080]">{examinerPageStart + index}</td><td className="px-3 py-3"><p className="font-semibold text-[#1f2d53]">{formatDosenFullName(dosen.nama, dosen.gelar) || "-"}</p><p className="text-xs text-[#61709b]">{dosen.nik || dosen.kode_dosen || dosen.email || "-"}</p></td><td className="px-3 py-3">{dosen.tanggal_tersedia?.length || 0} hari</td><td className="px-3 py-3">{dosen.jumlah_slot_tersedia || 0} slot</td><td className="px-3 py-3">{dosen.preferensi?.mobilitas_ruangan === "satu_ruangan" ? "Satu ruangan" : "Dapat berpindah"}</td><td className="px-3 py-3">{dosen.preferensi?.maksimal_sesi_per_hari || "-"} sesi/hari</td><td className="px-3 py-3">{dosen.preferensi?.membutuhkan_jeda ? "Memerlukan jeda" : "Tanpa jeda"}</td><td className="px-3 py-3"><button type="button" onClick={() => setSelectedAvailableDosen(dosen)} className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110"><Eye className="h-3.5 w-3.5" />Detail</button></td></tr>)}</tbody>
               </table>
-              {!loadingQueue && queueContext.dosen_tersedia.length === 0 ? <div className="absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">Belum ada dosen yang mengisi ketersediaan sidang.</div> : null}
+              {!loadingQueue && filteredAvailableExaminers.length === 0 ? <div className="absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">Belum ada dosen yang sesuai dengan pencarian.</div> : null}
             </div>
 
             <div className="mb-5 mt-3 flex flex-wrap items-center justify-between gap-3 border-b border-[#e8edf8] pb-5">
-              <p className="text-sm text-[#4f5e86]">Menampilkan {examinerPageStart} - {examinerPageEnd} dari {queueContext.dosen_tersedia.length} data dosen.</p>
+              <p className="text-sm text-[#4f5e86]">Menampilkan {examinerPageStart} - {examinerPageEnd} dari {filteredAvailableExaminers.length} data dosen.</p>
               <div className="flex items-center gap-2">
                 <button type="button" onClick={() => setExaminerPage((prev) => Math.max(1, prev - 1))} disabled={currentExaminerPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50">Sebelumnya</button>
                 <span className="text-sm font-semibold text-[#314778]">Halaman {currentExaminerPage} / {examinerTotalPages}</span>
                 <button type="button" onClick={() => setExaminerPage((prev) => Math.min(examinerTotalPages, prev + 1))} disabled={currentExaminerPage >= examinerTotalPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] transition hover:bg-[#f4f7ff] disabled:cursor-not-allowed disabled:opacity-50">Berikutnya</button>
               </div>
             </div>
+            </>
+            ) : null}
 
+            {periodePageMode === "availability" ? (
+            <>
             <div className="mb-2">
               <h4 className="font-black text-[#1f2d53]">Mahasiswa Pendaftar Sidang</h4>
               <p className="mt-1 text-sm text-[#66769a]">Data mahasiswa yang mendaftar pada periode ini beserta status penjadwalannya.</p>
@@ -1692,6 +1950,22 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
               <table className="w-full min-w-[1400px] text-left text-sm">
                 <thead>
                   <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                    {periodePageMode === "registrants" ? (
+                      <th className="bg-[#f8fbff] px-3 py-2 text-center font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={allAssignableRegistrantsSelected}
+                          disabled={assignableRegistrantIds.length === 0}
+                          onChange={(event) => {
+                            setSelectedAssignmentRegistrantIds(event.target.checked ? assignableRegistrantIds : []);
+                            setAssignmentRows([]);
+                            setAssignmentCommitted(false);
+                          }}
+                          aria-label="Pilih semua mahasiswa yang belum dijadwalkan"
+                          className="h-4 w-4 accent-[#2f63e3]"
+                        />
+                      </th>
+                    ) : null}
                     <th className="bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                     <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
                     <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Judul Skripsi</th>
@@ -1705,6 +1979,25 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 <tbody>
                   {pagedRows.map((row, index) => (
                     <tr key={`queue-row-${row.id}`} className="border-b border-[#eff3fb]">
+                      {periodePageMode === "registrants" ? (
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedAssignmentRegistrantIds.includes(Number(row.id))}
+                            disabled={String(row?.status || "").toLowerCase() !== "submitted"}
+                            onChange={(event) => {
+                              const registrationId = Number(row.id);
+                              setSelectedAssignmentRegistrantIds((current) => event.target.checked
+                                ? Array.from(new Set([...current, registrationId]))
+                                : current.filter((id) => id !== registrationId));
+                              setAssignmentRows([]);
+                              setAssignmentCommitted(false);
+                            }}
+                            aria-label={`Pilih ${row?.mahasiswa?.nama || "mahasiswa"}`}
+                            className="h-4 w-4 accent-[#2f63e3]"
+                          />
+                        </td>
+                      ) : null}
                       <td className="px-3 py-2 font-semibold text-[#254080]">{pageStart + index}</td>
                       <td className="px-3 py-2">
                         <p className="font-semibold text-[#1f2d53]">
@@ -1793,21 +2086,20 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 </button>
               </div>
             </div>
+            </>
+            ) : null}
 
-            <div className="mt-6 border-t border-[#e8edf8] pt-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h4 className="font-black text-[#1f2d53]">Hasil Penugasan Dosen Penguji</h4>
-                  <p className="mt-1 text-sm text-[#66769a]">Hasil rekomendasi AI dapat diperiksa sebelum disimpan.</p>
-                </div>
+            {periodePageMode === "registrants" ? (
+            <div className="mt-3">
+              <div className="mb-3 flex flex-wrap items-center justify-end gap-3">
                 {String(selectedPeriode?.status || "").toLowerCase() === "open" ? (
                   <button
                     type="button"
                     onClick={() => runExaminerAssignment({ commit: false })}
-                    disabled={assigningExaminers || savingAssignments}
+                    disabled={selectedAssignmentRegistrantIds.length === 0 || assigningExaminers || savingAssignments}
                     className="rounded-lg bg-[#137748] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {assigningExaminers ? "Memproses Rekomendasi..." : "Assign Dosen Penguji"}
+                    {assigningExaminers ? "Memproses Rekomendasi..." : `Assign Otomatis dengan AI (${selectedAssignmentRegistrantIds.length})`}
                   </button>
                 ) : null}
               </div>
@@ -1816,6 +2108,20 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 <table className="w-full min-w-[1250px] text-left text-sm">
                   <thead>
                     <tr className="border-y border-[#e6ecf8] text-[#4d5e89]">
+                      <th className="sticky top-0 bg-[#f8fbff] px-3 py-2 text-center font-semibold">
+                        <input
+                          type="checkbox"
+                          checked={allAssignableRegistrantsSelected}
+                          disabled={assignableRegistrantIds.length === 0}
+                          onChange={(event) => {
+                            setSelectedAssignmentRegistrantIds(event.target.checked ? assignableRegistrantIds : []);
+                            setAssignmentRows([]);
+                            setAssignmentCommitted(false);
+                          }}
+                          aria-label="Pilih semua mahasiswa yang belum dijadwalkan"
+                          className="h-4 w-4 accent-[#2f63e3]"
+                        />
+                      </th>
                       <th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">No</th>
                       <th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Mahasiswa</th>
                       <th className="sticky top-0 bg-[#f8fbff] px-3 py-2 font-semibold">Dosen Penguji 1</th>
@@ -1827,40 +2133,72 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                     </tr>
                   </thead>
                   <tbody>
-                    {assignmentDecisionRows.map((row, index) => (
-                      <tr key={`assignment-result-${row.id || index}`} className="border-b border-[#eff3fb]">
-                        <td className="px-3 py-3 font-semibold text-[#254080]">{index + 1}</td>
-                        <td className="px-3 py-3">
-                          <p className="font-bold text-[#253b6c]">{row.mahasiswa_nama || "-"}</p>
-                          <p className="text-xs text-[#7582a2]">{row.mahasiswa_nim || "-"}</p>
+                    {pagedRows.map((registration, index) => {
+                      const row = assignmentDecisionByRegistrationId.get(Number(registration.id));
+                      const existingSchedule = registration?.jadwal_sidang;
+                      return (
+                      <tr key={`assignment-registration-${registration.id}`} className="border-b border-[#eff3fb]">
+                        <td className="px-3 py-3 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedAssignmentRegistrantIds.includes(Number(registration.id))}
+                            disabled={String(registration?.status || "").toLowerCase() !== "submitted"}
+                            onChange={(event) => {
+                              const registrationId = Number(registration.id);
+                              setSelectedAssignmentRegistrantIds((current) => event.target.checked
+                                ? Array.from(new Set([...current, registrationId]))
+                                : current.filter((id) => id !== registrationId));
+                              setAssignmentRows([]);
+                              setAssignmentCommitted(false);
+                            }}
+                            aria-label={`Pilih ${registration?.mahasiswa?.nama || "mahasiswa"}`}
+                            className="h-4 w-4 accent-[#2f63e3]"
+                          />
                         </td>
-                        <td className="px-3 py-3">{formatDosenFullName(row.penguji1?.nama, row.penguji1?.gelar) || "-"}</td>
-                        <td className="px-3 py-3">{formatDosenFullName(row.penguji2?.nama, row.penguji2?.gelar) || "-"}</td>
-                        <td className="px-3 py-3">{formatDateLabel(row.tanggal_sidang)}</td>
-                        <td className="px-3 py-3">Sesi {row.sesi_ke || "-"}<p className="text-xs text-[#7582a2]">{row.sesi_mulai || "-"}–{row.sesi_selesai || "-"}</p></td>
-                        <td className="px-3 py-3">{row.ruangan || "-"}</td>
+                        <td className="px-3 py-3 font-semibold text-[#254080]">{pageStart + index}</td>
                         <td className="px-3 py-3">
-                          <button
-                            type="button"
-                            onClick={() => setEditingAssignment(row)}
-                            disabled={assignmentCommitted}
-                            className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            <Pencil className="h-3.5 w-3.5" /> Edit
-                          </button>
+                          <p className="font-bold text-[#253b6c]">{registration?.mahasiswa?.nama || "-"}</p>
+                          <p className="text-xs text-[#7582a2]">{registration?.mahasiswa?.nim || "-"}</p>
+                        </td>
+                        <td className="px-3 py-3">{formatDosenFullName(row?.penguji1?.nama || existingSchedule?.penguji1?.nama, row?.penguji1?.gelar || existingSchedule?.penguji1?.gelar) || "-"}</td>
+                        <td className="px-3 py-3">{formatDosenFullName(row?.penguji2?.nama || existingSchedule?.penguji2?.nama, row?.penguji2?.gelar || existingSchedule?.penguji2?.gelar) || "-"}</td>
+                        <td className="px-3 py-3">{formatDateLabel(row?.tanggal_sidang || existingSchedule?.tanggal_sidang)}</td>
+                        <td className="px-3 py-3">{row?.sesi_ke ? `Sesi ${row.sesi_ke}` : existingSchedule?.sesi_ke ? `Sesi ${existingSchedule.sesi_ke}` : "-"}</td>
+                        <td className="px-3 py-3">{row?.ruangan || existingSchedule?.ruangan || "-"}</td>
+                        <td className="px-3 py-3">
+                          {row ? (
+                            <button
+                              type="button"
+                              onClick={() => setEditingAssignment(row)}
+                              disabled={assignmentCommitted}
+                              className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              <Pencil className="h-3.5 w-3.5" /> Edit
+                            </button>
+                          ) : <span className="text-xs text-[#8793af]">-</span>}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
-                {assignmentDecisionRows.length === 0 ? (
+                {!loadingQueue && filteredQueueRows.length === 0 ? (
                   <div className="absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center px-4 text-center text-sm font-semibold text-[#7b88ab]">
-                    Belum ada hasil penugasan dosen penguji dari AI.
+                    Belum ada mahasiswa yang mendaftar sidang di periode ini.
                   </div>
                 ) : null}
               </div>
 
-              <div className="mt-3 flex justify-end">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#e8edf8] pt-3">
+                <p className="text-sm text-[#4f5e86]">Menampilkan {pageStart} - {pageEnd} dari {filteredQueueRows.length} data pendaftar sidang.</p>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => setQueuePage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Sebelumnya</button>
+                  <span className="text-sm font-semibold text-[#314778]">Halaman {currentPage} / {totalPages}</span>
+                  <button type="button" onClick={() => setQueuePage((prev) => Math.min(totalPages, prev + 1))} disabled={currentPage >= totalPages} className="rounded-md border border-[#d1daf0] px-3 py-1.5 text-sm font-semibold text-[#314778] disabled:opacity-50">Berikutnya</button>
+                </div>
+              </div>
+
+              <div className="mt-4 flex justify-end">
                 <button
                   type="button"
                   onClick={() => runExaminerAssignment({ commit: true })}
@@ -1871,6 +2209,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
                 </button>
               </div>
             </div>
+            ) : null}
           </section>
           ) : null}
 
@@ -1884,7 +2223,7 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
               </h3>
               <p className="mt-1 text-sm text-[#66769a]">
                 {periodePageMode === "edit"
-                  ? "Periode sedang aktif. Hanya tanggal selesai pendaftaran yang dapat diperbarui."
+                  ? "Periode sedang aktif. Tanggal selesai pendaftaran, hari sidang, dan ruangan dapat diperbarui."
                   : "Periode sudah tidak aktif. Data hanya dapat dilihat dan tidak dapat diubah."}
               </p>
 
@@ -1957,24 +2296,106 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
               </div>
 
               {periodePageMode === "edit" ? (
-                <div className="mt-4 flex flex-wrap gap-2 border-t border-[#e8edf8] pt-4">
-                  <button
-                    type="button"
-                    disabled={savingForm}
-                    onClick={() => handleSaveSelectedPeriode().catch(() => {})}
-                    className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <Save className="h-4 w-4" />
-                    Simpan Perubahan
-                  </button>
-                  <button
-                    type="button"
-                    disabled={savingForm}
-                    onClick={() => handleCloseSelectedPeriode().catch(() => {})}
-                    className="rounded-lg bg-[#b73a3a] px-3 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Tutup Periode Aktif
-                  </button>
+                <div className="mt-5 border-t border-[#e8edf8] pt-5">
+                  <div>
+                    <h4 className="text-base font-black text-[#1b274b]">Pengaturan Hari & Ruangan Sidang</h4>
+                    <p className="mt-1 text-sm text-[#66769a]">Perbarui hari pelaksanaan dan ruangan yang tersedia untuk periode ini.</p>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                      <p className="text-sm font-bold text-[#233a74]">Hari Sidang <span className="text-[#b73a3a]">*</span></p>
+                      <p className="mt-1 text-xs text-[#68779b]">Pilih beberapa tanggal dari kalender; tanggal tidak harus berurutan.</p>
+                      <button
+                        type="button"
+                        onClick={() => setCalendarOpen(true)}
+                        className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[#9db5ed] bg-[#eef3ff] px-4 py-2.5 text-sm font-bold text-[#244a9f] transition hover:border-[#2f63e3] hover:bg-[#e4edff]"
+                      >
+                        <CalendarDays className="h-4 w-4" />
+                        Buka Kalender Tanggal Sidang
+                      </button>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(editPeriodeForm.tanggal_sidang_list || []).map((tanggal) => (
+                          <button
+                            key={`edit-active-tanggal-${tanggal}`}
+                            type="button"
+                            onClick={() => handleRemoveSidangDate(tanggal)}
+                            className="rounded-full border border-[#c9d7f5] bg-white px-3 py-1 text-xs font-semibold text-[#2c4ca0]"
+                          >
+                            {formatDateLabel(tanggal)} <X className="ml-1 inline h-3 w-3" />
+                          </button>
+                        ))}
+                      </div>
+                      {(editPeriodeForm.tanggal_sidang_list || []).length === 0 ? (
+                        <p className="mt-2 text-xs font-semibold text-[#8a6a20]">Belum ada tanggal sidang yang dipilih.</p>
+                      ) : null}
+                      <FieldError message={editPeriodeErrors.tanggal_sidang_list} />
+                    </div>
+
+                    <div className="rounded-lg border border-[#e2e9f8] bg-[#f8fbff] p-3">
+                      <p className="text-sm font-bold text-[#233a74]">Ruangan Sidang <span className="text-[#b73a3a]">*</span></p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <select
+                          value={editRoomInput}
+                          onChange={(event) => {
+                            setEditRoomInput(event.target.value);
+                            setEditRoomError("");
+                          }}
+                          aria-invalid={Boolean(editRoomError)}
+                          aria-label="Pilih ruangan sidang"
+                          className={`min-w-0 flex-1 rounded-lg border px-3 py-2 text-sm outline-none ${editRoomError ? "border-[#dc4c4c] bg-[#fffafa] focus:border-[#c73737]" : "border-[#d1daf0] bg-white focus:border-[#2f63e3]"}`}
+                        >
+                          <option value="">Pilih ruangan sidang</option>
+                          {SIDANG_ROOM_OPTIONS.map((room) => (
+                            <option key={room} value={room}>{room}</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={addEditRoom}
+                          className="rounded-lg border border-[#d1daf0] bg-white px-3 py-2 text-sm font-semibold text-[#27407b] transition hover:bg-[#f3f6ff]"
+                        >
+                          Tambah Ruangan
+                        </button>
+                      </div>
+                      <FieldError message={editRoomError} />
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {(editPeriodeForm.ruangan_list || []).map((ruangan) => (
+                          <button
+                            key={`edit-active-ruangan-${ruangan}`}
+                            type="button"
+                            onClick={() => setEditPeriodeForm((prev) => ({
+                              ...prev,
+                              ruangan_list: (prev.ruangan_list || []).filter((item) => item !== ruangan),
+                            }))}
+                            className="rounded-full border border-[#c9d7f5] bg-white px-3 py-1 text-xs font-semibold text-[#2c4ca0]"
+                          >
+                            {ruangan} <X className="ml-1 inline h-3 w-3" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-[#e8edf8] pt-4">
+                    <button
+                      type="button"
+                      disabled={savingForm}
+                      onClick={() => handleSaveSelectedPeriode().catch(() => {})}
+                      className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <Save className="h-4 w-4" />
+                      {savingForm ? "Menyimpan..." : "Simpan Perubahan"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={savingForm}
+                      onClick={() => handleCloseSelectedPeriode().catch(() => {})}
+                      className="rounded-lg bg-[#b73a3a] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Tutup Periode
+                    </button>
+                  </div>
                 </div>
               ) : null}
             </section>
@@ -2137,10 +2558,17 @@ function SekretarisSidangManagementPage({ session, apiBaseUrl, onSessionExpired,
       <MultiDateCalendarModal
         open={calendarOpen}
         selectedDates={editPeriodeForm.tanggal_sidang_list}
+        lockedDates={periodePageMode === "edit" ? scheduledSidangDates : []}
         minDate={todayDateOnly}
         initialDate={selectedPeriode?.tanggal_selesai_pendaftaran || todayDateOnly}
         onClose={() => setCalendarOpen(false)}
-        onApply={(dates) => setEditPeriodeForm((prev) => ({ ...prev, tanggal_sidang_list: dates }))}
+        onLockedDateClick={(tanggal) => showErrorToast(
+          `Hari sidang ${formatDateLabel(tanggal)} tidak dapat dihapus karena sudah memiliki jadwal dan dosen penguji.`
+        )}
+        onApply={(dates) => {
+          setEditPeriodeForm((prev) => ({ ...prev, tanggal_sidang_list: dates }));
+          setEditPeriodeErrors((prev) => ({ ...prev, tanggal_sidang_list: "" }));
+        }}
       />
       <ExaminerAvailabilityDetailModal
         dosen={selectedAvailableDosen}

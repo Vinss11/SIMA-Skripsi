@@ -19,8 +19,10 @@ import {
   Send,
   UserCircle2,
   UserRound,
+  X,
 } from "lucide-react";
 import PengajuanPage from "./PengajuanPage";
+import { isPenjaluranResubmissionNotification } from "../utils/notificationAction";
 import StatusPage from "./StatusPage";
 import { formatDosenFullName } from "../utils/dosen";
 import BimbinganPage from "./BimbinganPage";
@@ -467,26 +469,33 @@ function HistoricalDosenCombobox({ options = [], value, onChange }) {
 
   return (
     <div className="relative mt-1">
-      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
-      <input
-        type="text"
-        role="combobox"
-        autoComplete="off"
-        aria-autocomplete="list"
-        aria-controls="historical-dosen-options"
-        aria-expanded={isOpen}
-        value={query}
-        onFocus={(event) => { setIsOpen(true); if (selected) event.currentTarget.select(); }}
-        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          if (value) onChange("");
-          setIsOpen(true);
-        }}
-        placeholder="Cari nama, NIK, kode, atau email dosen"
-        className="w-full rounded-lg border border-[#d0dbf4] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-      />
-      {isOpen ? (
+      {selected ? (
+        <div className="flex min-h-[42px] items-center rounded-lg border border-[#d0dbf4] bg-[#f8fbff] px-3 py-1.5">
+          <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+            <span className="truncate">{selectedLabel}</span>
+            <button type="button" aria-label={`Hapus pilihan ${selectedLabel}`} onClick={() => { onChange(""); setQuery(""); setIsOpen(false); }} className="rounded-full p-0.5 hover:bg-[#cfddff]"><X className="h-3.5 w-3.5" /></button>
+          </span>
+        </div>
+      ) : (
+        <>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#7282a8]" />
+          <input
+            type="text"
+            role="combobox"
+            autoComplete="off"
+            aria-autocomplete="list"
+            aria-controls="historical-dosen-options"
+            aria-expanded={isOpen}
+            value={query}
+            onFocus={() => setIsOpen(true)}
+            onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+            onChange={(event) => { setQuery(event.target.value); setIsOpen(true); }}
+            placeholder="Cari nama, NIK, kode, atau email dosen"
+            className="w-full rounded-lg border border-[#d0dbf4] bg-white py-2 pl-9 pr-3 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+          />
+        </>
+      )}
+      {isOpen && !selected ? (
         <div id="historical-dosen-options" role="listbox" className="absolute left-0 right-0 top-[calc(100%+6px)] z-40 max-h-64 overflow-y-auto rounded-lg border border-[#d9e3fb] bg-white shadow-xl">
           {filtered.length ? filtered.map((dosen) => (
             <button
@@ -1711,7 +1720,25 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
         data = null;
       }
 
-      if (response.status === 401 || response.status === 403) {
+      const responseCode = String(data?.code || "").toUpperCase();
+      const responseMessage = String(data?.message || "").toLowerCase();
+      const isAuthenticationError =
+        response.status === 401 ||
+        (response.status === 403 && (
+          responseCode === "AUTH_TOKEN_REQUIRED" ||
+          responseCode === "AUTH_TOKEN_INVALID" ||
+          responseCode === "SESSION_REVOKED" ||
+          responseCode === "PASSWORD_CHANGE_REQUIRED" ||
+          responseMessage.includes("token tidak valid") ||
+          responseMessage.includes("token tidak ditemukan") ||
+          responseMessage.includes("token tidak memiliki konteks sesi") ||
+          responseMessage.includes("sesi telah berakhir") ||
+          responseMessage.includes("sesi telah dicabut") ||
+          responseMessage.includes("kedaluwarsa") ||
+          responseMessage.includes("kadaluarsa")
+        ));
+
+      if (isAuthenticationError) {
         if (!sessionExpiredRef.current) {
           sessionExpiredRef.current = true;
           onSessionExpired?.();
@@ -2340,9 +2367,11 @@ function DashboardPage({ session, apiBaseUrl, onLogout, onSessionExpired, onOpen
               <NotificationPage
                 notificationState={notificationState}
                 onNavigate={(notification) => {
-                  if (notification?.action_key === "student_defense_documents") {
+                  if (isPenjaluranResubmissionNotification(notification)) {
+                    setActiveTab("pengajuan");
+                  } else if (notification?.action_key === "student_defense_documents") {
                     setActiveTab("dokumen");
-                  } else if (notification?.action_key === "student_submission_status") {
+                  } else if (["student_submission_status", "student_path_status"].includes(notification?.action_key)) {
                     setActiveTab("status");
                   } else {
                     setActiveTab("dashboard");

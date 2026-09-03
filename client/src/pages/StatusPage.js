@@ -1697,7 +1697,7 @@ function StatusPage({
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Pendaftaran</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Jalur</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Ringkasan</th>
-                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Detail</th>
+                <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Cluster</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Status</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Tahap</th>
                 <th className="bg-[#f8fbff] px-3 py-2 font-semibold">Reviewer Saat Ini</th>

@@ -25,7 +25,11 @@ const {
   sendSupervisionAccessDenied,
 } = require("../services/mahasiswaSupervisionAccessService");
 const { getSidangRequirement: getPenjaluranGradeRequirement } = require("../services/penjaluranGradeService");
-const { getCurrentProgressForMahasiswa, recalculateCurrentProgressForMahasiswa } = require("../services/guidanceProgressService");
+const {
+  getCurrentProgressForMahasiswa,
+  recalculateCurrentProgressForMahasiswa,
+  resolvePolicy: resolveGuidanceProgressPolicy,
+} = require("../services/guidanceProgressService");
 const {
   buildResearchProfile,
   rankLecturersForStudent,
@@ -203,9 +207,30 @@ function sanitizeDateList(dateList) {
 }
 
 async function getCountedBimbingan(mahasiswaId, transaction = null) {
-  return transaction
-    ? recalculateCurrentProgressForMahasiswa(mahasiswaId, transaction)
-    : getCurrentProgressForMahasiswa(mahasiswaId);
+  try {
+    return transaction
+      ? await recalculateCurrentProgressForMahasiswa(mahasiswaId, transaction)
+      : await getCurrentProgressForMahasiswa(mahasiswaId);
+  } catch (error) {
+    // Mahasiswa yang belum memiliki assignment pembimbing tetap berhak melihat
+    // status sidang. Kondisi tersebut berarti progresnya belum dimulai, bukan
+    // kegagalan server.
+    if (error?.code !== "GUIDANCE_ASSIGNMENT_REQUIRED") throw error;
+
+    const guidancePolicy = await resolveGuidanceProgressPolicy();
+    return {
+      policy: guidancePolicy,
+      enforcement: {
+        counted: 0,
+        sufficient: false,
+        is_stale: false,
+      },
+      unavailable_reason: {
+        code: error.code,
+        message: "Dosen pembimbing skripsi belum ditetapkan.",
+      },
+    };
+  }
 }
 
 async function getDokumenSidangApprovalSummary(mahasiswaId, transaction = null) {
@@ -255,6 +280,7 @@ async function getMahasiswaSidangEligibility(mahasiswaId, transaction = null) {
     counted_sessions: countedSessions,
     target_minimum: targetMinimum,
     bimbingan_ready: bimbinganReady,
+    bimbingan_unavailable_reason: guidanceProgress.unavailable_reason || null,
     dokumen_approved_count: dokumen.approved_count,
     dokumen_total_required: DOKUMEN_APPROVAL_FIELDS.length,
     dokumen_ready: dokumen.all_approved,
@@ -465,7 +491,14 @@ exports.getMahasiswaSidangPeriods = async (req, res) => {
     const registrations = periodeIds.length
       ? await PendaftaranSidang.findAll({
           where: { mahasiswa_id: mahasiswaId, periode_sidang_id: { [Op.in]: periodeIds } },
-          include: [{ model: JadwalSidangPenguji, as: "jadwalSidang" }],
+          include: [{
+            model: JadwalSidangPenguji,
+            as: "jadwalSidang",
+            include: [
+              { model: Dosen, as: "penguji1", attributes: ["id", "nama", "nik", "gelar"] },
+              { model: Dosen, as: "penguji2", attributes: ["id", "nama", "nik", "gelar"] },
+            ],
+          }],
           order: [["createdAt", "DESC"]],
         })
       : [];
@@ -1257,6 +1290,29 @@ exports.updateSekretarisPeriodeSidang = async (req, res) => {
           message: "Pilih minimal 1 tanggal sidang.",
         });
       }
+      const schedulesOnRemovedDates = await JadwalSidangPenguji.findAll({
+        where: {
+          periode_sidang_id: periode.id,
+          tanggal_sidang: { [Op.notIn]: nextDates },
+        },
+        attributes: ["tanggal_sidang"],
+        transaction,
+        lock: transaction.LOCK.UPDATE,
+      });
+      if (schedulesOnRemovedDates.length > 0) {
+        const protectedDates = Array.from(new Set(
+          schedulesOnRemovedDates.map((item) => String(item.tanggal_sidang))
+        )).sort();
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: `Hari sidang ${protectedDates.join(", ")} tidak dapat dihapus karena sudah memiliki jadwal dan dosen penguji.`,
+          field_errors: {
+            tanggal_sidang_list: "Hari yang sudah memiliki jadwal sidang tidak dapat dihapus.",
+          },
+          protected_dates: protectedDates,
+        });
+      }
       await PeriodeSidangHari.destroy({
         where: { periode_sidang_id: periode.id },
         transaction,
@@ -2000,10 +2056,34 @@ exports.autoAssignSidangPenguji = async (req, res) => {
       const mahasiswaId = Number(item.mahasiswa_id);
       if (!latestPenjaluranByStudent.has(mahasiswaId)) latestPenjaluranByStudent.set(mahasiswaId, item);
     });
-    const pendingRegistrations = rawPendingRegistrations.filter((item) =>
+    let pendingRegistrations = rawPendingRegistrations.filter((item) =>
       String(latestPenjaluranByStudent.get(Number(item.mahasiswa_id))?.program_kuliah || "reguler")
         === String(req.user?.program_kuliah || "reguler")
     );
+
+    if (Array.isArray(req.body?.pendaftaran_sidang_ids)) {
+      const requestedRegistrationIds = [...new Set(
+        req.body.pendaftaran_sidang_ids.map(Number).filter((id) => Number.isInteger(id) && id > 0)
+      )];
+      if (requestedRegistrationIds.length === 0) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: "Pilih minimal satu mahasiswa yang akan diproses.",
+        });
+      }
+      const availableRegistrationIds = new Set(pendingRegistrations.map((item) => Number(item.id)));
+      const hasUnavailableRegistration = requestedRegistrationIds.some((id) => !availableRegistrationIds.has(id));
+      if (hasUnavailableRegistration) {
+        await transaction.rollback();
+        return res.status(409).json({
+          success: false,
+          message: "Salah satu mahasiswa yang dipilih sudah tidak tersedia untuk penjadwalan. Muat ulang data lalu pilih kembali.",
+        });
+      }
+      const requestedIdSet = new Set(requestedRegistrationIds);
+      pendingRegistrations = pendingRegistrations.filter((item) => requestedIdSet.has(Number(item.id)));
+    }
 
     if (pendingRegistrations.length === 0) {
       await transaction.rollback();

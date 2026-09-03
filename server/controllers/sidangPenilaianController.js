@@ -22,6 +22,23 @@ const UPLOAD_ROOT = process.env.VERCEL
   ? path.join("/tmp", "sima-uploads", "sidang-dokumen")
   : path.resolve(SERVER_ROOT_DIR, "uploads", "sidang-dokumen");
 const VALID_DECISIONS = new Set(["lulus", "lulus_dengan_revisi", "tidak_lulus"]);
+const VALID_GRADE_LETTERS = new Set([
+  "A", "A-", "A/B", "B+", "B", "B-", "B/C", "C+", "C", "C-",
+  "C/D", "D+", "D", "D-", "D/E", "E+", "E", "E-", "E/F", "F",
+]);
+const INVALID_ASSESSMENT_TEXT_CHARACTERS = new Set([
+  "+", "=", "_", "{", "}", "[", "]", "<", ">", "?", "/", "\\", "|", ":", ";", "'", '"',
+]);
+
+function getAssessmentTextError(value, label) {
+  const text = String(value || "").trim();
+  const hasInvalidCharacter = Array.from(text).some((character) => {
+    const code = character.charCodeAt(0);
+    return INVALID_ASSESSMENT_TEXT_CHARACTERS.has(character) || code < 32 || code === 127;
+  });
+  if (!text || (!hasInvalidCharacter && !text.includes("--"))) return "";
+  return `${label} tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' ", atau pola -- (komentar SQL).`;
+}
 
 function safeRelativePathFromAbsolute(absolutePath) {
   return path.relative(SERVER_ROOT_DIR, absolutePath || "").split(path.sep).join("/");
@@ -170,7 +187,20 @@ exports.submitDosenAssessment = async (req, res) => {
       await transaction.rollback();
       return res.status(409).json({ success: false, message: "Keputusan sidang sudah difinalisasi dan penilaian tidak dapat diubah." });
     }
+    const existingAssessment = await SidangPenilaian.findOne({
+      where: { jadwal_sidang_id: schedule.id, dosen_id: dosenId },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (existingAssessment) {
+      await transaction.rollback();
+      return res.status(409).json({
+        success: false,
+        message: "Penilaian sudah dikirim dan tidak dapat diubah.",
+      });
+    }
     const nilai = Number(req.body?.nilai_akhir);
+    const hurufNilai = String(req.body?.huruf_nilai || "").trim().toUpperCase();
     const keputusan = String(req.body?.keputusan || "").trim().toLowerCase();
     const catatan = String(req.body?.catatan || "").trim();
     const catatanRevisi = String(req.body?.catatan_revisi || "").trim();
@@ -178,9 +208,25 @@ exports.submitDosenAssessment = async (req, res) => {
       await transaction.rollback();
       return res.status(400).json({ success: false, message: "Nilai akhir wajib berada pada rentang 0 sampai 100." });
     }
+    if (!VALID_GRADE_LETTERS.has(hurufNilai)) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: "Huruf nilai wajib dipilih dari pilihan yang tersedia." });
+    }
     if (!VALID_DECISIONS.has(keputusan)) {
       await transaction.rollback();
       return res.status(400).json({ success: false, message: "Keputusan sidang tidak valid." });
+    }
+    const catatanError = getAssessmentTextError(catatan, "Catatan penilaian");
+    if (catatanError) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: catatanError });
+    }
+    const catatanRevisiError = keputusan === "lulus_dengan_revisi"
+      ? getAssessmentTextError(catatanRevisi, "Catatan revisi")
+      : "";
+    if (catatanRevisiError) {
+      await transaction.rollback();
+      return res.status(400).json({ success: false, message: catatanRevisiError });
     }
     if (keputusan === "lulus_dengan_revisi" && catatanRevisi.length < 5) {
       await transaction.rollback();
@@ -196,6 +242,7 @@ exports.submitDosenAssessment = async (req, res) => {
       dosen_id: dosenId,
       peran: role,
       nilai_akhir: nilai,
+      huruf_nilai: hurufNilai,
       keputusan,
       catatan: catatan || null,
       catatan_revisi: keputusan === "lulus_dengan_revisi" ? catatanRevisi : null,
@@ -387,4 +434,3 @@ async function downloadRevision(req, res, actor) {
 
 exports.downloadMahasiswaDefenseRevision = (req, res) => downloadRevision(req, res, "mahasiswa");
 exports.downloadDosenDefenseRevision = (req, res) => downloadRevision(req, res, "dosen");
-

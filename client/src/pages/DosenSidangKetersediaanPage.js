@@ -2,6 +2,25 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, Download, Eye, FileCheck2, Pencil, RefreshCcw, Save, X } from "lucide-react";
 import Swal from "sweetalert2";
 
+const GRADE_LETTER_OPTIONS = [
+  "A", "A-", "A/B", "B+", "B", "B-", "B/C", "C+", "C", "C-",
+  "C/D", "D+", "D", "D-", "D/E", "E+", "E", "E-", "E/F", "F",
+];
+
+const INVALID_ASSESSMENT_TEXT_CHARACTERS = new Set([
+  "+", "=", "_", "{", "}", "[", "]", "<", ">", "?", "/", "\\", "|", ":", ";", "'", '"',
+]);
+
+function getAssessmentTextError(value, label) {
+  const text = String(value || "").trim();
+  const hasInvalidCharacter = Array.from(text).some((character) => {
+    const code = character.charCodeAt(0);
+    return INVALID_ASSESSMENT_TEXT_CHARACTERS.has(character) || code < 32 || code === 127;
+  });
+  if (!text || (!hasInvalidCharacter && !text.includes("--"))) return "";
+  return `${label} tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' ", atau pola -- (komentar SQL).`;
+}
+
 function showSuccessToast(message) {
   Swal.fire({
     toast: true,
@@ -203,8 +222,9 @@ function ScheduleDayDetailModal({ detail, onClose }) {
   );
 }
 
-function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) {
-  const [activeSection, setActiveSection] = useState("availability");
+function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired, mode = "management" }) {
+  const isAssessmentMode = mode === "assessment";
+  const [activeSection, setActiveSection] = useState(isAssessmentMode ? "assessment" : "availability");
   const [view, setView] = useState("list");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -216,7 +236,7 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
   const [assessmentRows, setAssessmentRows] = useState([]);
   const [selectedAssessment, setSelectedAssessment] = useState(null);
   const [savingAssessment, setSavingAssessment] = useState(false);
-  const [assessmentForm, setAssessmentForm] = useState({ nilai_akhir: "", keputusan: "", catatan: "", catatan_revisi: "" });
+  const [assessmentForm, setAssessmentForm] = useState({ nilai_akhir: "", huruf_nilai: "", keputusan: "", catatan: "", catatan_revisi: "" });
   const [revisionReview, setRevisionReview] = useState({ status: "approved", catatan: "" });
   const [form, setForm] = useState({
     tanggal_sidang_list: [],
@@ -309,6 +329,7 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
       setSelectedAssessment(next);
       setAssessmentForm({
         nilai_akhir: next?.penilaian_saya?.nilai_akhir ?? "",
+        huruf_nilai: next?.penilaian_saya?.huruf_nilai || "",
         keputusan: next?.penilaian_saya?.keputusan || "",
         catatan: next?.penilaian_saya?.catatan || "",
         catatan_revisi: next?.penilaian_saya?.catatan_revisi || "",
@@ -326,6 +347,14 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
     if (!selectedAssessment?.id) return;
     if (!selectedAssessment.session_started) {
       setError(`Penilaian belum dapat diberikan. Sesi dimulai ${formatDateLabel(selectedAssessment.tanggal_sidang)} pukul ${selectedAssessment.sesi_mulai} WIB.`);
+      return;
+    }
+    const catatanError = getAssessmentTextError(assessmentForm.catatan, "Catatan penilaian");
+    const catatanRevisiError = assessmentForm.keputusan === "lulus_dengan_revisi"
+      ? getAssessmentTextError(assessmentForm.catatan_revisi, "Catatan revisi")
+      : "";
+    if (catatanError || catatanRevisiError) {
+      setError("Periksa kembali catatan penilaian sebelum menyimpan.");
       return;
     }
     try {
@@ -388,7 +417,10 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
     }
   };
 
-  useEffect(() => { loadPeriods().catch(() => {}); }, [loadPeriods]);
+  useEffect(() => {
+    if (isAssessmentMode) loadAssessmentList().catch(() => {});
+    else loadPeriods().catch(() => {});
+  }, [isAssessmentMode, loadAssessmentList, loadPeriods]);
 
   const handleSave = async () => {
     const errors = {};
@@ -438,19 +470,26 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
       mahasiswa_count: new Set(rows.map((item) => item.mahasiswa?.id).filter(Boolean)).size,
     }));
   }, [detail?.jadwal_anda]);
+  const assessmentLocked = Boolean(selectedAssessment?.penilaian_saya);
+  const assessmentTextErrors = {
+    catatan: assessmentLocked ? "" : getAssessmentTextError(assessmentForm.catatan, "Catatan penilaian"),
+    catatan_revisi: !assessmentLocked && assessmentForm.keputusan === "lulus_dengan_revisi"
+      ? getAssessmentTextError(assessmentForm.catatan_revisi, "Catatan revisi")
+      : "",
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {error ? <div className="rounded-xl border border-[#f3caca] bg-[#fff2f2] p-4 text-sm font-semibold text-[#a03f3f]">{error}</div> : null}
 
-      <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
-        <h3 className="text-lg font-black text-[#1b274b]">Menu Manajemen Jadwal Sidang</h3>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {[
-            { id: "availability", label: "Ketersediaan Sidang" },
-            { id: "schedule", label: "Jadwal Sidang" },
-            { id: "assessment", label: "Penilaian & Revisi" },
-          ].map((item) => (
+      {!isAssessmentMode ? (
+        <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
+          <h3 className="text-lg font-black text-[#1b274b]">Menu Manajemen Jadwal Sidang</h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {[
+              { id: "availability", label: "Ketersediaan Sidang" },
+              { id: "schedule", label: "Jadwal Sidang" },
+            ].map((item) => (
             <button
               key={item.id}
               type="button"
@@ -461,16 +500,16 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
                 setSelectedScheduleDay(null);
                 setSelectedAssessment(null);
                 setError("");
-                if (item.id === "assessment") loadAssessmentList().catch(() => {});
-                else loadPeriods().catch(() => {});
+                loadPeriods().catch(() => {});
               }}
               className={`rounded-full border px-3 py-1.5 text-sm font-bold ${activeSection === item.id ? "border-[#2f63e3] bg-[#2f63e3] text-white" : "border-[#cfd8ef] bg-white text-[#2f4477]"}`}
             >
               {item.label}
             </button>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -550,7 +589,7 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
               <tbody>{assessmentRows.map((item, index) => {
                 const assessmentStatus = item.penilaian_saya ? "Sudah Dinilai" : item.session_started ? "Belum Dinilai" : "Sesi Belum Dimulai";
                 const revisionStatus = item.revisi_terakhir?.status === "submitted" ? "Menunggu Review" : item.revisi_terakhir?.status === "revision_required" ? "Perlu Revisi Lagi" : item.revisi_terakhir?.status === "approved" ? "Disetujui" : item.keputusan?.status_kelulusan === "lulus_bersyarat" ? "Menunggu Upload" : "-";
-                return <tr key={`assessment-${item.id}`} className="border-b border-[#eff3fb]"><td className="px-3 py-3">{index + 1}</td><td className="px-3 py-3"><p className="font-bold text-[#263a66]">{item.mahasiswa?.nama || "-"}</p><p className="text-xs text-[#7582a2]">{item.mahasiswa?.nim || "-"}</p></td><td className="px-3 py-3"><p className="font-semibold text-[#263a66]">{formatDateLabel(item.tanggal_sidang)}</p><p className="text-xs text-[#7582a2]">{item.sesi_mulai}–{item.sesi_selesai} · {item.ruangan}</p></td><td className="px-3 py-3 capitalize">{String(item.peran_saya || "-").replace("penguji", "Penguji ")}</td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.penilaian_saya ? "bg-[#e5f8ed] text-[#147347]" : item.session_started ? "bg-[#fff4d9] text-[#926600]" : "bg-[#eef2fb] text-[#59678e]"}`}>{assessmentStatus}</span></td><td className="px-3 py-3">{decisionLabel(item.keputusan?.keputusan)}</td><td className="px-3 py-3">{revisionStatus}</td><td className="px-3 py-3"><button type="button" onClick={() => loadAssessmentDetail(item.id).catch(() => {})} className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110"><FileCheck2 className="h-3.5 w-3.5" />{item.can_review_revision ? "Review Revisi" : item.keputusan ? "Lihat Hasil" : item.penilaian_saya ? "Ubah Penilaian" : "Isi Penilaian"}</button></td></tr>;
+                return <tr key={`assessment-${item.id}`} className="border-b border-[#eff3fb]"><td className="px-3 py-3">{index + 1}</td><td className="px-3 py-3"><p className="font-bold text-[#263a66]">{item.mahasiswa?.nama || "-"}</p><p className="text-xs text-[#7582a2]">{item.mahasiswa?.nim || "-"}</p></td><td className="px-3 py-3"><p className="font-semibold text-[#263a66]">{formatDateLabel(item.tanggal_sidang)}</p><p className="text-xs text-[#7582a2]">{item.sesi_mulai}–{item.sesi_selesai} · {item.ruangan}</p></td><td className="px-3 py-3 capitalize">{String(item.peran_saya || "-").replace("penguji", "Penguji ")}</td><td className="px-3 py-3"><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.penilaian_saya ? "bg-[#e5f8ed] text-[#147347]" : item.session_started ? "bg-[#fff4d9] text-[#926600]" : "bg-[#eef2fb] text-[#59678e]"}`}>{assessmentStatus}</span></td><td className="px-3 py-3">{decisionLabel(item.keputusan?.keputusan)}</td><td className="px-3 py-3">{revisionStatus}</td><td className="px-3 py-3"><button type="button" onClick={() => loadAssessmentDetail(item.id).catch(() => {})} className="inline-flex items-center gap-1 rounded-md bg-[#2f63e3] px-3 py-1.5 text-xs font-bold text-white hover:brightness-110"><FileCheck2 className="h-3.5 w-3.5" />{item.can_review_revision ? "Review Revisi" : item.penilaian_saya ? "Lihat Penilaian" : item.keputusan ? "Lihat Hasil" : "Isi Penilaian"}</button></td></tr>;
               })}</tbody>
             </table>
             {!loading && assessmentRows.length === 0 ? <div className="absolute inset-x-0 bottom-0 top-[41px] flex items-center justify-center text-sm font-semibold text-[#7b88ab]">Belum ada jadwal sidang yang ditugaskan kepada Anda.</div> : null}
@@ -567,25 +606,29 @@ function DosenSidangKetersediaanPage({ session, apiBaseUrl, onSessionExpired }) 
             {!selectedAssessment.session_started ? <div className="mt-4 rounded-xl border border-[#f0d7a6] bg-[#fffaf0] p-4 text-sm font-semibold text-[#8a6200]">Penilaian baru dapat diberikan saat sesi dimulai, yaitu {formatDateLabel(selectedAssessment.tanggal_sidang)} pukul {selectedAssessment.sesi_mulai} WIB.</div> : null}
           </section>
 
-          {!selectedAssessment.keputusan ? (
+          {(!selectedAssessment.keputusan || assessmentLocked) ? (
             <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
-              <h3 className="text-lg font-black text-[#1b274b]">Form Penilaian</h3>
-              <p className="mt-1 text-sm text-[#66769a]">Keputusan akhir dibentuk setelah kedua penguji mengirim penilaian.</p>
-              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <label className="text-sm font-bold text-[#263b6f]">Nilai Akhir (0–100)<input type="number" min="0" max="100" step="0.01" disabled={!selectedAssessment.session_started} value={assessmentForm.nilai_akhir} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, nilai_akhir: event.target.value }))} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]" /></label>
-                <label className="text-sm font-bold text-[#263b6f]">Keputusan<select disabled={!selectedAssessment.session_started} value={assessmentForm.keputusan} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, keputusan: event.target.value }))} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]"><option value="">Pilih keputusan</option><option value="lulus">Lulus</option><option value="lulus_dengan_revisi">Lulus dengan Revisi</option><option value="tidak_lulus">Tidak Lulus</option></select></label>
+              <h3 className="text-lg font-black text-[#1b274b]">{assessmentLocked ? "Penilaian Anda" : "Form Penilaian"}</h3>
+              <p className="mt-1 text-sm text-[#66769a]">{assessmentLocked ? "Penilaian telah dikirim dan tidak dapat diubah." : "Keputusan akhir dibentuk setelah kedua penguji mengirim penilaian."}</p>
+              {assessmentLocked ? <div className="mt-4 rounded-xl border border-[#c8ead6] bg-[#f1fbf5] p-3 text-sm font-semibold text-[#147347]">Penilaian ini sudah final. Anda hanya dapat melihat data yang telah dikirim.</div> : null}
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+                <label className="text-sm font-bold text-[#263b6f]">Nilai Akhir (0–100)<input type="number" min="0" max="100" step="0.01" inputMode="decimal" disabled={!selectedAssessment.session_started || assessmentLocked} value={assessmentForm.nilai_akhir} onKeyDown={(event) => { if (["e", "E", "+", "-"].includes(event.key)) event.preventDefault(); }} onChange={(event) => { const nextValue = event.target.value; if (nextValue === "" || (/^\d{0,3}(?:\.\d{0,2})?$/.test(nextValue) && Number(nextValue) <= 100)) setAssessmentForm((prev) => ({ ...prev, nilai_akhir: nextValue })); }} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]" /></label>
+                <label className="text-sm font-bold text-[#263b6f]">Huruf Nilai<select disabled={!selectedAssessment.session_started || assessmentLocked} value={assessmentForm.huruf_nilai} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, huruf_nilai: event.target.value }))} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]"><option value="">Pilih huruf nilai</option>{GRADE_LETTER_OPTIONS.map((grade) => <option key={grade} value={grade}>{grade}</option>)}</select></label>
+                <label className="text-sm font-bold text-[#263b6f]">Keputusan<select disabled={!selectedAssessment.session_started || assessmentLocked} value={assessmentForm.keputusan} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, keputusan: event.target.value }))} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]"><option value="">Pilih keputusan</option><option value="lulus">Lulus</option><option value="lulus_dengan_revisi">Lulus dengan Revisi</option><option value="tidak_lulus">Tidak Lulus</option></select></label>
               </div>
-              <label className="mt-4 block text-sm font-bold text-[#263b6f]">Catatan Penilaian<textarea rows="4" disabled={!selectedAssessment.session_started} value={assessmentForm.catatan} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, catatan: event.target.value }))} placeholder={assessmentForm.keputusan === "tidak_lulus" ? "Alasan tidak lulus wajib diisi" : "Catatan umum penilaian sidang"} className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]" /></label>
-              {assessmentForm.keputusan === "lulus_dengan_revisi" ? <label className="mt-4 block text-sm font-bold text-[#263b6f]">Catatan Revisi <span className="text-[#b73a3a]">*</span><textarea rows="5" disabled={!selectedAssessment.session_started} value={assessmentForm.catatan_revisi} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, catatan_revisi: event.target.value }))} placeholder="Tuliskan poin-poin yang wajib diperbaiki mahasiswa" className="mt-1 w-full rounded-lg border border-[#d1daf0] bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa]" /></label> : null}
-              <div className="mt-4 flex justify-end border-t border-[#e7edf8] pt-4"><button type="button" disabled={!selectedAssessment.session_started || savingAssessment || assessmentForm.nilai_akhir === "" || !assessmentForm.keputusan} onClick={() => submitAssessment().catch(() => {})} className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"><Save className="h-4 w-4" />{savingAssessment ? "Menyimpan..." : "Simpan Penilaian"}</button></div>
+              <label className="mt-4 block text-sm font-bold text-[#263b6f]">Catatan Penilaian<textarea rows="4" disabled={!selectedAssessment.session_started || assessmentLocked} value={assessmentForm.catatan} aria-invalid={Boolean(assessmentTextErrors.catatan)} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, catatan: event.target.value }))} placeholder={assessmentForm.keputusan === "tidak_lulus" ? "Alasan tidak lulus wajib diisi" : "Catatan umum penilaian sidang"} className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa] ${assessmentTextErrors.catatan ? "border-[#d64545]" : "border-[#d1daf0]"}`} />{assessmentTextErrors.catatan ? <span className="mt-1 block text-xs font-semibold text-[#c23737]">{assessmentTextErrors.catatan}</span> : null}</label>
+              {assessmentForm.keputusan === "lulus_dengan_revisi" ? <label className="mt-4 block text-sm font-bold text-[#263b6f]">Catatan Revisi <span className="text-[#b73a3a]">*</span><textarea rows="5" disabled={!selectedAssessment.session_started || assessmentLocked} value={assessmentForm.catatan_revisi} aria-invalid={Boolean(assessmentTextErrors.catatan_revisi)} onChange={(event) => setAssessmentForm((prev) => ({ ...prev, catatan_revisi: event.target.value }))} placeholder="Tuliskan poin-poin yang wajib diperbaiki mahasiswa" className={`mt-1 w-full rounded-lg border bg-white px-3 py-2 font-normal disabled:bg-[#f1f4fa] ${assessmentTextErrors.catatan_revisi ? "border-[#d64545]" : "border-[#d1daf0]"}`} />{assessmentTextErrors.catatan_revisi ? <span className="mt-1 block text-xs font-semibold text-[#c23737]">{assessmentTextErrors.catatan_revisi}</span> : null}</label> : null}
+              {!assessmentLocked ? <div className="mt-4 flex justify-end border-t border-[#e7edf8] pt-4"><button type="button" disabled={!selectedAssessment.session_started || savingAssessment || assessmentForm.nilai_akhir === "" || !assessmentForm.huruf_nilai || !assessmentForm.keputusan || Boolean(assessmentTextErrors.catatan) || Boolean(assessmentTextErrors.catatan_revisi)} onClick={() => submitAssessment().catch(() => {})} className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"><Save className="h-4 w-4" />{savingAssessment ? "Menyimpan..." : "Simpan Penilaian"}</button></div> : null}
             </section>
-          ) : (
+          ) : null}
+
+          {selectedAssessment.keputusan ? (
             <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-lg font-black text-[#1b274b]">Hasil Keputusan Sidang</h3><p className="mt-1 text-sm text-[#66769a]">Keputusan telah difinalisasi setelah kedua penguji mengirim penilaian.</p></div><span className={`rounded-full px-3 py-1.5 text-xs font-black ${selectedAssessment.keputusan.status_kelulusan === "lulus" ? "bg-[#e5f8ed] text-[#147347]" : selectedAssessment.keputusan.status_kelulusan === "tidak_lulus" ? "bg-[#ffe9e9] text-[#b73a3a]" : "bg-[#fff4d9] text-[#926600]"}`}>{graduationStatusLabel(selectedAssessment.keputusan.status_kelulusan)}</span></div>
               <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2"><div className="rounded-lg border border-[#dfe7f5] bg-[#f8fbff] p-4"><p className="text-xs font-bold uppercase text-[#7582a2]">Keputusan</p><p className="mt-1 text-lg font-black text-[#263a66]">{decisionLabel(selectedAssessment.keputusan.keputusan)}</p></div><div className="rounded-lg border border-[#dfe7f5] bg-[#f8fbff] p-4"><p className="text-xs font-bold uppercase text-[#7582a2]">Nilai Akhir</p><p className="mt-1 text-lg font-black text-[#263a66]">{selectedAssessment.keputusan.nilai_akhir}</p></div></div>
-              <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">{(selectedAssessment.penilaians || []).map((item) => <div key={item.id} className="rounded-xl border border-[#dfe7f5] p-4"><p className="font-black text-[#263a66]">{item.peran === "penguji1" ? "Penguji 1" : "Penguji 2"} — {item.dosen?.nama || "-"}</p><p className="mt-2 text-sm text-[#52658f]">Nilai: <b>{item.nilai_akhir}</b> · {decisionLabel(item.keputusan)}</p>{item.catatan ? <p className="mt-2 whitespace-pre-wrap text-sm text-[#52658f]">{item.catatan}</p> : null}{item.catatan_revisi ? <div className="mt-3 rounded-lg bg-[#fff8e8] p-3 text-sm text-[#765900]"><b>Catatan revisi:</b><p className="mt-1 whitespace-pre-wrap">{item.catatan_revisi}</p></div> : null}</div>)}</div>
+              <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">{(selectedAssessment.penilaians || []).map((item) => <div key={item.id} className="rounded-xl border border-[#dfe7f5] p-4"><p className="font-black text-[#263a66]">{item.peran === "penguji1" ? "Penguji 1" : "Penguji 2"} — {item.dosen?.nama || "-"}</p><p className="mt-2 text-sm text-[#52658f]">Nilai: <b>{item.nilai_akhir}</b>{item.huruf_nilai ? <> (<b>{item.huruf_nilai}</b>)</> : null} · {decisionLabel(item.keputusan)}</p>{item.catatan ? <p className="mt-2 whitespace-pre-wrap text-sm text-[#52658f]">{item.catatan}</p> : null}{item.catatan_revisi ? <div className="mt-3 rounded-lg bg-[#fff8e8] p-3 text-sm text-[#765900]"><b>Catatan revisi:</b><p className="mt-1 whitespace-pre-wrap">{item.catatan_revisi}</p></div> : null}</div>)}</div>
             </section>
-          )}
+          ) : null}
 
           {selectedAssessment.keputusan?.status_kelulusan === "lulus_bersyarat" ? (
             <section className="rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">

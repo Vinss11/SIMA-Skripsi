@@ -13,6 +13,7 @@ module.exports = (sequelize, DataTypes) => {
     dosen_id: { type: DataTypes.INTEGER, allowNull: false },
     peran: { type: DataTypes.ENUM("penguji1", "penguji2"), allowNull: false },
     nilai_akhir: { type: DataTypes.DECIMAL(5, 2), allowNull: false },
+    huruf_nilai: { type: DataTypes.STRING(5), allowNull: true },
     keputusan: { type: DataTypes.ENUM("lulus", "lulus_dengan_revisi", "tidak_lulus"), allowNull: false },
     catatan: { type: DataTypes.TEXT, allowNull: true },
     catatan_revisi: { type: DataTypes.TEXT, allowNull: true },

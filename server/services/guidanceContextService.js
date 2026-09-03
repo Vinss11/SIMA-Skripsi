@@ -32,7 +32,13 @@ async function resolveActiveGuidanceContext(mahasiswaId, { targetMemberId = null
     order: [[{ model: PenetapanPembimbingDosen, as: "pembimbings" }, "urutan", "ASC"]],
     transaction,
   });
-  if (!assignment) throw new GuidanceContextError("Assignment pembimbing aktif yang terikat siklus wajib tersedia.", 409, "GUIDANCE_ASSIGNMENT_REQUIRED");
+  if (!assignment) {
+    throw new GuidanceContextError(
+      "Dosen pembimbing skripsi Anda belum ditetapkan. Silakan menunggu proses penetapan oleh Sekretaris Prodi.",
+      409,
+      "GUIDANCE_ASSIGNMENT_REQUIRED"
+    );
+  }
   if (lock && transaction) {
     await PenetapanPembimbing.findByPk(assignment.id, { transaction, lock: transaction.LOCK.UPDATE });
     await PenetapanPembimbingDosen.findAll({ where: { penetapan_pembimbing_id: assignment.id, status: "active" }, transaction, lock: transaction.LOCK.UPDATE });

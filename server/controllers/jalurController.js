@@ -684,7 +684,7 @@ async function validateSubmissionTargetJalur({
   }
 
   if (targetJalur !== "penelitian" && requireNonPenelitianNotSubmitted) {
-    if (!["pending", "draft"].includes(String(pendaftaranAktif.form_lanjutan_status || ""))) {
+    if (!["pending", "draft", "rejected"].includes(String(pendaftaranAktif.form_lanjutan_status || ""))) {
       return {
         allowed: false,
         statusCode: 409,
@@ -722,9 +722,9 @@ function isHttpUrl(value) {
 }
 
 const MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS = new Set([
-  "+", "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
+  "+", "=", "_", "{", "}", "[", "]", "<", ">", "/", "?", "\\", "|", ":", ";", "'", '"',
 ]);
-const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["+", "{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
+const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["+", "{", "}", "[", "]", "<", ">", "\\", "|", ";", "'", '"']);
 const RESEARCH_TITLE_FORBIDDEN_CHARACTERS = new Set([
   "+", "=", "_", "{", "}", "[", "]", "<", ">", "/", "?", "\\", "|", ":", ";", "'", '"',
 ]);
@@ -734,9 +734,29 @@ function containsForbiddenCharacters(value, forbiddenCharacters) {
   return text.includes("--") || Array.from(text).some((character) => forbiddenCharacters.has(character));
 }
 
+function getLocalDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isValidDateOnly(value) {
+  const dateText = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(dateText)) return false;
+  const parsedDate = new Date(`${dateText}T00:00:00`);
+  return !Number.isNaN(parsedDate.getTime()) && getLocalDateInputValue(parsedDate) === dateText;
+}
+
 function getResearchTitleValidationError(value) {
   return containsForbiddenCharacters(value, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)
     ? "Judul penelitian tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' \", atau pola -- (komentar SQL)."
+    : "";
+}
+
+function getResearchDescriptionValidationError(value) {
+  return containsForbiddenCharacters(value, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)
+    ? getInvalidNonResearchTextMessage("Deskripsi singkat")
     : "";
 }
 
@@ -748,46 +768,18 @@ function hasForbiddenMagangUrlCharacters(value) {
   return containsForbiddenCharacters(value, MAGANG_URL_FORBIDDEN_CHARACTERS);
 }
 
-async function getActiveMitraMagangNameSet(transaction) {
-  const rows = await MitraMagang.findAll({
-    where: { is_active: true },
-    attributes: ["nama"],
-    order: [["nama", "ASC"]],
-    transaction,
-  });
-
-  const names = new Set();
-  for (const row of rows) {
-    const nama = String(row?.nama || "").trim();
-    if (nama) names.add(nama);
-  }
-
-  return names;
+function getInvalidMagangUrlMessage(label) {
+  return `${label} tidak boleh mengandung karakter { } [ ] < > + \\ | ; ' ", atau pola -- (komentar SQL).`;
 }
 
-async function findActiveMitraMagangByNama(nama, transaction) {
-  if (!nama) return null;
-
+async function findActiveMitraMagangById(id, transaction) {
+  const mitraId = Number(id);
+  if (!Number.isInteger(mitraId) || mitraId <= 0) return null;
   return MitraMagang.findOne({
-    where: {
-      is_active: true,
-      [Op.and]: [
-        sequelize.where(sequelize.fn("LOWER", sequelize.col("nama")), String(nama).trim().toLowerCase()),
-      ],
-    },
+    where: { id: mitraId, is_active: true },
     attributes: [
-      "id",
-      "nama",
-      "bidang_jenis",
-      "lokasi",
-      "email_kontak",
-      "website",
-      "posisi_magang",
-      "quota_magang",
-      "kriteria",
-      "prosedur_perusahaan",
-      "status",
-      "is_active",
+      "id", "nama", "bidang_jenis", "lokasi", "email_kontak", "website",
+      "posisi_magang", "quota_magang", "kriteria", "prosedur_perusahaan", "status", "is_active",
     ],
     transaction,
   });
@@ -822,6 +814,9 @@ function normalizeMagangSubmissionPayload(rawPayload) {
     chosen_institution:
       String(payload.chosen_institution || "").trim() ||
       (companyType === "non_partner_company" ? MAGANG_NON_PARTNER_INSTITUTION_LABEL : ""),
+    mitra_id: Number.isInteger(Number(payload.mitra_id)) && Number(payload.mitra_id) > 0
+      ? Number(payload.mitra_id)
+      : null,
     complete_address_of_institution: String(payload.complete_address_of_institution || "").trim(),
     company_type: companyType,
     sudah_apply_ke_mitra: parseBoolean(payload.sudah_apply_ke_mitra),
@@ -845,19 +840,19 @@ function normalizeMagangSubmissionPayload(rawPayload) {
   };
 }
 
-function validateMagangSubmissionPayload(payload, mitraNameSet) {
+function validateMagangSubmissionPayload(payload, selectedActiveMitra) {
   if (payload.sudah_apply_ke_mitra === null) {
     return { statusCode: 400, message: "Konfirmasi apply ke mitra magang wajib dipilih." };
-  }
-  if (payload.sudah_apply_ke_mitra === false) {
-    return { statusCode: 400, message: "Mahasiswa harus sudah apply ke mitra magang sebelum mengirim form." };
   }
   if (payload.sudah_apply_ke_mitra === true) {
     if (!payload.tanggal_apply) {
       return { statusCode: 400, message: "Tanggal apply wajib diisi." };
     }
-    if (Number.isNaN(new Date(payload.tanggal_apply).getTime())) {
+    if (!isValidDateOnly(payload.tanggal_apply)) {
       return { statusCode: 400, message: "Format tanggal apply tidak valid." };
+    }
+    if (payload.tanggal_apply > getLocalDateInputValue()) {
+      return { statusCode: 400, message: "Tanggal apply tidak boleh melebihi tanggal hari ini." };
     }
     if (!payload.metode_apply) {
       return { statusCode: 400, message: "Metode apply wajib dipilih terlebih dahulu." };
@@ -871,7 +866,7 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
     if (hasForbiddenMagangAdditionalNoteCharacters(payload.bukti_apply)) {
       return {
         statusCode: 400,
-        message: "Catatan tambahan mengandung karakter yang tidak diperbolehkan.",
+        message: getInvalidNonResearchTextMessage("Catatan tambahan"),
       };
     }
   }
@@ -884,6 +879,12 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   if (payload.proposed_position === "other" && !payload.proposed_position_other) {
     return { statusCode: 400, message: "Isi detail posisi untuk opsi Other pada Proposed / Expected Position." };
   }
+  if (
+    payload.proposed_position === "other"
+    && containsForbiddenCharacters(payload.proposed_position_other, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)
+  ) {
+    return { statusCode: 400, message: getInvalidNonResearchTextMessage("Posisi lain") };
+  }
 
   if (!payload.company_sector) return { statusCode: 400, message: "Company Sector wajib dipilih." };
   if (!MAGANG_COMPANY_SECTOR_OPTIONS.includes(payload.company_sector)) {
@@ -892,11 +893,23 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   if (payload.company_sector === "other" && !payload.company_sector_other) {
     return { statusCode: 400, message: "Isi detail sektor untuk opsi Other pada Company Sector." };
   }
+  if (
+    payload.company_sector === "other"
+    && containsForbiddenCharacters(payload.company_sector_other, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)
+  ) {
+    return { statusCode: 400, message: getInvalidNonResearchTextMessage("Sektor perusahaan lain") };
+  }
 
   if (!payload.chosen_institution) return { statusCode: 400, message: "Chosen Institution wajib dipilih." };
 
   if (!payload.complete_address_of_institution) {
     return { statusCode: 400, message: "Complete Address of the Institution wajib diisi." };
+  }
+  if (containsForbiddenCharacters(payload.complete_address_of_institution, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)) {
+    return {
+      statusCode: 400,
+      message: getInvalidNonResearchTextMessage("Complete address of the institution"),
+    };
   }
 
   if (!payload.company_type) return { statusCode: 400, message: "Type of Company wajib dipilih." };
@@ -904,13 +917,10 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
     return { statusCode: 400, message: "Pilihan Type of Company tidak valid." };
   }
   if (payload.company_type === "partner_company") {
-    if (!(mitraNameSet instanceof Set) || mitraNameSet.size === 0) {
-      return { statusCode: 409, message: "Daftar mitra magang belum tersedia. Hubungi sekretaris prodi." };
-    }
-    if (!mitraNameSet.has(payload.chosen_institution)) {
+    if (!selectedActiveMitra || Number(selectedActiveMitra.id) !== Number(payload.mitra_id)) {
       return {
         statusCode: 409,
-        message: "Institusi magang tidak valid atau sudah tidak aktif pada daftar mitra.",
+        message: "Institusi magang tidak valid, belum dipilih dari daftar, atau sudah tidak aktif.",
       };
     }
   }
@@ -925,7 +935,7 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   if (hasForbiddenMagangUrlCharacters(payload.internship_company_website_url)) {
     return {
       statusCode: 400,
-      message: "Internship Company website URL mengandung karakter yang tidak diperbolehkan.",
+      message: getInvalidMagangUrlMessage("Internship Company website URL"),
     };
   }
 
@@ -936,7 +946,7 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
   if (hasForbiddenMagangUrlCharacters(payload.internship_vacancy_url)) {
     return {
       statusCode: 400,
-      message: "Internship vacancy URL mengandung karakter yang tidak diperbolehkan.",
+      message: getInvalidMagangUrlMessage("Internship vacancy URL"),
     };
   }
 
@@ -956,11 +966,23 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
       return { statusCode: 400, message: "Chosen Institution wajib diisi untuk Non partner Company." };
     }
     if (!payload.company_name) return { statusCode: 400, message: "Company name wajib diisi untuk Non partner Company." };
+    if (containsForbiddenCharacters(payload.company_name, RESEARCH_TITLE_FORBIDDEN_CHARACTERS)) {
+      return { statusCode: 400, message: getInvalidNonResearchTextMessage("Company name") };
+    }
     if (!payload.year_of_establishment) {
       return { statusCode: 400, message: "Year of establishment wajib diisi untuk Non partner Company." };
     }
+    if (!/^\d{4}$/u.test(payload.year_of_establishment) || Number(payload.year_of_establishment) < 1000) {
+      return { statusCode: 400, message: "Year of establishment harus menggunakan format tahun 4 digit yang valid (YYYY)." };
+    }
+    if (Number(payload.year_of_establishment) > new Date().getFullYear()) {
+      return { statusCode: 400, message: "Year of establishment tidak boleh melebihi tahun berjalan." };
+    }
     if (!payload.number_of_employees) {
       return { statusCode: 400, message: "Number of employees wajib diisi untuk Non partner Company." };
+    }
+    if (!/^[1-9]\d*$/u.test(payload.number_of_employees)) {
+      return { statusCode: 400, message: "Number of employees harus berupa bilangan bulat positif." };
     }
     if (!payload.internship_application_method) {
       return {
@@ -982,6 +1004,12 @@ function validateMagangSubmissionPayload(payload, mitraNameSet) {
         statusCode: 400,
         message: "Selection Processes wajib diisi minimal 1 langkah untuk Non partner Company.",
       };
+    }
+    if (
+      payload.selection_processes.some((selectionProcess) =>
+        containsForbiddenCharacters(selectionProcess, RESEARCH_TITLE_FORBIDDEN_CHARACTERS))
+    ) {
+      return { statusCode: 400, message: getInvalidNonResearchTextMessage("Selection Processes") };
     }
   }
 
@@ -2089,13 +2117,18 @@ exports.getJalurEligibility = async (req, res) => {
 
       onboardingLocked = false;
     } else {
-      const alreadySubmittedNonPenelitian = !["pending", "draft"].includes(
+      const alreadySubmittedNonPenelitian = !["pending", "draft", "rejected"].includes(
         String(pendaftaranAktif?.form_lanjutan_status || "")
       );
       const alreadySubmittedPenelitian = hasPenelitianSubmission || hasActivePengajuan;
       const targetSubmitted =
         selectedJalur === "penelitian" ? alreadySubmittedPenelitian : alreadySubmittedNonPenelitian;
       const registrationApproved = String(pendaftaranAktif?.status || "") === "approved";
+      const canRetryRejectedNonPenelitian = Boolean(
+        selectedJalur !== "penelitian"
+        && String(pendaftaranAktif?.form_lanjutan_status || "").trim().toLowerCase() === "rejected"
+        && registrationApproved
+      );
       const isPerintisanMember =
         selectedJalur === "perintisan_bisnis" && kelompokPerintisan && !kelompokPerintisan.is_ketua;
 
@@ -2123,7 +2156,8 @@ exports.getJalurEligibility = async (req, res) => {
       });
 
       onboardingLocked =
-        !registrationApproved || (!targetSubmitted && !canRetryRejectedPenelitian);
+        !registrationApproved
+        || (!targetSubmitted && !canRetryRejectedPenelitian && !canRetryRejectedNonPenelitian);
       onboardingReason = onboardingLocked
         ? !registrationApproved
           ? pendaftaranAktif?.status === "rejected"
@@ -2172,6 +2206,10 @@ exports.getJalurEligibility = async (req, res) => {
           has_active_pengajuan: hasActivePengajuan,
           has_penelitian_submission: hasPenelitianSubmission,
           can_retry_rejected_penelitian: canRetryRejectedPenelitian,
+          can_retry_rejected_non_penelitian:
+            selectedJalur !== "penelitian"
+            && String(pendaftaranAktif?.form_lanjutan_status || "").trim().toLowerCase() === "rejected"
+            && String(pendaftaranAktif?.status || "").trim().toLowerCase() === "approved",
         },
       },
     });
@@ -2427,8 +2465,16 @@ exports.submitFormNonPenelitian = async (req, res) => {
         uploadedDocuments.supporting_documents_note?.original_name || payloadToSave.supporting_documents_note;
       payloadToSave.uploaded_documents = uploadedDocuments;
 
-      const activeMitraNameSet = await getActiveMitraMagangNameSet(t);
-      const validationResult = validateMagangSubmissionPayload(payloadToSave, activeMitraNameSet);
+      const isNonPartner = payloadToSave.company_type === "non_partner_company";
+      const selectedMitra = !isNonPartner
+        ? await findActiveMitraMagangById(payloadToSave.mitra_id, t)
+        : null;
+      if (selectedMitra) {
+        payloadToSave.mitra_id = selectedMitra.id;
+        payloadToSave.chosen_institution = selectedMitra.nama;
+      }
+
+      const validationResult = validateMagangSubmissionPayload(payloadToSave, selectedMitra);
       if (validationResult.message) {
         return rollbackAndRespond(validationResult.statusCode || 400, {
           success: false,
@@ -2436,10 +2482,6 @@ exports.submitFormNonPenelitian = async (req, res) => {
         });
       }
 
-      const isNonPartner = payloadToSave.company_type === "non_partner_company";
-      const selectedMitra = !isNonPartner
-        ? await findActiveMitraMagangByNama(payloadToSave.chosen_institution, t)
-        : null;
       payloadToSave.mitra_id = selectedMitra ? selectedMitra.id : null;
       payloadToSave.mitra_snapshot = selectedMitra
         ? {
@@ -2646,7 +2688,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
         referenceId: registrationId,
         actionKey: "student_path_status",
         metadata: { jalur: requestedJalur, workflow_status: workflowStatus },
-        deduplicationKey: `penjaluran:${registrationId}:notification:form-submitted`,
+        deduplicationKey: `penjaluran:${registrationId}:notification:form-submitted:${now.toISOString()}`,
         transaction: t,
       });
       if (pathReviewer.dosen_id) {
@@ -2659,7 +2701,7 @@ exports.submitFormNonPenelitian = async (req, res) => {
           referenceId: registrationId,
           actionKey: "lecturer_path_review",
           metadata: { jalur: requestedJalur, mahasiswa_id: mahasiswaId },
-          deduplicationKey: `penjaluran:${registrationId}:notification:path-review`,
+          deduplicationKey: `penjaluran:${registrationId}:notification:path-review:${now.toISOString()}`,
           transaction: t,
         });
       }
@@ -3000,8 +3042,8 @@ async function decideNonPenelitianReviewByDosen(req, res, decision, targetJalur)
         referenceType: "pendaftaran_penjaluran",
         referenceId: target.id,
         actionKey: "student_path_status",
-        metadata: { jalur: targetJalur, decision },
-        deduplicationKey: `penjaluran:${target.id}:notification:path-decision:${decision}`,
+        metadata: { jalur: targetJalur, decision, can_resubmit: decision === "rejected" },
+        deduplicationKey: `penjaluran:${target.id}:notification:path-decision:${decision}:${now.toISOString()}`,
         transaction: t,
       });
       if (nextStatus === "review_sekprodi") {
@@ -3588,8 +3630,8 @@ async function decideNonPenelitianReviewBySekretaris(req, res, decision) {
           referenceType: "pendaftaran_penjaluran",
           referenceId: target.id,
           actionKey: "student_path_status",
-          metadata: { jalur: reviewable.selectedJalur, decision },
-          deduplicationKey: `penjaluran:${target.id}:notification:final-rejected`,
+          metadata: { jalur: reviewable.selectedJalur, decision, can_resubmit: true },
+          deduplicationKey: `penjaluran:${target.id}:notification:final-rejected:${now.toISOString()}`,
           transaction: t,
         });
       }
@@ -3914,6 +3956,12 @@ exports.submitUlangJudulMandiri = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ success: false, message: judulValidationError });
     }
+    const normalizedDeskripsiMandiri = String(deskripsi_mandiri).trim();
+    const deskripsiValidationError = getResearchDescriptionValidationError(normalizedDeskripsiMandiri);
+    if (deskripsiValidationError) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: deskripsiValidationError });
+    }
 
     const bidangValidation = await validateBidangPenelitianSelection(bidang_penelitian_ids, t);
     if (!bidangValidation.ok) {
@@ -4027,7 +4075,7 @@ exports.submitUlangJudulMandiri = async (req, res) => {
         pamit_ulang_id: pamit_id,
         pengajuan_sebelumnya_id: pamit.pengajuan_sebelumnya_id,
         judul_mandiri: normalizedJudulMandiri,
-        deskripsi_mandiri,
+        deskripsi_mandiri: normalizedDeskripsiMandiri,
         keyword_mandiri: null,
         cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,
@@ -4267,6 +4315,12 @@ exports.submitBaruJudulMandiri = async (req, res) => {
       await t.rollback();
       return res.status(400).json({ success: false, message: judulValidationError });
     }
+    const normalizedDeskripsiMandiri = String(deskripsi_mandiri).trim();
+    const deskripsiValidationError = getResearchDescriptionValidationError(normalizedDeskripsiMandiri);
+    if (deskripsiValidationError) {
+      await t.rollback();
+      return res.status(400).json({ success: false, message: deskripsiValidationError });
+    }
 
 
     const bidangValidation = await validateBidangPenelitianSelection(bidang_penelitian_ids, t);
@@ -4363,7 +4417,7 @@ exports.submitBaruJudulMandiri = async (req, res) => {
         tipe_pengajuan: "judul_mandiri",
         pendaftaran_penjaluran_id: jalurGate.pendaftaranAktif.id,
         judul_mandiri: normalizedJudulMandiri,
-        deskripsi_mandiri,
+        deskripsi_mandiri: normalizedDeskripsiMandiri,
         keyword_mandiri: null,
         cluster_mandiri: clusterValidation.cluster_label,
         prospective_supervisor_id,

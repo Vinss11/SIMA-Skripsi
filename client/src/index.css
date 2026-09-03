@@ -31,4 +31,10 @@
     min-height: 440px;
     height: clamp(440px, 56vh, 640px);
   }
+
+  .master-penjaluran-role-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 32rem), 1fr));
+  }
+
 }

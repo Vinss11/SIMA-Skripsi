@@ -183,15 +183,15 @@ function getMagangUrlError(value, { required = false, label = "URL" } = {}) {
   const text = String(value || "").trim();
   if (!text) return required ? `${label} wajib diisi.` : "";
   if (hasForbiddenMagangUrlCharacters(text)) {
-    return `${label} tidak boleh mengandung karakter + { } [ ] ; ' " < > \\ atau pola --.`;
+    return getInvalidMagangUrlMessage(label);
   }
   return isHttpUrl(text) ? "" : `${label} harus berupa URL valid yang diawali http:// atau https://.`;
 }
 
 const MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS = new Set([
-  "+", "{", "}", "[", "]", ":", ";", "'", '"', "<", ">", "/", "\\",
+  "+", "=", "_", "{", "}", "[", "]", "<", ">", "/", "?", "\\", "|", ":", ";", "'", '"',
 ]);
-const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["+", "{", "}", "[", "]", ";", "'", '"', "<", ">", "\\"]);
+const MAGANG_URL_FORBIDDEN_CHARACTERS = new Set(["+", "{", "}", "[", "]", "<", ">", "\\", "|", ";", "'", '"']);
 
 function containsForbiddenCharacters(value, forbiddenCharacters) {
   const text = String(value || "");
@@ -202,11 +202,15 @@ function hasForbiddenMagangUrlCharacters(value) {
   return containsForbiddenCharacters(value, MAGANG_URL_FORBIDDEN_CHARACTERS);
 }
 
+function getInvalidMagangUrlMessage(label) {
+  return `${label} tidak boleh mengandung karakter { } [ ] < > + \\ | ; ' ", atau pola -- (komentar SQL).`;
+}
+
 function getMagangAdditionalNoteError(value) {
   const text = String(value || "");
   if (!text) return "";
   return containsForbiddenCharacters(text, MAGANG_ADDITIONAL_NOTE_FORBIDDEN_CHARACTERS)
-    ? "Catatan tambahan tidak boleh mengandung karakter + { } [ ] : ; ' \" < > / \\ atau pola --."
+    ? getInvalidGenericTextMessage("Catatan tambahan")
     : "";
 }
 
@@ -328,6 +332,42 @@ function hasInvalidGenericText(value) {
 
 function getInvalidGenericTextMessage(label) {
   return `${label} tidak boleh mengandung karakter { } [ ] < > ? + = _ / \\ | : ; ' ", atau pola -- (komentar SQL).`;
+}
+
+function getYearOfEstablishmentError(value) {
+  const yearText = String(value || "").trim();
+  if (!/^\d{4}$/u.test(yearText) || Number(yearText) < 1000) {
+    return "Year of establishment harus menggunakan format tahun 4 digit yang valid (YYYY).";
+  }
+  if (Number(yearText) > new Date().getFullYear()) {
+    return "Year of establishment tidak boleh melebihi tahun berjalan.";
+  }
+  return "";
+}
+
+function getNumberOfEmployeesError(value) {
+  return /^[1-9]\d*$/u.test(String(value || "").trim())
+    ? ""
+    : "Number of employees harus berupa bilangan bulat positif.";
+}
+
+function getLocalDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getMagangApplyDateError(value) {
+  const dateText = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(dateText)) return "Format tanggal apply tidak valid.";
+  const parsedDate = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(parsedDate.getTime()) || getLocalDateInputValue(parsedDate) !== dateText) {
+    return "Format tanggal apply tidak valid.";
+  }
+  return dateText > getLocalDateInputValue()
+    ? "Tanggal apply tidak boleh melebihi tanggal hari ini."
+    : "";
 }
 
 function statusBadge(item) {
@@ -1073,6 +1113,7 @@ function FormJudulDosen({
     const options = getFilteredTopikOptionsForSlot(slotNumber);
     const showOptions = openTopikComboSlot === slotNumber && enabled;
     const errorMessage = topikFieldErrors[field] || "";
+    const selectedTopik = topikByKode[selectedCodes[field]] || null;
 
     return (
       <div ref={(node) => { topikComboRefs.current[slotNumber] = node; }}>
@@ -1080,28 +1121,31 @@ function FormJudulDosen({
           {label} {required ? <RequiredMark /> : null}
         </label>
         <div className="relative">
-          <input
-            type="text"
-            role="combobox"
-            aria-expanded={showOptions}
-            aria-controls={`topik-combo-options-${slotNumber}`}
-            aria-autocomplete="list"
-            value={query}
-            onChange={(event) => handleTopikComboInputChange(slotNumber, event.target.value)}
-            onFocus={() => {
-              if (enabled) setOpenTopikComboSlot(slotNumber);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setOpenTopikComboSlot(null);
-            }}
-            disabled={!enabled}
-            placeholder={placeholder}
-            autoComplete="off"
-            className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${
-              enabled ? "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20" : "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-            }`}
-          />
-          <button
+          {selectedTopik ? (
+            <div className="flex min-h-[42px] items-center rounded-lg border border-[#d0dbf4] bg-[#f8fbff] px-3 py-1.5">
+              <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+                <span className="truncate">{getTopikOptionLabel(selectedTopik)}</span>
+                <button type="button" disabled={!enabled} aria-label={`Hapus pilihan topik ${slotNumber}`} onClick={() => handleSelectChange(field, "")} className="rounded-full p-0.5 hover:bg-[#cfddff] disabled:cursor-not-allowed"><X className="h-3.5 w-3.5" /></button>
+              </span>
+            </div>
+          ) : (
+            <input
+              type="text"
+              role="combobox"
+              aria-expanded={showOptions}
+              aria-controls={`topik-combo-options-${slotNumber}`}
+              aria-autocomplete="list"
+              value={query}
+              onChange={(event) => handleTopikComboInputChange(slotNumber, event.target.value)}
+              onFocus={() => { if (enabled) setOpenTopikComboSlot(slotNumber); }}
+              onKeyDown={(event) => { if (event.key === "Escape") setOpenTopikComboSlot(null); }}
+              disabled={!enabled}
+              placeholder={placeholder}
+              autoComplete="off"
+              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${enabled ? "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20" : "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"}`}
+            />
+          )}
+          {!selectedTopik ? <button
             type="button"
             aria-label={`Buka pilihan topik ${slotNumber}`}
             onClick={() => {
@@ -1117,9 +1161,9 @@ function FormJudulDosen({
             }`}
           >
             <ChevronDown className="h-4 w-4" />
-          </button>
+          </button> : null}
 
-          {showOptions ? (
+          {showOptions && !selectedTopik ? (
             <div
               id={`topik-combo-options-${slotNumber}`}
               role="listbox"
@@ -1664,7 +1708,13 @@ function FormJudulSendiri({
     } else if (judulMandiri.trim().length < 8) {
       nextErrors.judulMandiri = "Judul penelitian wajib diisi minimal 8 karakter.";
     }
-    if (deskripsiMandiri.trim().length < 20) {
+    if (
+      deskripsiMandiri
+        .split(/\r?\n/u)
+        .some((descriptionLine) => hasInvalidGenericText(descriptionLine))
+    ) {
+      nextErrors.deskripsiMandiri = getInvalidGenericTextMessage("Deskripsi singkat");
+    } else if (deskripsiMandiri.trim().length < 20) {
       nextErrors.deskripsiMandiri = "Deskripsi singkat wajib diisi minimal 20 karakter.";
     }
     if (selectedBidangPenelitianIds.length === 0) {
@@ -1864,12 +1914,26 @@ function FormJudulSendiri({
           rows={4}
           value={deskripsiMandiri}
           onChange={(event) => {
-            setDeskripsiMandiri(event.target.value);
-            clearFieldError("deskripsiMandiri");
+            const value = event.target.value;
+            setDeskripsiMandiri(value);
+            const hasInvalidCharacter = value
+              .split(/\r?\n/u)
+              .some((descriptionLine) => hasInvalidGenericText(descriptionLine));
+            setFieldErrors((prev) => ({
+              ...prev,
+              deskripsiMandiri: hasInvalidCharacter
+                ? getInvalidGenericTextMessage("Deskripsi singkat")
+                : "",
+            }));
           }}
           disabled={disabled || submitLoading}
           placeholder="Jelaskan latar belakang, ruang lingkup, dan gambaran singkat penelitian yang ingin diajukan..."
-          className="w-full rounded-lg border border-[#d2dcef] px-3 py-2 text-sm outline-none focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6]"
+          aria-invalid={Boolean(fieldErrors.deskripsiMandiri)}
+          className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f3f5fb] disabled:text-[#8b97b6] ${
+            fieldErrors.deskripsiMandiri
+              ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/20"
+              : "border-[#d2dcef] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
+          }`}
         />
         <FieldError message={fieldErrors.deskripsiMandiri} />
       </div>
@@ -2039,38 +2103,34 @@ function PerintisanStudentCombobox({
 
   return (
     <div className="relative mt-1">
-      <input
-        id={inputId}
-        type="text"
-        role="combobox"
-        autoComplete="off"
-        aria-autocomplete="list"
-        aria-controls={`${inputId}-options`}
-        aria-expanded={isOpen}
-        aria-invalid={hasError}
-        value={query}
-        disabled={loading}
-        onFocus={(event) => {
-          setIsOpen(true);
-          if (selected) event.currentTarget.select();
-        }}
-        onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") setIsOpen(false);
-        }}
-        onChange={(event) => {
-          setQuery(event.target.value);
-          if (value) onChange("");
-          setIsOpen(true);
-        }}
-        placeholder={loading ? "Memuat kandidat..." : "Cari nama atau NIM mahasiswa"}
-        className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${
-          hasError
-            ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
-            : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
-        }`}
-      />
-      {isOpen && !loading ? (
+      {selected ? (
+        <div className={`flex min-h-[42px] items-center rounded-lg border px-3 py-1.5 ${hasError ? "border-[#dc4c4c] bg-[#fff8f8]" : "border-[#d0dbf4] bg-[#f8fbff]"}`}>
+          <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+            <span className="truncate">{selectedLabel}</span>
+            <button type="button" disabled={loading} aria-label={`Hapus pilihan ${selectedLabel}`} onClick={() => { onChange(""); setQuery(""); setIsOpen(false); }} className="rounded-full p-0.5 hover:bg-[#cfddff] disabled:cursor-not-allowed"><X className="h-3.5 w-3.5" /></button>
+          </span>
+        </div>
+      ) : (
+        <input
+          id={inputId}
+          type="text"
+          role="combobox"
+          autoComplete="off"
+          aria-autocomplete="list"
+          aria-controls={`${inputId}-options`}
+          aria-expanded={isOpen}
+          aria-invalid={hasError}
+          value={query}
+          disabled={loading}
+          onFocus={() => setIsOpen(true)}
+          onBlur={() => window.setTimeout(() => setIsOpen(false), 120)}
+          onKeyDown={(event) => { if (event.key === "Escape") setIsOpen(false); }}
+          onChange={(event) => { setQuery(event.target.value); setIsOpen(true); }}
+          placeholder={loading ? "Memuat kandidat..." : "Cari nama atau NIM mahasiswa"}
+          className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:cursor-not-allowed disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${hasError ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
+        />
+      )}
+      {isOpen && !loading && !selected ? (
         <div
           id={`${inputId}-options`}
           role="listbox"
@@ -3002,6 +3062,7 @@ function FormSuratRekomendasiMagang({
     proposed_position_other: "",
     company_sector: "",
     company_sector_other: "",
+    chosen_institution_id: "",
     chosen_institution: "",
     complete_address_of_institution: "",
     company_type: "",
@@ -3035,6 +3096,7 @@ function FormSuratRekomendasiMagang({
   const [fileInputResetKey, setFileInputResetKey] = useState(0);
   const [magangUploadFiles, setMagangUploadFiles] = useState({});
   const [institutionComboOpen, setInstitutionComboOpen] = useState(false);
+  const [institutionQuery, setInstitutionQuery] = useState("");
   const institutionComboRef = useRef(null);
 
   const isNonPartner = formData.company_type === "non_partner_company";
@@ -3048,6 +3110,10 @@ function FormSuratRekomendasiMagang({
   const partnerInstitutionOptions = useMemo(
     () => activeMitraMagangOptions.map((item) => String(item?.nama || "").trim()).filter(Boolean),
     [activeMitraMagangOptions]
+  );
+  const selectedInstitution = useMemo(
+    () => activeMitraMagangOptions.find((item) => String(item.id) === String(formData.chosen_institution_id)) || null,
+    [activeMitraMagangOptions, formData.chosen_institution_id]
   );
   const filteredMitraMagangOptions = useMemo(() => {
     const keyword = mitraGridQuery.trim().toLowerCase();
@@ -3070,12 +3136,12 @@ function FormSuratRekomendasiMagang({
     });
   }, [activeMitraMagangOptions, mitraGridQuery]);
   const filteredPartnerInstitutionOptions = useMemo(() => {
-    const keyword = String(formData.chosen_institution || "").trim().toLowerCase();
-    if (!keyword) return [];
-    return partnerInstitutionOptions.filter((option) => option.toLowerCase().includes(keyword));
-  }, [formData.chosen_institution, partnerInstitutionOptions]);
+    const keyword = institutionQuery.trim().toLowerCase();
+    if (!keyword) return activeMitraMagangOptions;
+    return activeMitraMagangOptions.filter((option) => String(option?.nama || "").toLowerCase().includes(keyword));
+  }, [activeMitraMagangOptions, institutionQuery]);
   const shouldShowInstitutionOptions =
-    institutionComboOpen && !disabled && !loadingMitraOptions && formData.chosen_institution.trim().length > 0;
+    institutionComboOpen && !disabled && !loadingMitraOptions;
 
   useEffect(() => {
     let isMounted = true;
@@ -3133,6 +3199,7 @@ function FormSuratRekomendasiMagang({
       if (formData.chosen_institution !== MAGANG_NON_PARTNER_OPTION_LABEL) {
         setFormData((prev) => ({
           ...prev,
+          chosen_institution_id: "",
           chosen_institution: MAGANG_NON_PARTNER_OPTION_LABEL,
         }));
       }
@@ -3143,12 +3210,17 @@ function FormSuratRekomendasiMagang({
     if (formData.chosen_institution === MAGANG_NON_PARTNER_OPTION_LABEL) {
       setFormData((prev) => ({
         ...prev,
+        chosen_institution_id: "",
         chosen_institution: "",
       }));
       return;
     }
 
-  }, [formData.chosen_institution, isNonPartner, partnerInstitutionOptions]);
+    if (formData.chosen_institution_id && !selectedInstitution) {
+      setFormData((prev) => ({ ...prev, chosen_institution_id: "", chosen_institution: "" }));
+    }
+
+  }, [formData.chosen_institution, formData.chosen_institution_id, isNonPartner, selectedInstitution]);
 
   useEffect(() => {
     if (!institutionComboOpen) return undefined;
@@ -3173,19 +3245,19 @@ function FormSuratRekomendasiMagang({
       if (field === "company_type") {
         if (value === "non_partner_company") {
           setInstitutionComboOpen(false);
+          setInstitutionQuery("");
           return {
             ...prev,
             company_type: value,
+            chosen_institution_id: "",
             chosen_institution: MAGANG_NON_PARTNER_OPTION_LABEL,
           };
         }
         return {
           ...prev,
           company_type: value,
-          chosen_institution:
-            prev.chosen_institution === MAGANG_NON_PARTNER_OPTION_LABEL
-              ? ""
-              : prev.chosen_institution,
+          chosen_institution_id: "",
+          chosen_institution: "",
         };
       }
 
@@ -3226,7 +3298,7 @@ function FormSuratRekomendasiMagang({
         ? "Internship Company website URL"
         : "Internship vacancy URL";
     const unsafeCharacterError = hasForbiddenMagangUrlCharacters(value)
-      ? `${label} tidak boleh mengandung karakter + { } [ ] ; ' " < > \\ atau pola --.`
+      ? getInvalidMagangUrlMessage(label)
       : "";
     if (!unsafeCharacterError) return;
     setMagangFieldErrors((prev) => ({ ...prev, [field]: unsafeCharacterError }));
@@ -3237,6 +3309,15 @@ function FormSuratRekomendasiMagang({
     const error = getMagangAdditionalNoteError(value);
     if (!error) return;
     setMagangFieldErrors((prev) => ({ ...prev, bukti_apply: error }));
+  };
+
+  const updateValidatedMagangTextField = (field, value, label, { multiline = false } = {}) => {
+    updateField(field, value);
+    const hasInvalidCharacter = multiline
+      ? String(value || "").split(/\r?\n/u).some((line) => hasInvalidGenericText(line))
+      : hasInvalidGenericText(value);
+    if (!hasInvalidCharacter) return;
+    setMagangFieldErrors((prev) => ({ ...prev, [field]: getInvalidGenericTextMessage(label) }));
   };
 
   const updateFileField = (field, event) => {
@@ -3343,6 +3424,7 @@ function FormSuratRekomendasiMagang({
       proposed_position_other: "",
       company_sector: "",
       company_sector_other: "",
+      chosen_institution_id: "",
       chosen_institution: "",
       complete_address_of_institution: "",
       company_type: "",
@@ -3369,6 +3451,7 @@ function FormSuratRekomendasiMagang({
     setSubmitSuccess("");
     setMagangFieldErrors({});
     setMitraGridQuery("");
+    setInstitutionQuery("");
     setMagangUploadFiles({});
     setFileInputResetKey((prev) => prev + 1);
   };
@@ -3378,11 +3461,14 @@ function FormSuratRekomendasiMagang({
 
     if (formData.sudah_apply_ke_mitra === null) {
       errors.sudah_apply_ke_mitra = "Konfirmasi apply ke mitra magang wajib dipilih.";
-    } else if (formData.sudah_apply_ke_mitra === false) {
-      errors.sudah_apply_ke_mitra = "Anda harus sudah apply ke mitra magang sebelum mengirim form.";
     }
-    if (formData.sudah_apply_ke_mitra === true && !formData.tanggal_apply.trim()) {
-      errors.tanggal_apply = "Tanggal apply wajib diisi.";
+    if (formData.sudah_apply_ke_mitra === true) {
+      if (!formData.tanggal_apply.trim()) {
+        errors.tanggal_apply = "Tanggal apply wajib diisi.";
+      } else {
+        const applyDateError = getMagangApplyDateError(formData.tanggal_apply);
+        if (applyDateError) errors.tanggal_apply = applyDateError;
+      }
     }
     if (formData.sudah_apply_ke_mitra === true) {
       if (!formData.metode_apply.trim()) {
@@ -3408,34 +3494,59 @@ function FormSuratRekomendasiMagang({
     if (!formData.proposed_position) {
       errors.proposed_position = "Proposed / Expected Position wajib dipilih.";
     }
-    if (formData.proposed_position === "other" && !formData.proposed_position_other.trim()) {
-      errors.proposed_position_other = "Isian other pada Proposed / Expected Position wajib diisi.";
+    if (formData.proposed_position === "other") {
+      if (!formData.proposed_position_other.trim()) {
+        errors.proposed_position_other = "Isian other pada Proposed / Expected Position wajib diisi.";
+      } else if (hasInvalidGenericText(formData.proposed_position_other)) {
+        errors.proposed_position_other = getInvalidGenericTextMessage("Posisi lain");
+      }
     }
     if (!formData.company_sector) errors.company_sector = "Company Sector wajib dipilih.";
-    if (formData.company_sector === "other" && !formData.company_sector_other.trim()) {
-      errors.company_sector_other = "Isian other pada Company Sector wajib diisi.";
+    if (formData.company_sector === "other") {
+      if (!formData.company_sector_other.trim()) {
+        errors.company_sector_other = "Isian other pada Company Sector wajib diisi.";
+      } else if (hasInvalidGenericText(formData.company_sector_other)) {
+        errors.company_sector_other = getInvalidGenericTextMessage("Sektor perusahaan lain");
+      }
     }
     if (!formData.company_type) errors.company_type = "Type of Company wajib dipilih.";
-    if (!formData.chosen_institution) errors.chosen_institution = "Chosen Institution wajib dipilih.";
+    if (!isNonPartner && !formData.chosen_institution_id) errors.chosen_institution = "Chosen Institution wajib dipilih dari daftar mitra.";
+    if (isNonPartner && !formData.chosen_institution) errors.chosen_institution = "Chosen Institution wajib dipilih.";
     if (!isNonPartner) {
       if (partnerInstitutionOptions.length === 0) {
         errors.chosen_institution = "Daftar mitra magang belum tersedia. Hubungi sekretaris prodi.";
       }
-      if (!partnerInstitutionOptions.includes(formData.chosen_institution)) {
+      if (!selectedInstitution) {
         errors.chosen_institution = "Chosen Institution tidak valid. Pilih dari daftar mitra yang tersedia.";
       }
     }
     if (!formData.complete_address_of_institution.trim()) {
       errors.complete_address_of_institution = "Complete address of the institution wajib diisi.";
+    } else if (
+      formData.complete_address_of_institution
+        .split(/\r?\n/u)
+        .some((addressLine) => hasInvalidGenericText(addressLine))
+    ) {
+      errors.complete_address_of_institution = getInvalidGenericTextMessage("Complete address of the institution");
     }
 
     if (isNonPartner) {
-      if (!formData.company_name.trim()) errors.company_name = "Company name wajib diisi untuk Non partner Company.";
+      if (!formData.company_name.trim()) {
+        errors.company_name = "Company name wajib diisi untuk Non partner Company.";
+      } else if (hasInvalidGenericText(formData.company_name)) {
+        errors.company_name = getInvalidGenericTextMessage("Company name");
+      }
       if (!formData.year_of_establishment.trim()) {
         errors.year_of_establishment = "Year of establishment wajib diisi untuk Non partner Company.";
+      } else {
+        const yearError = getYearOfEstablishmentError(formData.year_of_establishment);
+        if (yearError) errors.year_of_establishment = yearError;
       }
       if (!formData.number_of_employees.trim()) {
         errors.number_of_employees = "Number of employees wajib diisi untuk Non partner Company.";
+      } else {
+        const employeeError = getNumberOfEmployeesError(formData.number_of_employees);
+        if (employeeError) errors.number_of_employees = employeeError;
       }
       if (!formData.internship_application_method) {
         errors.internship_application_method = "Internship Application method wajib dipilih untuk Non partner Company.";
@@ -3448,6 +3559,12 @@ function FormSuratRekomendasiMagang({
       }
       if (!formData.selection_processes_text.trim()) {
         errors.selection_processes_text = "Selection Processes wajib diisi untuk Non partner Company.";
+      } else if (
+        formData.selection_processes_text
+          .split(/\r?\n/u)
+          .some((selectionProcess) => hasInvalidGenericText(selectionProcess))
+      ) {
+        errors.selection_processes_text = getInvalidGenericTextMessage("Selection Processes");
       }
     }
 
@@ -3469,7 +3586,8 @@ function FormSuratRekomendasiMagang({
       company_sector_other: normalizeText(formData.company_sector_other),
       chosen_institution: isNonPartner
         ? MAGANG_NON_PARTNER_OPTION_LABEL
-        : normalizeText(formData.chosen_institution),
+        : normalizeText(selectedInstitution?.nama),
+      mitra_id: isNonPartner ? null : Number(formData.chosen_institution_id),
       complete_address_of_institution: normalizeText(formData.complete_address_of_institution),
       company_type: formData.company_type,
       sudah_apply_ke_mitra: formData.sudah_apply_ke_mitra === true,
@@ -3765,74 +3883,92 @@ function FormSuratRekomendasiMagang({
               Chosen Institution <RequiredMark />
             </label>
             <div ref={institutionComboRef} className="relative">
-              <input
-                type="text"
-                role="combobox"
-                aria-expanded={institutionComboOpen}
-                aria-controls="chosen-institution-options"
-                aria-autocomplete="list"
-                value={formData.chosen_institution}
-                onChange={(event) => {
-                  updateField("chosen_institution", event.target.value);
-                  setInstitutionComboOpen(true);
-                }}
-                onFocus={() => {
-                  if (formData.chosen_institution.trim()) setInstitutionComboOpen(true);
-                }}
-                disabled={disabled || loadingMitraOptions}
-                placeholder={loadingMitraOptions ? "Memuat daftar mitra..." : "Ketik atau pilih institusi mitra"}
-                autoComplete="off"
-                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${
-                  disabled || loadingMitraOptions
-                    ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
-                    : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
-                }`}
-              />
-              <button
-                type="button"
-                aria-label="Buka daftar institusi mitra"
-                onClick={() => {
-                  if (!formData.chosen_institution.trim()) {
-                    setInstitutionComboOpen(false);
-                    return;
-                  }
-                  setInstitutionComboOpen((prev) => !prev);
-                }}
-                disabled={disabled || loadingMitraOptions}
-                className={`absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-sm ${
-                  disabled || loadingMitraOptions
-                    ? "cursor-not-allowed text-[#9aa6c2]"
-                    : "text-[#4c5f8d] hover:bg-[#f2f5ff]"
-                }`}
-              >
-                <ChevronDown className="h-4 w-4" />
-              </button>
+              {selectedInstitution ? (
+                <div className="flex min-h-[42px] items-center rounded-lg border border-[#d0dbf4] bg-[#f8fbff] px-3 py-1.5">
+                  <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+                    <span className="truncate">{selectedInstitution.nama}</span>
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      aria-label={`Hapus pilihan ${selectedInstitution.nama}`}
+                      onClick={() => {
+                        setFormData((prev) => ({ ...prev, chosen_institution_id: "", chosen_institution: "" }));
+                        setInstitutionQuery("");
+                        setInstitutionComboOpen(false);
+                        setMagangFieldErrors((prev) => ({ ...prev, chosen_institution: "" }));
+                      }}
+                      className="rounded-full p-0.5 hover:bg-[#cfddff] disabled:cursor-not-allowed"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    role="combobox"
+                    aria-expanded={institutionComboOpen}
+                    aria-controls="chosen-institution-options"
+                    aria-autocomplete="list"
+                    value={institutionQuery}
+                    onChange={(event) => {
+                      setInstitutionQuery(event.target.value);
+                      setInstitutionComboOpen(true);
+                    }}
+                    onFocus={() => setInstitutionComboOpen(true)}
+                    disabled={disabled || loadingMitraOptions}
+                    placeholder={loadingMitraOptions ? "Memuat daftar mitra..." : "Cari nama mitra..."}
+                    autoComplete="off"
+                    className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 pr-10 text-sm outline-none ${
+                      disabled || loadingMitraOptions
+                        ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]"
+                        : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
+                    }`}
+                  />
+                  <button
+                    type="button"
+                    aria-label="Buka daftar institusi mitra"
+                    onClick={() => setInstitutionComboOpen((prev) => !prev)}
+                    disabled={disabled || loadingMitraOptions}
+                    className={`absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-sm ${
+                      disabled || loadingMitraOptions
+                        ? "cursor-not-allowed text-[#9aa6c2]"
+                        : "text-[#4c5f8d] hover:bg-[#f2f5ff]"
+                    }`}
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </button>
+                </>
+              )}
 
-              {shouldShowInstitutionOptions ? (
+              {shouldShowInstitutionOptions && !selectedInstitution ? (
                 <div
                   id="chosen-institution-options"
                   role="listbox"
-                  className="absolute z-30 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-[#d0dbf4] bg-white shadow-lg"
+                  className="absolute z-30 mt-1 max-h-[200px] w-full overflow-y-auto rounded-lg border border-[#d0dbf4] bg-white shadow-lg"
                 >
                   {filteredPartnerInstitutionOptions.length > 0 ? (
                     filteredPartnerInstitutionOptions.map((option) => (
                       <button
-                        key={`inst-combo-${option}`}
+                        key={`inst-combo-${option.id}`}
                         type="button"
                         role="option"
-                        aria-selected={formData.chosen_institution === option}
+                        aria-selected={String(formData.chosen_institution_id) === String(option.id)}
                         onMouseDown={(event) => event.preventDefault()}
                         onClick={() => {
-                          updateField("chosen_institution", option);
+                          setFormData((prev) => ({ ...prev, chosen_institution_id: String(option.id), chosen_institution: option.nama }));
+                          setInstitutionQuery("");
                           setInstitutionComboOpen(false);
+                          setMagangFieldErrors((prev) => ({ ...prev, chosen_institution: "" }));
                         }}
-                        className={`block w-full px-3 py-2 text-left text-sm transition hover:bg-[#eef3ff] ${
-                          formData.chosen_institution === option
+                        className={`block min-h-[40px] w-full px-3 py-2 text-left text-sm transition hover:bg-[#eef3ff] ${
+                          String(formData.chosen_institution_id) === String(option.id)
                             ? "bg-[#eef3ff] font-semibold text-[#254db4]"
                             : "text-[#263a68]"
                         }`}
                       >
-                        {option}
+                        {option.nama}
                       </button>
                     ))
                   ) : (
@@ -3856,9 +3992,16 @@ function FormSuratRekomendasiMagang({
             <textarea
               rows={3}
               value={formData.complete_address_of_institution}
-              onChange={(event) => updateField("complete_address_of_institution", event.target.value)}
+              onChange={(event) => updateValidatedMagangTextField(
+                "complete_address_of_institution",
+                event.target.value,
+                "Complete address of the institution",
+                { multiline: true },
+              )}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.complete_address_of_institution ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
@@ -3879,9 +4022,11 @@ function FormSuratRekomendasiMagang({
                 <input
                   type="text"
                   value={formData.company_name}
-                  onChange={(event) => updateField("company_name", event.target.value)}
+                  onChange={(event) => updateValidatedMagangTextField("company_name", event.target.value, "Company name")}
                   disabled={disabled}
-                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                    magangFieldErrors.company_name ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+                  } ${
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
@@ -3893,10 +4038,23 @@ function FormSuratRekomendasiMagang({
                 </label>
                 <input
                   type="text"
+                  inputMode="numeric"
+                  maxLength={4}
+                  placeholder="Contoh: 2020"
                   value={formData.year_of_establishment}
-                  onChange={(event) => updateField("year_of_establishment", event.target.value)}
+                  onChange={(event) => updateField(
+                    "year_of_establishment",
+                    event.target.value.replace(/\D/gu, "").slice(0, 4),
+                  )}
+                  onBlur={() => {
+                    if (!formData.year_of_establishment) return;
+                    const error = getYearOfEstablishmentError(formData.year_of_establishment);
+                    if (error) setMagangFieldErrors((prev) => ({ ...prev, year_of_establishment: error }));
+                  }}
                   disabled={disabled}
-                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                    magangFieldErrors.year_of_establishment ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+                  } ${
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
@@ -3907,11 +4065,28 @@ function FormSuratRekomendasiMagang({
                   Number of employees <RequiredMark />
                 </label>
                 <input
-                  type="text"
+                  type="number"
+                  inputMode="numeric"
+                  min="1"
+                  step="1"
+                  placeholder="Contoh: 50"
                   value={formData.number_of_employees}
-                  onChange={(event) => updateField("number_of_employees", event.target.value)}
+                  onKeyDown={(event) => {
+                    if (["e", "E", "+", "-", ".", ","].includes(event.key)) event.preventDefault();
+                  }}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (value === "" || /^\d+$/u.test(value)) updateField("number_of_employees", value);
+                  }}
+                  onBlur={() => {
+                    if (!formData.number_of_employees) return;
+                    const error = getNumberOfEmployeesError(formData.number_of_employees);
+                    if (error) setMagangFieldErrors((prev) => ({ ...prev, number_of_employees: error }));
+                  }}
                   disabled={disabled}
-                  className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                    magangFieldErrors.number_of_employees ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+                  } ${
                     disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                   }`}
                 />
@@ -3960,9 +4135,16 @@ function FormSuratRekomendasiMagang({
               <textarea
                 rows={4}
                 value={formData.selection_processes_text}
-                onChange={(event) => updateField("selection_processes_text", event.target.value)}
+                onChange={(event) => updateValidatedMagangTextField(
+                  "selection_processes_text",
+                  event.target.value,
+                  "Selection Processes",
+                  { multiline: true },
+                )}
                 disabled={disabled}
-                className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+                className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                  magangFieldErrors.selection_processes_text ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+                } ${
                   disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
                 }`}
               />
@@ -3977,9 +4159,16 @@ function FormSuratRekomendasiMagang({
             <textarea
               rows={3}
               value={formData.complete_address_of_institution}
-              onChange={(event) => updateField("complete_address_of_institution", event.target.value)}
+              onChange={(event) => updateValidatedMagangTextField(
+                "complete_address_of_institution",
+                event.target.value,
+                "Complete address of the institution",
+                { multiline: true },
+              )}
               disabled={disabled}
-              className={`w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.complete_address_of_institution ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
@@ -4013,8 +4202,14 @@ function FormSuratRekomendasiMagang({
               placeholder="Isi posisi lain"
               value={formData.proposed_position_other}
               disabled={disabled}
-              onChange={(event) => updateField("proposed_position_other", event.target.value)}
-              className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              onChange={(event) => updateValidatedMagangTextField(
+                "proposed_position_other",
+                event.target.value,
+                "Posisi lain",
+              )}
+              className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.proposed_position_other ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
@@ -4049,8 +4244,14 @@ function FormSuratRekomendasiMagang({
               placeholder="Isi sektor lain"
               value={formData.company_sector_other}
               disabled={disabled}
-              onChange={(event) => updateField("company_sector_other", event.target.value)}
-              className={`mt-2 w-full rounded-lg border border-[#d0dbf4] px-3 py-2 text-sm outline-none ${
+              onChange={(event) => updateValidatedMagangTextField(
+                "company_sector_other",
+                event.target.value,
+                "Sektor perusahaan lain",
+              )}
+              className={`mt-2 w-full rounded-lg border px-3 py-2 text-sm outline-none ${
+                magangFieldErrors.company_sector_other ? "border-[#d94a4a]" : "border-[#d0dbf4]"
+              } ${
                 disabled ? "cursor-not-allowed bg-[#f3f5fb] text-[#8b97b6]" : "focus:border-[#2f63e3] focus:ring-2 focus:ring-[#2f63e3]/20"
               }`}
             />
@@ -4063,7 +4264,7 @@ function FormSuratRekomendasiMagang({
       <div className="mt-6 rounded-lg border border-[#e4ebf9] bg-[#f9fbff] p-4">
         <h3 className="text-sm font-black text-[#1b274b]">Konfirmasi Apply ke Mitra</h3>
         <p className="mt-1 text-xs text-[#5d6c91]">
-          Wajib: mahasiswa harus sudah apply terlebih dahulu ke tempat magang sebelum submit form ini.
+          Pilih status apply Anda. Detail tanggal, metode, dan bukti hanya wajib diisi jika sudah apply ke mitra.
         </p>
 
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -4093,12 +4294,24 @@ function FormSuratRekomendasiMagang({
         <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Tanggal apply <RequiredMark />
+              Tanggal apply {formData.sudah_apply_ke_mitra === true ? <RequiredMark /> : null}
             </label>
             <input
               type="date"
+              max={getLocalDateInputValue()}
               value={formData.tanggal_apply}
-              onChange={(event) => updateField("tanggal_apply", event.target.value)}
+              onChange={(event) => {
+                const value = event.target.value;
+                updateField("tanggal_apply", value);
+                if (!value) return;
+                const error = getMagangApplyDateError(value);
+                if (error) setMagangFieldErrors((prev) => ({ ...prev, tanggal_apply: error }));
+              }}
+              onBlur={() => {
+                if (!formData.tanggal_apply) return;
+                const error = getMagangApplyDateError(formData.tanggal_apply);
+                if (error) setMagangFieldErrors((prev) => ({ ...prev, tanggal_apply: error }));
+              }}
               disabled={disabled || formData.sudah_apply_ke_mitra !== true}
               className={`w-full rounded-lg border px-3 py-2 text-sm outline-none ${
                 magangFieldErrors.tanggal_apply ? "border-[#dc4b4b] bg-[#fff7f7]" : "border-[#d0dbf4] bg-white"
@@ -4112,7 +4325,7 @@ function FormSuratRekomendasiMagang({
           </div>
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Metode apply <RequiredMark />
+              Metode apply {formData.sudah_apply_ke_mitra === true ? <RequiredMark /> : null}
             </label>
             <select
               value={formData.metode_apply}
@@ -4140,7 +4353,7 @@ function FormSuratRekomendasiMagang({
         <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
             <label className="mb-2 block text-sm font-semibold text-[#324c86]">
-              Upload bukti apply <RequiredMark />
+              Upload bukti apply {formData.sudah_apply_ke_mitra === true ? <RequiredMark /> : null}
             </label>
             <input
               key={`bukti-apply-${fileInputResetKey}`}
@@ -4409,7 +4622,20 @@ function PengajuanPage({
   const onboardingReason = jalurEligibility?.onboarding?.reason || "";
   const renderJalur = selectedJalur || "penelitian";
   const renderJalurEligibility = jalurEligibility?.jalur_eligibility?.[renderJalur] || null;
-  const currentFormDisabled = forcedJalur
+  const activeNonPenelitianWorkflowStatus = String(
+    jalurStatus?.non_penelitian_form?.workflow_status
+      || jalurStatus?.pendaftaran_aktif?.form_lanjutan_status
+      || jalurEligibility?.pendaftaran_aktif?.form_lanjutan_status
+      || ""
+  ).trim().toLowerCase();
+  const isRejectedNonPenelitianRetry = renderJalur !== "penelitian"
+    && activeNonPenelitianWorkflowStatus === "rejected"
+    && String(
+      jalurEligibility?.pendaftaran_aktif?.status
+        || jalurStatus?.pendaftaran_aktif?.status
+        || ""
+    ).trim().toLowerCase() === "approved";
+  const currentFormDisabled = forcedJalur || isRejectedNonPenelitianRetry
     ? false
     : Boolean(renderJalurEligibility && renderJalurEligibility.enabled === false);
   const currentFormDisabledReason = renderJalurEligibility?.reason || "";

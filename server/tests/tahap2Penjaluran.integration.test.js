@@ -1378,5 +1378,25 @@ test("kontrak integrasi penjaluran Tahap 2", async (t) => {
         type: "penjaluran_final_rejected_student",
       },
     }), 1);
+
+    const eligibilityResponse = responseRecorder();
+    await jalurController.getJalurEligibility({
+      user: { id: student.id, role: "mahasiswa" },
+    }, eligibilityResponse);
+    assert.equal(eligibilityResponse.statusCode, 200, eligibilityResponse.payload?.message);
+    assert.equal(eligibilityResponse.payload?.data?.jalur_eligibility?.magang?.enabled, true);
+    assert.equal(eligibilityResponse.payload?.data?.jalur_eligibility?.magang?.reason, "");
+    assert.equal(eligibilityResponse.payload?.data?.flags?.can_retry_rejected_non_penelitian, true);
+    assert.equal(eligibilityResponse.payload?.data?.onboarding?.is_locked, false);
+    assert.equal(eligibilityResponse.payload?.data?.onboarding?.reason, "");
+
+    const retryValidationResponse = responseRecorder();
+    await jalurController.submitFormNonPenelitian({
+      body: { jalur: "magang", payload: {} },
+      user: { id: student.id, role: "mahasiswa" },
+      files: {},
+    }, retryValidationResponse);
+    assert.equal(retryValidationResponse.statusCode, 400);
+    assert.notEqual(retryValidationResponse.payload?.code, "FORM_ALREADY_SUBMITTED");
   });
 });

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, CheckCircle2, Clock3, Download, Eye, FileCheck2, RefreshCcw, Send, Upload, XCircle } from "lucide-react";
 import Swal from "sweetalert2";
+import { formatDosenFullName } from "../utils/dosen";
 
 function formatDate(value, withTime = false) {
   if (!value) return "-";
@@ -45,6 +46,29 @@ function graduationLabel(value) {
   if (status === "lulus_bersyarat") return "Wajib Menyelesaikan Revisi";
   if (status === "tidak_lulus") return "Tidak Lulus";
   return "Menunggu Hasil Sidang";
+}
+
+function formatSidangDayDate(value) {
+  if (!value) return "-";
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return "-";
+  return new Intl.DateTimeFormat("id-ID", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
+function ScheduleField({ label, value }) {
+  return (
+    <div>
+      <p className="mb-1 text-sm font-semibold text-[#344b7f]">{label}</p>
+      <div className="min-h-[42px] rounded-lg border border-[#d3dbef] bg-[#f5f7fc] px-3 py-2.5 text-sm text-[#52658f]">
+        {value || "-"}
+      </div>
+    </div>
+  );
 }
 
 function RequirementCard({ title, fulfilled, description, icon: Icon = FileCheck2 }) {
@@ -239,6 +263,10 @@ function MahasiswaSidangRegistrationPage({ session, apiBaseUrl, onSessionExpired
   const registration = detail?.pendaftaran || null;
   const hasActiveRegistration = Boolean(registration && String(registration.status || "").toLowerCase() !== "cancelled");
   const canAttemptRegister = Boolean(detail?.registration_window_open) && !hasActiveRegistration;
+  const scheduledPeriod = periods.find(
+    (item) => String(item?.pendaftaran?.status || "").toLowerCase() === "scheduled" && item?.pendaftaran?.jadwal_sidang
+  ) || null;
+  const sidangSchedule = scheduledPeriod?.pendaftaran?.jadwal_sidang || null;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
@@ -247,7 +275,8 @@ function MahasiswaSidangRegistrationPage({ session, apiBaseUrl, onSessionExpired
       <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm">
         <h3 className="text-lg font-black text-[#1b274b]">Menu Sidang</h3>
         <div className="mt-2 flex flex-wrap gap-2">{[
-          { id: "registration", label: "Pendaftaran & Jadwal" },
+          { id: "registration", label: "Pendaftaran Sidang" },
+          { id: "schedule", label: "Jadwal Sidang" },
           { id: "result", label: "Hasil Sidang & Revisi" },
         ].map((item) => <button key={item.id} type="button" onClick={() => { setActiveSection(item.id); setView("list"); setDetail(null); setError(""); if (item.id === "result") loadResult().catch(() => {}); else loadPeriods().catch(() => {}); }} className={`rounded-full border px-3 py-1.5 text-sm font-bold ${activeSection === item.id ? "border-[#2f63e3] bg-[#2f63e3] text-white" : "border-[#cfd8ef] bg-white text-[#2f4477]"}`}>{item.label}</button>)}</div>
       </section>
@@ -257,7 +286,7 @@ function MahasiswaSidangRegistrationPage({ session, apiBaseUrl, onSessionExpired
           <button type="button" disabled={view === "list"} onClick={() => { setView("list"); setDetail(null); setError(""); setValidationErrors([]); loadPeriods().catch(() => {}); }} className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#d3dbef] text-[#27407b] hover:bg-[#f3f6ff] disabled:cursor-not-allowed disabled:opacity-50"><ArrowLeft className="h-4 w-4" /></button>
           <button type="button" disabled={loading} onClick={() => { if (view === "detail" && detail?.periode_sidang?.id) loadDetail(detail.periode_sidang.id).catch(() => {}); else loadPeriods().catch(() => {}); }} className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:opacity-60"><RefreshCcw className="h-4 w-4" />Refresh</button>
         </div>
-      </section> : <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm"><button type="button" disabled={loading} onClick={() => loadResult().catch(() => {})} className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:opacity-60"><RefreshCcw className="h-4 w-4" />Refresh</button></section>}
+      </section> : <section className="rounded-xl border border-[#e4e9f6] bg-white p-3 shadow-sm"><button type="button" disabled={loading} onClick={() => { if (activeSection === "result") loadResult().catch(() => {}); else loadPeriods().catch(() => {}); }} className="inline-flex items-center gap-2 rounded-lg border border-[#d3dbef] px-3 py-2 text-sm font-semibold text-[#27407b] hover:bg-[#f3f6ff] disabled:opacity-60"><RefreshCcw className="h-4 w-4" />Refresh</button></section>}
 
       {activeSection === "registration" && view === "list" ? (
         <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[#e4e9f6] bg-white p-4 shadow-sm">
@@ -312,6 +341,44 @@ function MahasiswaSidangRegistrationPage({ session, apiBaseUrl, onSessionExpired
             {!detail.registration_window_open && !registration ? <p className="mt-2 text-right text-xs font-semibold text-[#8a6a20]"><Clock3 className="mr-1 inline h-3.5 w-3.5" />Pendaftaran hanya dapat dikirim selama rentang periode aktif.</p> : null}
           </section>
         </>
+      ) : null}
+
+      {activeSection === "schedule" ? (
+        sidangSchedule ? (
+          <section className="rounded-xl border border-[#e4e9f6] bg-white p-5 shadow-sm">
+            <div>
+              <h3 className="text-lg font-black text-[#1b274b]">Jadwal Sidang</h3>
+              <p className="mt-1 text-sm text-[#66769a]">
+                Detail jadwal sidang Anda pada periode {scheduledPeriod?.label_periode || "-"}.
+              </p>
+            </div>
+            <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <ScheduleField label="Hari dan Tanggal Sidang" value={formatSidangDayDate(sidangSchedule.tanggal_sidang)} />
+              <ScheduleField label="Sesi" value={sidangSchedule.sesi_ke ? `Sesi ${sidangSchedule.sesi_ke}` : "-"} />
+              <ScheduleField
+                label="Jam Sidang"
+                value={[sidangSchedule.sesi_mulai, sidangSchedule.sesi_selesai].filter(Boolean).join(" - ") || "-"}
+              />
+              <ScheduleField label="Ruangan" value={sidangSchedule.ruangan || "-"} />
+              <ScheduleField
+                label="Dosen Penguji 1"
+                value={formatDosenFullName(sidangSchedule.penguji1?.nama, sidangSchedule.penguji1?.gelar) || "Belum ditetapkan"}
+              />
+              <ScheduleField
+                label="Dosen Penguji 2"
+                value={formatDosenFullName(sidangSchedule.penguji2?.nama, sidangSchedule.penguji2?.gelar) || "Belum ditetapkan"}
+              />
+            </div>
+          </section>
+        ) : (
+          <section className="flex min-h-[360px] items-center justify-center rounded-xl border border-[#e4e9f6] bg-white p-6 text-center shadow-sm">
+            <div>
+              <Clock3 className="mx-auto h-10 w-10 text-[#8593b3]" />
+              <p className="mt-3 font-black text-[#263a66]">Jadwal Sidang Belum Tersedia</p>
+              <p className="mt-1 text-sm text-[#66769a]">Jadwal akan tampil setelah tanggal, sesi, ruangan, dan dosen penguji ditetapkan.</p>
+            </div>
+          </section>
+        )
       ) : null}
 
       {activeSection === "result" ? (

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ClipboardPlus, Info, Loader2, Send } from "lucide-react";
+import { ArrowLeft, ArrowRight, ClipboardPlus, Info, Loader2, Send, X } from "lucide-react";
 import { formatDosenFullName } from "../utils/dosen";
 
 const PENDAFTARAN_OPTIONS = [
@@ -752,34 +752,33 @@ function PendaftaranJalurPage({ apiBaseUrl, onBack, onRegisterSuccess }) {
           <label className="mb-1 block text-sm font-semibold text-[#324c86]">{label}</label>
         )}
         <div className="relative">
-          <input
-            type="text"
-            role="combobox"
-            autoComplete="off"
-            aria-autocomplete="list"
-            aria-expanded={shouldShowResults}
-            aria-controls={resultsId}
-            value={inputValue}
-            disabled={isDisabledField}
-            onFocus={(event) => {
-              handleDosenSearchFocus(name);
-              if (selectedDosen) event.currentTarget.select();
-            }}
-            onBlur={() => {
-              handleFieldBlur(name);
-              handleDosenSearchBlur(name);
-            }}
-            onChange={(event) => handleDosenSearchQueryChange(name, event.target.value)}
-            placeholder={loadingDosen ? "Memuat data dosen..." : "Cari nama atau NIK dosen"}
-            aria-invalid={Boolean(error)}
-            aria-describedby={error ? `${name}-error` : undefined}
-            className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${
-              error
-                ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15"
-                : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"
-            }`}
-          />
-          {shouldShowResults ? (
+          {selectedDosen ? (
+            <div className={`flex min-h-[42px] items-center rounded-lg border px-3 py-1.5 ${error ? "border-[#dc4c4c] bg-[#fff8f8]" : "border-[#d0dbf4] bg-[#f8fbff]"}`}>
+              <span className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f0ff] px-3 py-1.5 text-sm font-semibold text-[#244a9f]">
+                <span className="truncate">{selectedLabel}</span>
+                <button type="button" disabled={isDisabledField} aria-label={`Hapus pilihan ${selectedLabel}`} onClick={() => { handleDosenSearchQueryChange(name, ""); setActiveDosenSearchField(""); }} className="rounded-full p-0.5 hover:bg-[#cfddff] disabled:cursor-not-allowed"><X className="h-3.5 w-3.5" /></button>
+              </span>
+            </div>
+          ) : (
+            <input
+              type="text"
+              role="combobox"
+              autoComplete="off"
+              aria-autocomplete="list"
+              aria-expanded={shouldShowResults}
+              aria-controls={resultsId}
+              value={inputValue}
+              disabled={isDisabledField}
+              onFocus={() => handleDosenSearchFocus(name)}
+              onBlur={() => { handleFieldBlur(name); handleDosenSearchBlur(name); }}
+              onChange={(event) => handleDosenSearchQueryChange(name, event.target.value)}
+              placeholder={loadingDosen ? "Memuat data dosen..." : "Cari nama atau NIK dosen"}
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? `${name}-error` : undefined}
+              className={`w-full rounded-lg border px-3 py-2 text-sm text-[#203462] outline-none focus:ring-2 disabled:bg-[#f2f5fc] disabled:text-[#8b95af] ${error ? "border-[#dc4c4c] focus:border-[#dc4c4c] focus:ring-[#dc4c4c]/15" : "border-[#d0dbf4] focus:border-[#2f63e3] focus:ring-[#2f63e3]/20"}`}
+            />
+          )}
+          {shouldShowResults && !selectedDosen ? (
             <div
               id={resultsId}
               role="listbox"

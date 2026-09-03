@@ -1,12 +1,19 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Swal from "sweetalert2";
 import { Bell, CheckCheck, Eye, ListChecks, RefreshCcw, Trash2, X } from "lucide-react";
+import { getNotificationActionLabel } from "../utils/notificationAction";
 
 function formatDateTime(value) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(date);
+}
+
+function formatNotificationMessage(message) {
+  return String(message || "-")
+    .replace(/\s*Anda dapat memperbaiki dan mengajukan kembali\.\s*$/i, "")
+    .trim();
 }
 
 export default function NotificationPage({ notificationState, onNavigate }) {
@@ -146,7 +153,7 @@ export default function NotificationPage({ notificationState, onNavigate }) {
                   />
                   <div className="min-w-0 flex-1">
                     <h4 className="font-black text-[#1a2648]">{notification.title}</h4>
-                    <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#596789]">{notification.message}</p>
+                    <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#596789]">{formatNotificationMessage(notification.message)}</p>
                     <p className="mt-2 text-xs font-semibold text-[#7a87a7]">{formatDateTime(notification.createdAt)}</p>
                   </div>
                   <button type="button" onClick={() => openDetail(notification)} className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-[#cfd9f0] bg-white px-3 py-2 text-sm font-bold text-[#2f56a6] hover:bg-[#f3f6ff]">
@@ -172,7 +179,7 @@ export default function NotificationPage({ notificationState, onNavigate }) {
               <div><h3 className="text-xl font-black text-[#1a2648]">{selected.title}</h3><p className="mt-1 text-xs font-semibold text-[#7a87a7]">{formatDateTime(selected.createdAt)}</p></div>
               <button type="button" onClick={() => setSelected(null)} className="rounded-lg p-2 text-[#647294] hover:bg-[#f3f6ff]"><X className="h-5 w-5" /></button>
             </div>
-            <p className="mt-5 whitespace-pre-wrap text-sm leading-relaxed text-[#36456d]">{selected.message}</p>
+            <p className="mt-5 whitespace-pre-wrap text-sm leading-relaxed text-[#36456d]">{formatNotificationMessage(selected.message)}</p>
             {appointedSupervisors.length > 0 ? (
               <div className="mt-4 rounded-lg bg-[#f5f8ff] p-3 text-sm text-[#435681]">
                 <b>Dosen yang ditetapkan oleh Sekprodi:</b>
@@ -187,7 +194,7 @@ export default function NotificationPage({ notificationState, onNavigate }) {
             ) : null}
             <div className="mt-6 flex justify-end gap-2">
               <button type="button" onClick={() => setSelected(null)} className="rounded-lg border border-[#d3dbef] px-4 py-2 text-sm font-bold text-[#30477e]">Tutup</button>
-              {selected.action_key ? <button type="button" onClick={() => { onNavigate?.(selected); setSelected(null); }} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white">Buka Halaman Terkait</button> : null}
+              {selected.action_key ? <button type="button" onClick={() => { onNavigate?.(selected); setSelected(null); }} className="rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white">{getNotificationActionLabel(selected)}</button> : null}
             </div>
           </div>
         </div>

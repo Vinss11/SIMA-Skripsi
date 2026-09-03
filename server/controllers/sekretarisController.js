@@ -195,23 +195,26 @@ function isRolePayloadDifferent(masterRow, rolePayload = {}) {
 
 function summarizePenanggungJawabAssignmentLock({
   activePeriode = null,
-  pendingPengajuanCount = 0,
-  pendingPendaftaranCount = 0,
+  pendingReviewTaskCount = 0,
+  hasPendingReviewProcess = false,
 } = {}) {
-  const reasons = [];
-  if (activePeriode) {
-    reasons.push(`periode aktif ${activePeriode.label_periode || activePeriode.tahun_akademik || ""}`.trim());
-  }
-  if (pendingPengajuanCount > 0) {
-    reasons.push(`${pendingPengajuanCount} pengajuan topik/judul aktif`);
-  }
-  if (pendingPendaftaranCount > 0) {
-    reasons.push(`${pendingPendaftaranCount} pendaftaran/form penjaluran aktif`);
-  }
+  const periodeLabel = activePeriode?.label_periode || activePeriode?.tahun_akademik || "";
+  const taskDescription = pendingReviewTaskCount > 0
+    ? `${pendingReviewTaskCount} tugas review yang belum selesai`
+    : hasPendingReviewProcess
+    ? "proses review yang belum selesai"
+    : "";
 
-  return reasons.length > 0
-    ? `Penanggung jawab penjaluran belum dapat diubah karena masih ada ${reasons.join(", ")}. Selesaikan atau tutup proses aktif terlebih dahulu.`
-    : "Penanggung jawab penjaluran dapat diubah.";
+  if (activePeriode && taskDescription) {
+    return `Penanggung jawab penjaluran belum dapat diubah karena periode ${periodeLabel} masih aktif dan terdapat ${taskDescription}. Selesaikan tugas review dan tutup periode aktif terlebih dahulu.`;
+  }
+  if (activePeriode) {
+    return `Penanggung jawab penjaluran belum dapat diubah karena periode ${periodeLabel} masih aktif. Tutup periode aktif terlebih dahulu.`;
+  }
+  if (taskDescription) {
+    return `Penanggung jawab penjaluran belum dapat diubah karena masih terdapat ${taskDescription}. Selesaikan tugas review terlebih dahulu.`;
+  }
+  return "Penanggung jawab penjaluran dapat diubah.";
 }
 
 const NON_PENELITIAN_RESPONSIBILITY_CONFIG = {
@@ -265,7 +268,16 @@ function buildOutstandingResponsibilityRows({ researchRows = [], registrationRow
   const dosenById = new Map(dosens.map((dosen) => [Number(dosen.id), dosen]));
   const grouped = new Map();
 
-  const addTask = ({ dosenId, roleLabel, taskLabel, source, row, taskId = null }) => {
+  const addTask = ({
+    dosenId,
+    roleLabel,
+    taskLabel,
+    source,
+    row,
+    taskId = null,
+    taskIdentity = null,
+    kelompok = null,
+  }) => {
     const parsedDosenId = Number(dosenId);
     const dosen = dosenById.get(parsedDosenId);
     if (!parsedDosenId || !dosen) return;
@@ -277,17 +289,23 @@ function buildOutstandingResponsibilityRows({ researchRows = [], registrationRow
         responsibility_labels: [],
         task_types: [],
         tasks: [],
+        taskIdentities: new Set(),
       });
     }
 
     const target = grouped.get(parsedDosenId);
+    const resolvedTaskId = taskId || row.id;
+    const resolvedTaskIdentity = taskIdentity || `${source}:${resolvedTaskId}`;
+    if (target.taskIdentities.has(resolvedTaskIdentity)) return;
+    target.taskIdentities.add(resolvedTaskIdentity);
+    const taskPeriode = row.periode || row.pendaftaranPenjaluran?.periode || null;
     target.pending_count += 1;
     if (!target.responsibility_labels.includes(roleLabel)) target.responsibility_labels.push(roleLabel);
     if (!target.task_types.includes(taskLabel)) target.task_types.push(taskLabel);
     if (target.tasks.length < 5) {
       target.tasks.push({
         source,
-        id: taskId || row.id,
+        id: resolvedTaskId,
         label: taskLabel,
         status: source === "pengajuan_penelitian" ? row.status : row.form_lanjutan_status,
         mahasiswa: row.mahasiswa
@@ -297,10 +315,16 @@ function buildOutstandingResponsibilityRows({ researchRows = [], registrationRow
               nama: row.mahasiswa.nama || null,
             }
           : null,
-        periode: row.periode
+        kelompok: kelompok
           ? {
-              id: row.periode.id,
-              label_periode: row.periode.label_periode || null,
+              id: kelompok.id,
+              nama_kelompok: kelompok.nama_kelompok || "Nama kelompok belum tersedia",
+            }
+          : null,
+        periode: taskPeriode
+          ? {
+              id: taskPeriode.id,
+              label_periode: taskPeriode.label_periode || null,
             }
           : null,
       });
@@ -348,19 +372,26 @@ function buildOutstandingResponsibilityRows({ researchRows = [], registrationRow
   }
 
   for (const row of registrationRows) {
-    const config = NON_PENELITIAN_RESPONSIBILITY_CONFIG[resolvePendaftaranJalur(row)];
+    const jalur = resolvePendaftaranJalur(row);
+    const config = NON_PENELITIAN_RESPONSIBILITY_CONFIG[jalur];
     const formStatus = String(row.form_lanjutan_status || "").toLowerCase();
     if (!config || !config.reviewStatuses.includes(formStatus)) continue;
+    const kelompok = jalur === "perintisan_bisnis"
+      ? row.keanggotaanPerintisanBisnis?.kelompok || null
+      : null;
     addTask({
       dosenId: row.periode?.[config.periodeField],
       roleLabel: config.roleLabel,
       taskLabel: config.taskLabel,
       source: "pendaftaran_penjaluran",
       row,
+      taskId: kelompok ? `kelompok-${kelompok.id}` : null,
+      taskIdentity: kelompok ? `perintisan_bisnis:${kelompok.id}` : null,
+      kelompok,
     });
   }
 
-  return [...grouped.values()].sort((left, right) => {
+  return [...grouped.values()].map(({ taskIdentities, ...row }) => row).sort((left, right) => {
     if (right.pending_count !== left.pending_count) return right.pending_count - left.pending_count;
     return String(left.dosen?.nama || "").localeCompare(String(right.dosen?.nama || ""), "id-ID");
   });
@@ -384,6 +415,20 @@ async function getOutstandingPenanggungJawabResponsibilities(transaction) {
           attributes: ["id", "dosen_id", "tipe_approval", "status", "topik_slot"],
           where: { status: "pending", dosen_id: { [Op.ne]: null } },
           required: false,
+        },
+        {
+          model: PendaftaranPenjaluran,
+          as: "pendaftaranPenjaluran",
+          attributes: ["id", "periode_penjaluran_id"],
+          required: false,
+          include: [
+            {
+              model: PeriodePenjaluran,
+              as: "periode",
+              attributes: ["id", "label_periode"],
+              required: false,
+            },
+          ],
         },
       ],
       transaction,
@@ -414,6 +459,20 @@ async function getOutstandingPenanggungJawabResponsibilities(transaction) {
             "pengawas_perintisan_bisnis_dosen_id",
           ],
           required: false,
+        },
+        {
+          model: AnggotaKelompokPerintisan,
+          as: "keanggotaanPerintisanBisnis",
+          attributes: ["id", "kelompok_id"],
+          required: false,
+          include: [
+            {
+              model: KelompokPerintisanBisnis,
+              as: "kelompok",
+              attributes: ["id", "nama_kelompok"],
+              required: false,
+            },
+          ],
         },
       ],
       transaction,
@@ -506,19 +565,23 @@ async function getPenanggungJawabAssignmentLock(options = {}) {
         is_active: true,
       }
     : null;
-  const locked = Boolean(activePeriodePayload) || pendingPengajuanCount > 0 || pendingPendaftaranCount > 0;
+  const hasPendingReviewProcess = pendingPengajuanCount > 0 || pendingPendaftaranCount > 0;
+  const pendingReviewTaskCount = outstandingResponsibilities.reduce(
+    (total, item) => total + Number(item.pending_count || 0),
+    0
+  );
+  const locked = Boolean(activePeriodePayload) || hasPendingReviewProcess;
 
   return {
     locked,
     can_edit: !locked,
     active_periode: activePeriodePayload,
-    pending_pengajuan_count: pendingPengajuanCount,
-    pending_pendaftaran_count: pendingPendaftaranCount,
+    pending_review_task_count: pendingReviewTaskCount,
     outstanding_responsibilities: outstandingResponsibilities,
     message: summarizePenanggungJawabAssignmentLock({
       activePeriode: activePeriodePayload,
-      pendingPengajuanCount,
-      pendingPendaftaranCount,
+      pendingReviewTaskCount,
+      hasPendingReviewProcess,
     }),
   };
 }
@@ -4081,6 +4144,13 @@ function getPenelitianFinalIncludes(programKuliah = null) {
       attributes: ["id", "nik", "nama", "gelar", "email"],
       required: false,
     },
+    {
+      model: BidangPenelitian,
+      as: "bidangPenelitians",
+      attributes: ["id", "nama", "deskripsi"],
+      through: { attributes: [] },
+      required: false,
+    },
     ...["dosen1", "dosen2", "dosen3"].map((association) => ({
       model: Dosen,
       as: association,
@@ -4238,6 +4308,13 @@ async function loadPenelitianFinalTopikMeta(submissions, transaction = null) {
 
 function formatPenelitianFinalRow(submission, topikMetaByKode = {}) {
   const riwayat = Array.isArray(submission.riwayat) ? submission.riwayat : [];
+  const bidangPenelitianMandiri = (
+    Array.isArray(submission.bidangPenelitians) ? submission.bidangPenelitians : []
+  ).map((field) => ({
+    id: field.id,
+    nama: field.nama,
+    deskripsi: field.deskripsi || null,
+  }));
   const state =
     submission.tipe_pengajuan === "topik_dosen"
       ? evaluateTopikParallelState(submission)
@@ -4308,11 +4385,17 @@ function formatPenelitianFinalRow(submission, topikMetaByKode = {}) {
             slot: null,
             kode: null,
             judul: submission.judul_mandiri,
+            deskripsi: submission.deskripsi_mandiri,
+            bidang_penelitian: bidangPenelitianMandiri,
+            cluster: submission.cluster_mandiri || null,
             dosen_id: Number(submission.prospective_supervisor_id || 0) || null,
             dosen_nama: submission.prospectiveSupervisor?.nama || null,
             dosen_gelar: submission.prospectiveSupervisor?.gelar || null,
             status: submission.is_approved_by_supervisor ? "approved" : "pending",
             catatan: null,
+            status_ketua_cluster: ketuaDecision?.status || null,
+            catatan_ketua_cluster: ketuaDecision?.keterangan || null,
+            ketua_cluster: ketuaDecision?.dosen || null,
             dipilih: true,
           },
         ];
@@ -4336,6 +4419,9 @@ function formatPenelitianFinalRow(submission, topikMetaByKode = {}) {
     id: submission.id,
     jenis_jalur: submission.jenis_jalur,
     tipe_pengajuan: submission.tipe_pengajuan,
+    judul_mandiri: submission.tipe_pengajuan === "judul_mandiri" ? submission.judul_mandiri : null,
+    deskripsi_mandiri: submission.tipe_pengajuan === "judul_mandiri" ? submission.deskripsi_mandiri : null,
+    bidang_penelitian: submission.tipe_pengajuan === "judul_mandiri" ? bidangPenelitianMandiri : [],
     status: submission.status,
     program_kuliah: submission.pendaftaranPenjaluran?.program_kuliah || "reguler",
     cluster_penelitian: submission.cluster_mandiri || null,

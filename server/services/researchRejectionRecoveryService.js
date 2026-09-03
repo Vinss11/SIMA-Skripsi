@@ -75,7 +75,7 @@ async function recoverRejectedResearchSubmission({
       recipientType: "mahasiswa",
       recipientId: mahasiswa.id,
       type: notificationType,
-      message: `${actorLabel} menolak pengajuan penelitian Anda. Alasan: ${rejectionReason}. Anda dapat memperbaiki dan mengajukan kembali.`,
+      message: `${actorLabel} menolak pengajuan penelitian Anda. Alasan: ${rejectionReason}.`,
       referenceType: notificationReferenceType,
       referenceId: submission.id,
       actionKey: notificationActionKey,

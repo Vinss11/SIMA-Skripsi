@@ -1145,7 +1145,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                       className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <Send className="h-4 w-4" />
-                      {savingDecision ? "Menyimpan..." : decision === "approve" ? "Simpan Approve" : "Simpan Tolak"}
+                      {savingDecision ? "Menyimpan..." : decision === "approve" ? "Approve" : "Reject"}
                     </button>
                   </div>
                 </div>
@@ -1205,7 +1205,7 @@ function DosenBimbinganReviewPage({ session, apiBaseUrl, onSessionExpired, onRef
                       className="inline-flex items-center gap-2 rounded-lg bg-[#2f63e3] px-4 py-2 text-sm font-bold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <Send className="h-4 w-4" />
-                      {savingResume ? "Menyimpan..." : resumeAction === "approve" ? "Approve Resume" : "Simpan Tolak Resume"}
+                      {savingResume ? "Menyimpan..." : resumeAction === "approve" ? "Approve" : "Reject"}
                     </button>
                   </div>
                 </div>
